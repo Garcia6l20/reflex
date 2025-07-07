@@ -1,0 +1,54 @@
+---
+# We'll use defaults from the LLVM style, but with 4 columns indentation.
+Language: Cpp
+BasedOnStyle: llvm
+
+IndentWidth: 2
+UseTab: Never
+ColumnLimit: 120
+MaxEmptyLinesToKeep: 1
+ExperimentalAutoDetectBinPacking: false
+
+# includes - sort includes per blocks
+SortIncludes: true
+IncludeBlocks: Preserve
+
+# specific for preprocessor
+IndentPPDirectives: None
+
+# allman style configuration
+AllowShortFunctionsOnASingleLine: None
+KeepEmptyLinesAtTheStartOfBlocks: false
+BreakBeforeBraces: Allman
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortBlocksOnASingleLine: false
+
+# functions
+IndentWrappedFunctionNames: true
+AlignAfterOpenBracket: Align
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+BinPackArguments: false
+BinPackParameters: false
+
+# variables
+PointerAlignment: Left
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignOperands: true
+
+# specific for switch
+IndentCaseLabels: true
+
+# defines & macros
+AlignConsecutiveMacros: true
+AlignEscapedNewlines: Left
+
+# space config
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: Never
+SpaceInEmptyParentheses: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
