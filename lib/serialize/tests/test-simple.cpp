@@ -119,3 +119,20 @@ TEST_CASE("deserialization")
     REQUIRE(json::load<std::vector<S>>(json::dump(d)) == d);
   }
 }
+
+TEST_CASE("unicode test")
+{
+  SECTION("loading")
+  {
+    constexpr auto json_data = "\"\\u2728\"";
+    const auto     d         = json::load<std::string>(json_data);
+    // std::println("{}", d);
+    REQUIRE(d == "✨");
+    const auto s = json::dump(d);
+    std::println("{}", s);
+    REQUIRE(s != json_data); // NOTE: unicode auto escaping not suppored
+    REQUIRE(unicode::escape("✨") == "\\u2728");
+    REQUIRE(unicode::escape(s) == json_data);
+    REQUIRE(s == unicode::unescape(json_data));
+  }
+}

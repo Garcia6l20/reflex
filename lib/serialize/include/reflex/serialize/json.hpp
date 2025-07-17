@@ -1,6 +1,7 @@
 #pragma once
 
 #include <reflex/meta.hpp>
+#include <reflex/unicode.hpp>
 
 #include <charconv>
 #include <format>
@@ -138,7 +139,21 @@ constexpr std::string load(auto& begin, auto const& end)
             result += '\t';
             break;
           case 'u':
-            throw error("Unicode not implemented yet !!");
+          {
+            uint16_t code;
+            auto [ptr, ec] = std::from_chars(&*(begin + 1), &*(begin + 5), code, 16);
+            if(ec != std::errc{})
+            {
+              throw error{format("failed to parse unicode: {}", std::make_error_code(ec).message())};
+            }
+            begin    = ptr - 1;
+            auto out = std::back_inserter(result);
+            if(!unicode::to_utf8(out, code))
+            {
+              throw error{"invalid unicode charater"};
+            }
+          }
+          break;
           default:
             throw error(std::format("Unknown escape character: {}", *begin));
         }
