@@ -10,7 +10,7 @@ This project utilizes early C++26 features that are not yet available in mainstr
 ## Requirements
 
 - Bloomberg's clang fork: [https://github.com/bloomberg/clang-p2996](https://github.com/bloomberg/clang-p2996)
-- CMake (version X.Y or higher)
+- CMake (version 3.20 or higher)
 - Standard C++ build tools
 
 ## Building
@@ -18,8 +18,10 @@ This project utilizes early C++26 features that are not yet available in mainstr
 
 ## Modules
 
+- **reflex.utility**: [General purpose utilities](lib/utility/README.md).
 - **reflex.cli**: [Command line interface](lib/cli/README.md).
 - **reflex.di**: [Dependency injection](lib/di/README.md).
+- **reflex.poly**: [Polymorphic types](lib/poly/README.md).
 
 ## Building clang
 
