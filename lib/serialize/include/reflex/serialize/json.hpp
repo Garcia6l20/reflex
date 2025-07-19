@@ -3,6 +3,10 @@
 #include <reflex/meta.hpp>
 #include <reflex/unicode.hpp>
 
+#if __has_include(<reflex/var.hpp>)
+#include <reflex/var.hpp>
+#endif
+
 #include <charconv>
 #include <format>
 #include <iterator>
@@ -13,6 +17,20 @@
 
 namespace reflex::serialize::json
 {
+#if __has_include(<reflex/var.hpp>)
+
+using string  = std::string;
+using number  = double;
+using boolean = bool;
+using value   = recursive_var<boolean, number, string>;
+using array   = typename value::vec_t;
+using object  = typename value::map_t;
+#define REFLEX_JSON_POLY_SUPPORT (true)
+
+constexpr value parse(auto& begin, auto const& end);
+#else
+#define REFLEX_JSON_POLY_SUPPORT (false)
+#endif
 
 namespace detail
 {
@@ -207,15 +225,31 @@ constexpr auto load(auto& begin, auto const& end)
   throw error(std::format("unexpected boolean expression"));
 }
 
+consteval bool is_loadable_object(meta::info R)
+{
+  auto D = dealias(R);
+  return is_aggregate_type(D)
+#if REFLEX_JSON_POLY_SUPPORT
+         or D == dealias(^^object)
+#endif
+      ;
+}
+
+consteval bool is_loadable_array(meta::info R)
+{
+  auto D = dealias(R);
+  return has_template_arguments(D) and template_of(D) == ^^std::vector;
+}
+
 template <meta::info R>
-  requires(is_aggregate_type(R))
+  requires(is_loadable_object(R))
 constexpr auto load(auto& begin, auto const& end);
 
 template <meta::info R>
-  requires(has_template_arguments(R) and template_of(R) == ^^std::vector)
+  requires(is_loadable_array(R))
 constexpr auto load(auto& begin, auto const& end)
 {
-  using T = [:R:];
+  using T = [:dealias(R):];
   T result{};
   if(*begin != '[')
   {
@@ -232,13 +266,24 @@ constexpr auto load(auto& begin, auto const& end)
       ++begin;
       continue;
     }
-    result.push_back(load<^^typename T::value_type>(begin, end));
+#if REFLEX_JSON_POLY_SUPPORT
+    if constexpr(dealias(^^typename T::value_type) == dealias(^^value))
+    {
+      result.push_back(parse(begin, end));
+    }
+    else
+    {
+#endif // REFLEX_JSON_POLY_SUPPORT
+      result.push_back(load<^^typename T::value_type>(begin, end));
+#if REFLEX_JSON_POLY_SUPPORT
+    }
+#endif // REFLEX_JSON_POLY_SUPPORT
   }
   return result;
 }
 
 template <meta::info R>
-  requires(is_aggregate_type(R))
+  requires(is_loadable_object(R))
 constexpr auto load(auto& begin, auto const& end)
 {
   constexpr auto members =
@@ -269,25 +314,85 @@ constexpr auto load(auto& begin, auto const& end)
     }
     ++begin;
 
-    bool found = false;
-    template for(constexpr auto field : members)
+#if REFLEX_JSON_POLY_SUPPORT
+    if constexpr(dealias(^^T) == dealias(^^object))
     {
-      if(identifier_of(field) == key)
+      result[key] = parse(begin, end);
+    }
+    else
+    {
+#endif // REFLEX_JSON_POLY_SUPPORT
+      bool found = false;
+      template for(constexpr auto field : members)
       {
-        result.[:field:] = load<type_of(field)>(begin, end);
-        found            = true;
-        break;
+        if(identifier_of(field) == key)
+        {
+          result.[:field:] = load<type_of(field)>(begin, end);
+          found            = true;
+          break;
+        }
       }
+      if(not found)
+      {
+        throw error(std::format("field {} not found in {}", key, identifier));
+      }
+#if REFLEX_JSON_POLY_SUPPORT
     }
-    if(not found)
-    {
-      throw error(std::format("field {} not found in {}", key, identifier));
-    }
+#endif // REFLEX_JSON_POLY_SUPPORT
   }
   ++begin;
 
   return result;
 }
+
+#if __has_include(<reflex/var.hpp>)
+constexpr value parse(auto& begin, auto const& end)
+{
+  value result;
+  for(; begin != end; ++begin)
+  {
+    switch(*begin)
+    {
+      case ' ':
+      case '\n':
+      case '\t':
+        continue;
+      case 't': // assuming true
+        begin += 4;
+        result = true;
+        return result;
+      case 'f': // assuming false
+        begin += 5;
+        result = false;
+        return result;
+      case 'n': // assuming null
+        begin += 4;
+        return result;
+      case '{':
+        result = load<^^object>(begin, end);
+        return result;
+        break;
+      case '[':
+        result = load<^^array>(begin, end);
+        return result;
+        break;
+      case '"':
+        result = load<^^string>(begin, end);
+        return result;
+      default:
+        result = load<^^number>(begin, end);
+        return result;
+    }
+  }
+  throw std::runtime_error("Error occurred while parsing value");
+}
+
+constexpr auto load(std::string_view body) -> value
+{
+  auto begin = std::begin(body);
+  return parse(begin, std::end(body));
+}
+#endif
 
 template <typename T> constexpr auto load(std::string_view body) -> T
 {
