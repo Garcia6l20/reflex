@@ -27,10 +27,19 @@ struct ml_object : qt::object<ml_object>
     std::println("ml_object: intSlot called: {}", value);
   }
 
-  void not_a_signal()
+  [[= qt::invocable]] bool sayTheTruth()
   {
+    std::println("ml_object: I'm not lying !");
+    return true;
   }
 
+private:
+  [[= qt::property<"rwn", "setIntProp", "getIntProp", "intPropChanged">]] int intProp = 42;
+
+  void intProp_written()
+  {
+    std::println("ml_object: intProp is now {}", intProp);
+  }
 };
 
 #include <QCoreApplication>
@@ -51,6 +60,7 @@ void dumpObject(QObject* object)
     qDebug() << "  Info:" << info.name() << info.value();
   }
 
+  // --- Signals/Slots/Invocables ---
   for(int i = 0; i < metaObject->methodCount(); ++i)
   {
     QMetaMethod method = metaObject->method(i);
@@ -58,30 +68,43 @@ void dumpObject(QObject* object)
     switch(method.methodType())
     {
       case QMetaMethod::Signal:
-        qDebug() << "  Signal:" << method.methodSignature();
+        qDebug() << "    Signal:" << method.methodSignature();
         break;
       case QMetaMethod::Slot:
-        qDebug() << "  Slot:" << method.methodSignature();
+        qDebug() << "      Slot:" << method.methodSignature();
+        break;
+      case QMetaMethod::Method:
+        qDebug() << " Invocable:" << method.methodSignature();
         break;
       default:
         // Ignore Method or Constructor types
         break;
     }
   }
+  // --- Properties ---
+  for(int i = metaObject->propertyOffset(); i < metaObject->propertyCount(); ++i)
+  {
+    QMetaProperty property = metaObject->property(i);
+    qDebug() << "  Property:" << property.name() << "-" << property.typeName();
+  }
 }
+
+#define dump_exec(...)              \
+  std::println("{}", #__VA_ARGS__); \
+  __VA_ARGS__
 
 int main(int argc, char** argv)
 {
   QCoreApplication app{argc, argv};
 
-  // constexpr auto strings = ml_object::__get_strings(); // patch qt::object to make __get_strings public for debugging
-  // template for(constexpr auto s : strings)
-  // {
-  //   using wrapper = typename[:s:];
-  //   std::println("- \"{}\": \"{}\" ({} chars, {:p})", display_string_of(s),
-  //                [:s:] ::view(),
-  //                [:s:] ::size(), static_cast<const void*>(&[:s:] ::data));
-  // }
+  constexpr auto strings = ml_object::__get_strings(); // patch qt::object to make __get_strings public for debugging
+  template for(constexpr auto s : strings)
+  {
+    using wrapper = typename[:s:];
+    std::println("- \"{}\": \"{}\" ({} chars, {:p})", display_string_of(s),
+                 [:s:] ::view(),
+                 [:s:] ::size(), static_cast<const void*>(&[:s:] ::data));
+  }
 
   QTestObject to;
   // dumpObject(&to);
@@ -90,12 +113,33 @@ int main(int argc, char** argv)
   dumpObject(&mlo);
 
   QObject::connect(&mlo, &ml_object::emptySig, &to, &QTestObject::emtpySlot);
-  mlo.emptySig();
+  dump_exec(mlo.emptySig());
   QObject::connect(&mlo, &ml_object::intSig, &to, &QTestObject::intSlot);
-  mlo.intSig(42);
+  dump_exec(mlo.intSig(42));
 
   QObject::connect(&to, &QTestObject::emptySig, &mlo, &ml_object::emptySlot);
-  to.emptySig();
+  dump_exec(to.emptySig());
   QObject::connect(&to, &QTestObject::intSig, &mlo, &ml_object::intSlot);
-  to.intSig(42);
+  dump_exec(to.intSig(42));
+
+  // QMetaObject::invokeMethod(&to, "intSlot", Q_ARG(int, 55));
+  QMetaObject::invokeMethod(&mlo, "intSlot", Q_ARG(int, 55));
+  bool truth = false;
+  QMetaObject::invokeMethod(&mlo, "sayTheTruth", Q_RETURN_ARG(bool, truth));
+
+  {
+    const auto value = mlo.property("intProp");
+    mlo.setProperty("intProp", value.toInt() + 1);
+    qDebug() << mlo.property("intProp");
+  }
+  {
+    const auto value = mlo.property<"intProp">();
+    mlo.setProperty<"intProp">(value + 1);
+    qDebug() << mlo.property("intProp");
+  }
+
+  QObject::connect(&mlo,
+                   &ml_object::propertyChanged<"intProp">,
+                   [&mlo] { std::println("intProp change caught: {}", mlo.property<"intProp">()); });
+  mlo.setProperty<"intProp">(12);
 }

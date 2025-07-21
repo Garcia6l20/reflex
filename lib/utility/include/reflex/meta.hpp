@@ -10,10 +10,10 @@ namespace reflex::meta
 {
 using namespace std::meta;
 
-consteval auto member_named(meta::info R, std::string_view name) -> meta::info
+consteval auto member_named(meta::info R, std::string_view name, access_context ctx = access_context::current())
+    -> meta::info
 {
-  constexpr auto ctx = std::meta::access_context::current();
-  for(std::meta::info field : members_of(R, ctx))
+  for(std::meta::info field : members_of(R, ctx) | std::views::filter(has_identifier))
   {
     if(identifier_of(field) == name)
       return field;
@@ -113,7 +113,7 @@ template <meta::info R, meta::info Class> static constexpr auto signature_of()
 
 template <auto... chars> struct static_string_wrapper
 {
-  static constexpr char data[sizeof...(chars)] = {chars...};
+  static constexpr char data[sizeof...(chars) + 1] = {chars..., '\0'};
   static constexpr auto size()
   {
     return sizeof...(chars);
@@ -122,15 +122,29 @@ template <auto... chars> struct static_string_wrapper
   {
     return {data, size()};
   }
+  template <fixed_string prefix> static constexpr auto with_prefix()
+  {
+    return [&]<size_t... I>(std::index_sequence<I...>)
+    { return static_string_wrapper<prefix[I]..., chars...>{}; }(std::make_index_sequence<prefix.size() - 1>());
+  }
+  template <fixed_string suffix> static constexpr auto with_suffix()
+  {
+    return [&]<size_t... I>(std::index_sequence<I...>)
+    { return static_string_wrapper<chars..., suffix[I]...>{}; }(std::make_index_sequence<suffix.size() - 1>());
+  }
+
+  static constexpr fixed_string<size() + 1> to_fixed()
+  {
+    return data;
+  }
 };
 
 template <meta::info R> static consteval auto static_identifier_wrapper_of()
 {
-  constexpr auto name     = identifier_of(R);
-  constexpr auto get_char = []<size_t I, auto name>() constexpr { return name[I]; };
-  constexpr auto size     = name.size();
+  constexpr auto name = identifier_of(R);
+  constexpr auto size = name.size();
   return [&]<size_t... I>(std::index_sequence<I...>)
-  { return static_string_wrapper<name.data()[I]..., '\0'>{}; }(std::make_index_sequence<name.size()>());
+  { return static_string_wrapper<name.data()[I]...>{}; }(std::make_index_sequence<name.size()>());
 }
 
 template <meta::info R> static consteval auto static_identifier_wrapper_type_of()

@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QDebug>
+#include <QProperty>
 
 class QTestObject : public QObject
 {
@@ -18,9 +19,11 @@ public:
     return 42;
   }
 
+Q_INVOKABLE bool sayTheTruth() { return true; }
+
 signals:
   void emptySig();
-  void emptySig2();
+  // void emptySig2();
   void intSig(int);
   void intChanged();
 
@@ -43,4 +46,6 @@ public slots:
 // private:
 //   // RefEnum value_;
 //   int ivalue_ = 0;
+public:
+  QProperty<int> intProp{42};
 };
