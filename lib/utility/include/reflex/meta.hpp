@@ -81,4 +81,62 @@ consteval auto nonstatic_data_members_of_r(info I, access_context ctx) -> std::v
          | std::ranges::to<std::vector<info>>();
 }
 
+namespace detail
+{
+template <typename Ret, typename... Args> struct signature_wrapper
+{
+  using function_type                         = Ret(Args...);
+  template <typename Class> using method_type = Ret (Class::*)(Args...);
+};
+consteval auto signature_of(meta::info R)
+{
+  std::vector sig{return_type_of(R)};
+  sig.append_range(parameters_of(R) | std::views::transform(meta::type_of));
+  return sig;
+}
+} // namespace detail
+
+template <meta::info R> static constexpr auto signature_of()
+{
+  constexpr auto wrapper = substitute(^^detail::signature_wrapper, detail::signature_of(R));
+  using wrapper_type     = [:wrapper:];
+  return ^^typename wrapper_type::function_type;
+}
+
+template <meta::info R, meta::info Class> static constexpr auto signature_of()
+{
+  constexpr auto wrapper = substitute(^^detail::signature_wrapper, detail::signature_of(R));
+  using wrapper_type     = [:wrapper:];
+  using class_type       = [:Class:];
+  return ^^typename wrapper_type::template method_type<class_type>;
+}
+
+template <auto... chars> struct static_string_wrapper
+{
+  static constexpr char data[sizeof...(chars)] = {chars...};
+  static constexpr auto size()
+  {
+    return sizeof...(chars);
+  }
+  static constexpr std::string_view view()
+  {
+    return {data, size()};
+  }
+};
+
+template <meta::info R> static consteval auto static_identifier_wrapper_of()
+{
+  constexpr auto name     = identifier_of(R);
+  constexpr auto get_char = []<size_t I, auto name>() constexpr { return name[I]; };
+  constexpr auto size     = name.size();
+  return [&]<size_t... I>(std::index_sequence<I...>)
+  { return static_string_wrapper<name.data()[I]..., '\0'>{}; }(std::make_index_sequence<name.size()>());
+}
+
+template <meta::info R> static consteval auto static_identifier_wrapper_type_of()
+{
+  constexpr auto wrapper = static_identifier_wrapper_of<R>();
+  return type_of(^^wrapper);
+}
+
 } // namespace reflex::meta
