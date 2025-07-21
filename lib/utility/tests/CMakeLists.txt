@@ -5,3 +5,4 @@ link_libraries(reflex.utility Catch2::Catch2WithMain)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(reflex-utility-named-tuple-test test-named-tuple.cpp)
+add_executable(reflex-utility-error-code test-error-code.cpp)

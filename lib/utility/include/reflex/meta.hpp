@@ -57,12 +57,6 @@ consteval auto template_annotations_of(info I, info Expected)
          | std::views::transform(constant_of);
 }
 
-consteval bool has_annotation(info I, info Expected)
-{
-  return std::ranges::empty(annotations_of(I) //
-                            | std::views::filter([&](auto A) { return A == Expected; }));
-}
-
 template <std::meta::info I> consteval auto fixed_identifier_of() noexcept
 {
   constexpr auto name = identifier_of(I);
