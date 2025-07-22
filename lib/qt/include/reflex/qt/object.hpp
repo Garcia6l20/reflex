@@ -29,50 +29,50 @@ struct invocable_annotation
 };
 template <fixed_string... spec> struct property_annotation
 {
-  static constexpr auto specs      = std::tuple{spec...};
-  static constexpr auto read_pos   = std::get<0>(specs).view().find('r');
-  static constexpr auto write_pos  = std::get<0>(specs).view().find('w');
-  static constexpr auto notify_pos = std::get<0>(specs).view().find('n');
+  static constexpr auto _specs      = std::tuple{spec...};
+  static constexpr auto _read_pos   = std::get<0>(_specs).view().find('r');
+  static constexpr auto _write_pos  = std::get<0>(_specs).view().find('w');
+  static constexpr auto _notify_pos = std::get<0>(_specs).view().find('n');
 
-  static constexpr auto readable = read_pos != std::string_view::npos;
-  static constexpr auto writable = write_pos != std::string_view::npos;
-  static constexpr auto notify   = notify_pos != std::string_view::npos;
+  static constexpr auto readable = _read_pos != std::string_view::npos;
+  static constexpr auto writable = _write_pos != std::string_view::npos;
+  static constexpr auto notify   = _notify_pos != std::string_view::npos;
 
-  static constexpr std::string_view read_name()
-  {
-    if constexpr(not readable)
-    {
-      return "";
-    }
-    else
-    {
-      return std::get<1 + read_pos>(specs);
-    }
-  }
+  // static constexpr std::string_view read_name()
+  // {
+  //   if constexpr(not readable)
+  //   {
+  //     return "";
+  //   }
+  //   else
+  //   {
+  //     return std::get<1 + read_pos>(specs);
+  //   }
+  // }
 
-  static constexpr std::string_view write_name()
-  {
-    if constexpr(not writable)
-    {
-      return "";
-    }
-    else
-    {
-      return std::get<1 + write_pos>(specs);
-    }
-  }
+  // static constexpr std::string_view write_name()
+  // {
+  //   if constexpr(not writable)
+  //   {
+  //     return "";
+  //   }
+  //   else
+  //   {
+  //     return std::get<1 + write_pos>(specs);
+  //   }
+  // }
 
-  static constexpr std::string_view notify_name()
-  {
-    if constexpr(not notify)
-    {
-      return "";
-    }
-    else
-    {
-      return std::get<1 + notify_pos>(specs);
-    }
-  }
+  // static constexpr std::string_view notify_name()
+  // {
+  //   if constexpr(not notify)
+  //   {
+  //     return "";
+  //   }
+  //   else
+  //   {
+  //     return std::get<1 + notify_pos>(specs);
+  //   }
+  // }
 };
 } // namespace detail
 
@@ -83,6 +83,7 @@ template <fixed_string... spec> inline constexpr detail::property_annotation<spe
 
 template <typename Super> struct object : QObject
 {
+  using ParentT = QObject;
 public:
   static consteval auto __signals()
   {

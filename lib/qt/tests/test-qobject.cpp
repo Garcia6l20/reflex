@@ -1,4 +1,5 @@
 #include <reflex/qt.hpp>
+#include <reflex/qt/dump.hpp>
 #include <test_object.hpp>
 
 #include <print>
@@ -42,61 +43,12 @@ private:
   }
 };
 
-#include <QCoreApplication>
-#include <QDebug>
-#include <QMetaClassInfo>
-#include <QMetaMethod>
-#include <QMetaObject>
-
-void dumpObject(QObject* object)
-{
-  const QMetaObject* metaObject = object->metaObject();
-
-  qDebug() << "Class:" << metaObject->className();
-
-  for(int i = 0; i < metaObject->classInfoCount(); ++i)
-  {
-    QMetaClassInfo info = metaObject->classInfo(i);
-    qDebug() << "  Info:" << info.name() << info.value();
-  }
-
-  // --- Signals/Slots/Invocables ---
-  for(int i = 0; i < metaObject->methodCount(); ++i)
-  {
-    QMetaMethod method = metaObject->method(i);
-
-    switch(method.methodType())
-    {
-      case QMetaMethod::Signal:
-        qDebug() << "    Signal:" << method.methodSignature();
-        break;
-      case QMetaMethod::Slot:
-        qDebug() << "      Slot:" << method.methodSignature();
-        break;
-      case QMetaMethod::Method:
-        qDebug() << " Invocable:" << method.methodSignature();
-        break;
-      default:
-        // Ignore Method or Constructor types
-        break;
-    }
-  }
-  // --- Properties ---
-  for(int i = metaObject->propertyOffset(); i < metaObject->propertyCount(); ++i)
-  {
-    QMetaProperty property = metaObject->property(i);
-    qDebug() << "  Property:" << property.name() << "-" << property.typeName();
-  }
-}
-
 #define dump_exec(...)              \
   std::println("{}", #__VA_ARGS__); \
   __VA_ARGS__
 
 int main(int argc, char** argv)
 {
-  QCoreApplication app{argc, argv};
-
   constexpr auto strings = ml_object::__get_strings(); // patch qt::object to make __get_strings public for debugging
   template for(constexpr auto s : strings)
   {
@@ -107,10 +59,10 @@ int main(int argc, char** argv)
   }
 
   QTestObject to;
-  // dumpObject(&to);
+  // qt::dump(to);
 
   ml_object mlo;
-  dumpObject(&mlo);
+  qt::dump(mlo);
 
   QObject::connect(&mlo, &ml_object::emptySig, &to, &QTestObject::emtpySlot);
   dump_exec(mlo.emptySig());

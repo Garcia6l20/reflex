@@ -9,3 +9,4 @@ target_include_directories(reflex.qt INTERFACE include)
 target_link_libraries(reflex.qt INTERFACE reflex.utility)
 
 add_subdirectory(tests)
+add_subdirectory(examples)
