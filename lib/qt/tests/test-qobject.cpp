@@ -51,14 +51,14 @@ private:
 
 int main(int argc, char** argv)
 {
-  constexpr auto strings = ml_object::__get_strings(); // patch qt::object to make __get_strings public for debugging
-  template for(constexpr auto s : strings)
-  {
-    using wrapper = typename[:s:];
-    std::println("- \"{}\": \"{}\" ({} chars, {:p})", display_string_of(s),
-                 [:s:] ::view(),
-                 [:s:] ::size(), static_cast<const void*>(&[:s:] ::data));
-  }
+  // constexpr auto strings = ml_object::__get_strings(); // patch qt::object to make __get_strings public for debugging
+  // template for(constexpr auto s : strings)
+  // {
+  //   using wrapper = typename[:s:];
+  //   std::println("- \"{}\": \"{}\" ({} chars, {:p})", display_string_of(s),
+  //                [:s:] ::view(),
+  //                [:s:] ::size(), static_cast<const void*>(&[:s:] ::data));
+  // }
 
   QTestObject to;
   // qt::dump(to);

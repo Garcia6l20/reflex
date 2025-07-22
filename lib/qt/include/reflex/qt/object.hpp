@@ -15,10 +15,6 @@
 #include <memory>
 #include <print>
 
-#ifndef REFLEX_QT_INTERNAL_VISIBILITY
-#define REFLEX_QT_INTERNAL_VISIBILITY private
-#endif
-
 namespace reflex::qt
 {
 
@@ -91,11 +87,10 @@ inline constexpr detail::invocable_annotation                                   
 template <fixed_string... spec> inline constexpr detail::property_annotation<spec...> property;
 inline constexpr detail::timer_event_annotation                                       timer_event;
 
-template <typename Super> struct object : QObject
+template <typename Super, typename ParentT = QObject> struct object : ParentT
 {
-  using ParentT = QObject;
-
-  REFLEX_QT_INTERNAL_VISIBILITY : static consteval auto __signals()
+private:
+  static consteval auto __signals()
   {
     return members_of(^^Super, meta::access_context::unchecked()) //
            | std::views::filter(meta::is_user_declared)           //
@@ -229,9 +224,7 @@ template <typename Super> struct object : QObject
   }
 
 public:
-  explicit object(QObject* parent = nullptr) : QObject{parent}
-  {
-  }
+  using ParentT::ParentT;
   virtual ~object() = default;
 
   template <meta::info Signal, typename... Args> auto trigger(Args... args)
@@ -746,8 +739,17 @@ protected:
 
 namespace QtPrivate
 {
+consteval bool is_reflex_object(std::meta::info R)
+{
+  const auto first_base_type = type_of(bases_of(R, std::meta::access_context::current())[0]);
+  if(has_template_arguments(first_base_type) and template_of(first_base_type) == ^^reflex::qt::object)
+  {
+    return true;
+  }
+  return false;
+}
 template <typename Super>
-  requires(type_of(bases_of(^^Super, std::meta::access_context::current())[0]) == ^^reflex::qt::object<Super>)
+  requires(is_reflex_object(^^Super))
 struct HasQ_OBJECT_Macro<Super>
 {
   enum
