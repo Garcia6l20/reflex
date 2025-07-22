@@ -15,36 +15,30 @@ class Controller : public qt::object<Controller>
 public:
   Controller(QObject* parent = nullptr) : qt::object<Controller>{parent}
   {
-    timerId_ = startTimer(1000);
+    updateClock(); // initialize property
+    startTimer<^^updateClock>(1000);
   }
   virtual ~Controller() = default;
 
   [[= qt::property<"rwn">]] QString clockText = "00:00:00";
 
 protected:
-  void timerEvent(QTimerEvent* e) final
+  [[= qt::timer_event]] void updateClock()
   {
-    if(e->timerId() == timerId_)
-    {
-      // use setProperty to trigger notification signal automaticaly
-      setProperty<^^clockText>(QString::fromStdString(std::format("{:%X}", std::chrono::system_clock::now())));
-    }
+    setProperty<^^clockText>(QString::fromStdString(std::format("{:%X}", std::chrono::system_clock::now())));
   }
-
-private:
-  int timerId_ = -1;
 };
 
 int main(int argc, char** argv)
 {
   QGuiApplication app(argc, argv);
-  app.setOrganizationName("tpl");
-  app.setOrganizationDomain("b2r");
-  app.setApplicationName("b2r-configurator");
+  app.setOrganizationName("reflex");
+  app.setOrganizationDomain("examples");
+  app.setApplicationName("clock-example");
   QQmlApplicationEngine engine;
   auto*                 controller = new Controller{&engine};
 
-  qt::dump(*controller);
+  qt::dump(controller);
 
   auto& ctx = *engine.rootContext();
   ctx.setContextProperty("controller", controller);

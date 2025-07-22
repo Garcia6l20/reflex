@@ -1,3 +1,5 @@
+#define REFLEX_QT_INTERNAL_VISIBILITY public
+
 #include <reflex/qt.hpp>
 #include <reflex/qt/dump.hpp>
 #include <test_object.hpp>

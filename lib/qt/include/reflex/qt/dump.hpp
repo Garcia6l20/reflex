@@ -1,7 +1,7 @@
+#include <QDebug>
 #include <QMetaClassInfo>
 #include <QMetaMethod>
 #include <QMetaObject>
-#include <QDebug>
 
 #include <print>
 
@@ -11,7 +11,7 @@ inline void dump(auto& object)
 {
   const QMetaObject* metaObject = object.metaObject();
 
-  qDebug() << "Class: {}" << metaObject->className();
+  qDebug() << "Class: " << metaObject->className();
 
   for(int i = 0; i < metaObject->classInfoCount(); ++i)
   {
@@ -46,5 +46,9 @@ inline void dump(auto& object)
     QMetaProperty property = metaObject->property(i);
     qDebug() << "  Property:" << property.name() << "-" << property.typeName();
   }
+}
+inline void dump(auto* object)
+{
+  dump(*object);
 }
 } // namespace reflex::qt

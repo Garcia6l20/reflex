@@ -6,12 +6,18 @@
 #include <reflex/qt/detail/metatype.hpp>
 
 #include <QObject>
+#include <QTimerEvent>
 #include <QtCore/qmetatype.h>
 #include <QtCore/qtmochelpers.h>
 #include <QtCore/qxptype_traits.h>
 
+#include <any>
 #include <memory>
 #include <print>
+
+#ifndef REFLEX_QT_INTERNAL_VISIBILITY
+#define REFLEX_QT_INTERNAL_VISIBILITY private
+#endif
 
 namespace reflex::qt
 {
@@ -74,18 +80,22 @@ template <fixed_string... spec> struct property_annotation
   //   }
   // }
 };
+struct timer_event_annotation
+{
+};
 } // namespace detail
 
 inline constexpr detail::signal_annotation                                            signal;
 inline constexpr detail::slot_annotation                                              slot;
 inline constexpr detail::invocable_annotation                                         invocable;
 template <fixed_string... spec> inline constexpr detail::property_annotation<spec...> property;
+inline constexpr detail::timer_event_annotation                                       timer_event;
 
 template <typename Super> struct object : QObject
 {
   using ParentT = QObject;
-public:
-  static consteval auto __signals()
+
+  REFLEX_QT_INTERNAL_VISIBILITY : static consteval auto __signals()
   {
     return members_of(^^Super, meta::access_context::unchecked()) //
            | std::views::filter(meta::is_user_declared)           //
@@ -138,36 +148,19 @@ public:
                  });
   }
 
-public:
-  explicit object(QObject* parent = nullptr) : QObject{parent}
+  static consteval auto __timer_events()
   {
+    return define_static_array(members_of(^^Super, meta::access_context::unchecked()) //
+                               | std::views::filter(meta::is_user_declared)           //
+                               | std::views::filter(meta::is_function)                //
+                               | std::views::filter(
+                                     [](auto member)
+                                     {
+                                       return std::ranges::contains(annotations_of(member) |
+                                                                        std::views::transform(meta::type_of),
+                                                                    ^^detail::timer_event_annotation);
+                                     }));
   }
-  virtual ~object() = default;
-
-  template <meta::info Signal, typename... Args> auto trigger(Args... args)
-  {
-    constexpr auto sigs = define_static_array(__signals());
-
-    template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
-    {
-      constexpr auto s = sigs[ii];
-      if constexpr(s == Signal)
-      {
-        QMetaObject::activate<void>(this, &staticMetaObject, ii, nullptr, std::forward<Args>(args)...);
-      }
-    }
-  }
-
-  QT_WARNING_PUSH
-  Q_OBJECT_NO_OVERRIDE_WARNING
-  // static const QMetaObject   staticMetaObject;
-  // virtual const QMetaObject* metaObject() const;
-  // virtual void*              qt_metacast(const char*);
-  // virtual int                qt_metacall(QMetaObject::Call, int, void**);
-  QT_TR_FUNCTIONS
-public:
-  // QT_OBJECT_GADGET_COMMON
-  // QT_META_OBJECT_VARS
 
   static constexpr auto __get_strings()
   {
@@ -207,6 +200,58 @@ public:
     return define_static_array(strings);
   }
 
+  static consteval auto __make_object_data()
+  {
+    struct object_data;
+    consteval
+    {
+      constexpr auto timer_events = __timer_events();
+      define_aggregate(^^object_data,
+                       {
+                           data_member_spec(^^int[timer_events.size()],
+                                            {
+                                                .name = "timer_events"}),
+                       });
+    };
+    object_data data{};
+    if constexpr(not __timer_events().empty())
+    {
+      std::ranges::fill(data.timer_events, -1);
+    }
+    return data;
+  }
+  std::any object_data_ = __make_object_data();
+
+  template <typename Self> decltype(auto) __get_object_data(this Self& self)
+  {
+    using object_data_type = decltype(__make_object_data());
+    return std::any_cast<const_like_t<Self, object_data_type&>>(self.object_data_);
+  }
+
+public:
+  explicit object(QObject* parent = nullptr) : QObject{parent}
+  {
+  }
+  virtual ~object() = default;
+
+  template <meta::info Signal, typename... Args> auto trigger(Args... args)
+  {
+    constexpr auto sigs = define_static_array(__signals());
+
+    template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
+    {
+      constexpr auto s = sigs[ii];
+      if constexpr(s == Signal)
+      {
+        QMetaObject::activate<void>(this, &staticMetaObject, ii, nullptr, std::forward<Args>(args)...);
+      }
+    }
+  }
+
+  QT_WARNING_PUSH
+  Q_OBJECT_NO_OVERRIDE_WARNING
+  QT_TR_FUNCTIONS
+private:
   template <typename> static constexpr auto qt_create_metaobjectdata()
   {
     namespace QMC                 = QtMocConstants;
@@ -288,7 +333,6 @@ public:
                         std::tuple_cat(signals_data, properties_notification_data, slots_data, invocables_data));
     }();
 
-    // QtMocHelpers::UintData qt_properties{};
     size_t property_index = 0;
     size_t notify_index   = sigs.size();
     auto   qt_properties  = [&]
@@ -450,8 +494,8 @@ public:
           return;
         }
         static constexpr auto fixed_name = meta::static_identifier_wrapper_of<p>().to_fixed();
-        static constexpr auto s2 = ^^object::propertyChanged<fixed_name>;
-        using signature_type2    = [:meta::signature_of<s2, ^^object>():];
+        static constexpr auto s2         = ^^object::propertyChanged<fixed_name>;
+        using signature_type2            = [:meta::signature_of<s2, ^^object>():];
         if(QtMocHelpers::indexOfMethod<signature_type>(_a, &[:s2:], ii + sig_count))
         {
           return;
@@ -491,8 +535,6 @@ public:
   }
 
 public:
-  // static const QMetaObject staticMetaObject;
-
   static const inline QMetaObject staticMetaObject = {{QMetaObject::SuperData::link<QObject::staticMetaObject>(),
                                                        qt_staticMetaObjectStaticContent<tag>.stringdata,
                                                        qt_staticMetaObjectStaticContent<tag>.data,
@@ -547,16 +589,15 @@ public:
   }
   QT_WARNING_POP
 
-public:
   using QObject::property;
 
-  template <meta::info Property> auto property()
+  template <meta::info Property> auto property(this auto& self)
   {
     using std::ranges::contains;
     static constexpr auto props = define_static_array(__properties());
     if constexpr(contains(props, Property))
     {
-      return static_cast<Super*>(this)->[:Property:];
+      return self.[:Property:];
     }
     else
     {
@@ -564,23 +605,23 @@ public:
     }
   }
 
-  template <fixed_string name> auto property()
+  template <fixed_string name> auto property(this auto& self)
   {
     using std::ranges::contains;
     static constexpr auto prop = meta::member_named(^^Super, name.view(), meta::access_context::unchecked());
-    return property<prop>();
+    return self.template property<prop>();
   }
 
   using QObject::setProperty;
 
-  template <meta::info Property, typename T> void setProperty(T&& value)
+  template <meta::info Property, typename T> void setProperty(this auto& self, T&& value)
   {
     using std::ranges::find;
     static constexpr auto props = define_static_array(__properties());
     static constexpr auto it    = find(props, Property);
     if constexpr(it != end(props))
     {
-      auto& val = static_cast<Super*>(this)->[:Property:];
+      auto& val = self.[:Property:];
 
       if(value != val)
       {
@@ -591,14 +632,14 @@ public:
         static constexpr auto listener = meta::member_named(^^Super, identifier, meta::access_context::unchecked());
         if constexpr(listener != ^^void)
         {
-          static_cast<Super*>(this)->[:listener:]();
+          self.[:listener:]();
         }
 
         static constexpr auto relative_offset   = std::distance(begin(props), it);
         static constexpr auto sigs              = define_static_array(__signals());
         static constexpr auto slts              = define_static_array(__slots());
         static constexpr auto signal_slot_count = sigs.size() /* + slts.size() */;
-        QMetaObject::activate<void>(this, &staticMetaObject, signal_slot_count + relative_offset, nullptr);
+        QMetaObject::activate<void>(&self, &staticMetaObject, signal_slot_count + relative_offset, nullptr);
       }
     }
     else
@@ -607,21 +648,97 @@ public:
     }
   }
 
-  template <fixed_string name, typename T> void setProperty(T&& value)
+  template <fixed_string name, typename T> void setProperty(this auto& self, T&& value)
   {
     using std::ranges::contains;
     static constexpr auto prop = meta::member_named(^^Super, name.view(), meta::access_context::unchecked());
-    setProperty<prop>(std::forward<T>(value));
+    self.template setProperty<prop>(std::forward<T>(value));
   }
 
   template <meta::info Property> void propertyChanged()
   {
-    std::unreachable();
+    std::unreachable(); // NOTE: actually unused, just to allow QObject::connect to match the auto-generated signal
   }
 
   template <fixed_string name> void propertyChanged()
   {
-    std::unreachable();
+    std::unreachable(); // NOTE: actually unused, just to allow QObject::connect to match the auto-generated signal
+  }
+
+public:
+  using QObject::startTimer;
+
+  template <meta::info Event> void startTimer(int periodMs)
+  {
+    using object_data_type = decltype(__make_object_data());
+
+    using std::ranges::find;
+    static constexpr auto events = __timer_events();
+    static constexpr auto it     = find(events, Event);
+    if constexpr(it != end(events))
+    {
+      auto&                 data            = __get_object_data();
+      static constexpr auto relative_offset = std::distance(begin(events), it);
+      if(data.timer_events[relative_offset] == -1)
+      {
+        data.timer_events[relative_offset] = startTimer(periodMs);
+      }
+      else
+      {
+        std::println("timer event \"{}\" already started", identifier_of(Event));
+      }
+    }
+    else
+    {
+      static_assert(always_false<Super>, "no such timer event");
+    }
+  }
+
+  using QObject::killTimer;
+
+  template <meta::info Event> void killTimer()
+  {
+    using std::ranges::find;
+    static constexpr auto events = __timer_events();
+    static constexpr auto it     = find(events, Event);
+    if constexpr(it != end(events))
+    {
+      auto&                 data            = __get_object_data();
+      static constexpr auto relative_offset = std::distance(begin(events), it);
+      if(data.timer_events[relative_offset] != -1)
+      {
+        killTimer(data.timer_events[relative_offset]);
+        data.timer_events[relative_offset] = -1;
+      }
+      else
+      {
+        std::println("timer event \"{}\" not started", identifier_of(Event));
+      }
+    }
+    else
+    {
+      static_assert(always_false<Super>, "no such timer event");
+    }
+  }
+
+protected:
+  void timerEvent(QTimerEvent* e) override
+  {
+    static constexpr auto events = __timer_events();
+    if constexpr(not events.empty())
+    {
+      auto& data = __get_object_data();
+      template for(constexpr auto ii : std::views::iota(size_t(0), events.size()))
+      {
+        constexpr auto event = events[ii];
+        if(data.timer_events[ii] == e->timerId())
+        {
+          static_cast<Super*>(this)->[:event:]();
+          return;
+        }
+      }
+    }
+    ParentT::timerEvent(e);
   }
 };
 

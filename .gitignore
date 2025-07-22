@@ -1,3 +1,4 @@
 .vscode
 .envrc
 build/
+.qmlls.ini
