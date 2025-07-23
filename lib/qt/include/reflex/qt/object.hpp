@@ -43,14 +43,14 @@ private:
   }
 };
 
-struct slot_annotation
+struct slot
 {
 };
-struct invocable_annotation
+struct invocable
 {
 };
 
-template <fixed_string... spec> struct property_annotation
+template <fixed_string... spec> struct property
 {
   static constexpr auto _specs      = std::tuple{spec...};
   static constexpr auto _read_pos   = std::get<0>(_specs).view().find('r');
@@ -62,7 +62,19 @@ template <fixed_string... spec> struct property_annotation
   static constexpr auto notify   = _notify_pos != std::string_view::npos;
 };
 
-struct timer_event_annotation
+template <meta::info of> struct listener_of
+{
+};
+
+template <meta::info of> struct setter_of
+{
+};
+
+template <meta::info of> struct getter_of
+{
+};
+
+struct timer_event
 {
 };
 } // namespace detail
@@ -76,82 +88,55 @@ public:
 
   template <typename... Args> using signal = detail::signal_decl<Super, Args...>;
 
-  static constexpr detail::slot_annotation        slot;
-  static constexpr detail::invocable_annotation   invocable;
-  static constexpr detail::timer_event_annotation timer_event;
+  static constexpr detail::slot        slot;
+  static constexpr detail::invocable   invocable;
+  static constexpr detail::timer_event timer_event;
 
-  template <fixed_string... spec> static constexpr detail::property_annotation<spec...> prop;
+  template <fixed_string... spec> static constexpr detail::property<spec...> prop;
+  template <meta::info of> static constexpr detail::listener_of<of>          listener_of;
+  template <meta::info of> static constexpr detail::getter_of<of>            getter_of;
+  template <meta::info of> static constexpr detail::setter_of<of>            setter_of;
 
 public:
   static consteval auto __signals()
   {
-    return define_static_array(nonstatic_data_members_of(^^Super, meta::access_context::unchecked()) //
-                               | std::views::filter(
-                                     [](auto member)
-                                     {
-                                       return has_template_arguments(type_of(member)) and
-                                              template_of(type_of(member)) == ^^detail::signal_decl;
-                                     }));
+    return define_static_array(                                               //
+        nonstatic_data_members_of(^^Super, meta::access_context::unchecked()) //
+        | std::views::filter(
+              [&](auto M)
+              { return has_template_arguments(type_of(M)) and template_of(type_of(M)) == ^^detail::signal_decl; }));
   }
 
   static consteval auto __slots()
   {
-    return define_static_array(                                //
-        members_of(^^Super, meta::access_context::unchecked()) //
-        | std::views::filter(meta::is_user_declared)           //
-        | std::views::filter(meta::is_function)                //
-        | std::views::filter(
-              [](auto member)
-              {
-                return std::ranges::contains(annotations_of(member) //
-                                                 | std::views::transform(meta::type_of),
-                                             ^^detail::slot_annotation);
-              }));
+    return define_static_array(                        //
+        meta::member_functions_annotated_with(^^Super, //
+                                              ^^detail::slot,
+                                              meta::access_context::unchecked()));
   }
 
   static consteval auto __invocables()
   {
-    return define_static_array(                                //
-        members_of(^^Super, meta::access_context::unchecked()) //
-        | std::views::filter(meta::is_user_declared)           //
-        | std::views::filter(meta::is_function)                //
-        | std::views::filter(
-              [](auto member)
-              {
-                return std::ranges::contains(annotations_of(member) //
-                                                 | std::views::transform(meta::type_of),
-                                             ^^detail::invocable_annotation);
-              }));
+    return define_static_array(                        //
+        meta::member_functions_annotated_with(^^Super, //
+                                              ^^detail::invocable,
+                                              meta::access_context::unchecked()));
   }
 
   static consteval auto __properties()
   {
-    return define_static_array(                                               //
-        nonstatic_data_members_of(^^Super, meta::access_context::unchecked()) //
-        | std::views::filter(
-              [](auto member)
-              {
-                return std::ranges::contains(annotations_of(member)                                 //
-                                                 | std::views::transform(meta::type_of)             //
-                                                 | std::views::filter(meta::has_template_arguments) //
-                                                 | std::views::transform(meta::template_of),
-                                             ^^detail::property_annotation);
-              }));
+    return define_static_array(                              //
+        meta::nonstatic_data_members_annotated_with(^^Super, //
+                                                    ^^detail::property,
+                                                    meta::access_context::unchecked()));
   }
 
   static consteval auto __timer_events()
   {
-    return define_static_array(                                //
-        members_of(^^Super, meta::access_context::unchecked()) //
-        | std::views::filter(meta::is_user_declared)           //
-        | std::views::filter(meta::is_function)                //
-        | std::views::filter(
-              [](auto member)
-              {
-                return std::ranges::contains(annotations_of(member) //
-                                                 | std::views::transform(meta::type_of),
-                                             ^^detail::timer_event_annotation);
-              }));
+    return define_static_array(                        //
+        meta::member_functions_annotated_with(^^Super, //
+                                              ^^detail::timer_event,
+                                              meta::access_context::unchecked()));
   }
 
   static constexpr auto __get_strings()
@@ -160,7 +145,7 @@ public:
 
     std::vector<meta::info> strings;
     strings.push_back(meta::static_identifier_wrapper_type_of<^^Super>());
-    strings.push_back(^^meta::static_string_wrapper<'\0'>); // add an empty entry
+    strings.push_back(^^meta::static_string_wrapper<>); // add an empty entry
 
     template for(constexpr auto s : __signals())
     {
@@ -578,7 +563,7 @@ private:
         {
           static constexpr auto p   = props[ii];
           using T                   = [:type_of(p):];
-          *reinterpret_cast<T*>(_v) = _t->[:p:];
+          *reinterpret_cast<T*>(_v) = _t->template property<p>();
           return;
         }
       }
@@ -662,7 +647,17 @@ public:
     static constexpr auto props = __properties();
     if constexpr(contains(props, Property))
     {
-      return self.[:Property:];
+      static constexpr auto getter = meta::first_member_function_annotated_with(^^Super, //
+                                                                                ^^detail::getter_of<Property>,
+                                                                                meta::access_context::unchecked());
+      if constexpr(getter != meta::null)
+      {
+        return self.[:getter:]();
+      }
+      else
+      {
+        return self.[:Property:];
+      }
     }
     else
     {
@@ -686,26 +681,36 @@ public:
     static constexpr auto it    = find(props, Property);
     if constexpr(it != end(props))
     {
-      auto& val = self.[:Property:];
-
-      if(value != val)
+      static constexpr auto setter = meta::first_member_function_annotated_with(^^Super, //
+                                                                                ^^detail::setter_of<Property>,
+                                                                                meta::access_context::unchecked());
+      if constexpr(setter != meta::null)
       {
-        val = std::forward<T>(value);
-
-        static constexpr auto identifier =
-            meta::static_identifier_wrapper_of<Property>().template with_suffix<"_written">().view();
-        static constexpr auto listener = meta::member_named(^^Super, identifier, meta::access_context::unchecked());
-        if constexpr(listener != ^^void)
-        {
-          self.[:listener:]();
-        }
-
-        static constexpr auto relative_offset   = std::distance(begin(props), it);
-        static constexpr auto sigs              = __signals();
-        static constexpr auto slts              = __slots();
-        static constexpr auto signal_slot_count = sigs.size() /* + slts.size() */;
-        QMetaObject::activate<void>(&self, &staticMetaObject, signal_slot_count + relative_offset, nullptr);
+        self.[:setter:](value);
       }
+      else
+      {
+        auto& val = self.[:Property:];
+        if(value == val)
+        {
+          return; // no write need
+        }
+        val = std::forward<T>(value);
+      }
+
+      static constexpr auto listener = meta::first_member_function_annotated_with(^^Super, //
+                                                                                  ^^detail::listener_of<Property>,
+                                                                                  meta::access_context::unchecked());
+      if constexpr(listener != meta::null)
+      {
+        self.[:listener:]();
+      }
+
+      static constexpr auto relative_offset   = std::distance(begin(props), it);
+      static constexpr auto sigs              = __signals();
+      static constexpr auto slts              = __slots();
+      static constexpr auto signal_slot_count = sigs.size() /* + slts.size() */;
+      QMetaObject::activate<void>(&self, &staticMetaObject, signal_slot_count + relative_offset, nullptr);
     }
     else
     {

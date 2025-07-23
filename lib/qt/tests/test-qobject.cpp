@@ -4,6 +4,7 @@
 #include <reflex/qt/dump.hpp>
 #include <test_object.hpp>
 
+#include <cmath>
 #include <print>
 
 using namespace reflex;
@@ -32,9 +33,23 @@ struct ml_object : qt::object<ml_object>
 private:
   [[= prop<"rwn">]] int intProp = 42;
 
-  void intProp_written()
+  [[= listener_of<^^intProp>]] void intPropListener()
   {
     std::println("ml_object: intProp is now {}", intProp);
+  }
+
+  [[= prop<"rwn">]] double      power = 42;
+  [[= setter_of<^^power>]] void setPower(double dB)
+  {
+    power = std::pow(10.0, dB / 10.0);
+  }
+  [[= getter_of<^^power>]] double getPower()
+  {
+    return 10.0 * std::log10(power);
+  }
+  [[= listener_of<^^power>]] void powerListener()
+  {
+    std::println("ml_object: power is now {}", power);
   }
 };
 
@@ -89,4 +104,9 @@ int main(int argc, char** argv)
                    &ml_object::propertyChanged<"intProp">,
                    [&mlo] { std::println("intProp change caught: {}", mlo.property<"intProp">()); });
   mlo.setProperty<"intProp">(12);
+
+  mlo.setProperty<"power">(3);
+  std::println("power: {} dB", mlo.property<"power">());
+  mlo.setProperty<"power">(6);
+  std::println("power: {} dB", mlo.property<"power">());
 }

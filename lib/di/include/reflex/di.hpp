@@ -135,7 +135,7 @@ template <meta::info NS> struct instance_resolver
         }
       }
     }
-    return ^^void;
+    return meta::null;
   }
 
   template <meta::info tmpl> consteval meta::info get()
@@ -178,7 +178,7 @@ template <meta::info obj, meta::info reg_ns> consteval auto dependencies_of() ->
         else
         {
           auto resolved = resolver.get(decayed_type);
-          if(resolved != ^^void)
+          if(resolved != meta::null)
           {
             if(is_lvalue_reference_type(ptype))
             {
@@ -331,7 +331,7 @@ private:
   template <meta::info R, typename Make> auto make_template(Make const& make)
   {
     constexpr auto instance_type = detail::resolve_template_instance<R, cfg.registry>();
-    if constexpr(instance_type == ^^void)
+    if constexpr(instance_type == meta::null)
     {
       static_assert(always_false<decltype(*this)>,
                     "cannot resolve suitable template instance, check registry namespace");

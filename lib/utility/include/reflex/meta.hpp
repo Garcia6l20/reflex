@@ -10,6 +10,8 @@ namespace reflex::meta
 {
 using namespace std::meta;
 
+constexpr std::meta::info null;
+
 consteval auto member_named(meta::info R, std::string_view name, access_context ctx = access_context::current())
     -> meta::info
 {
@@ -18,7 +20,7 @@ consteval auto member_named(meta::info R, std::string_view name, access_context 
     if(identifier_of(field) == name)
       return field;
   }
-  return ^^void;
+  return null;
 }
 
 consteval auto remove_cvref(meta::info r) -> meta::info
@@ -55,6 +57,67 @@ consteval auto template_annotations_of(info I, info Expected)
                  return has_template_arguments(AT) and template_of(AT) == Expected;
                }) //
          | std::views::transform(constant_of);
+}
+
+consteval bool has_annotation(info R, info A)
+{
+  if(is_template(A))
+  {
+    return std::ranges::contains(annotations_of(R)                                      //
+                                     | std::views::transform(meta::type_of)             //
+                                     | std::views::filter(meta::has_template_arguments) //
+                                     | std::views::transform(meta::template_of),
+                                 A);
+  }
+  else if(is_type(A))
+  {
+    return std::ranges::contains(annotations_of(R) | std::views::transform(type_of), A);
+  }
+  else
+  {
+    return std::ranges::contains(annotations_of(R) | std::views::transform(constant_of), constant_of(A));
+  }
+}
+
+consteval auto nonstatic_data_members_annotated_with(info R, info A, access_context ctx = access_context::current())
+{
+  return nonstatic_data_members_of(R, ctx) //
+         | std::views::filter([A](auto member) { return has_annotation(member, A); });
+}
+
+consteval auto
+    first_nonstatic_data_member_annotated_with(info R, info A, access_context ctx = access_context::current())
+{
+  auto members = meta::nonstatic_data_members_annotated_with(R, A, meta::access_context::unchecked());
+  if(not members.empty())
+  {
+    return members.front();
+  }
+  else
+  {
+    return meta::null;
+  }
+}
+
+consteval auto member_functions_annotated_with(info R, info A, access_context ctx = access_context::current())
+{
+  return members_of(R, ctx)                           //
+         | std::views::filter(meta::is_user_declared) //
+         | std::views::filter(meta::is_function)      //
+         | std::views::filter([A](auto fn) { return has_annotation(fn, A); });
+}
+
+consteval auto first_member_function_annotated_with(info R, info A, access_context ctx = access_context::current())
+{
+  auto functions = meta::member_functions_annotated_with(R, A, meta::access_context::unchecked());
+  if(not functions.empty())
+  {
+    return functions.front();
+  }
+  else
+  {
+    return meta::null;
+  }
 }
 
 template <std::meta::info I> consteval auto fixed_identifier_of() noexcept
