@@ -18,17 +18,38 @@
 namespace reflex::qt
 {
 
+template <typename Super, typename ParentT = QObject> struct object;
+
 namespace detail
 {
-struct signal_annotation
+
+template <typename ObjectT, typename... Args> struct signal_decl
 {
+  ObjectT* p_ = nullptr;
+
+  template <typename... VArgs> inline void operator()(VArgs&&... args)
+  {
+    assert(p_ != nullptr); // you should declare your signal like this: signal_decl<...> mySignal{this};
+    p_->trigger(this, std::forward<VArgs>(args)...);
+  }
+
+private:
+  // template <typename Super, typename ParentT> struct object;
+  friend struct object<ObjectT, typename ObjectT::parent_type>;
+
+  // for signature resolution
+  inline void fn(Args...)
+  {
+  }
 };
+
 struct slot_annotation
 {
 };
 struct invocable_annotation
 {
 };
+
 template <fixed_string... spec> struct property_annotation
 {
   static constexpr auto _specs      = std::tuple{spec...};
@@ -39,122 +60,98 @@ template <fixed_string... spec> struct property_annotation
   static constexpr auto readable = _read_pos != std::string_view::npos;
   static constexpr auto writable = _write_pos != std::string_view::npos;
   static constexpr auto notify   = _notify_pos != std::string_view::npos;
-
-  // static constexpr std::string_view read_name()
-  // {
-  //   if constexpr(not readable)
-  //   {
-  //     return "";
-  //   }
-  //   else
-  //   {
-  //     return std::get<1 + read_pos>(specs);
-  //   }
-  // }
-
-  // static constexpr std::string_view write_name()
-  // {
-  //   if constexpr(not writable)
-  //   {
-  //     return "";
-  //   }
-  //   else
-  //   {
-  //     return std::get<1 + write_pos>(specs);
-  //   }
-  // }
-
-  // static constexpr std::string_view notify_name()
-  // {
-  //   if constexpr(not notify)
-  //   {
-  //     return "";
-  //   }
-  //   else
-  //   {
-  //     return std::get<1 + notify_pos>(specs);
-  //   }
-  // }
 };
+
 struct timer_event_annotation
 {
 };
 } // namespace detail
 
-inline constexpr detail::signal_annotation                                            signal;
-inline constexpr detail::slot_annotation                                              slot;
-inline constexpr detail::invocable_annotation                                         invocable;
-template <fixed_string... spec> inline constexpr detail::property_annotation<spec...> property;
-inline constexpr detail::timer_event_annotation                                       timer_event;
-
-template <typename Super, typename ParentT = QObject> struct object : ParentT
+template <typename Super, typename ParentT> struct object : ParentT
 {
-private:
+public:
+  using parent_type = ParentT;
+
+  template <typename ObjectT, typename... Args> friend struct detail::signal_decl;
+
+  template <typename... Args> using signal = detail::signal_decl<Super, Args...>;
+
+  static constexpr detail::slot_annotation        slot;
+  static constexpr detail::invocable_annotation   invocable;
+  static constexpr detail::timer_event_annotation timer_event;
+
+  template <fixed_string... spec> static constexpr detail::property_annotation<spec...> prop;
+
+public:
   static consteval auto __signals()
   {
-    return members_of(^^Super, meta::access_context::unchecked()) //
-           | std::views::filter(meta::is_user_declared)           //
-           | std::views::filter(meta::is_function)                //
-           | std::views::filter(
-                 [](auto member)
-                 {
-                   return std::ranges::contains(annotations_of(member) | std::views::transform(meta::type_of),
-                                                ^^detail::signal_annotation);
-                 });
+    return define_static_array(nonstatic_data_members_of(^^Super, meta::access_context::unchecked()) //
+                               | std::views::filter(
+                                     [](auto member)
+                                     {
+                                       return has_template_arguments(type_of(member)) and
+                                              template_of(type_of(member)) == ^^detail::signal_decl;
+                                     }));
   }
 
   static consteval auto __slots()
   {
-    return members_of(^^Super, meta::access_context::unchecked()) //
-           | std::views::filter(meta::is_user_declared)           //
-           | std::views::filter(meta::is_function)                //
-           | std::views::filter(
-                 [](auto member)
-                 {
-                   return std::ranges::contains(annotations_of(member) | std::views::transform(meta::type_of),
-                                                ^^detail::slot_annotation);
-                 });
+    return define_static_array(                                //
+        members_of(^^Super, meta::access_context::unchecked()) //
+        | std::views::filter(meta::is_user_declared)           //
+        | std::views::filter(meta::is_function)                //
+        | std::views::filter(
+              [](auto member)
+              {
+                return std::ranges::contains(annotations_of(member) //
+                                                 | std::views::transform(meta::type_of),
+                                             ^^detail::slot_annotation);
+              }));
   }
 
   static consteval auto __invocables()
   {
-    return members_of(^^Super, meta::access_context::unchecked()) //
-           | std::views::filter(meta::is_user_declared)           //
-           | std::views::filter(meta::is_function)                //
-           | std::views::filter(
-                 [](auto member)
-                 {
-                   return std::ranges::contains(annotations_of(member) | std::views::transform(meta::type_of),
-                                                ^^detail::invocable_annotation);
-                 });
+    return define_static_array(                                //
+        members_of(^^Super, meta::access_context::unchecked()) //
+        | std::views::filter(meta::is_user_declared)           //
+        | std::views::filter(meta::is_function)                //
+        | std::views::filter(
+              [](auto member)
+              {
+                return std::ranges::contains(annotations_of(member) //
+                                                 | std::views::transform(meta::type_of),
+                                             ^^detail::invocable_annotation);
+              }));
   }
 
   static consteval auto __properties()
   {
-    return nonstatic_data_members_of(^^Super, meta::access_context::unchecked()) //
-           | std::views::filter(
-                 [](auto member)
-                 {
-                   return std::ranges::contains(annotations_of(member)                                 //
-                                                    | std::views::transform(meta::type_of)             //
-                                                    | std::views::filter(meta::has_template_arguments) //
-                                                    | std::views::transform(meta::template_of),
-                                                ^^detail::property_annotation);
-                 });
+    return define_static_array(                                               //
+        nonstatic_data_members_of(^^Super, meta::access_context::unchecked()) //
+        | std::views::filter(
+              [](auto member)
+              {
+                return std::ranges::contains(annotations_of(member)                                 //
+                                                 | std::views::transform(meta::type_of)             //
+                                                 | std::views::filter(meta::has_template_arguments) //
+                                                 | std::views::transform(meta::template_of),
+                                             ^^detail::property_annotation);
+              }));
   }
 
   static consteval auto __timer_events()
   {
-    return define_static_array(members_of(^^Super, meta::access_context::unchecked()) //
-                               | std::views::filter(meta::is_user_declared)           //
-                               | std::views::filter(meta::is_function)                //
-                               | std::views::filter(
-                                     [](auto member)
-                                     {
-                                       return std::ranges::contains(annotations_of(member) |
-                                                                        std::views::transform(meta::type_of),
-                                                                    ^^detail::timer_event_annotation);
-                                     }));
+    return define_static_array(                                //
+        members_of(^^Super, meta::access_context::unchecked()) //
+        | std::views::filter(meta::is_user_declared)           //
+        | std::views::filter(meta::is_function)                //
+        | std::views::filter(
+              [](auto member)
+              {
+                return std::ranges::contains(annotations_of(member) //
+                                                 | std::views::transform(meta::type_of),
+                                             ^^detail::timer_event_annotation);
+              }));
   }
 
   static constexpr auto __get_strings()
@@ -165,29 +162,29 @@ private:
     strings.push_back(meta::static_identifier_wrapper_type_of<^^Super>());
     strings.push_back(^^meta::static_string_wrapper<'\0'>); // add an empty entry
 
-    template for(constexpr auto s : define_static_array(__signals()))
+    template for(constexpr auto s : __signals())
     {
       strings.push_back(meta::static_identifier_wrapper_type_of<s>());
     }
 
-    template for(constexpr auto p : define_static_array(__properties()))
+    template for(constexpr auto p : __properties())
     {
       constexpr auto id          = meta::static_identifier_wrapper_of<p>();
       constexpr auto signal_name = id.template with_suffix<"Changed">();
       strings.push_back(type_of(^^signal_name));
     }
 
-    template for(constexpr auto s : define_static_array(__slots()))
+    template for(constexpr auto s : __slots())
     {
       strings.push_back(meta::static_identifier_wrapper_type_of<s>());
     }
 
-    template for(constexpr auto i : define_static_array(__invocables()))
+    template for(constexpr auto i : __invocables())
     {
       strings.push_back(meta::static_identifier_wrapper_type_of<i>());
     }
 
-    template for(constexpr auto p : define_static_array(__properties()))
+    template for(constexpr auto p : __properties())
     {
       strings.push_back(meta::static_identifier_wrapper_type_of<p>());
     }
@@ -229,7 +226,7 @@ public:
 
   template <meta::info Signal, typename... Args> auto trigger(Args... args)
   {
-    constexpr auto sigs = define_static_array(__signals());
+    constexpr auto sigs = __signals();
 
     template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
     {
@@ -237,6 +234,26 @@ public:
       if constexpr(s == Signal)
       {
         QMetaObject::activate<void>(this, &staticMetaObject, ii, nullptr, std::forward<Args>(args)...);
+      }
+    }
+  }
+
+  template <typename... Args, typename... VArgs> auto trigger(signal<Args...>* sig, VArgs&&... args)
+  {
+    constexpr auto sigs                 = __signals();
+    constexpr auto expected_signal_type = dealias(^^signal<Args...>);
+
+    auto& self = *static_cast<Super*>(this);
+
+    template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
+    {
+      constexpr auto s = sigs[ii];
+      if constexpr(dealias(decay(type_of(s))) == expected_signal_type)
+      {
+        if(&self.[:s:] == sig)
+        {
+          QMetaObject::activate<void>(this, &staticMetaObject, ii, nullptr, std::forward<VArgs>(args)...);
+        }
       }
     }
   }
@@ -258,24 +275,36 @@ private:
 
     size_t strings_index = 2;
 
-    constexpr auto sigs   = define_static_array(__signals());
-    constexpr auto invocs = define_static_array(__invocables());
-    constexpr auto slts   = define_static_array(__slots());
-    constexpr auto props  = define_static_array(__properties());
+    constexpr auto sigs   = __signals();
+    constexpr auto invocs = __invocables();
+    constexpr auto slts   = __slots();
+    constexpr auto props  = __properties();
 
     auto qt_methods = [&] constexpr
     {
-      auto make_data_impl = [&]<meta::info s, auto qt_method_type>() constexpr
+      auto make_data_impl = [&]<meta::info Fn, auto Type>() constexpr
       {
-        constexpr auto method_type = type_of(s);
+        constexpr auto method = []
+        {
+          if constexpr(is_function(Fn))
+          {
+            return Fn;
+          }
+          else
+          {
+            using FnT = [:type_of(Fn):];
+            return ^^FnT::fn;
+          }
+        }();
+        constexpr auto method_type = type_of(method);
         using SignalT              = [:method_type:];
         using RetT                 = [:return_type_of(method_type):];
-        using SignatureT           = typename[:meta::signature_of<s>():];
-        using DataT                = QtMocHelpers::FunctionData<SignatureT, qt_method_type>;
+        using SignatureT           = typename[:meta::signature_of<method>():];
+        using DataT                = QtMocHelpers::FunctionData<SignatureT, Type>;
 
         auto make_parameters_data = [&] constexpr
         {
-          constexpr auto parameters     = define_static_array(parameters_of(s));
+          constexpr auto parameters     = define_static_array(parameters_of(method));
           auto           make_parameter = [&]<meta::info p>
           {
             constexpr auto param_type = type_of(p);
@@ -293,9 +322,9 @@ private:
         return DataT( //
             /* nameIndex = */ strings_index++,
             /* tagIndex = */ 1,
-            is_public(s)      ? QMC::AccessPublic
-            : is_protected(s) ? QMC::AccessProtected
-                              : QMC::AccessPrivate,
+            is_public(Fn)      ? QMC::AccessPublic
+            : is_protected(Fn) ? QMC::AccessProtected
+                               : QMC::AccessPrivate,
             detail::static_meta_type_id_of(^^RetT),
             make_parameters_data());
       };
@@ -397,39 +426,40 @@ private:
   {
     auto* _t = static_cast<Super*>(_o);
 
-    constexpr auto sigs   = define_static_array(__signals());
-    constexpr auto invocs = define_static_array(__invocables());
-    constexpr auto slts   = define_static_array(__slots());
-    constexpr auto props  = define_static_array(__properties());
+    constexpr auto sigs   = __signals();
+    constexpr auto invocs = __invocables();
+    constexpr auto slts   = __slots();
+    constexpr auto props  = __properties();
 
     constexpr auto sig_count  = sigs.size();
     constexpr auto slts_count = slts.size();
 
-    const auto do_invoke = [&]<meta::info R>()
+    const auto do_invoke = []<meta::info R>(Super* self, void** args)
     {
       static constexpr auto parameters = define_static_array(parameters_of(R));
       const auto            get_arg    = [&]<size_t I>
       {
         constexpr auto p = type_of(parameters[I]);
         using T          = typename[:p:];
-        return *reinterpret_cast<T*>(_a[I + 1]);
+        return *reinterpret_cast<T*>(args[I + 1]);
       };
+
       constexpr auto return_type = return_type_of(R);
       if constexpr(return_type == ^^void)
       {
         [&]<size_t ...I>(std::index_sequence<I...>) {//
-              _t->[:R:](get_arg.template operator()<I>()...);
+            self->[:R:](get_arg.template operator()<I>()...);
             }(std::make_index_sequence<parameters.size()>());
       }
       else
       {
         using Ret = [:return_type:];
         Ret ret = [&]<size_t ...I>(std::index_sequence<I...>) {//
-              return _t->[:R:](get_arg.template operator()<I>()...);
+              return self->[:R:](get_arg.template operator()<I>()...);
             }(std::make_index_sequence<parameters.size()>());
-        if(_a[0])
+        if(args[0])
         {
-          *reinterpret_cast<Ret*>(_a[0]) = std::move(ret);
+          *reinterpret_cast<Ret*>(args[0]) = std::move(ret);
         }
       }
     };
@@ -440,8 +470,35 @@ private:
       {
         if(ii == _id)
         {
-          static constexpr auto s = sigs[ii];
-          do_invoke.template    operator()<s>();
+          static constexpr auto s          = sigs[ii];
+          static constexpr auto parameters = []
+          {
+            if constexpr(is_function(s))
+            {
+              return define_static_array(parameters_of(s) | std::views::transform(meta::type_of));
+            }
+            else
+            {
+              constexpr auto type    = type_of(s);
+              using SignalT          = [:type:];
+              constexpr auto call_fn = ^^SignalT::fn;
+              return define_static_array(parameters_of(call_fn)                 //
+                                         | std::views::transform(meta::type_of) //
+                                         | std::views::transform(meta::remove_reference));
+            }
+          }();
+          const auto get_arg = []<size_t I>(void** args)
+          {
+            constexpr auto p = parameters[I];
+            using T          = typename[:p:];
+            return *reinterpret_cast<T*>(args[I + 1]);
+          };
+
+          [&]<size_t ...I>(std::index_sequence<I...>, Super* self, void**args) {//
+            self->template trigger<s>(get_arg.template operator()<I>(args)...);
+            }(std::make_index_sequence<parameters.size()>(), _t, _a);
+
+          // do_invoke.template operator()<s>();
           return;
         }
       }
@@ -451,7 +508,7 @@ private:
         if(ii == _id)
         {
           static constexpr auto s = slts[ii];
-          do_invoke.template    operator()<s>();
+          do_invoke.template    operator()<s>(_t, _a);
           return;
         }
       }
@@ -461,7 +518,7 @@ private:
         if(ii == _id)
         {
           static constexpr auto s = invocs[ii];
-          do_invoke.template    operator()<s>();
+          do_invoke.template    operator()<s>(_t, _a);
           return;
         }
       }
@@ -470,11 +527,26 @@ private:
     {
       template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
       {
-        constexpr auto s     = sigs[ii];
-        using signature_type = [:meta::signature_of<s, ^^Super>():];
-        if(QtMocHelpers::indexOfMethod<signature_type>(_a, &[:s:], ii))
+        constexpr auto s = sigs[ii];
+        if constexpr(is_function(s))
         {
-          return;
+          using signature_type = [:meta::signature_of<s, ^^Super>():];
+          if(QtMocHelpers::indexOfMethod<signature_type>(_a, &[:s:], ii))
+          {
+            return;
+          }
+        }
+        else
+        {
+          using SignalT                   = [:type_of(s):];
+          constexpr auto offset           = offset_of(s);
+          auto           candidate_offset = *reinterpret_cast<size_t*>(_a[1]);
+          if(candidate_offset == offset.bytes) // sig)
+          {
+            int* result = static_cast<int*>(_a[0]);
+            *result     = ii;
+            return;
+          }
         }
       }
       template for(constexpr auto ii : std::views::iota(size_t(0), props.size()))
@@ -552,8 +624,8 @@ public:
 
   int qt_metacall(QMetaObject::Call _c, int _id, void** _a) override
   {
-    static constexpr auto sigs              = define_static_array(__signals());
-    static constexpr auto slts              = define_static_array(__slots());
+    static constexpr auto sigs              = __signals();
+    static constexpr auto slts              = __slots();
     static constexpr auto signal_slot_count = sigs.size() + slts.size();
 
     _id = QObject::qt_metacall(_c, _id, _a);
@@ -587,7 +659,7 @@ public:
   template <meta::info Property> auto property(this auto& self)
   {
     using std::ranges::contains;
-    static constexpr auto props = define_static_array(__properties());
+    static constexpr auto props = __properties();
     if constexpr(contains(props, Property))
     {
       return self.[:Property:];
@@ -610,7 +682,7 @@ public:
   template <meta::info Property, typename T> void setProperty(this auto& self, T&& value)
   {
     using std::ranges::find;
-    static constexpr auto props = define_static_array(__properties());
+    static constexpr auto props = __properties();
     static constexpr auto it    = find(props, Property);
     if constexpr(it != end(props))
     {
@@ -629,8 +701,8 @@ public:
         }
 
         static constexpr auto relative_offset   = std::distance(begin(props), it);
-        static constexpr auto sigs              = define_static_array(__signals());
-        static constexpr auto slts              = define_static_array(__slots());
+        static constexpr auto sigs              = __signals();
+        static constexpr auto slts              = __slots();
         static constexpr auto signal_slot_count = sigs.size() /* + slts.size() */;
         QMetaObject::activate<void>(&self, &staticMetaObject, signal_slot_count + relative_offset, nullptr);
       }
@@ -757,4 +829,23 @@ struct HasQ_OBJECT_Macro<Super>
     Value = 1
   };
 };
+
+template <typename ObjectT, typename... Args>
+struct FunctionPointer<reflex::qt::detail::signal_decl<ObjectT, Args...> ObjectT::*>
+{
+  using Object     = ObjectT;
+  using Arguments  = List<Args...>;
+  using ReturnType = void;
+  typedef ReturnType (reflex::qt::detail::signal_decl<ObjectT, Args...>::*Function)(Args...);
+  enum
+  {
+    ArgumentCount             = sizeof...(Args),
+    IsPointerToMemberFunction = true
+  };
+  template <typename SignalArgs, typename R> static void call(Function f, Object* o, void** arg)
+  {
+    FunctorCall<std::index_sequence_for<Args...>, SignalArgs, R, Function>::call(f, o, arg);
+  }
+};
+
 } // namespace QtPrivate

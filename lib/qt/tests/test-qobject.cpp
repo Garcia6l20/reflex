@@ -10,34 +10,27 @@ using namespace reflex;
 
 struct ml_object : qt::object<ml_object>
 {
-  [[= qt::signal]] inline void emptySig()
-  {
-    trigger<^^emptySig>();
-  }
+  signal<>    emptySig{this};
+  signal<int> intSig{this};
 
-  [[= qt::signal]] inline void intSig(int value)
-  {
-    trigger<^^intSig>(value);
-  }
-
-  [[= qt::slot]] void emptySlot()
+  [[= slot]] void emptySlot()
   {
     std::println("ml_object: emptySlot called");
   }
 
-  [[= qt::slot]] void intSlot(int value)
+  [[= slot]] void intSlot(int value)
   {
     std::println("ml_object: intSlot called: {}", value);
   }
 
-  [[= qt::invocable]] bool sayTheTruth()
+  [[= invocable]] bool sayTheTruth()
   {
     std::println("ml_object: I'm not lying !");
     return true;
   }
 
 private:
-  [[= qt::property<"rwn", "setIntProp", "getIntProp", "intPropChanged">]] int intProp = 42;
+  [[= prop<"rwn">]] int intProp = 42;
 
   void intProp_written()
   {
@@ -45,8 +38,8 @@ private:
   }
 };
 
-#define dump_exec(...)              \
-  std::println("{}", #__VA_ARGS__); \
+#define dump_exec(...)                \
+  std::println("> {}", #__VA_ARGS__); \
   __VA_ARGS__
 
 int main(int argc, char** argv)

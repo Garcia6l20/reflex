@@ -98,7 +98,19 @@ consteval auto signature_of(meta::info R)
 
 template <meta::info R> static constexpr auto signature_of()
 {
-  constexpr auto wrapper = substitute(^^detail::signature_wrapper, detail::signature_of(R));
+  constexpr auto func = []
+  {
+    if constexpr(is_function(R))
+    {
+      return R;
+    }
+    else
+    {
+      using FnT = [:type_of(R):];
+      return ^^FnT::operator();
+    }
+  }();
+  constexpr auto wrapper = substitute(^^detail::signature_wrapper, detail::signature_of(func));
   using wrapper_type     = [:wrapper:];
   return ^^typename wrapper_type::function_type;
 }

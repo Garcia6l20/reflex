@@ -20,10 +20,10 @@ public:
   }
   virtual ~Controller() = default;
 
-  [[= qt::property<"rwn">]] QString clockText = "00:00:00";
+  [[= prop<"rwn">]] QString clockText = "00:00:00";
 
 protected:
-  [[= qt::timer_event]] void updateClock()
+  [[= timer_event]] void updateClock()
   {
     setProperty<^^clockText>(QString::fromStdString(std::format("{:%X}", std::chrono::system_clock::now())));
   }
