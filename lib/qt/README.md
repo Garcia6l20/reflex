@@ -88,6 +88,6 @@ class obj : qt::object<obj> {
 };
 ```
 
-- ❌ Custom types: not handled yet.
+- ✔️ Custom types: regular Qt custom type registration.
 - ❌ Enums: not handled yet.
 - ❓ Missing something ???

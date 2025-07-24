@@ -216,7 +216,18 @@ template <auto... chars> struct static_string_wrapper
 
 template <meta::info R> static consteval auto static_identifier_wrapper_of()
 {
-  constexpr auto name = identifier_of(R);
+  constexpr auto name = []
+  {
+    if(has_identifier(R))
+    {
+      return identifier_of(R);
+    }
+    else if(is_type(R))
+    {
+      return display_string_of(R);
+    }
+    std::unreachable();
+  }();
   constexpr auto size = name.size();
   return [&]<size_t... I>(std::index_sequence<I...>)
   { return static_string_wrapper<name.data()[I]...>{}; }(std::make_index_sequence<name.size()>());

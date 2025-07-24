@@ -139,13 +139,91 @@ public:
                                               meta::access_context::unchecked()));
   }
 
-  static constexpr auto __get_strings()
+  static consteval auto __custom_types()
+  {
+    std::vector<meta::info> types;
+
+    auto try_push = [&types](auto R)
+    {
+      auto T   = decay(R);
+      auto tid = detail::static_meta_type_id_of(T);
+      if(tid == detail::custom_type and not std::ranges::contains(types, T))
+      {
+        types.push_back(T);
+      }
+    };
+
+    for(auto R : __signals())
+    {
+      for(auto A : template_arguments_of(type_of(R)))
+      {
+        try_push(A);
+      }
+    }
+
+    for(auto R : __properties())
+    {
+      try_push(type_of(R));
+    }
+
+    for(auto R : __slots())
+    {
+      for(auto P : parameters_of(R))
+      {
+        try_push(type_of(P));
+      }
+    }
+
+    for(auto R : __invocables())
+    {
+      for(auto P : parameters_of(R))
+      {
+        try_push(type_of(P));
+      }
+      try_push(return_type_of(R));
+    }
+
+    return define_static_array(types);
+  }
+
+  struct introspection_data
+  {
+    const std::span<const meta::info> strings;
+
+    const size_t signals_offset;
+    const size_t slots_offset;
+    const size_t invocables_offset;
+    const size_t properties_offset;
+    const size_t custom_types_offset;
+
+    constexpr auto size() const
+    {
+      return strings.size();
+    }
+
+    template <meta::info t> consteval size_t custom_type_offset_of() const
+    {
+      auto ST = meta::static_identifier_wrapper_type_of<remove_const(remove_reference(t))>();
+      for(auto ii : std::views::iota(custom_types_offset, strings.size()))
+      {
+        if(ST == strings[ii])
+        {
+          return ii;
+        }
+      }
+      std::unreachable();
+    }
+  };
+
+  static constexpr auto __introspection_data()
   {
     namespace QMC = QtMocConstants;
 
     std::vector<meta::info> strings;
     strings.push_back(meta::static_identifier_wrapper_type_of<^^Super>());
     strings.push_back(^^meta::static_string_wrapper<>); // add an empty entry
+
+    const size_t signals_offset = strings.size();
 
     template for(constexpr auto s : __signals())
     {
@@ -159,22 +237,42 @@ public:
       strings.push_back(type_of(^^signal_name));
     }
 
+    const size_t slots_offset = strings.size();
+
     template for(constexpr auto s : __slots())
     {
       strings.push_back(meta::static_identifier_wrapper_type_of<s>());
     }
+
+    const size_t invocables_offset = strings.size();
 
     template for(constexpr auto i : __invocables())
     {
       strings.push_back(meta::static_identifier_wrapper_type_of<i>());
     }
 
+    const size_t properties_offset = strings.size();
+
     template for(constexpr auto p : __properties())
     {
       strings.push_back(meta::static_identifier_wrapper_type_of<p>());
     }
 
-    return define_static_array(strings);
+    const size_t custom_types_offset = strings.size();
+
+    template for(constexpr auto t : __custom_types())
+    {
+      strings.push_back(meta::static_identifier_wrapper_type_of<t>());
+    }
+
+    return introspection_data{
+        .strings             = define_static_array(strings),
+        .signals_offset      = signals_offset,
+        .slots_offset        = slots_offset,
+        .invocables_offset   = invocables_offset,
+        .properties_offset   = properties_offset,
+        .custom_types_offset = custom_types_offset,
+    };
   }
 
   static consteval auto __make_object_data()
@@ -249,16 +347,18 @@ public:
 private:
   template <typename> static constexpr auto qt_create_metaobjectdata()
   {
-    namespace QMC                 = QtMocConstants;
-    static constexpr auto strings = __get_strings();
+    namespace QMC              = QtMocConstants;
+    static constexpr auto data = __introspection_data();
 
     auto qt_stringData = [&] constexpr
     {
       return [&]<std::size_t... I>(std::index_sequence<I...>)
-      { return QtMocHelpers::StringRefStorage{[:strings[I]:] ::data...}; }(std::make_index_sequence<strings.size()>());
+      {
+        return QtMocHelpers::StringRefStorage{[:data.strings[I]:] ::data...};
+      }(std::make_index_sequence<data.size()>());
     }();
 
-    size_t strings_index = 2;
+    size_t strings_index = data.signals_offset;
 
     constexpr auto sigs   = __signals();
     constexpr auto invocs = __invocables();
@@ -293,8 +393,21 @@ private:
           auto           make_parameter = [&]<meta::info p>
           {
             constexpr auto param_type = type_of(p);
+            constexpr auto tid        = []
+            {
+              constexpr auto static_tid = uint(detail::static_meta_type_id_of(param_type));
+              if constexpr(static_tid == uint(detail::custom_type))
+              {
+                return static_tid | data.template custom_type_offset_of<param_type>();
+                // return static_tid;
+              }
+              else
+              {
+                return static_tid;
+              }
+            }();
             return typename DataT::FunctionParameter{
-                .typeIdx = detail::static_meta_type_id_of(param_type),
+                .typeIdx = tid,
                 .nameIdx = 1, // TODO
             };
           };
@@ -396,15 +509,24 @@ private:
   {
   };
 
-  template <meta::info R> static consteval auto make_property_listener_name()
+  static consteval auto parameters_types_of(meta::info R)
   {
-    constexpr auto             identifier         = identifier_of(R);
-    constexpr std::string_view suffix             = "_changed";
-    constexpr auto             listener_name_size = identifier.size() + suffix.size();
-    char                       listener_name[listener_name_size];
-    std::ranges::copy(identifier, listener_name);
-    std::ranges::copy(suffix, listener_name + identifier.size());
-    return std::array{listener_name};
+    if(is_function(R))
+    {
+      return parameters_of(R) | std::views::transform(meta::type_of);
+    }
+    else
+    {
+      // assume signal
+      auto type    = type_of(R);
+      auto call_fn = meta::member_named(type, "fn", meta::access_context::unchecked());
+      return parameters_of(call_fn) //
+             | std::views::transform(meta::type_of);
+    }
+  }
+  template <meta::info R> static consteval auto parameters_types_of()
+  {
+    return parameters_types_of(R);
   }
 
   static void qt_static_metacall(QObject* _o, QMetaObject::Call _c, int _id, void** _a)
@@ -418,13 +540,14 @@ private:
 
     constexpr auto sig_count  = sigs.size();
     constexpr auto slts_count = slts.size();
+    constexpr auto prop_count = props.size();
 
     const auto do_invoke = []<meta::info R>(Super* self, void** args)
     {
       static constexpr auto parameters = define_static_array(parameters_of(R));
       const auto            get_arg    = [&]<size_t I>
       {
-        constexpr auto p = type_of(parameters[I]);
+        constexpr auto p = remove_reference(type_of(parameters[I]));
         using T          = typename[:p:];
         return *reinterpret_cast<T*>(args[I + 1]);
       };
@@ -455,23 +578,9 @@ private:
       {
         if(ii == _id)
         {
-          static constexpr auto s          = sigs[ii];
-          static constexpr auto parameters = []
-          {
-            if constexpr(is_function(s))
-            {
-              return define_static_array(parameters_of(s) | std::views::transform(meta::type_of));
-            }
-            else
-            {
-              constexpr auto type    = type_of(s);
-              using SignalT          = [:type:];
-              constexpr auto call_fn = ^^SignalT::fn;
-              return define_static_array(parameters_of(call_fn)                 //
-                                         | std::views::transform(meta::type_of) //
-                                         | std::views::transform(meta::remove_reference));
-            }
-          }();
+          static constexpr auto s = sigs[ii];
+          static constexpr auto parameters =
+              define_static_array(parameters_types_of<s>() | std::views::transform(meta::remove_reference));
           const auto get_arg = []<size_t I>(void** args)
           {
             constexpr auto p = parameters[I];
@@ -482,12 +591,23 @@ private:
           [&]<size_t ...I>(std::index_sequence<I...>, Super* self, void**args) {//
             self->template trigger<s>(get_arg.template operator()<I>(args)...);
             }(std::make_index_sequence<parameters.size()>(), _t, _a);
-
-          // do_invoke.template operator()<s>();
           return;
         }
       }
       _id -= sig_count;
+
+      template for(constexpr auto ii : std::views::iota(size_t(0), prop_count))
+      {
+        if(ii == _id)
+        {
+          static constexpr auto p = props[ii];
+          static constexpr auto s = ^^object::propertyChanged<p>;
+          do_invoke.template    operator()<s>(_t, _a);
+          return;
+        }
+      }
+      _id -= prop_count;
+
       template for(constexpr auto ii : std::views::iota(size_t(0), slts.size()))
       {
         if(ii == _id)
@@ -507,6 +627,37 @@ private:
           return;
         }
       }
+    }
+    if(_c == QMetaObject::RegisterMethodArgumentMetaType)
+    {
+      const auto     arg_num      = *reinterpret_cast<int*>(_a[1]);
+      auto*          result       = reinterpret_cast<QMetaType*>(_a[0]);
+      constexpr auto custom_types = __custom_types();
+
+      template for(constexpr auto ii : std::views::iota(size_t(0), sig_count))
+      {
+        if(ii == _id)
+        {
+          static constexpr auto s = sigs[ii];
+
+          static constexpr auto parameters =
+              define_static_array(parameters_types_of<s>() | std::views::transform(meta::remove_reference));
+
+          constexpr auto p_count = parameters.size();
+          template for(constexpr auto jj : std::views::iota(size_t(0), p_count))
+          {
+            if(arg_num == jj)
+            {
+              using ParamT = [:parameters[jj]:];
+              *result      = QMetaType::fromType<ParamT>();
+              return;
+            }
+          }
+        }
+      }
+      _id -= sig_count;
+
+      *result = QMetaType();
     }
     if(_c == QMetaObject::IndexOfMethod)
     {
@@ -611,7 +762,8 @@ public:
   {
     static constexpr auto sigs              = __signals();
     static constexpr auto slts              = __slots();
-    static constexpr auto signal_slot_count = sigs.size() + slts.size();
+    static constexpr auto invoks            = __invocables();
+    static constexpr auto signal_slot_count = sigs.size() + slts.size() + invoks.size();
 
     _id = QObject::qt_metacall(_c, _id, _a);
     if(_id < 0)
@@ -619,13 +771,13 @@ public:
 
     if(_c == QMetaObject::InvokeMetaMethod)
     {
-      if(_id < signal_slot_count)
+      if(_id <= signal_slot_count)
         qt_static_metacall(this, _c, _id, _a);
       _id -= signal_slot_count;
     }
     if(_c == QMetaObject::RegisterMethodArgumentMetaType)
     {
-      if(_id < signal_slot_count)
+      if(_id <= signal_slot_count)
         *reinterpret_cast<QMetaType*>(_a[0]) = QMetaType();
       _id -= signal_slot_count;
     }

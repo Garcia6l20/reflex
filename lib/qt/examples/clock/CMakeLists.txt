@@ -1,7 +1,7 @@
 find_package(Qt6 COMPONENTS Core Gui Qml Quick QuickControls2)
 
-if(NOT TARGET Qt6::Qml)
-  message(STATUS "Configuration ui disabled (missing: Qt6::Qml)")
+if(NOT Qt6_FOUND)
+  message(STATUS "QML tests disabled (some components are missing)")
   return()
 endif()
 

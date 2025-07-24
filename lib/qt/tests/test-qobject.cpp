@@ -24,10 +24,25 @@ struct ml_object : qt::object<ml_object>
     std::println("ml_object: intSlot called: {}", value);
   }
 
-  [[= invocable]] bool sayTheTruth()
+  [[= slot]] void handleMessage(TestMessage const& value)
   {
-    std::println("ml_object: I'm not lying !");
-    return true;
+    std::println("ml_object: TestMessage: {} ({})", value.body(), value.headers());
+  }
+
+  [[= slot]] void handleObject(QObject* obj)
+  {
+    qDebug() << "ml_object: handleObject:" << obj->objectName();
+  }
+
+  [[= slot]] void handleQmlEngine(QQmlEngine* engine)
+  {
+    qDebug() << "ml_object: handleQmlEngine:" << engine->objectName();
+  }
+
+  [[= invocable]] bool sayTheTruth(bool lie = false) // TODO handle defaulted arguments
+  {
+    std::println("ml_object: I'm{}lying !", lie ? " " : " not ");
+    return lie;
   }
 
 private:
@@ -59,19 +74,15 @@ private:
 
 int main(int argc, char** argv)
 {
-  // constexpr auto strings = ml_object::__get_strings(); // patch qt::object to make __get_strings public for debugging
-  // template for(constexpr auto s : strings)
-  // {
-  //   using wrapper = typename[:s:];
-  //   std::println("- \"{}\": \"{}\" ({} chars, {:p})", display_string_of(s),
-  //                [:s:] ::view(),
-  //                [:s:] ::size(), static_cast<const void*>(&[:s:] ::data));
-  // }
+  static_assert(qt::detail::static_meta_type_id_of(^^int) == QMetaType::Type::Int);
+  static_assert(qt::detail::static_meta_type_id_of(^^QObject*) == QMetaType::Type::QObjectStar);
+  static_assert(qt::detail::static_meta_type_id_of(^^QQmlEngine*) == qt::detail::custom_type);
+  static_assert(qt::detail::static_meta_type_id_of(^^TestMessage) == qt::detail::custom_type);
 
   QTestObject to;
-  // qt::dump(to);
+  ml_object   mlo;
 
-  ml_object mlo;
+  qt::dump(to);
   qt::dump(mlo);
 
   QObject::connect(&mlo, &ml_object::emptySig, &to, &QTestObject::emtpySlot);
@@ -83,11 +94,18 @@ int main(int argc, char** argv)
   dump_exec(to.emptySig());
   QObject::connect(&to, &QTestObject::intSig, &mlo, &ml_object::intSlot);
   dump_exec(to.intSig(42));
+  {
+    TestMessage m{"hello", QStringList{"h1", "h2"}};
+    QMetaObject::invokeMethod(&to, "handleMessage", Q_ARG(TestMessage, m));
+    QMetaObject::invokeMethod(&mlo, "handleMessage", Q_ARG(TestMessage, m));
+  }
 
-  // QMetaObject::invokeMethod(&to, "intSlot", Q_ARG(int, 55));
+  QMetaObject::invokeMethod(&to, "intSlot", Q_ARG(int, 55));
   QMetaObject::invokeMethod(&mlo, "intSlot", Q_ARG(int, 55));
   bool truth = false;
-  QMetaObject::invokeMethod(&mlo, "sayTheTruth", Q_RETURN_ARG(bool, truth));
+  QMetaObject::invokeMethod(&mlo, "sayTheTruth", Q_RETURN_ARG(bool, truth)); // TODO handle default args
+  QMetaObject::invokeMethod(&mlo, "sayTheTruth", Q_RETURN_ARG(bool, truth), Q_ARG(bool, true));
+  QMetaObject::invokeMethod(&mlo, "sayTheTruth", Q_RETURN_ARG(bool, truth), Q_ARG(bool, false));
 
   {
     const auto value = mlo.property("intProp");
