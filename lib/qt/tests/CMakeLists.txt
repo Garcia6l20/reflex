@@ -20,5 +20,6 @@ target_link_libraries(reflex-qt-qobject PRIVATE reflex-qt-test-objects)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Test)
 add_executable(reflex-qt-widgets test-widgets.cpp)
 target_link_libraries(reflex-qt-widgets PRIVATE Qt6::Widgets Qt6::Test)
+add_test(NAME reflex-qt-widgets COMMAND reflex-qt-widgets)
 
 add_subdirectory(qml)

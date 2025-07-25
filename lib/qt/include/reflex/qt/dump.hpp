@@ -26,14 +26,17 @@ inline void dump(auto& object)
 
     switch(method.methodType())
     {
+      case QMetaMethod::Constructor:
+        qDebug() << "🛠️ Constructor:" << method.methodSignature();
+        break;
       case QMetaMethod::Signal:
-        qDebug() << "    Signal:" << method.methodSignature();
+        qDebug() << " 🔔     Signal:" << method.methodSignature();
         break;
       case QMetaMethod::Slot:
-        qDebug() << "      Slot:" << method.methodSignature();
+        qDebug() << " 🎯       Slot:" << method.methodSignature();
         break;
       case QMetaMethod::Method:
-        qDebug() << " Invocable:" << method.methodSignature();
+        qDebug() << " 📞  Invocable:" << method.methodSignature();
         break;
       default:
         // Ignore Method or Constructor types
@@ -44,7 +47,7 @@ inline void dump(auto& object)
   for(int i = metaObject->propertyOffset(); i < metaObject->propertyCount(); ++i)
   {
     QMetaProperty property = metaObject->property(i);
-    qDebug() << "  Property:" << property.name() << "-" << property.typeName();
+    qDebug() << " 🏷️    Property:" << property.name() << "-" << property.typeName();
   }
 }
 inline void dump(auto* object)

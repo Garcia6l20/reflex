@@ -7,16 +7,17 @@ namespace reflex
 {
 template <size_t N> struct fixed_string
 {
-  char data[N];
+  char data[N + 1];
 
   constexpr fixed_string(char const* s)
   {
     std::copy(s, s + N, data);
+    data[N] = '\0';
   }
 
   constexpr auto view() const -> std::string_view
   {
-    return data;
+    return {data};
   }
 
   constexpr auto operator[](size_t i) const

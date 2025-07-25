@@ -1,6 +1,7 @@
 #pragma once
 
 #include <reflex/meta.hpp>
+#include <reflex/to_tuple.hpp>
 #include <reflex/utility.hpp>
 
 #include <reflex/qt/detail/metatype.hpp>
@@ -155,7 +156,7 @@ public:
 
     for(auto R : __signals())
     {
-      for(auto A : template_arguments_of(type_of(R)))
+      for(auto A : template_arguments_of(type_of(R)) | std::views::drop(1)) // first arg is ^^Super
       {
         try_push(A);
       }
@@ -186,9 +187,9 @@ public:
     return define_static_array(types);
   }
 
-  struct introspection_data
+  template <typename... Strings> struct introspection_data
   {
-    const std::span<const meta::info> strings;
+    std::tuple<Strings...> strings;
 
     const size_t signals_offset;
     const size_t slots_offset;
@@ -198,81 +199,135 @@ public:
 
     constexpr auto size() const
     {
-      return strings.size();
+      return sizeof...(Strings);
     }
 
-    template <meta::info t> consteval size_t custom_type_offset_of() const
+    template <meta::info R> consteval size_t custom_type_offset_of() const
     {
-      auto ST = meta::static_identifier_wrapper_type_of<remove_const(remove_reference(t))>();
-      for(auto ii : std::views::iota(custom_types_offset, strings.size()))
+      constexpr auto id = []
       {
-        if(ST == strings[ii])
+        if(has_identifier(R))
         {
-          return ii;
+          return identifier_of(R);
+        }
+        else if(is_type(R))
+        {
+          return display_string_of(remove_const(remove_reference(R)));
+        }
+        std::unreachable();
+      }();
+      template for(constexpr auto ii : std::views::iota(size_t(0), sizeof...(Strings)))
+      {
+        if(ii >= custom_types_offset)
+        {
+          // using std::ranges::equal;
+          // using std::views::filter;
+          // auto no_white_space = id | filter([](auto c) { return c != ' '; });
+          // if(equal(no_white_space, std::get<ii>(strings).view()))
+          if (id == std::get<ii>(strings).view())
+          {
+            return ii;
+          }
         }
       }
       std::unreachable();
     }
+
+    template <size_t index> consteval auto string_view_at() const
+    {
+      return std::get<index>(strings).view();
+    }
   };
 
-  static constexpr auto __introspection_data()
+  static consteval auto __get_strings()
   {
-    namespace QMC = QtMocConstants;
+    struct __strings
+    {
+      std::vector<std::string> strings;
 
-    std::vector<meta::info> strings;
-    strings.push_back(meta::static_identifier_wrapper_type_of<^^Super>());
-    strings.push_back(^^meta::static_string_wrapper<>); // add an empty entry
+      size_t signals_offset;
+      size_t slots_offset;
+      size_t invocables_offset;
+      size_t properties_offset;
+      size_t custom_types_offset;
+    };
+    __strings data;
 
-    const size_t signals_offset = strings.size();
+    data.strings.push_back(std::string{identifier_of(^^Super)});
+    data.strings.push_back(""); // add an empty entry
+
+    data.signals_offset = data.strings.size();
 
     template for(constexpr auto s : __signals())
     {
-      strings.push_back(meta::static_identifier_wrapper_type_of<s>());
+      data.strings.push_back(std::string{identifier_of(s)});
     }
 
     template for(constexpr auto p : __properties())
     {
-      constexpr auto id          = meta::static_identifier_wrapper_of<p>();
-      constexpr auto signal_name = id.template with_suffix<"Changed">();
-      strings.push_back(type_of(^^signal_name));
+      data.strings.push_back(std::string{identifier_of(p)} + "Changed");
     }
 
-    const size_t slots_offset = strings.size();
+    data.slots_offset = data.strings.size();
 
     template for(constexpr auto s : __slots())
     {
-      strings.push_back(meta::static_identifier_wrapper_type_of<s>());
+      data.strings.push_back(std::string{identifier_of(s)});
     }
 
-    const size_t invocables_offset = strings.size();
+    data.invocables_offset = data.strings.size();
 
     template for(constexpr auto i : __invocables())
     {
-      strings.push_back(meta::static_identifier_wrapper_type_of<i>());
+      data.strings.push_back(std::string{identifier_of(i)});
     }
 
-    const size_t properties_offset = strings.size();
+    data.properties_offset = data.strings.size();
 
     template for(constexpr auto p : __properties())
     {
-      strings.push_back(meta::static_identifier_wrapper_type_of<p>());
+      data.strings.push_back(std::string{identifier_of(p)});
     }
 
-    const size_t custom_types_offset = strings.size();
+    data.custom_types_offset = data.strings.size();
 
     template for(constexpr auto t : __custom_types())
     {
-      strings.push_back(meta::static_identifier_wrapper_type_of<t>());
+      // std::string id{display_string_of(t)};
+      // std::erase(id, ' ');
+      // data.strings.push_back(std::move(id));
+      data.strings.push_back(std::string{display_string_of(t)});
     }
+    return data;
+  }
+  static consteval auto __make_strings_tuple_type()
+  {
+    std::vector<meta::info> members;
+    for(auto s : __get_strings().strings)
+    {
+      members.push_back(substitute(^^fixed_string,
+                                   {
+                                       meta::reflect_constant(s.size())}));
+    }
+    return substitute(^^std::tuple, members);
+  }
 
-    return introspection_data{
-        .strings             = define_static_array(strings),
-        .signals_offset      = signals_offset,
-        .slots_offset        = slots_offset,
-        .invocables_offset   = invocables_offset,
-        .properties_offset   = properties_offset,
-        .custom_types_offset = custom_types_offset,
-    };
+  static consteval auto __introspection_data()
+  {
+    auto           data              = __get_strings();
+    constexpr auto string_tuple_type = __make_strings_tuple_type();
+    using StringTupleT               = [:string_tuple_type:];
+    return [&]<size_t... I>(std::index_sequence<I...>)
+    {
+      return introspection_data<std::tuple_element_t<I, StringTupleT>...>{
+          .strings             = StringTupleT{std::tuple_element_t<I, StringTupleT>{data.strings[I].data()}...},
+          .signals_offset      = data.signals_offset,
+          .slots_offset        = data.slots_offset,
+          .invocables_offset   = data.invocables_offset,
+          .properties_offset   = data.properties_offset,
+          .custom_types_offset = data.custom_types_offset,
+      };
+    }(std::make_index_sequence<std::tuple_size_v<StringTupleT>>());
   }
 
   static consteval auto __make_object_data()
@@ -354,7 +409,7 @@ private:
     {
       return [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return QtMocHelpers::StringRefStorage{[:data.strings[I]:] ::data...};
+        return QtMocHelpers::StringRefStorage{std::get<I>(data.strings).data...};
       }(std::make_index_sequence<data.size()>());
     }();
 
@@ -398,7 +453,7 @@ private:
               constexpr auto static_tid = uint(detail::static_meta_type_id_of(param_type));
               if constexpr(static_tid == uint(detail::custom_type))
               {
-                return static_tid | data.template custom_type_offset_of<param_type>();
+                return static_tid | uint(data.template custom_type_offset_of<param_type>());
                 // return static_tid;
               }
               else
@@ -821,6 +876,7 @@ public:
   {
     using std::ranges::contains;
     static constexpr auto prop = meta::member_named(^^Super, name.view(), meta::access_context::unchecked());
+    static_assert(prop != meta::null, "no such property");
     return self.template property<prop>();
   }
 
@@ -874,6 +930,7 @@ public:
   {
     using std::ranges::contains;
     static constexpr auto prop = meta::member_named(^^Super, name.view(), meta::access_context::unchecked());
+    static_assert(prop != meta::null, "no such property");
     self.template setProperty<prop>(std::forward<T>(value));
   }
 

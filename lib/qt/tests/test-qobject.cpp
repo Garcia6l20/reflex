@@ -39,6 +39,10 @@ struct ml_object : qt::object<ml_object>
     qDebug() << "ml_object: handleQmlEngine:" << engine->objectName();
   }
 
+  [[= slot]] void qmlEngineAvailable(QQmlEngine* engine)
+  {
+  }
+
   [[= invocable]] bool sayTheTruth(bool lie = false) // TODO handle defaulted arguments
   {
     std::println("ml_object: I'm{}lying !", lie ? " " : " not ");
@@ -79,6 +83,47 @@ int main(int argc, char** argv)
   static_assert(qt::detail::static_meta_type_id_of(^^QQmlEngine*) == qt::detail::custom_type);
   static_assert(qt::detail::static_meta_type_id_of(^^TestMessage) == qt::detail::custom_type);
 
+  static constexpr auto data = ml_object::__introspection_data();
+
+  template for(constexpr auto ii : std::views::iota(size_t(0), std::tuple_size_v<decltype(data.strings)>))
+  {
+    constexpr auto s    = std::get<ii>(data.strings);
+    constexpr auto size = s.size();
+    std::println("{} (size={}, offset={})", s.view(), size, ii);
+  }
+  template for(constexpr auto R : std::array{^^TestMessage const&, ^^QQmlEngine* })
+  {
+    // constexpr auto id = []
+    // {
+    //   if(has_identifier(R))
+    //   {
+    //     return identifier_of(R);
+    //   }
+    //   else if(is_type(R))
+    //   {
+    //     return display_string_of(remove_const(remove_reference(R)));
+    //   }
+    //   std::unreachable();
+    // }();
+    // std::print("{} identifier: {}...", display_string_of(R), id);
+    // bool found = false;
+    // template for(constexpr auto ii : std::views::iota(size_t(0), std::tuple_size_v<decltype(data.strings)>))
+    // {
+    //   if(id == std::get<ii>(data.strings).view())
+    //   {
+    //     std::println(" found at offset {} !", ii);
+    //     found = true;
+    //   }
+    // }
+    // if(not found)
+    // {
+    //   std::println(" not found !");
+    // }
+    constexpr auto offset = data.template custom_type_offset_of<R>();
+    constexpr auto str    = data.template string_view_at<offset>();
+    std::println("{} at {}: {}", display_string_of(R), offset, str);
+  }
+
   QTestObject to;
   ml_object   mlo;
 
@@ -88,7 +133,10 @@ int main(int argc, char** argv)
   QObject::connect(&mlo, &ml_object::emptySig, &to, &QTestObject::emtpySlot);
   dump_exec(mlo.emptySig());
   QObject::connect(&mlo, &ml_object::intSig, &to, &QTestObject::intSlot);
-  dump_exec(mlo.intSig(42));
+  dump_exec(
+    mlo.intSig(42);
+    mlo.intSig(43);
+  );
 
   QObject::connect(&to, &QTestObject::emptySig, &mlo, &ml_object::emptySlot);
   dump_exec(to.emptySig());
@@ -109,22 +157,22 @@ int main(int argc, char** argv)
 
   {
     const auto value = mlo.property("intProp");
-    mlo.setProperty("intProp", value.toInt() + 1);
+    dump_exec(mlo.setProperty("intProp", value.toInt() + 1));
     qDebug() << mlo.property("intProp");
   }
   {
     const auto value = mlo.property<"intProp">();
-    mlo.setProperty<"intProp">(value + 1);
+    dump_exec(mlo.setProperty<"intProp">(value + 1));
     qDebug() << mlo.property("intProp");
   }
 
   QObject::connect(&mlo,
                    &ml_object::propertyChanged<"intProp">,
                    [&mlo] { std::println("intProp change caught: {}", mlo.property<"intProp">()); });
-  mlo.setProperty<"intProp">(12);
+  dump_exec(mlo.setProperty<"intProp">(12));
 
-  mlo.setProperty<"power">(3);
+  dump_exec(mlo.setProperty<"power">(3));
   std::println("power: {} dB", mlo.property<"power">());
-  mlo.setProperty<"power">(6);
+  dump_exec(mlo.setProperty<"power">(6));
   std::println("power: {} dB", mlo.property<"power">());
 }

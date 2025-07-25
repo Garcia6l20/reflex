@@ -19,6 +19,8 @@
       "inherits": "clang-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "REFLEX_BUILD_TESTS": "ON",
+        "REFLEX_BUILD_EXAMPLES": "ON",
         "BUILD_TESTING": "ON"
       }
     },
@@ -44,7 +46,7 @@
   "testPresets": [
     {
       "name": "ClangDebug",
-      "configurePreset": "ClangRelease",
+      "configurePreset": "ClangDebug",
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error", "stopOnFailure": true }
     },

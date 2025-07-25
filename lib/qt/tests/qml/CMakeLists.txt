@@ -17,3 +17,4 @@ target_link_libraries(reflex-qt-qml-test
     Qt6::Gui
     reflex.qt
 )
+add_test(NAME reflex-qt-qml-test COMMAND reflex-qt-qml-test)
