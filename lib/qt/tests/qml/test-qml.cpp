@@ -4,6 +4,7 @@
 #include <QtQuickTest>
 
 #include <reflex/qt.hpp>
+#include <reflex/qt/dump.hpp>
 
 using namespace reflex;
 
@@ -38,7 +39,6 @@ private:
   }
 };
 
-
 class InvocableTestController : public qt::object<InvocableTestController>
 {
 public:
@@ -57,13 +57,34 @@ public:
 
   signal<bool> toggled{this};
 
-  [[= slot]] void trig() {
+  [[= slot]] void trig()
+  {
     toggled(value_);
     value_ = !value_;
   }
 
+  signal<int, defaulted<int>> sig1{this, -1};
+  signal<int, defaulted<int>> sig2{this, -1};
+
+  [[= slot]] void slt1(int a = -1, int b = -2)
+  {
+    setProperty<^^slt1Value1>(a);
+    setProperty<^^slt1Value2>(b);
+  }
+
+  [[= slot]] void slt2(int a = -1, int b = -2)
+  {
+    setProperty<^^slt2Value1>(a);
+    setProperty<^^slt2Value2>(b);
+  }
+
 private:
   bool value_ = false;
+
+  [[= prop<"rwn">]] int slt1Value1 = -1;
+  [[= prop<"rwn">]] int slt1Value2 = -1;
+  [[= prop<"rwn">]] int slt2Value1 = -1;
+  [[= prop<"rwn">]] int slt2Value2 = -1;
 };
 
 class Setup : public qt::object<Setup>
@@ -78,13 +99,16 @@ public:
 
   [[= slot]] void qmlEngineAvailable(QQmlEngine* engine)
   {
+    qt::dump(this);
+
     QLoggingCategory::setFilterRules(QStringLiteral("qt.qml.binding.removal.info=true"));
 
     // Initialization requiring the QQmlEngine to be constructed
     engine->rootContext()->setContextProperty("simplePropertyController", new SimplePropertyController(engine));
     engine->rootContext()->setContextProperty("invocableTestController", new InvocableTestController(engine));
     engine->rootContext()->setContextProperty("getSetPropertyController", new GetSetPropertyController(engine));
-    engine->rootContext()->setContextProperty("signalSlotController", new SignalSlotController(engine));
+
+    engine->rootContext()->setContextProperty("signalSlotController", qt::dump(new SignalSlotController(engine)));
   }
 
   [[= slot]] void cleanupTestCase()
@@ -93,4 +117,4 @@ public:
   }
 };
 
-QUICK_TEST_MAIN_WITH_SETUP(mytest, Setup)
+QUICK_TEST_MAIN_WITH_SETUP(qml - tests, Setup)

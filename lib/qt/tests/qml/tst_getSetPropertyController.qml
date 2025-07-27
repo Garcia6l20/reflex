@@ -2,28 +2,14 @@ import QtQuick
 import QtTest
 
 TestCase {
-    id: root
-    name: "SignalSlotsTests"
+    name: "GetSetPropertyTests"
 
-    readonly property QtObject controller: signalSlotController
-    property bool value: true
+    readonly property QtObject controller: getSetPropertyController
 
     function test_base() {
-        compare(value, true);
-        controller.trig();
-        compare(value, false);
-        controller.trig();
-        compare(value, true);
-        controller.trig();
-        compare(value, false);
-        controller.trig();
-        compare(value, true);
-    }
-
-    Connections {
-        target: controller
-        function onToggled(v) {
-            root.value = v;
-        }
+        controller.ivalue = 1;
+        compare(controller.ivalue, 4);
+        controller.ivalue++; // read as 4, written with 5 => next read is 20
+        compare(controller.ivalue, 20);
     }
 }

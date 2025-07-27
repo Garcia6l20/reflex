@@ -70,7 +70,7 @@ public:
 signals:
   void emptySig();
   // void emptySig2();
-  void intSig(int);
+  void intSig(int value, int value2 = 42);
   void intChanged();
   void sendMessage(TestMessage const&);
 
@@ -79,9 +79,9 @@ public slots:
   {
     qDebug() << "emtpySlot called";
   }
-  void intSlot(int value)
+  void intSlot(int value = 42, int value2 = 0)
   {
-    qDebug() << "intSlot called with" << value;
+    qDebug() << "intSlot called with" << value << "and" << value2;
     emit intChanged();
   }
 

@@ -1,5 +1,4 @@
 #include <reflex/di.hpp>
-#include <reflex/views/combinations.hpp>
 #include <reflex/views/permutations.hpp>
 
 #include <catch2/catch_test_macros.hpp>

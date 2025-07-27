@@ -151,15 +151,17 @@ template <typename Ret, typename... Args> struct signature_wrapper
   using function_type                         = Ret(Args...);
   template <typename Class> using method_type = Ret (Class::*)(Args...);
 };
+
+template <size_t N = size_t(-1)>
 consteval auto signature_of(meta::info R)
 {
   std::vector sig{return_type_of(R)};
-  sig.append_range(parameters_of(R) | std::views::transform(meta::type_of));
+  sig.append_range(parameters_of(R) | std::views::transform(meta::type_of) | std::views::take(N));
   return sig;
 }
 } // namespace detail
 
-template <meta::info R> static constexpr auto signature_of()
+template <meta::info R, size_t N = size_t(-1)> static constexpr auto signature_of()
 {
   constexpr auto func = []
   {
@@ -173,14 +175,14 @@ template <meta::info R> static constexpr auto signature_of()
       return ^^FnT::operator();
     }
   }();
-  constexpr auto wrapper = substitute(^^detail::signature_wrapper, detail::signature_of(func));
+  constexpr auto wrapper = substitute(^^detail::signature_wrapper, detail::signature_of<N>(func));
   using wrapper_type     = [:wrapper:];
   return ^^typename wrapper_type::function_type;
 }
 
-template <meta::info R, meta::info Class> static constexpr auto signature_of()
+template <meta::info R, meta::info Class, size_t N = size_t(-1)> static constexpr auto signature_of()
 {
-  constexpr auto wrapper = substitute(^^detail::signature_wrapper, detail::signature_of(R));
+  constexpr auto wrapper = substitute(^^detail::signature_wrapper, detail::signature_of<N>(R));
   using wrapper_type     = [:wrapper:];
   using class_type       = [:Class:];
   return ^^typename wrapper_type::template method_type<class_type>;

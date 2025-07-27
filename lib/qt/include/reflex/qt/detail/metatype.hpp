@@ -12,10 +12,10 @@ consteval QMetaType::Type static_meta_type_id_of(meta::info R)
   if(false)
   {
   }
-#define X(__enum_mem, __id, __type)                          \
-  else if(remove_reference(dealias(^^__type)) == dealias(R)) \
-  {                                                          \
-    return QMetaType::__enum_mem;                            \
+#define X(__enum_mem, __id, __type)                                        \
+  else if(remove_const(remove_reference(dealias(^^__type))) == dealias(R)) \
+  {                                                                        \
+    return QMetaType::__enum_mem;                                          \
   }
   QT_FOR_EACH_STATIC_TYPE(X)
 #undef X

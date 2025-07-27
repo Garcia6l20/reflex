@@ -1,6 +1,5 @@
-#define REFLEX_QT_INTERNAL_VISIBILITY public
-
 #include <reflex/qt.hpp>
+#include <reflex/qt/connection_guard.hpp>
 #include <reflex/qt/dump.hpp>
 #include <test_object.hpp>
 
@@ -11,17 +10,19 @@ using namespace reflex;
 
 struct ml_object : qt::object<ml_object>
 {
-  signal<>    emptySig{this};
-  signal<int> intSig{this};
+  signal<>                    emptySig{this};
+  signal<int, defaulted<int>> intSig{this, 42};
+  // signal<int, defaulted<int>> intSig{this}; // Missing default argument(s)
+  // signal<int, defaulted<int>> intSig{this, 42, 43}; // Too much default argument(s)
 
   [[= slot]] void emptySlot()
   {
     std::println("ml_object: emptySlot called");
   }
 
-  [[= slot]] void intSlot(int value)
+  [[= slot]] void intSlot(int value = 0, int value2 = 1)
   {
-    std::println("ml_object: intSlot called: {}", value);
+    std::println("ml_object: intSlot called: {} and {}", value, value2);
   }
 
   [[= slot]] void handleMessage(TestMessage const& value)
@@ -80,49 +81,54 @@ int main(int argc, char** argv)
 {
   static_assert(qt::detail::static_meta_type_id_of(^^int) == QMetaType::Type::Int);
   static_assert(qt::detail::static_meta_type_id_of(^^QObject*) == QMetaType::Type::QObjectStar);
-  static_assert(qt::detail::static_meta_type_id_of(^^QQmlEngine*) == qt::detail::custom_type);
+  // static_assert(qt::detail::static_meta_type_id_of(^^QQmlEngine*) == qt::detail::custom_type);
   static_assert(qt::detail::static_meta_type_id_of(^^TestMessage) == qt::detail::custom_type);
 
-  static constexpr auto data = ml_object::__introspection_data();
+  // template for(constexpr auto T : ml_object::__custom_types())
+  // {
+  //   std::println("{}", display_string_of(T));
+  // }
 
-  template for(constexpr auto ii : std::views::iota(size_t(0), std::tuple_size_v<decltype(data.strings)>))
-  {
-    constexpr auto s    = std::get<ii>(data.strings);
-    constexpr auto size = s.size();
-    std::println("{} (size={}, offset={})", s.view(), size, ii);
-  }
-  template for(constexpr auto R : std::array{^^TestMessage const&, ^^QQmlEngine* })
-  {
-    // constexpr auto id = []
-    // {
-    //   if(has_identifier(R))
-    //   {
-    //     return identifier_of(R);
-    //   }
-    //   else if(is_type(R))
-    //   {
-    //     return display_string_of(remove_const(remove_reference(R)));
-    //   }
-    //   std::unreachable();
-    // }();
-    // std::print("{} identifier: {}...", display_string_of(R), id);
-    // bool found = false;
-    // template for(constexpr auto ii : std::views::iota(size_t(0), std::tuple_size_v<decltype(data.strings)>))
-    // {
-    //   if(id == std::get<ii>(data.strings).view())
-    //   {
-    //     std::println(" found at offset {} !", ii);
-    //     found = true;
-    //   }
-    // }
-    // if(not found)
-    // {
-    //   std::println(" not found !");
-    // }
-    constexpr auto offset = data.template custom_type_offset_of<R>();
-    constexpr auto str    = data.template string_view_at<offset>();
-    std::println("{} at {}: {}", display_string_of(R), offset, str);
-  }
+  // static constexpr auto data = ml_object::__introspection_data();
+
+  // template for(constexpr auto ii : std::views::iota(size_t(0), std::tuple_size_v<decltype(data.strings)>))
+  // {
+  //   constexpr auto s    = std::get<ii>(data.strings);
+  //   constexpr auto size = s.size();
+  //   std::println("{} (size={}, offset={})", s.view(), size, ii);
+  // }
+  // template for(constexpr auto R : std::array{^^TestMessage const&, ^^QQmlEngine* })
+  // {
+  //   // constexpr auto id = []
+  //   // {
+  //   //   if(has_identifier(R))
+  //   //   {
+  //   //     return identifier_of(R);
+  //   //   }
+  //   //   else if(is_type(R))
+  //   //   {
+  //   //     return display_string_of(remove_const(remove_reference(R)));
+  //   //   }
+  //   //   std::unreachable();
+  //   // }();
+  //   // std::print("{} identifier: {}...", display_string_of(R), id);
+  //   // bool found = false;
+  //   // template for(constexpr auto ii : std::views::iota(size_t(0), std::tuple_size_v<decltype(data.strings)>))
+  //   // {
+  //   //   if(id == std::get<ii>(data.strings).view())
+  //   //   {
+  //   //     std::println(" found at offset {} !", ii);
+  //   //     found = true;
+  //   //   }
+  //   // }
+  //   // if(not found)
+  //   // {
+  //   //   std::println(" not found !");
+  //   // }
+  //   constexpr auto offset = data.template custom_type_offset_of<R>();
+  //   constexpr auto str    = data.template string_view_at<offset>();
+  //   std::println("{} at {}: {}", display_string_of(R), offset, str);
+  // }
 
   QTestObject to;
   ml_object   mlo;
@@ -132,11 +138,37 @@ int main(int argc, char** argv)
 
   QObject::connect(&mlo, &ml_object::emptySig, &to, &QTestObject::emtpySlot);
   dump_exec(mlo.emptySig());
-  QObject::connect(&mlo, &ml_object::intSig, &to, &QTestObject::intSlot);
-  dump_exec(
-    mlo.intSig(42);
-    mlo.intSig(43);
-  );
+  {
+    std::println("======= lambda style connection =======");
+    qt::connection_guard con = QObject::connect(&mlo, &ml_object::intSig, &to, &QTestObject::intSlot);
+    dump_exec(mlo.intSig(42); mlo.intSig(43); mlo.intSig(444, 555););
+  }
+  {
+    std::println("===== old school style connection (2 args) [MLO -> TO] =====");
+    qt::connection_guard con = QObject::connect(&mlo, SIGNAL(intSig(int, int)), &to, SLOT(intSlot(int, int)));
+    dump_exec(mlo.intSig(42));
+    dump_exec(mlo.intSig(43));
+  }
+  {
+    std::println("===== old school style connection (1 arg) [MLO -> TO] =====");
+    qt::connection_guard con = QObject::connect(&mlo, SIGNAL(intSig(int)), &to, SLOT(intSlot(int)));
+    dump_exec(mlo.intSig(42));
+    dump_exec(mlo.intSig(43));
+  }
+  {
+    std::println("===== old school style connection (2 args) [TO -> MLO] =====");
+    qt::connection_guard con = QObject::connect(&to, SIGNAL(intSig(int, int)), &mlo, SLOT(intSlot(int, int)));
+    dump_exec(to.intSig(42));
+    dump_exec(to.intSig(43));
+  }
+  {
+    std::println("===== old school style connection (1 args) [TO -> MLO] =====");
+    qt::connection_guard con = QObject::connect(&to, SIGNAL(intSig(int)), &mlo, SLOT(intSlot(int)));
+    dump_exec(to.intSig(42));
+    dump_exec(to.intSig(43));
+  }
+  // mlo.intSig(); // Missing required signal argument(s)
+  // mlo.intSig(1, 2, 3); // Too much argument(s)
 
   QObject::connect(&to, &QTestObject::emptySig, &mlo, &ml_object::emptySlot);
   dump_exec(to.emptySig());

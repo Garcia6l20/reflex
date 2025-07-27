@@ -7,7 +7,7 @@
 
 namespace reflex::qt
 {
-inline void dump(auto& object)
+inline decltype(auto) dump(auto& object)
 {
   const QMetaObject* metaObject = object.metaObject();
 
@@ -49,9 +49,11 @@ inline void dump(auto& object)
     QMetaProperty property = metaObject->property(i);
     qDebug() << " 🏷️    Property:" << property.name() << "-" << property.typeName();
   }
+  return object;
 }
-inline void dump(auto* object)
+inline auto dump(auto* object)
 {
   dump(*object);
+  return object;
 }
 } // namespace reflex::qt

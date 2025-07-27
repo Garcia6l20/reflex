@@ -24,23 +24,77 @@ template <typename Super, typename ParentT = QObject> struct object;
 namespace detail
 {
 
+template <typename T> struct defaulted
+{
+  using type = T;
+};
+
+template <typename T> struct drop_defaulted_fn
+{
+  using type = T;
+};
+
+template <typename T> struct drop_defaulted_fn<defaulted<T>>
+{
+  using type = T;
+};
+
 template <typename ObjectT, typename... Args> struct signal_decl
 {
-  ObjectT* p_ = nullptr;
-
-  template <typename... VArgs> inline void operator()(VArgs&&... args)
-  {
-    assert(p_ != nullptr); // you should declare your signal like this: signal_decl<...> mySignal{this};
-    p_->trigger(this, std::forward<VArgs>(args)...);
-  }
-
 private:
   // template <typename Super, typename ParentT> struct object;
   friend struct object<ObjectT, typename ObjectT::parent_type>;
 
   // for signature resolution
-  inline void fn(Args...)
+  inline void fn(typename drop_defaulted_fn<Args>::type...)
   {
+  }
+
+  using default_tuple_type = [:substitute(
+                                   ^^std::tuple,
+                                   std::vector<meta::info>{
+                                       ^^Args...} |
+                                       std::views::filter(
+                                           [](auto R)
+                                           { return has_template_arguments(R) and template_of(R) == ^^defaulted; }) |
+                                       std::views::transform([](auto R) { return template_arguments_of(R)[0]; })):];
+
+  const default_tuple_type defaults_;
+  static constexpr auto    defaulted_args_count_ = std::tuple_size_v<default_tuple_type>;
+
+  ObjectT* p_ = nullptr;
+
+public:
+  template <typename... VArgs>
+    requires((sizeof...(VArgs) >= defaulted_args_count_)      // Missing default argument(s)
+             and (sizeof...(VArgs) <= defaulted_args_count_)) // Too much default argument(s)
+  signal_decl(ObjectT* parent, VArgs... defaults) noexcept : p_{parent}, defaults_{defaults...}
+  {
+  }
+
+  template <typename... VArgs>
+    requires((sizeof...(VArgs) <= sizeof...(Args))                          // Too much argument(s)
+             and                                                            //
+             (sizeof...(VArgs) >= sizeof...(Args) - defaulted_args_count_)) // Missing required argument(s)
+  inline void operator()(VArgs&&... args)
+  {
+    assert(p_ != nullptr); // you should declare your signal like this: signal_decl<...> mySignal{this};
+
+    auto get_arg = [&]<size_t I>
+    {
+      if constexpr(I >= sizeof...(VArgs))
+      {
+        constexpr auto default_arg_index = sizeof...(VArgs) - I;
+        return std::get<default_arg_index>(defaults_);
+      }
+      else
+      {
+        return std::forward<decltype(args...[I])>(args...[I]);
+      }
+    };
+    std::apply([this](auto&&... args) { p_->trigger(this, std::forward<decltype(args)>(args)...); },
+               [&]<size_t... I>(std::index_sequence<I...>)
+               { return std::make_tuple(get_arg.template operator()<I>()...); }(std::index_sequence_for<Args...>()));
   }
 };
 
@@ -88,6 +142,7 @@ public:
   template <typename ObjectT, typename... Args> friend struct detail::signal_decl;
 
   template <typename... Args> using signal = detail::signal_decl<Super, Args...>;
+  template <typename T> using defaulted    = detail::defaulted<T>;
 
   static constexpr detail::slot        slot;
   static constexpr detail::invocable   invocable;
@@ -99,54 +154,64 @@ public:
   template <meta::info of> static constexpr detail::setter_of<of>            setter_of;
 
 public:
-  static consteval auto __signals()
+  template <typename Tag>
+  static constexpr auto __signals = [] consteval
   {
     return define_static_array(                                               //
         nonstatic_data_members_of(^^Super, meta::access_context::unchecked()) //
         | std::views::filter(
               [&](auto M)
               { return has_template_arguments(type_of(M)) and template_of(type_of(M)) == ^^detail::signal_decl; }));
-  }
+  }();
 
-  static consteval auto __slots()
+  template <typename Tag>
+  static constexpr auto __slots = [] consteval
   {
     return define_static_array(                        //
         meta::member_functions_annotated_with(^^Super, //
                                               ^^detail::slot,
                                               meta::access_context::unchecked()));
-  }
+  }();
 
-  static consteval auto __invocables()
+  template <typename Tag>
+  static constexpr auto __invocables = [] consteval
   {
     return define_static_array(                        //
         meta::member_functions_annotated_with(^^Super, //
                                               ^^detail::invocable,
                                               meta::access_context::unchecked()));
-  }
+  }();
 
-  static consteval auto __properties()
+  template <typename Tag>
+  static constexpr auto __properties = [] consteval
   {
     return define_static_array(                              //
         meta::nonstatic_data_members_annotated_with(^^Super, //
                                                     ^^detail::property,
                                                     meta::access_context::unchecked()));
-  }
+  }();
 
-  static consteval auto __timer_events()
+  template <typename Tag>
+  static constexpr auto __timer_events = [] consteval
   {
     return define_static_array(                        //
         meta::member_functions_annotated_with(^^Super, //
                                               ^^detail::timer_event,
                                               meta::access_context::unchecked()));
-  }
+  }();
 
-  static consteval auto __custom_types()
+  template <typename Tag>
+  static constexpr auto __custom_types = [] consteval
   {
     std::vector<meta::info> types;
 
     auto try_push = [&types](auto R)
     {
-      auto T   = decay(R);
+      auto T = decay(R);
+      if(has_template_arguments(T) and template_of(T) == ^^detail::defaulted)
+      {
+        T = decay(template_arguments_of(T)[0]);
+      }
       auto tid = detail::static_meta_type_id_of(T);
       if(tid == detail::custom_type and not std::ranges::contains(types, T))
       {
@@ -154,7 +219,7 @@ public:
       }
     };
 
-    for(auto R : __signals())
+    for(auto R : __signals<Tag>)
     {
       for(auto A : template_arguments_of(type_of(R)) | std::views::drop(1)) // first arg is ^^Super
       {
@@ -162,12 +227,12 @@ public:
       }
     }
 
-    for(auto R : __properties())
+    for(auto R : __properties<Tag>)
     {
       try_push(type_of(R));
     }
 
-    for(auto R : __slots())
+    for(auto R : __slots<Tag>)
     {
       for(auto P : parameters_of(R))
       {
@@ -175,7 +240,7 @@ public:
       }
     }
 
-    for(auto R : __invocables())
+    for(auto R : __invocables<Tag>)
     {
       for(auto P : parameters_of(R))
       {
@@ -185,157 +250,58 @@ public:
     }
 
     return define_static_array(types);
-  }
+  }();
 
-  template <typename... Strings> struct introspection_data
+  template <typename Tag>
+  static constexpr auto __strings = [] consteval
   {
-    std::tuple<Strings...> strings;
+    std::vector<meta::info> strings;
 
-    const size_t signals_offset;
-    const size_t slots_offset;
-    const size_t invocables_offset;
-    const size_t properties_offset;
-    const size_t custom_types_offset;
+    strings.push_back(meta::static_identifier_wrapper_type_of<^^Super>());
+    strings.push_back(^^meta::static_string_wrapper<>); // add an empty entry
 
-    constexpr auto size() const
+    template for(constexpr auto s : __signals<Tag>)
     {
-      return sizeof...(Strings);
+      strings.push_back(meta::static_identifier_wrapper_type_of<s>());
     }
 
-    template <meta::info R> consteval size_t custom_type_offset_of() const
+    template for(constexpr auto p : __properties<Tag>)
     {
-      constexpr auto id = []
-      {
-        if(has_identifier(R))
-        {
-          return identifier_of(R);
-        }
-        else if(is_type(R))
-        {
-          return display_string_of(remove_const(remove_reference(R)));
-        }
-        std::unreachable();
-      }();
-      template for(constexpr auto ii : std::views::iota(size_t(0), sizeof...(Strings)))
-      {
-        if(ii >= custom_types_offset)
-        {
-          // using std::ranges::equal;
-          // using std::views::filter;
-          // auto no_white_space = id | filter([](auto c) { return c != ' '; });
-          // if(equal(no_white_space, std::get<ii>(strings).view()))
-          if (id == std::get<ii>(strings).view())
-          {
-            return ii;
-          }
-        }
-      }
-      std::unreachable();
+      constexpr auto id = meta::static_identifier_wrapper_of<p>().template with_suffix<"Changed">();
+      strings.push_back(type_of(^^id));
     }
 
-    template <size_t index> consteval auto string_view_at() const
+    template for(constexpr auto s : __slots<Tag>)
     {
-      return std::get<index>(strings).view();
-    }
-  };
-
-  static consteval auto __get_strings()
-  {
-    struct __strings
-    {
-      std::vector<std::string> strings;
-
-      size_t signals_offset;
-      size_t slots_offset;
-      size_t invocables_offset;
-      size_t properties_offset;
-      size_t custom_types_offset;
-    };
-    __strings data;
-
-    data.strings.push_back(std::string{identifier_of(^^Super)});
-    data.strings.push_back(""); // add an empty entry
-
-    data.signals_offset = data.strings.size();
-
-    template for(constexpr auto s : __signals())
-    {
-      data.strings.push_back(std::string{identifier_of(s)});
+      strings.push_back(meta::static_identifier_wrapper_type_of<s>());
     }
 
-    template for(constexpr auto p : __properties())
+    template for(constexpr auto i : __invocables<Tag>)
     {
-      data.strings.push_back(std::string{identifier_of(p)} + "Changed");
+      strings.push_back(meta::static_identifier_wrapper_type_of<i>());
     }
 
-    data.slots_offset = data.strings.size();
-
-    template for(constexpr auto s : __slots())
+    template for(constexpr auto p : __properties<Tag>)
     {
-      data.strings.push_back(std::string{identifier_of(s)});
+      strings.push_back(meta::static_identifier_wrapper_type_of<p>());
     }
 
-    data.invocables_offset = data.strings.size();
-
-    template for(constexpr auto i : __invocables())
-    {
-      data.strings.push_back(std::string{identifier_of(i)});
-    }
-
-    data.properties_offset = data.strings.size();
-
-    template for(constexpr auto p : __properties())
-    {
-      data.strings.push_back(std::string{identifier_of(p)});
-    }
-
-    data.custom_types_offset = data.strings.size();
-
-    template for(constexpr auto t : __custom_types())
+    template for(constexpr auto t : __custom_types<Tag>)
     {
       // std::string id{display_string_of(t)};
       // std::erase(id, ' ');
-      // data.strings.push_back(std::move(id));
-      data.strings.push_back(std::string{display_string_of(t)});
+      // strings.push_back(std::move(id));
+      strings.push_back(meta::static_identifier_wrapper_type_of<t>());
     }
-    return data;
-  }
-  static consteval auto __make_strings_tuple_type()
-  {
-    std::vector<meta::info> members;
-    for(auto s : __get_strings().strings)
-    {
-      members.push_back(substitute(^^fixed_string,
-                                   {
-                                       meta::reflect_constant(s.size())}));
-    }
-    return substitute(^^std::tuple, members);
-  }
+    return define_static_array(strings);
+  }();
 
-  static consteval auto __introspection_data()
-  {
-    auto           data              = __get_strings();
-    constexpr auto string_tuple_type = __make_strings_tuple_type();
-    using StringTupleT               = [:string_tuple_type:];
-    return [&]<size_t... I>(std::index_sequence<I...>)
-    {
-      return introspection_data<std::tuple_element_t<I, StringTupleT>...>{
-          .strings             = StringTupleT{std::tuple_element_t<I, StringTupleT>{data.strings[I].data()}...},
-          .signals_offset      = data.signals_offset,
-          .slots_offset        = data.slots_offset,
-          .invocables_offset   = data.invocables_offset,
-          .properties_offset   = data.properties_offset,
-          .custom_types_offset = data.custom_types_offset,
-      };
-    }(std::make_index_sequence<std::tuple_size_v<StringTupleT>>());
-  }
-
-  static consteval auto __make_object_data()
+  template <typename Tag> static consteval auto __make_object_data()
   {
     struct object_data;
     consteval
     {
-      constexpr auto timer_events = __timer_events();
+      constexpr auto timer_events = __timer_events<Tag>;
       define_aggregate(^^object_data,
                        {
                            data_member_spec(^^int[timer_events.size()],
@@ -344,17 +310,18 @@ public:
                        });
     };
     object_data data{};
-    if constexpr(not __timer_events().empty())
+    if constexpr(not __timer_events<Tag>.empty())
     {
       std::ranges::fill(data.timer_events, -1);
     }
     return data;
   }
-  std::any object_data_ = __make_object_data();
+
+  std::any object_data_ = __make_object_data<tag>();
 
   template <typename Self> decltype(auto) __get_object_data(this Self& self)
   {
-    using object_data_type = decltype(__make_object_data());
+    using object_data_type = decltype(__make_object_data<tag>());
     return std::any_cast<const_like_t<Self, object_data_type&>>(self.object_data_);
   }
 
@@ -364,35 +331,50 @@ public:
 
   template <meta::info Signal, typename... Args> auto trigger(Args... args)
   {
-    constexpr auto sigs = __signals();
-
-    template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
+    using std::views::iota;
+    size_t local_signal_index = 0;
+    template for(constexpr auto ii : std::views::iota(size_t(0), __signals<tag>.size()))
     {
-      constexpr auto s = sigs[ii];
+      constexpr auto s     = __signals<tag>[ii];
+      using CurrentSignalT = [:type_of(s):];
+
       if constexpr(s == Signal)
       {
-        QMetaObject::activate<void>(this, &staticMetaObject, ii, nullptr, std::forward<Args>(args)...);
+        static_cast<Super*>(this)->[:s:](std::forward<Args>(args)...);
+        return;
       }
+      local_signal_index += CurrentSignalT::defaulted_args_count_ + 1;
     }
   }
 
   template <typename... Args, typename... VArgs> auto trigger(signal<Args...>* sig, VArgs&&... args)
   {
-    constexpr auto sigs                 = __signals();
+    using std::views::iota;
     constexpr auto expected_signal_type = dealias(^^signal<Args...>);
 
     auto& self = *static_cast<Super*>(this);
 
-    template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
+    size_t local_signal_index = 0;
+    template for(constexpr auto ii : iota(size_t(0), __signals<tag>.size()))
     {
-      constexpr auto s = sigs[ii];
+      constexpr auto s     = __signals<tag>[ii];
+      using CurrentSignalT = [:type_of(s):];
       if constexpr(dealias(decay(type_of(s))) == expected_signal_type)
       {
         if(&self.[:s:] == sig)
         {
-          QMetaObject::activate<void>(this, &staticMetaObject, ii, nullptr, std::forward<VArgs>(args)...);
+          for(auto jj : iota(size_t(0), signal<Args...>::defaulted_args_count_ + 1))
+          {
+            QMetaObject::activate<void>(this,
+                                        &staticMetaObject,
+                                        local_signal_index + jj,
+                                        nullptr,
+                                        std::forward<VArgs>(args)...);
+          }
+          return;
         }
       }
+      local_signal_index += CurrentSignalT::defaulted_args_count_ + 1;
     }
   }
 
@@ -400,25 +382,24 @@ public:
   Q_OBJECT_NO_OVERRIDE_WARNING
   QT_TR_FUNCTIONS
 private:
-  template <typename> static constexpr auto qt_create_metaobjectdata()
+  template <typename Tag> static constexpr auto make_data()
   {
-    namespace QMC              = QtMocConstants;
-    static constexpr auto data = __introspection_data();
+    return __introspection_data<Tag>();
+  }
+  template <typename MetaObjectTagType>
+  static constexpr inline auto qt_introspectionData = make_data<MetaObjectTagType>();
+
+  template <typename Tag> static constexpr auto qt_create_metaobjectdata()
+  {
+    namespace QMC = QtMocConstants;
 
     auto qt_stringData = [&] constexpr
     {
       return [&]<std::size_t... I>(std::index_sequence<I...>)
-      {
-        return QtMocHelpers::StringRefStorage{std::get<I>(data.strings).data...};
-      }(std::make_index_sequence<data.size()>());
+      { return QtMocHelpers::StringRefStorage{[:__strings<Tag>[I]:] ::data...}; }(std::make_index_sequence<__strings<Tag>.size()>());
     }();
 
-    size_t strings_index = data.signals_offset;
-
-    constexpr auto sigs   = __signals();
-    constexpr auto invocs = __invocables();
-    constexpr auto slts   = __slots();
-    constexpr auto props  = __properties();
+    size_t strings_index = 2;
 
     auto qt_methods = [&] constexpr
     {
@@ -432,20 +413,29 @@ private:
           }
           else
           {
-            using FnT = [:type_of(Fn):];
-            return ^^FnT::fn;
+            using SignalT = [:type_of(Fn):];
+            return ^^SignalT::fn;
+          }
+        }();
+        constexpr auto func_type = []
+        {
+          if constexpr(is_function(Fn))
+          {
+            return Fn;
+          }
+          else
+          {
+            return type_of(Fn);
           }
         }();
         constexpr auto method_type = type_of(method);
-        using SignalT              = [:method_type:];
         using RetT                 = [:return_type_of(method_type):];
-        using SignatureT           = typename[:meta::signature_of<method>():];
-        using DataT                = QtMocHelpers::FunctionData<SignatureT, Type>;
 
-        auto make_parameters_data = [&] constexpr
+        constexpr auto parameters = define_static_array(parameters_of(method));
+
+        auto make_parameters_data = [&]<size_t N, typename DataT> constexpr
         {
-          constexpr auto parameters     = define_static_array(parameters_of(method));
-          auto           make_parameter = [&]<meta::info p>
+          auto make_parameter = [&]<meta::info p>
           {
             constexpr auto param_type = type_of(p);
             constexpr auto tid        = []
@@ -453,8 +443,37 @@ private:
               constexpr auto static_tid = uint(detail::static_meta_type_id_of(param_type));
               if constexpr(static_tid == uint(detail::custom_type))
               {
-                return static_tid | uint(data.template custom_type_offset_of<param_type>());
-                // return static_tid;
+                constexpr auto offset = []
+                {
+                  constexpr auto id = []
+                  {
+                    constexpr auto DR = remove_const(remove_reference(param_type));
+                    if(has_identifier(DR))
+                    {
+                      return identifier_of(DR);
+                    }
+                    else if(is_type(DR))
+                    {
+                      return display_string_of(DR);
+                    }
+                    std::unreachable();
+                  }();
+                  template for(constexpr auto ii :
+                               std::views::iota(size_t(0), __strings<Tag>.size()))
+                  {
+                    // using std::ranges::equal;
+                    // using std::views::filter;
+                    // auto no_white_space = id | filter([](auto c) { return c != ' '; });
+                    // if(equal(no_white_space, std::get<ii>(strings).view()))
+                    constexpr auto s = __strings<Tag>[ii];
+                    if(id == [:s:]::view())
+                    {
+                      return ii;
+                    }
+                  }
+                  std::unreachable();
+                }();
+                return static_tid | offset;
               }
               else
               {
@@ -469,39 +488,81 @@ private:
           return [&]<std::size_t... I>(std::index_sequence<I...>)
           {
             return typename DataT::ParametersArray{make_parameter.template operator()<parameters[I]>()...};
-          }(std::make_index_sequence<parameters.size()>());
+          }(std::make_index_sequence<N>());
         };
 
-        return DataT( //
-            /* nameIndex = */ strings_index++,
-            /* tagIndex = */ 1,
-            is_public(Fn)      ? QMC::AccessPublic
-            : is_protected(Fn) ? QMC::AccessProtected
-                               : QMC::AccessPrivate,
-            detail::static_meta_type_id_of(^^RetT),
-            make_parameters_data());
+        const auto make_data = [&, string_index = strings_index++]<size_t N>
+        {
+          constexpr auto can_invoke = [&]
+          {
+            // NOTE: is_invocable_type dont work for defaulted function arguments (but works for callable types [ie.:
+            // signal_decl])
+            if constexpr(is_invocable_type(type_of(Fn),
+                                           parameters | std::views::take(N) | std::views::transform(meta::type_of)))
+            {
+              return true;
+            }
+            else if constexpr(is_function(Fn))
+            {
+              // as workaround we check if last argument is defaulted
+              return has_default_argument(parameters[N]);
+            }
+            else
+            {
+              return false;
+            }
+          }();
+          if constexpr(can_invoke)
+          {
+            using SignatureT = typename[:meta::signature_of<method, N>():];
+            using DataT      = QtMocHelpers::FunctionData<SignatureT, Type>;
+
+            uint flags = is_public(Fn)      ? QMC::AccessPublic
+                         : is_protected(Fn) ? QMC::AccessProtected
+                                            : QMC::AccessPrivate;
+            if constexpr(N < parameters.size())
+            {
+              flags = flags | uint(QMC::MethodCloned);
+            }
+            return std::make_tuple(DataT( //
+                /* nameIndex = */ string_index,
+                /* tagIndex = */ 1,
+                flags,
+                detail::static_meta_type_id_of(^^RetT),
+                make_parameters_data.template operator()<N, DataT>()));
+          }
+          else
+          {
+            return std::tuple();
+          }
+        };
+
+        return [&]<size_t... I>(std::index_sequence<I...>)
+        {
+          return std::tuple_cat(make_data.template operator()<parameters.size() - I>()...);
+        }(std::make_index_sequence<parameters.size() + 1>());
       };
 
       const auto signals_data = [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return std::make_tuple(make_data_impl.template operator()<sigs[I], QtMocConstants::MethodSignal>()...);
-      }(std::make_index_sequence<sigs.size()>());
+        return std::tuple_cat(make_data_impl.template operator()<__signals<Tag>[I], QtMocConstants::MethodSignal>()...);
+      }(std::make_index_sequence<__signals<Tag>.size()>());
 
       const auto properties_notification_data = [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return std::make_tuple(
-            make_data_impl.template operator()<^^object::propertyChanged<props[I]>, QtMocConstants::MethodSignal>()...);
-      }(std::make_index_sequence<props.size()>());
+        return std::tuple_cat(
+            make_data_impl.template operator()<^^object::propertyChanged<__properties<Tag>[I]>, QtMocConstants::MethodSignal>()...);
+      }(std::make_index_sequence<__properties<Tag>.size()>());
 
       const auto slots_data = [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return std::make_tuple(make_data_impl.template operator()<slts[I], QtMocConstants::MethodSlot>()...);
-      }(std::make_index_sequence<slts.size()>());
+        return std::tuple_cat(make_data_impl.template operator()<__slots<Tag>[I], QtMocConstants::MethodSlot>()...);
+      }(std::make_index_sequence<__slots<Tag>.size()>());
 
       const auto invocables_data = [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return std::make_tuple(make_data_impl.template operator()<invocs[I], QtMocConstants::MethodMethod>()...);
-      }(std::make_index_sequence<invocs.size()>());
+        return std::tuple_cat(make_data_impl.template operator()<__invocables<Tag>[I], QtMocConstants::MethodMethod>()...);
+      }(std::make_index_sequence<__invocables<Tag>.size()>());
 
       return std::apply([]<typename... Args>(Args... args)
                         { return QtMocHelpers::UintData<Args...>{std::move(args)...}; },
@@ -509,8 +570,17 @@ private:
     }();
 
     size_t property_index = 0;
-    size_t notify_index   = sigs.size();
-    auto   qt_properties  = [&]
+    size_t notify_index   = [&]
+    {
+      size_t count = 0;
+      template for(constexpr auto s : __signals<Tag>)
+      {
+        using CurrentSignalT = [:type_of(s):];
+        count += CurrentSignalT::defaulted_args_count_ + 1;
+      }
+      return count;
+    }();
+    auto qt_properties = [&]
     {
       auto make_data_impl = [&]<meta::info p>() constexpr
       {
@@ -536,8 +606,8 @@ private:
 
       return [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return QtMocHelpers::UintData{make_data_impl.template operator()<props[I]>()...};
-      }(std::make_index_sequence<props.size()>());
+        return QtMocHelpers::UintData{make_data_impl.template operator()<__properties<Tag>[I]>()...};
+      }(std::make_index_sequence<__properties<Tag>.size()>());
     }();
     QtMocHelpers::UintData qt_enums{};
     return QtMocHelpers::metaObjectData<Super, tag>(QMC::MetaObjectFlag{},
@@ -546,6 +616,7 @@ private:
                                                     qt_properties,
                                                     qt_enums);
   }
+
   template <typename MetaObjectTagType>
   static constexpr inline auto qt_staticMetaObjectContent = qt_create_metaobjectdata<MetaObjectTagType>();
   template <typename MetaObjectTagType>
@@ -588,16 +659,16 @@ private:
   {
     auto* _t = static_cast<Super*>(_o);
 
-    constexpr auto sigs   = __signals();
-    constexpr auto invocs = __invocables();
-    constexpr auto slts   = __slots();
-    constexpr auto props  = __properties();
+    constexpr auto sigs   = __signals<tag>;
+    constexpr auto invocs = __invocables<tag>;
+    constexpr auto slts   = __slots<tag>;
+    constexpr auto props  = __properties<tag>;
 
     constexpr auto sig_count  = sigs.size();
     constexpr auto slts_count = slts.size();
     constexpr auto prop_count = props.size();
 
-    const auto do_invoke = []<meta::info R>(Super* self, void** args)
+    const auto do_invoke = []<meta::info R, size_t N>(Super* self, void** args)
     {
       static constexpr auto parameters = define_static_array(parameters_of(R));
       const auto            get_arg    = [&]<size_t I>
@@ -612,14 +683,14 @@ private:
       {
         [&]<size_t ...I>(std::index_sequence<I...>) {//
             self->[:R:](get_arg.template operator()<I>()...);
-            }(std::make_index_sequence<parameters.size()>());
+            }(std::make_index_sequence<N>());
       }
       else
       {
         using Ret = [:return_type:];
         Ret ret = [&]<size_t ...I>(std::index_sequence<I...>) {//
               return self->[:R:](get_arg.template operator()<I>()...);
-            }(std::make_index_sequence<parameters.size()>());
+            }(std::make_index_sequence<N>());
         if(args[0])
         {
           *reinterpret_cast<Ret*>(args[0]) = std::move(ret);
@@ -629,27 +700,35 @@ private:
 
     if(_c == QMetaObject::InvokeMetaMethod)
     {
-      template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
       {
-        if(ii == _id)
+        size_t local_signal_index = 0;
+        template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
         {
           static constexpr auto s = sigs[ii];
-          static constexpr auto parameters =
-              define_static_array(parameters_types_of<s>() | std::views::transform(meta::remove_reference));
-          const auto get_arg = []<size_t I>(void** args)
+          using CurrentSignalT    = [:type_of(s):];
+          template for(constexpr auto jj : std::views::iota(size_t(0), CurrentSignalT::defaulted_args_count_ + 1))
           {
-            constexpr auto p = parameters[I];
-            using T          = typename[:p:];
-            return *reinterpret_cast<T*>(args[I + 1]);
-          };
+            if(local_signal_index == _id)
+            {
+              static constexpr auto parameters =
+                  define_static_array(parameters_types_of<s>() | std::views::transform(meta::remove_reference));
+              const auto get_arg = []<size_t I>(void** args)
+              {
+                constexpr auto p = parameters[I];
+                using T          = typename[:p:];
+                return *reinterpret_cast<T*>(args[I + 1]);
+              };
 
-          [&]<size_t ...I>(std::index_sequence<I...>, Super* self, void**args) {//
-            self->template trigger<s>(get_arg.template operator()<I>(args)...);
-            }(std::make_index_sequence<parameters.size()>(), _t, _a);
-          return;
+              [&]<size_t ...I>(std::index_sequence<I...>, Super* self, void**args) {//
+                self->template trigger<s>(get_arg.template operator()<I>(args)...);
+              }(std::make_index_sequence<parameters.size() - jj>(), _t, _a);
+              return;
+            }
+            ++local_signal_index;
+          }
         }
+        _id -= local_signal_index;
       }
-      _id -= sig_count;
 
       template for(constexpr auto ii : std::views::iota(size_t(0), prop_count))
       {
@@ -657,29 +736,47 @@ private:
         {
           static constexpr auto p = props[ii];
           static constexpr auto s = ^^object::propertyChanged<p>;
-          do_invoke.template    operator()<s>(_t, _a);
+          do_invoke.template    operator()<s, 0>(_t, _a);
           return;
         }
       }
       _id -= prop_count;
 
-      template for(constexpr auto ii : std::views::iota(size_t(0), slts.size()))
       {
-        if(ii == _id)
+        size_t local_slot_index = 0;
+        template for(constexpr auto ii : std::views::iota(size_t(0), slts.size()))
         {
-          static constexpr auto s = slts[ii];
-          do_invoke.template    operator()<s>(_t, _a);
-          return;
+          static constexpr auto s           = slts[ii];
+          static constexpr auto parameters  = define_static_array(parameters_of(s));
+          constexpr size_t      n_overloads = 1 + std::ranges::count_if(parameters, meta::has_default_argument);
+          template for(constexpr auto jj : std::views::iota(size_t(0), n_overloads))
+          {
+            if(local_slot_index == _id)
+            {
+              do_invoke.template operator()<s, parameters.size() - jj>(_t, _a);
+              return;
+            }
+            ++local_slot_index;
+          }
         }
+        _id -= local_slot_index;
       }
-      _id -= slts_count;
-      template for(constexpr auto ii : std::views::iota(size_t(0), invocs.size()))
       {
-        if(ii == _id)
+        size_t local_invoc_index = 0;
+        template for(constexpr auto ii : std::views::iota(size_t(0), invocs.size()))
         {
-          static constexpr auto s = invocs[ii];
-          do_invoke.template    operator()<s>(_t, _a);
-          return;
+          static constexpr auto s           = invocs[ii];
+          static constexpr auto parameters  = define_static_array(parameters_of(s));
+          constexpr size_t      n_overloads = 1 + std::ranges::count_if(parameters, meta::has_default_argument);
+          template for(constexpr auto jj : std::views::iota(size_t(0), n_overloads))
+          {
+            if(local_invoc_index == _id)
+            {
+              do_invoke.template operator()<s, parameters.size() - jj>(_t, _a);
+              return;
+            }
+            ++local_invoc_index;
+          }
         }
       }
     }
@@ -687,7 +784,7 @@ private:
     {
       const auto     arg_num      = *reinterpret_cast<int*>(_a[1]);
       auto*          result       = reinterpret_cast<QMetaType*>(_a[0]);
-      constexpr auto custom_types = __custom_types();
+      constexpr auto custom_types = __custom_types<tag>;
 
       template for(constexpr auto ii : std::views::iota(size_t(0), sig_count))
       {
@@ -815,10 +912,27 @@ public:
 
   int qt_metacall(QMetaObject::Call _c, int _id, void** _a) override
   {
-    static constexpr auto sigs              = __signals();
-    static constexpr auto slts              = __slots();
-    static constexpr auto invoks            = __invocables();
-    static constexpr auto signal_slot_count = sigs.size() + slts.size() + invoks.size();
+    static constexpr auto  signal_slot_count = [&]
+    {
+      size_t count = 0;
+      template for(constexpr auto s : __signals<tag>)
+      {
+        using CurrentSignalT = [:type_of(s):];
+        count += CurrentSignalT::defaulted_args_count_ + 1;
+      }
+      count += __properties<tag>.size(); // no args for property notifiers
+      template for(constexpr auto s : __slots<tag>)
+      {
+        constexpr size_t n_overloads = 1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
+        count += n_overloads;
+      }
+      template for(constexpr auto s : __invocables<tag>)
+      {
+        constexpr size_t n_overloads = 1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
+        count += n_overloads;
+      }
+      return count;
+    }();
 
     _id = QObject::qt_metacall(_c, _id, _a);
     if(_id < 0)
@@ -851,7 +965,7 @@ public:
   template <meta::info Property> auto property(this auto& self)
   {
     using std::ranges::contains;
-    static constexpr auto props = __properties();
+    static constexpr auto props = __properties<tag>;
     if constexpr(contains(props, Property))
     {
       static constexpr auto getter = meta::first_member_function_annotated_with(^^Super, //
@@ -885,7 +999,7 @@ public:
   template <meta::info Property, typename T> void setProperty(this auto& self, T&& value)
   {
     using std::ranges::find;
-    static constexpr auto props = __properties();
+    static constexpr auto props = __properties<tag>;
     static constexpr auto it    = find(props, Property);
     if constexpr(it != end(props))
     {
@@ -914,11 +1028,18 @@ public:
         self.[:listener:]();
       }
 
-      static constexpr auto relative_offset   = std::distance(begin(props), it);
-      static constexpr auto sigs              = __signals();
-      static constexpr auto slts              = __slots();
-      static constexpr auto signal_slot_count = sigs.size() /* + slts.size() */;
-      QMetaObject::activate<void>(&self, &staticMetaObject, signal_slot_count + relative_offset, nullptr);
+      static constexpr auto relative_offset         = std::distance(begin(props), it);
+      static constexpr auto notifier_signals_offset = [&]
+      {
+        size_t count = 0;
+        template for(constexpr auto s : __signals<tag>)
+        {
+          using CurrentSignalT = [:type_of(s):];
+          count += CurrentSignalT::defaulted_args_count_ + 1;
+        }
+        return count;
+      }();
+      QMetaObject::activate<void>(&self, &staticMetaObject, notifier_signals_offset + relative_offset, nullptr);
     }
     else
     {
@@ -949,10 +1070,8 @@ public:
 
   template <meta::info Event> void startTimer(int periodMs)
   {
-    using object_data_type = decltype(__make_object_data());
-
     using std::ranges::find;
-    static constexpr auto events = __timer_events();
+    static constexpr auto events = __timer_events<tag>;
     static constexpr auto it     = find(events, Event);
     if constexpr(it != end(events))
     {
@@ -978,7 +1097,7 @@ public:
   template <meta::info Event> void killTimer()
   {
     using std::ranges::find;
-    static constexpr auto events = __timer_events();
+    static constexpr auto events = __timer_events<tag>;
     static constexpr auto it     = find(events, Event);
     if constexpr(it != end(events))
     {
@@ -1003,7 +1122,7 @@ public:
 protected:
   void timerEvent(QTimerEvent* e) override
   {
-    static constexpr auto events = __timer_events();
+    static constexpr auto events = __timer_events<tag>;
     if constexpr(not events.empty())
     {
       auto& data = __get_object_data();
@@ -1048,9 +1167,10 @@ template <typename ObjectT, typename... Args>
 struct FunctionPointer<reflex::qt::detail::signal_decl<ObjectT, Args...> ObjectT::*>
 {
   using Object     = ObjectT;
-  using Arguments  = List<Args...>;
+  using Arguments  = List<typename reflex::qt::detail::drop_defaulted_fn<Args>::type...>;
   using ReturnType = void;
-  typedef ReturnType (reflex::qt::detail::signal_decl<ObjectT, Args...>::*Function)(Args...);
+  typedef ReturnType (reflex::qt::detail::signal_decl<ObjectT, Args...>::*Function)(
+      typename reflex::qt::detail::drop_defaulted_fn<Args>::type...);
   enum
   {
     ArgumentCount             = sizeof...(Args),
