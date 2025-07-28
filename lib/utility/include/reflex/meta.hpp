@@ -152,8 +152,7 @@ template <typename Ret, typename... Args> struct signature_wrapper
   template <typename Class> using method_type = Ret (Class::*)(Args...);
 };
 
-template <size_t N = size_t(-1)>
-consteval auto signature_of(meta::info R)
+template <size_t N = size_t(-1)> consteval auto signature_of(meta::info R)
 {
   std::vector sig{return_type_of(R)};
   sig.append_range(parameters_of(R) | std::views::transform(meta::type_of) | std::views::take(N));
@@ -208,6 +207,18 @@ template <auto... chars> struct static_string_wrapper
   {
     return [&]<size_t... I>(std::index_sequence<I...>)
     { return static_string_wrapper<chars..., suffix[I]...>{}; }(std::make_index_sequence<suffix.size() - 1>());
+  }
+  template <auto filter> static constexpr auto remove_if()
+  {
+    constexpr auto result_type = [] consteval
+    {
+      return substitute(template_of(^^static_string_wrapper),
+                        view()                           //
+                            | std::views::filter(filter) //
+                            | std::views::transform([](char c) { return reflect_constant(c); }));
+    }();
+    using ResultT = [:result_type:];
+    return ResultT{};
   }
 
   static constexpr fixed_string<size() + 1> to_fixed()

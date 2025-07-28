@@ -288,10 +288,8 @@ public:
 
     template for(constexpr auto t : __custom_types<Tag>)
     {
-      // std::string id{display_string_of(t)};
-      // std::erase(id, ' ');
-      // strings.push_back(std::move(id));
-      strings.push_back(meta::static_identifier_wrapper_type_of<t>());
+      constexpr auto id = meta::static_identifier_wrapper_of<t>().template remove_if<[](auto c) { return c == ' '; }>();
+      strings.push_back(type_of(^^id));
     }
     return define_static_array(strings);
   }();
@@ -448,25 +446,13 @@ private:
                   constexpr auto id = []
                   {
                     constexpr auto DR = remove_const(remove_reference(param_type));
-                    if(has_identifier(DR))
-                    {
-                      return identifier_of(DR);
-                    }
-                    else if(is_type(DR))
-                    {
-                      return display_string_of(DR);
-                    }
-                    std::unreachable();
+                    return meta::static_identifier_wrapper_of<DR>().template remove_if<[](auto c) { return c == ' '; }>();
                   }();
                   template for(constexpr auto ii :
                                std::views::iota(size_t(0), __strings<Tag>.size()))
                   {
-                    // using std::ranges::equal;
-                    // using std::views::filter;
-                    // auto no_white_space = id | filter([](auto c) { return c != ' '; });
-                    // if(equal(no_white_space, std::get<ii>(strings).view()))
                     constexpr auto s = __strings<Tag>[ii];
-                    if(id == [:s:]::view())
+                    if(id.view() == [:s:]::view())
                     {
                       return ii;
                     }

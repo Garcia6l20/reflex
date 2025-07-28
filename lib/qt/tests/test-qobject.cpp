@@ -44,7 +44,7 @@ struct ml_object : qt::object<ml_object>
   {
   }
 
-  [[= invocable]] bool sayTheTruth(bool lie = false) // TODO handle defaulted arguments
+  [[= invocable]] bool sayTheTruth(bool lie = false)
   {
     std::println("ml_object: I'm{}lying !", lie ? " " : " not ");
     return lie;
@@ -183,7 +183,7 @@ int main(int argc, char** argv)
   QMetaObject::invokeMethod(&to, "intSlot", Q_ARG(int, 55));
   QMetaObject::invokeMethod(&mlo, "intSlot", Q_ARG(int, 55));
   bool truth = false;
-  QMetaObject::invokeMethod(&mlo, "sayTheTruth", Q_RETURN_ARG(bool, truth)); // TODO handle default args
+  QMetaObject::invokeMethod(&mlo, "sayTheTruth", Q_RETURN_ARG(bool, truth));
   QMetaObject::invokeMethod(&mlo, "sayTheTruth", Q_RETURN_ARG(bool, truth), Q_ARG(bool, true));
   QMetaObject::invokeMethod(&mlo, "sayTheTruth", Q_RETURN_ARG(bool, truth), Q_ARG(bool, false));
 
