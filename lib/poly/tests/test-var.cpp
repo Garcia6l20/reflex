@@ -13,8 +13,9 @@ TEST_CASE("basic")
   var_t c;
   REQUIRE(not c.has_value());
   STATIC_REQUIRE(c.can_hold<int, bool>());
-  STATIC_REQUIRE(c.index_of<int>() == 0);
-  STATIC_REQUIRE(c.index_of<bool>() == 1);
+  STATIC_REQUIRE(c.index_of<none_t>() == 0);
+  STATIC_REQUIRE(c.index_of<int>() == 1);
+  STATIC_REQUIRE(c.index_of<bool>() == 2);
   STATIC_REQUIRE(c.index_of<double>() == -1);
   c = 42;
   REQUIRE(c.has_value());
@@ -30,8 +31,7 @@ TEST_CASE("basic")
   }
   SECTION("string value")
   {
-    using namespace std::string_literals;
-    c = "hello"s;
+    c = "hello";
     REQUIRE(c.has_value());
     REQUIRE(c.has_value<std::string>());
     std::println("{}", c);
@@ -89,6 +89,37 @@ TEST_CASE("basic")
   // }
 }
 
+TEST_CASE("string")
+{
+  using var_t = var<int, bool, std::string>;
+  STATIC_REQUIRE(not meta::has_explicit_constructor(^^int,
+                                                    {
+                                                        ^^const char* }));
+  STATIC_REQUIRE(not meta::has_explicit_constructor(^^bool,
+                                                    {
+                                                        ^^const char* }));
+  STATIC_REQUIRE(meta::has_explicit_constructor(^^std::string,
+                                                {
+                                                    ^^const char* }));
+
+  STATIC_REQUIRE(not std::equality_comparable_with<int, const char*>);
+  STATIC_REQUIRE(not std::equality_comparable_with<bool, const char*>);
+  STATIC_REQUIRE(std::equality_comparable_with<std::string, const char*>);
+  STATIC_REQUIRE(var_t::equality_comparable_with<const char*>());
+  SECTION("construct")
+  {
+    var_t c{"hello constructed"};
+    std::println("{}", c);
+    REQUIRE(c == "hello constructed");
+  }
+  SECTION("assign")
+  {
+    var_t c = "hello assigned";
+    std::println("{}", c);
+    REQUIRE(c == "hello assigned");
+  }
+}
+
 template <typename T> struct lifetime_dumper
 {
   struct
@@ -122,7 +153,8 @@ template <typename T> struct lifetime_dumper
   lifetime_dumper(lifetime_dumper const& o) noexcept : lifetime_info{o.lifetime_info}
   {
     ++lifetime_info.copy_count;
-    __lifetime_info("copy-constructed from {:p} ({} copies)", static_cast<const void*>(&o), lifetime_info.copy_count);
+    __lifetime_info("copy-constructed from {:p} ({} copies)", static_cast<const void*>(&o),
+    lifetime_info.copy_count);
   }
 
   lifetime_dumper& operator=(lifetime_dumper&& o) noexcept

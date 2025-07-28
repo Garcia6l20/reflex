@@ -1,6 +1,7 @@
 #pragma once
 
 #include <reflex/meta.hpp>
+#include <reflex/none.hpp>
 #include <reflex/utility.hpp>
 
 #include <array>
@@ -129,17 +130,9 @@ private:
   static constexpr auto alternatives_ = define_static_array(
       [] consteval
       {
-        auto types_impl =
-            std::array{types...} | std::views::transform(type_implementation_of) | std::ranges::to<std::vector>();
+        auto types_impl = std::array{^^none_t, types...} | std::views::transform(type_implementation_of) |
+                          std::ranges::to<std::vector>();
         types_impl.append_range(recursive_types_);
-        // if(has_vec_)
-        // {
-        //   types_impl.push_back(type_implementation_of(config.vec_template));
-        // }
-        // if(has_map_)
-        // {
-        //   types_impl.push_back(type_implementation_of(config.map_template));
-        // }
         return types_impl;
       }());
 
@@ -163,7 +156,7 @@ private:
   }();
 
   alignas(storage_align_) std::byte storage_[storage_size_];
-  index_type current_ = -1;
+  index_type current_ = 0;
 
 public:
   using vec_t = [:vec_type_:];
@@ -171,26 +164,22 @@ public:
 
   constexpr void reset() noexcept
   {
-    if(current_ != -1)
+    index_type index = 0;
+    template for(constexpr auto R : alternatives_)
     {
-      index_type index = 0;
-      template for(constexpr auto R : alternatives_)
+      if(index == current_)
       {
-        if(index == current_)
-        {
-          using T = [:R:];
-          std::destroy_at(reinterpret_cast<T*>(storage_));
-          break;
-        }
-        ++index;
+        using T = [:R:];
+        std::destroy_at(reinterpret_cast<T*>(storage_));
+        break;
       }
+      ++index;
     }
-    current_ = -1;
   }
 
   constexpr bool has_value() noexcept
   {
-    return current_ != -1;
+    return current_ != 0;
   }
 
   static consteval bool is_equivalent_to(meta::info I, meta::info R) noexcept
@@ -232,6 +221,18 @@ public:
     return can_hold<std::decay_t<T>>();
   }
 
+  template <typename T> static constexpr bool explicitly_constructible_from() noexcept
+  {
+    template for(constexpr auto R : alternatives_)
+    {
+      if constexpr(meta::has_explicit_constructor(R, {^^T}))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
   template <typename T> static constexpr index_type index_of() noexcept
   {
     index_type index = 0;
@@ -251,12 +252,15 @@ public:
     return current_ == index_of<T>();
   }
 
-  template <template <typename ...> typename T> constexpr bool has_value() noexcept
+  template <template <typename...> typename T> constexpr bool has_value() noexcept
   {
     return current_ == index_of<typename[:type_implementation_of(^^T):]>();
   }
 
-  constexpr var_impl() = default;
+  constexpr var_impl() noexcept
+  {
+    emplace<none_t>();
+  }
 
   constexpr var_impl(var_impl&& o) noexcept
   {
@@ -288,7 +292,23 @@ public:
     requires(constructible_from<T>())
   constexpr var_impl(T&& value) noexcept
   {
-    assign(std::forward<T>(value));
+    emplace<std::decay_t<T>>(std::forward<T>(value));
+  }
+
+  template <typename T>
+    requires(not constructible_from<T>() and explicitly_constructible_from<T>())
+  constexpr var_impl(T&& value) noexcept
+  {
+    template for(constexpr auto R : alternatives_)
+    {
+      if constexpr(meta::has_explicit_constructor(R, {^^T}))
+      {
+        using U = [:R:];
+        emplace<U>(std::forward<T>(value));
+        return;
+      }
+    }
+    std::unreachable();
   }
 
   template <typename T>
@@ -424,6 +444,38 @@ public:
     return false;
   }
 
+  template <typename T> static constexpr bool equality_comparable_with() noexcept
+  {
+    constexpr auto R = dealias(decay(^^T));
+
+    template for(constexpr auto A : alternatives_)
+    {
+      using U = [:A:];
+      if constexpr(std::equality_comparable_with<U, T>)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  template <typename T>
+    requires(not constructible_from<T>() and equality_comparable_with<T>())
+  constexpr bool operator==(T&& value) const noexcept
+  {
+    constexpr auto R = dealias(decay(^^T));
+    template for(constexpr auto A : alternatives_)
+    {
+      using U = [:A:];
+      if constexpr(std::equality_comparable_with<U, T>)
+      {
+        auto* p = reinterpret_cast<const typename[:A:]*>(storage_);
+        return value == *p;
+      }
+    }
+    std::unreachable();
+  }
+
   friend constexpr bool operator==(var_impl const& self, var_impl const& other) noexcept
   {
     if(other.current_ == self.current_)
@@ -488,7 +540,20 @@ public:
     requires(has_vec_)
   decltype(auto) operator[](this Self&& self, size_t index)
   {
-    return std::forward<Self>(self).vec()[index];
+    const_like_t<Self, vec_t>* v;
+    if(not self.template has_value<vec_t>())
+    {
+      v = &self.template emplace<vec_t>();
+    }
+    else
+    {
+      v = &std::forward<Self>(self).vec();
+    }
+    if(v->size() < index + 1)
+    {
+      v->resize(index + 1);
+    }
+    return (*v)[index];
   }
 
   template <typename Self>
@@ -498,19 +563,44 @@ public:
     return std::forward<Self>(self).vec().at(index);
   }
 
+  template <typename T>
+    requires(has_vec_)
+  void push_back(T&& value)
+  {
+    vec_t* v;
+    if(not has_value<vec_t>())
+    {
+      v = &emplace<vec_t>();
+    }
+    else
+    {
+      v = &vec();
+    }
+    v->push_back(std::forward<T>(value));
+  }
+
   template <typename Self>
     requires(has_map_)
   decltype(auto) map(this Self&& self)
   {
     return std::forward<Self>(self).template get<map_t>();
   }
-  
+
   template <typename Self, typename KeyT>
     requires(has_map_)
   decltype(auto) operator[](this Self&& self, KeyT&& key)
     requires(std::constructible_from<typename map_t::key_type, KeyT>)
   {
-    return std::forward<Self>(self).map()[key];
+    const_like_t<Self, map_t>* m;
+    if(not self.template has_value<map_t>())
+    {
+      m = &self.template emplace<map_t>();
+    }
+    else
+    {
+      m = &std::forward<Self>(self).map();
+    }
+    return (*m)[key];
   }
 
   template <typename Self, typename KeyT>
@@ -551,10 +641,22 @@ struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
   enum class mode
   {
     none,
-    json
+    json,
+    pretty,
   };
 
-  mode mode_ = mode::none;
+  mode   mode_   = mode::none;
+  size_t indent_ = 0;
+
+  inline constexpr bool is_json() const noexcept
+  {
+    return mode(int(mode_) & int(mode::json)) != mode::none;
+  }
+
+  inline constexpr bool is_pretty() const noexcept
+  {
+    return mode(int(mode_) & int(mode::pretty)) != mode::none;
+  }
 
   constexpr auto parse(auto& ctx)
   {
@@ -565,19 +667,42 @@ struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
     {
       if(*it == 'j')
       {
-        mode_ = mode::json;
+        mode_ = mode(int(mode_) | int(mode::json));
+      }
+      else if(*it == 'p')
+      {
+        mode_ = mode(int(mode_) | int(mode::pretty));
+      }
+      else if(reflex::is_digit(*it))
+      {
+        if(not is_pretty())
+        {
+          mode_ = mode(int(mode_) | int(mode::pretty));
+        }
+        if(indent_ != 0)
+        {
+          throw std::format_error("Invalid format args for reflex::var: indent value has only 1 digit.");
+        }
+        indent_ = *it - '0';
       }
       else
       {
         throw std::format_error("Invalid format args for reflex::var.");
       }
       ++it;
+      if(is_pretty() and indent_ == 0)
+      {
+        indent_ = 2; // default to 2
+      }
     }
     return it;
   }
 
-  template <typename Ctx> auto format(var_type const& c, Ctx& ctx) const -> decltype(ctx.out())
+  template <typename Ctx> auto format(var_type const& c, Ctx& ctx, size_t indent = 0) const -> decltype(ctx.out())
   {
+    auto do_close_indent = [indent](auto& out) { return std::format_to(out, "\n{:{}}", "", indent); };
+    indent += indent_;
+    auto do_indent = [indent](auto& out) { return std::format_to(out, "\n{:{}}", "", indent); };
     return c.match( //
         [&]<typename T>(T const& value)
         {
@@ -588,21 +713,32 @@ struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
             using YieldedT              = [:yielded_type:];
             if constexpr(has_template_arguments(yielded_type) and template_of(yielded_type) == ^^std::pair)
             {
-              auto out   = ctx.out();
-              *out++     = '{';
+              auto out = ctx.out();
+              *out++   = '{';
+              if(is_pretty())
+              {
+                out = do_indent(out);
+              }
               bool first = true;
               for(const auto& [k, v] : value)
               {
                 if(!first) [[likely]]
                 {
                   *out++ = ',';
-                  *out++ = ' ';
+                  if(is_pretty())
+                  {
+                    out = do_indent(out);
+                  }
+                  else
+                  {
+                    *out++ = ' ';
+                  }
                 }
                 else
                 {
                   first = false;
                 }
-                if(mode_ == mode::json)
+                if(is_json())
                 {
                   out = std::format_to(ctx.out(), "\"{}\": ", k);
                 }
@@ -610,28 +746,47 @@ struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
                 {
                   out = std::format_to(ctx.out(), "{}: ", k);
                 }
-                out = this->format(v, ctx);
+                out = this->format(v, ctx, indent);
+              }
+              if(is_pretty())
+              {
+                out = do_close_indent(out);
               }
               *out++ = '}';
               return out;
             }
             else
             {
-              auto out   = ctx.out();
-              *out++     = '[';
+              auto out = ctx.out();
+              *out++   = '[';
+              if(is_pretty())
+              {
+                out = do_indent(out);
+              }
               bool first = true;
               for(const auto& v : value)
               {
                 if(!first) [[likely]]
                 {
                   *out++ = ',';
-                  *out++ = ' ';
+                  if(is_pretty())
+                  {
+                    out = do_indent(out);
+                  }
+                  else
+                  {
+                    *out++ = ' ';
+                  }
                 }
                 else
                 {
                   first = false;
                 }
-                out = this->format(v, ctx);
+                out = this->format(v, ctx, indent);
+              }
+              if(is_pretty())
+              {
+                out = do_close_indent(out);
               }
               *out++ = ']';
               return out;
@@ -643,9 +798,17 @@ struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
                            { value.data() } -> std::same_as<const char*>;
                          })
             {
-              if(mode_ == mode::json)
+              if(is_json())
               {
                 return std::format_to(ctx.out(), "\"{}\"", value);
+              }
+            }
+            else if constexpr(reflex::none_c<T>)
+            {
+              if(is_json())
+              {
+                // none is represented as null in json
+                return std::format_to(ctx.out(), "null", value);
               }
             }
             return std::format_to(ctx.out(), "{}", value);

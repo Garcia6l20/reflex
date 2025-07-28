@@ -37,7 +37,7 @@ struct string_loader<Optional>
 
   constexpr from_string_result<value_type> from_string(std::string_view sv) const
   {
-    return {string_loader<value_type>{}.from_string(sv)};
+    return string_loader<value_type>{}.from_string(sv);
   }
 };
 

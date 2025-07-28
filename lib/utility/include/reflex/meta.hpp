@@ -120,6 +120,22 @@ consteval auto first_member_function_annotated_with(info R, info A, access_conte
   }
 }
 
+consteval bool has_explicit_constructor(meta::info                        R,
+                                        std::initializer_list<meta::info> args,
+                                        meta::access_context              ctx = meta::access_context::current())
+{
+  if(not is_class_type(R))
+  {
+    return false;
+  }
+  else
+  {
+    return std::ranges::any_of(members_of(R, ctx), [&](auto M) {//
+      return is_constructor(M) and is_explicit(M) and is_constructible_type(R, args);
+    });
+  }
+}
+
 template <std::meta::info I> consteval auto fixed_identifier_of() noexcept
 {
   constexpr auto name = identifier_of(I);
