@@ -17,11 +17,22 @@ struct validation_result
   std::string          expression;
   std::string          expanded_expression;
   std::source_location location;
+  bool                 should_fail = false;
+  bool                 negated     = false;
   operator bool() const
   {
     return result;
   }
 };
+
+struct __fail_test
+{
+};
+
+consteval bool is_fail_test(meta::info R)
+{
+  return meta::has_annotation(R, ^^__fail_test);
+}
 
 struct reporter_t
 {
@@ -44,48 +55,108 @@ struct reporter_t
   int finish() const
   {
     using std::ranges::any_of;
+    using std::ranges::count_if;
     using std::views::filter;
+
+    struct counter
+    {
+      size_t fail_count    = 0;
+      size_t success_count = 0;
+
+      void failed()
+      {
+        ++fail_count;
+      }
+      void succeed()
+      {
+        ++success_count;
+      }
+      size_t total() const
+      {
+        return fail_count + success_count;
+      }
+      inline bool operator()(bool value)
+      {
+        if(value)
+        {
+          succeed();
+        }
+        else
+        {
+          failed();
+        }
+        return value;
+      }
+    };
+    counter suite_counter{};
+    counter case_counter{};
+    counter check_counter{};
+
     auto failed_suites = results //
                          | filter(
-                               [](auto const& test_cases)
+                               [&](auto const& test_cases)
                                {
-                                 return any_of(test_cases.second, [](auto const& test_case) {//
-                                   return any_of(test_case.second, [](auto const& result) { return not result; });
-                                 });
+                                 return !suite_counter(count_if(test_cases.second, [&](auto const& test_case) {//
+                                   return !case_counter(count_if(test_case.second, [&](auto const& result) { return not check_counter(result); }) == 0);
+                                 }) == 0);
                                });
 
-    size_t total_failed_case_count = 0;
-
-    if(not failed_suites.empty())
+    for(const auto& [suite, test_cases] : failed_suites)
     {
-      for(const auto& [suite, test_cases] : failed_suites)
-      {
-        std::println("❌ suite '{}' failed:", suite);
+      std::println("❌ suite '{}' failed:", suite);
 
-        auto failed_cases = test_cases //
-                            |
-                            filter([](auto const& test_case)
+      auto failed_cases = test_cases //
+                          | filter([](auto const& test_case)
                                    { return any_of(test_case.second, [](auto const& result) { return not result; }); });
-        for(const auto& [test_case, res_vec] : failed_cases)
-        {
-          std::println("  ❌ case '{}' failed:", test_case);
+      for(const auto& [test_case, res_vec] : failed_cases)
+      {
+        std::println("  ❌ case '{}' failed:", test_case);
 
-          auto failed_results = res_vec //
-                                | filter([](auto const& result) { return not result; });
-          for(const validation_result& result : failed_results)
+        auto failed_results = res_vec //
+                              | filter([](auto const& result) { return not result; });
+        for(const validation_result& result : failed_results)
+        {
+          std::println("    ❌ {}:{} {}",
+                       result.should_fail ? "fail-check succeed" : "check failed",
+                       result.negated ? " not" : "",
+                       result.expression);
+          if(result.expression != result.expanded_expression)
           {
-            std::println("    ❌ check failed: {}", result.expression);
-            if(result.expression != result.expanded_expression)
-            {
-              std::println("                  👉 {}", result.expanded_expression);
-            }
-            std::println("       {}:{}", result.location.file_name(), result.location.line());
+            std::println("                 {}👉 {} {}",
+                         result.should_fail ? "      " : "",
+                         result.negated ? " not" : "",
+                         result.expanded_expression);
           }
-          ++total_failed_case_count;
+          std::println("       {}:{}", result.location.file_name(), result.location.line());
         }
       }
     }
-    return total_failed_case_count;
+
+    std::println("{}", suite_counter.fail_count ? "❌ failed" : "✔️  success");
+
+    const auto pass_align =
+        std::ranges::max({suite_counter.success_count, case_counter.success_count, check_counter.success_count}) / 10;
+    const auto fail_align =
+        std::ranges::max({suite_counter.fail_count, case_counter.fail_count, check_counter.fail_count}) / 10;
+    const auto total_align =
+        std::ranges::max({suite_counter.total(), case_counter.total(), check_counter.total()}) / 10;
+
+    auto print_stats = [&](auto id, auto const& counter)
+    {
+      std::println(" 👉 {}: {:>{}} pass, {:>{}} failed, {:>{}} total ({}% pass)",
+                   id,
+                   counter.success_count,
+                   pass_align,
+                   counter.fail_count,
+                   fail_align,
+                   counter.total(),
+                   total_align,
+                   std::round(100 * counter.success_count / float(counter.total())));
+    };
+    print_stats("suites", suite_counter);
+    print_stats(" cases", case_counter);
+    print_stats("checks", check_counter);
+    return check_counter.fail_count;
   }
 
   std::map<std::string, std::map<std::string, std::vector<validation_result>>> results;
@@ -96,8 +167,10 @@ template <typename Expr, meta::access_context Ctx> struct validator
 {
   Expr const&                 e_;
   std::source_location const& l_;
-  mutable bool                wip_   = true;
-  const bool                  fatal_ = true;
+  mutable bool                wip_          = true;
+  const bool                  fatal_        = true;
+  bool                        negated_      = false;
+  static constexpr auto       is_fail_test_ = is_fail_test(Ctx.scope());
 
   validator(Expr const& e, bool fatal, std::source_location const& l) : e_{e}, l_{l}, fatal_{fatal}
   {
@@ -117,6 +190,12 @@ template <typename Expr, meta::access_context Ctx> struct validator
         std::abort();
       }
     }
+  }
+
+  decltype(auto) negate()
+  {
+    negated_ = !negated_;
+    return *this;
   }
 
   auto _loc_str() const
@@ -152,14 +231,23 @@ template <typename Expr, meta::access_context Ctx> struct validator
     wip_                     = false;
     validation_result result = fn(*this);
     result.location          = l_;
+    result.result            = result != is_fail_test_;
+    result.result            = result != negated_;
     if(not result)
     {
-      std::println("failed: {} [{}] ({})", result.expression, result.expanded_expression, _loc_str());
+      std::println("{}:{} {} [{}] ({})",
+                   is_fail_test_ ? "succeed" : "failed",
+                   negated_ ? " not" : "",
+                   result.expression,
+                   result.expanded_expression,
+                   _loc_str());
       if(fatal_)
       {
         std::abort();
       }
     }
+    result.should_fail = is_fail_test_;
+    result.negated     = negated_;
     reporter.template append<Ctx>(std::move(result));
     return true;
   }
@@ -247,6 +335,7 @@ template <typename Expr, meta::access_context Ctx> struct validator
         });
     return *this;
   }
+
   constexpr decltype(auto) view() const
     requires std::ranges::range<decltype(expression())>
   {
@@ -260,8 +349,22 @@ auto _ensure(Expr const& expression, bool fatal, std::source_location const& l =
   return detail::validator<Expr, Ctx>{expression, fatal, l};
 }
 
+constexpr detail::__fail_test fail_test;
+
 #define assert_that(_expression) reflex::testing::_ensure<std::meta::access_context::current()>((_expression), true)
 #define check_that(_expression)  reflex::testing::_ensure<std::meta::access_context::current()>((_expression), false)
+
+consteval auto get_suites(std::meta::info NS)
+{
+  return members_of(NS, meta::access_context::unchecked()) |
+         std::views::filter([](auto R) { return is_namespace(R) and identifier_of(R).contains("test"); });
+}
+
+consteval auto get_cases(std::meta::info NS)
+{
+  return members_of(NS, meta::access_context::unchecked()) |
+         std::views::filter([](auto R) { return is_function(R) and identifier_of(R).contains("test"); });
+}
 
 template <std::meta::info... NSs> int run_all(int argc, char** argv)
 {

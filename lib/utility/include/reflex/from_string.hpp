@@ -49,6 +49,14 @@ template <> struct string_loader<std::string_view>
   }
 };
 
+template <> struct string_loader<std::string>
+{
+  constexpr from_string_result<std::string> from_string(std::string_view s) const
+  {
+    return std::string{s};
+  }
+};
+
 template <typename T> auto from_string(std::string_view s) noexcept
 {
   return string_loader<T>{}.from_string(s);

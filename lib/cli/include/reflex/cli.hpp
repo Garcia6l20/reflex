@@ -144,9 +144,13 @@ namespace _flags
 struct count
 {
 };
+struct default_
+{
+};
 } // namespace _flags
 
-constexpr _flags::count _count;
+constexpr _flags::count    _count;
+constexpr _flags::default_ _default;
 
 template <meta::info I, meta::info M> consteval auto flags_of()
 {
@@ -497,7 +501,7 @@ std::optional<int> process_cmdline(std::string_view program, auto it, auto end, 
             {
               it              = std::next(it);
               auto value_view = std::string_view{*it};
-              target          = from_string<T>(view);
+              target          = from_string<T>(value_view).value();
             }
           }
 
@@ -597,13 +601,25 @@ std::optional<int> process_cmdline(std::string_view program, auto it, auto end, 
     }
   }
 
+  if constexpr(not commands.empty())
+  {
+    template for(constexpr auto mem : commands)
+    {
+      if constexpr(detail::has_flag<I, mem, ^^_default>())
+      {
+        return on_command.template operator()<mem>(it, end);
+      }
+    }
+  }
+
   return std::nullopt;
 }
 } // namespace detail
 
 template <fixed_string... Specs> constexpr detail::specs<Specs...> specs;
 
-constexpr auto _count = detail::_count;
+constexpr auto _count   = detail::_count;
+constexpr auto _default = detail::_default;
 
 class command
 {
@@ -641,11 +657,11 @@ public:
         {
           constexpr auto type = type_of(mem);
           using T             = [:type:];
-          auto view           = std::string_view(*it);
+          auto view           = std::string_view(it != end ? *it : "");
 
           if constexpr(is_function(mem))
           {
-            if(std::ranges::find_if(std::next(it), end, [](auto it) { return it == "-h" or it == "--help"; }) != end)
+            if(it != end and std::ranges::find_if(std::next(it), end, [](auto it) { return it == "-h" or it == "--help"; }) != end)
             {
               detail::usage_of<mem>(std::format("{} {}", program, view));
               return 0;
@@ -655,7 +671,7 @@ public:
               return detail::invoke<mem>([&self]<typename... Args>(Args&&... args)
                                          { return self.[:mem:](std::forward<Args>(args)...); },
                                          std::format("{} {}", program, view),
-                                         std::next(it),
+                                         it != end ? std::next(it) : it,
                                          end);
             }
           }
@@ -676,7 +692,8 @@ public:
     }
     else
     {
-      return 0;
+      std::println("Error: missing subcommand");
+      return -1;
     }
   }
 

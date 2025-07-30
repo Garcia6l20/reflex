@@ -1,8 +1,5 @@
 link_libraries(reflex.testing)
 
-include(CPM)
-CPMAddPackage("gh:catchorg/Catch2@3.4.0")
-
-link_libraries(reflex.cli Catch2::Catch2)
-include_directories(${CMAKE_BINARY_DIR}/_deps/catch2-src/src/catch2/internal)
+include(ReflexTesting)
 add_executable(test-testcase test-testcase.cpp)
+reflex_discover_tests(test-testcase)

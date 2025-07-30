@@ -159,23 +159,15 @@ template <typename Object> constexpr auto make_named_tuple(Object const& obj)
 
   named_tuple<tuple_t> tup;
 
-  if(std::is_constant_evaluated())
+  constexpr auto ctx         = meta::access_context::current();
+  constexpr auto obj_members = define_static_array(nonstatic_data_members_of(^^Object, ctx));
+  constexpr auto tup_members = define_static_array(nonstatic_data_members_of(^^tuple_t, ctx));
+  static_assert(obj_members.size() == tup_members.size());
+  template for(constexpr auto ii : std::views::iota(std::size_t(0), obj_members.size()))
   {
-    constexpr auto ctx         = meta::access_context::current();
-    constexpr auto obj_members = define_static_array(nonstatic_data_members_of(^^Object, ctx));
-    constexpr auto tup_members = define_static_array(nonstatic_data_members_of(^^tuple_t, ctx));
-    static_assert(obj_members.size() == tup_members.size());
-    template for(constexpr auto ii : std::views::iota(std::size_t(0), obj_members.size()))
-    {
-      constexpr auto t_mem = tup_members[ii];
-      constexpr auto o_mem = obj_members[ii];
-      tup.[:t_mem:]        = obj.[:o_mem:];
-    }
-  }
-  else
-  {
-    static_assert(sizeof(tup) == sizeof(obj));
-    std::memcpy(&tup, &obj, sizeof(tup));
+    constexpr auto t_mem = tup_members[ii];
+    constexpr auto o_mem = obj_members[ii];
+    tup.[:t_mem:]        = obj.[:o_mem:];
   }
   return tup;
 }
