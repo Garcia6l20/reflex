@@ -10,9 +10,10 @@ struct with_simple_fixture_tests
   {
     check_that(data).negate().is_empty();
   }
+  [[=reflex::testing::fail_test]]
   void test2()
   {
-    check_that(data).contains(2);
+    check_that(data).negate().contains(2);
   }
 };
 } // namespace fixure_tests

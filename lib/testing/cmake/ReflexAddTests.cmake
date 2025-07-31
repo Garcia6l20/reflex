@@ -122,19 +122,20 @@ function(reflex_discover_tests_impl)
   foreach(line ${output})
     set(test "${line}")
 
-    string(REPLACE ":" ";" specs ${test})
-    list(SUBLIST specs 0 2 id)
-    list(JOIN id ":" name)
-    list(JOIN id ":" id)
+    string(REPLACE "#" ";" specs ${test})
+    list(GET specs 0 id)
+    set(name ${id})
 
-    list(REMOVE_AT specs 0 1)
+    list(REMOVE_AT specs 0)
+    if (specs)
+      string(REPLACE ":" ";" flags ${specs})
 
-    foreach(spec ${specs})
-      if (${spec} STREQUAL "failing")
-        # list(APPEND properties WILL_FAIL TRUE)
-        set(name "${name} [fail-test]")
-      endif()
-    endforeach()
+      foreach(flag ${flags})
+        if (${flag} STREQUAL "failing")
+          set(name "${name} [fail-test]")
+        endif()
+      endforeach()
+    endif()
 
     add_command(add_test
       "${prefix}${name}${suffix}"

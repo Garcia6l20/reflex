@@ -1,4 +1,4 @@
-add_library(reflex.testing INTERFACE)
-target_include_directories(reflex.testing INTERFACE include)
-target_link_libraries(reflex.testing INTERFACE reflex.utility reflex.cli)
+add_library(reflex.testing STATIC src/test_main.cpp)
+target_include_directories(reflex.testing PUBLIC include)
+target_link_libraries(reflex.testing PUBLIC reflex.utility PRIVATE reflex.cli)
 add_subdirectory(tests)

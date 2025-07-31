@@ -3,6 +3,7 @@
 #include <reflex/meta.hpp>
 #include <reflex/none.hpp>
 #include <reflex/utility.hpp>
+#include <reflex/match_patten.hpp>
 
 #include <array>
 #include <exception>
@@ -14,12 +15,6 @@
 
 namespace reflex
 {
-template <class... Ts> struct match_pattern : Ts...
-{
-  using Ts::operator()...;
-};
-template <class... Ts> match_pattern(Ts...) -> match_pattern<Ts...>;
-
 struct bad_var_access : std::exception
 {
   const char* what() const noexcept final

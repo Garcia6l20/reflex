@@ -136,11 +136,12 @@ struct reporter_t
     std::println("{}", suite_counter.fail_count ? "❌ failed" : "✔️  success");
 
     const auto pass_align =
+        1 +
         std::ranges::max({suite_counter.success_count, case_counter.success_count, check_counter.success_count}) / 10;
     const auto fail_align =
-        std::ranges::max({suite_counter.fail_count, case_counter.fail_count, check_counter.fail_count}) / 10;
+        1 + std::ranges::max({suite_counter.fail_count, case_counter.fail_count, check_counter.fail_count}) / 10;
     const auto total_align =
-        std::ranges::max({suite_counter.total(), case_counter.total(), check_counter.total()}) / 10;
+        1 + std::ranges::max({suite_counter.total(), case_counter.total(), check_counter.total()}) / 10;
 
     auto print_stats = [&](auto id, auto const& counter)
     {
@@ -162,7 +163,8 @@ struct reporter_t
 
   std::map<std::string, std::map<std::string, std::vector<validation_result>>> results;
 };
-inline static reporter_t reporter;
+
+reporter_t& get_reporter();
 
 template <typename Expr, meta::access_context Ctx> struct validator
 {
@@ -250,7 +252,7 @@ template <typename Expr, meta::access_context Ctx> struct validator
     }
     result.should_fail = is_fail_test_;
     result.negated     = negated_;
-    reporter.template append<Ctx>(std::move(result));
+    get_reporter().template append<Ctx>(std::move(result));
     return true;
   }
 
@@ -357,19 +359,6 @@ constexpr detail::__fail_test fail_test;
 #define assert_that(_expression) reflex::testing::_ensure<std::meta::access_context::current()>((_expression), true)
 #define check_that(_expression)  reflex::testing::_ensure<std::meta::access_context::current()>((_expression), false)
 
-consteval auto get_suites(std::meta::info NS)
-{
-  return members_of(NS, meta::access_context::unchecked()) |
-         std::views::filter([](auto R) { return is_namespace(R) and identifier_of(R).contains("test"); });
-}
-
-consteval auto get_cases(std::meta::info NS)
-{
-  return members_of(NS, meta::access_context::unchecked()) |
-         std::views::filter([](auto R)
-                            { return (is_function(R) or is_class_type(R)) and identifier_of(R).contains("test"); });
-}
-
 template <std::meta::info... NSs> int run_all(int argc, char** argv)
 {
   using namespace std::meta;
@@ -402,6 +391,6 @@ template <std::meta::info... NSs> int run_all(int argc, char** argv)
       }
     }
   }
-  return detail::reporter.finish();
+  return detail::get_reporter().finish();
 }
 } // namespace reflex::testing

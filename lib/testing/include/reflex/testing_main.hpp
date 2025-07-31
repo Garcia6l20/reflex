@@ -1,9 +1,15 @@
 #pragma once
 
-#include <reflex/testing/main_impl.hpp>
+#include <reflex/testing.hpp>
+#include <reflex/testing/test_suite.hpp>
+
+namespace reflex::testing {
+  int main(int argc, const char** argv, test_suite const&);
+}
 
 int main(int argc, const char** argv)
 {
-  reflex::testing::command_line<^^::> cli{};
-  return cli.run(argc, argv);
+  using namespace reflex;
+  using namespace reflex::testing;
+  return reflex::testing::main(argc, argv, test_suite::parse<^^::>());
 }
