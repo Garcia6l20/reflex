@@ -1,7 +1,6 @@
 #pragma once
 
-#include <reflex/testing/reflected_ref.hpp>
-#include <reflex/testing/view.hpp>
+#include <reflex/testing/expression.hpp>
 
 #include <map>
 #include <meta>
@@ -166,17 +165,18 @@ struct reporter_t
 
 reporter_t& get_reporter();
 
-template <typename Expr, meta::access_context Ctx> struct validator
+template <typename T, meta::access_context Ctx> struct validator
 {
-  Expr const& e_;
-  using expression_type = Expr;
+  expression<T> expression_;
+  // using expression_type = Expr;
   std::source_location const& l_;
   mutable bool                wip_          = true;
   const bool                  fatal_        = true;
   bool                        negated_      = false;
   static constexpr auto       is_fail_test_ = is_fail_test(Ctx.scope());
 
-  validator(Expr const& e, bool fatal, std::source_location const& l) : e_{e}, l_{l}, fatal_{fatal}
+  validator(T const& e, std::string_view expression_str, bool fatal, std::source_location const& l)
+      : expression_{e, expression_str}, l_{l}, fatal_{fatal}
   {
   }
 
@@ -207,27 +207,13 @@ template <typename Expr, meta::access_context Ctx> struct validator
     return std::format("{}:{}", l_.file_name(), l_.line());
   }
 
-  decltype(auto) expression() const
+  decltype(auto) value() const
   {
-    if constexpr(is_reflected_ref(^^Expr))
-    {
-      return e_.get();
-    }
-    else
-    {
-      return e_;
-    }
+    return expression_.value;
   }
   constexpr decltype(auto) expression_string() const
   {
-    if constexpr(is_reflected_ref(^^Expr))
-    {
-      return display_string_of(std::decay_t<Expr>::info);
-    }
-    else
-    {
-      return e_;
-    }
+    return expression_.str;
   }
 
   template <typename Fn> bool validate(Fn&& fn) const
@@ -256,11 +242,11 @@ template <typename Expr, meta::access_context Ctx> struct validator
     return true;
   }
 
-  template <typename T> static constexpr auto expected_expression(T&& expected)
+  template <typename U> static constexpr auto expected_expression(U&& expected)
   {
-    if constexpr(is_reflected_ref(^^T))
+    if constexpr(is_expression(^^U))
     {
-      return display_string_of(std::decay_t<T>::info);
+      return expected.str;
     }
     else
     {
@@ -277,24 +263,24 @@ template <typename Expr, meta::access_context Ctx> struct validator
   X(<=, _is_less_or_equal_than)
 
 #define X(__op, __name)                                                           \
-  template <typename T> constexpr void __name(T&& expected) const                 \
+  template <typename U> constexpr void __name(U&& expected) const                 \
   {                                                                               \
     const auto expected_ex = [&] { return expected_expression(expected); };       \
     validate(                                                                     \
         [&](auto&)                                                                \
         {                                                                         \
           return detail::validation_result{                                       \
-              expression() __op expected,                                         \
+              value() __op expected,                                              \
               std::format("{} {} {}", expression_string(), #__op, expected_ex()), \
-              std::format("{} {} {}", expression(), #__op, expected),             \
+              std::format("{} {} {}", value(), #__op, expected),                  \
           };                                                                      \
         });                                                                       \
   }                                                                               \
-  template <typename T>                                                           \
-  constexpr void operator __op(T&& expected) const                                \
-    requires requires() { expression() __op expected; }                           \
+  template <typename U>                                                           \
+  constexpr void operator __op(U&& expected) const                                \
+    requires requires() { value() __op expected; }                                \
   {                                                                               \
-    __name(std::forward<T>(expected));                                            \
+    __name(std::forward<U>(expected));                                            \
   }
   _X_TESTING_OPERATIONS(X)
 #undef X
@@ -305,9 +291,9 @@ template <typename Expr, meta::access_context Ctx> struct validator
         [&](auto&)
         {
           return detail::validation_result{
-              expression().empty(),
+              value().empty(),
               std::format("{} is empty", expression_string()),
-              std::format("{} is empty", expression()),
+              std::format("{} is empty", value()),
           };
         });
     return *this;
@@ -318,46 +304,52 @@ template <typename Expr, meta::access_context Ctx> struct validator
         [&](auto&)
         {
           return detail::validation_result{
-              not expression().empty(),
+              not value().empty(),
               std::format("{} is not empty", expression_string()),
-              std::format("{} is not empty", expression()),
+              std::format("{} is not empty", value()),
           };
         });
     return *this;
   }
-  template <typename T> constexpr decltype(auto) contains(T&& expected) const
+  template <typename U> constexpr decltype(auto) contains(U&& expected) const
   {
     const auto expected_ex = [&] { return expected_expression(expected); };
     validate(
         [&](auto&)
         {
           return detail::validation_result{
-              std::ranges::contains(expression(), expected),
+              std::ranges::contains(value(), expected),
               std::format("{} contains {}", expression_string(), expected_ex()),
-              std::format("{} contains {}", expression(), expected),
+              std::format("{} contains {}", value(), expected),
           };
         });
     return *this;
   }
 
-  constexpr decltype(auto) view() &&
-    requires std::ranges::range<decltype(expression())>
+  constexpr decltype(auto) view()
+    requires std::ranges::range<decltype(value())>
   {
     wip_ = false;
-    return validation_view<validator>{std::move(*this)};
+    return value();
+    // return validation_view<validator>{std::move(*this)};
   }
 };
 } // namespace detail
 template <meta::access_context Ctx, typename Expr>
-auto _ensure(Expr const& expression, bool fatal, std::source_location const& l = std::source_location::current())
+auto _ensure(Expr const&                 expression,
+             std::string_view            expression_str,
+             bool                        fatal,
+             std::source_location const& l = std::source_location::current())
 {
-  return detail::validator<Expr, Ctx>{expression, fatal, l};
+  return detail::validator<Expr, Ctx>{expression, expression_str, fatal, l};
 }
 
 constexpr detail::__fail_test fail_test;
 
-#define assert_that(_expression) reflex::testing::_ensure<std::meta::access_context::current()>((_expression), true)
-#define check_that(_expression)  reflex::testing::_ensure<std::meta::access_context::current()>((_expression), false)
+#define assert_that(_expression) \
+  reflex::testing::_ensure<std::meta::access_context::current()>((_expression), #_expression, true)
+#define check_that(_expression) \
+  reflex::testing::_ensure<std::meta::access_context::current()>((_expression), #_expression, false)
 
 template <std::meta::info... NSs> int run_all(int argc, char** argv)
 {
