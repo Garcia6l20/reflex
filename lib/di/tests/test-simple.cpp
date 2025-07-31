@@ -1,7 +1,5 @@
 #include <reflex/di.hpp>
 
-#include <catch2/catch_test_macros.hpp>
-
 #include <print>
 
 using namespace reflex;
@@ -102,7 +100,12 @@ static_assert(get_dependency_type(^^no_dep&) == dependency_type::shared);
 static_assert(get_dependency_type(^^no_dep const&) == dependency_type::shared);
 } // namespace checks
 
-TEST_CASE("base-test")
+#include <reflex/testing_main.hpp>
+
+namespace di_simple_tests
+{
+
+void test_base()
 {
   di::injector<di::config{.debug = true}> injector;
 
@@ -128,3 +131,4 @@ TEST_CASE("base-test")
 
   auto ovord = injector.make_value<one_value_one_ref_dep>();
 }
+} // namespace di_simple_tests

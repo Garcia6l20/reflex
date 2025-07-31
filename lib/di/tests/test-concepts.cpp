@@ -1,8 +1,6 @@
 #include <reflex/di.hpp>
 #include <reflex/views/permutations.hpp>
 
-#include <catch2/catch_test_macros.hpp>
-
 #include <functional>
 #include <print>
 
@@ -55,14 +53,18 @@ static constexpr auto dumb_srvc  = ^^dumb_service;
 static constexpr auto print_srvc = ^^print_service;
 } // namespace registry
 
-TEST_CASE("base-test")
+#include <reflex/testing_main.hpp>
+
+namespace di_concept_tests
+{
+
+struct test_base
 {
   di::injector<di::config{.registry = ^^registry, .debug = true}> injector;
-
-  SECTION("debugging")
+  void                                                            test_debugging()
   {
-    using di::detail::resolve_template_instance;
     using di::detail::dependencies_of;
+    using di::detail::resolve_template_instance;
     {
       constexpr auto test = resolve_template_instance<^^dumb_service, ^^registry>();
       std::println("{}", display_string_of(test));
@@ -73,8 +75,7 @@ TEST_CASE("base-test")
       std::println("{}", display_string_of(test));
       injector.make_shared<^^print_service>();
 
-      template for(constexpr auto tmp :
-                   define_static_array(dependencies_of<^^print_service, ^^registry>()))
+      template for(constexpr auto tmp : define_static_array(dependencies_of<^^print_service, ^^registry>()))
       {
         std::println("{}", display_string_of(tmp));
       }
@@ -83,8 +84,7 @@ TEST_CASE("base-test")
       constexpr auto test = resolve_template_instance<^^one_dep_service, ^^registry>();
       std::println("{}", display_string_of(test));
 
-      template for(constexpr auto tmp :
-                   define_static_array(dependencies_of<^^one_dep_service, ^^registry>()))
+      template for(constexpr auto tmp : define_static_array(dependencies_of<^^one_dep_service, ^^registry>()))
       {
         std::println(" -- {}", display_string_of(tmp));
       }
@@ -93,20 +93,18 @@ TEST_CASE("base-test")
     }
   }
 
-  SECTION("shared objects are persistant")
+  void test_shared_objects_are_persistant()
   {
     auto ods1 = injector.make_shared<^^one_dep_service>();
     auto ods2 = injector.make_shared<^^one_dep_service>();
-    REQUIRE(ods1 == ods2);
+    check_that(ods1) == ods2;
   }
-  SECTION("unique objects are not persistant")
+  void test_unique_objects_are_not_persistant()
   {
     auto ods1 = injector.make_unique<^^one_dep_service>();
     auto ods2 = injector.make_unique<^^one_dep_service>();
-    REQUIRE(ods1 != ods2);
-    THEN("shared dependencies are actually shared")
-    {
-      REQUIRE(&ods1->p == &ods2->p);
-    }
+    check_that(ods1) != ods2;
+    check_that(&ods1->p) == &ods2->p;
   }
-}
+};
+} // namespace di_concept_tests

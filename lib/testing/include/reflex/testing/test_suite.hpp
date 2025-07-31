@@ -24,14 +24,17 @@ consteval auto get_cases(std::meta::info S)
   if(is_namespace(S))
   {
     return members_of(S, meta::access_context::unchecked()) |
-           std::views::filter([](auto R)
-                              { return (is_function(R) or is_class_type(R)) and identifier_of(R).contains("test"); }) |
+           std::views::filter(
+               [](auto R)
+               {
+                 return (is_function(R) or (is_type(R) and is_class_type(R))) and identifier_of(R).contains("test");
+               }) |
            std::ranges::to<std::vector>();
   }
   else
   {
-    // static_assert(is_class_type(S));
-    return meta::member_functions_of(S) | std::views::filter([](auto M) { return identifier_of(M).contains("test"); }) |
+    return meta::member_functions_of(S) |
+           std::views::filter([](auto M) { return not is_constructor(M) and identifier_of(M).contains("test"); }) |
            std::ranges::to<std::vector>();
   }
 }

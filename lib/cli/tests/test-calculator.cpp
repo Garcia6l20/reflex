@@ -1,6 +1,5 @@
 #include <reflex/cli.hpp>
 
-#include <catch2/catch_test_macros.hpp>
 #include <iostream>
 #include <pipe_capture.hpp>
 
@@ -17,7 +16,8 @@ struct[[= specs<"CLI calculator.">]] //
       [[= specs<":lhs:", "The left value.">]]                                    //
       [[= specs<":rhs:", "The right value.">]]                                   //
       [[= specs<":repeat:", "-r/--repeat", "Repeat output N times.">, = _count]] //
-      int add(float lhs, float rhs, std::optional<int> repeat) const noexcept
+      int
+      add(float lhs, float rhs, std::optional<int> repeat) const noexcept
   {
     for(int ii = 0; ii < repeat.value_or(0) + 1; ++ii)
     {
@@ -73,49 +73,15 @@ struct[[= specs<"CLI calculator.">]] //
 
 #define DUMP_STR_OF(__I__) std::println(#__I__ ": {}", display_string_of(__I__))
 
-TEST_CASE("base-test")
-{
-  // SECTION("option spec")
-  // {
-  //   static constexpr auto s = specs<"-h/--help", "Show this message and exit.">;
-  //   STATIC_REQUIRE(s.is_opt);
-  //   STATIC_REQUIRE(not s.is_field);
-  //   STATIC_REQUIRE(s.short_switch == "-h");
-  //   STATIC_REQUIRE(s.long_switch == "--help");
-  //   STATIC_REQUIRE(s.help == "Show this message and exit.");
-  // }
-  // SECTION("non-option spec")
-  // {
-  //   static constexpr auto s = specs<"Help message.">;
-  //   STATIC_REQUIRE(not s.is_opt);
-  //   STATIC_REQUIRE(s.short_switch.empty());
-  //   STATIC_REQUIRE(s.long_switch.empty());
-  //   STATIC_REQUIRE(s.help == "Help message.");
-  // }
-  // SECTION("field option spec")
-  // {
-  //   static constexpr auto s = specs<":verbose:", "-v/--verbose", "Verbosity level.">;
-  //   STATIC_REQUIRE(s.is_opt);
-  //   STATIC_REQUIRE(s.is_field);
-  //   STATIC_REQUIRE(s.field == "verbose");
-  //   STATIC_REQUIRE(s.short_switch == "-v");
-  //   STATIC_REQUIRE(s.long_switch == "--verbose");
-  //   STATIC_REQUIRE(s.help == "Verbosity level.");
-  // }
-  // SECTION("non-option spec")
-  // {
-  //   static constexpr auto s = specs<":value:", "A value.">;
-  //   STATIC_REQUIRE(not s.is_opt);
-  //   STATIC_REQUIRE(s.is_field);
-  //   STATIC_REQUIRE(s.field == "value");
-  //   STATIC_REQUIRE(s.short_switch.empty());
-  //   STATIC_REQUIRE(s.long_switch.empty());
-  //   STATIC_REQUIRE(s.help == "A value.");
-  // }
+#include <reflex/testing_main.hpp>
 
+namespace cli_calculator_tests
+{
+struct base_tests
+{
   calculator c{};
 
-  // SECTION("experiments 1")
+  // void experiments_test_1()
   // {
   //   constexpr auto I = ^^calculator;
 
@@ -136,7 +102,7 @@ TEST_CASE("base-test")
   //     }
   //   }
   // }
-  // SECTION("getting flags")
+  // void getting_flags_test()
   // {
   //   {
   //     constexpr auto flags = detail::flags_of<^^calculator, ^^calculator::verbose>();
@@ -157,33 +123,33 @@ TEST_CASE("base-test")
   //   }
   // }
 
-  // SECTION("help")
-  // {
-  //   const char* args[] = {"test1", "-h"};
-  //   REQUIRE(c.run(arraysize(args), args) == 0);
-  // }
-  // SECTION("add help")
-  // {
-  //   const char* args[] = {"test1", "add", "-h"};
-  //   REQUIRE(c.run(arraysize(args), args) == 0);
-  // }
-  // SECTION("sub help")
-  // {
-  //   const char* args[] = {"test1", "sub", "-h"};
-  //   REQUIRE(c.run(arraysize(args), args) == 0);
-  // }
-  SECTION("add")
+  void test_help()
+  {
+    const char* args[] = {"test1", "-h"};
+    check_that(c.run(arraysize(args), args)) == 0;
+  }
+  void test_add_help()
+  {
+    const char* args[] = {"test1", "add", "-h"};
+    check_that(c.run(arraysize(args), args)) == 0;
+  }
+  void test_sub_help()
+  {
+    const char* args[] = {"test1", "sub", "-h"};
+    check_that(c.run(arraysize(args), args) == 0);
+  }
+  void test_add()
   {
     const char* args[] = {"test1", "add", "2", "3"};
     int         rc     = -1;
     auto [out, err]    = capture_out_err([&] { rc = c.run(arraysize(args), args); });
     std::println("stdout: {}", out);
     std::println("stderr: {}", err);
-    REQUIRE(rc == 0);
-    REQUIRE(err.empty());
-    REQUIRE(out == "5\n");
+    check_that(rc) == 0;
+    check_that(err).is_empty();
+    check_that(out) == "5\n";
   }
-  SECTION("add --repeat")
+  void test_add_repeat()
   {
     const char* args[] = {"test1", "add", "--repeat", "2", "3"};
     int         rc     = -1;
@@ -192,11 +158,11 @@ TEST_CASE("base-test")
     });
     std::println("stdout: {}", out);
     std::println("stderr: {}", err);
-    REQUIRE(rc == 0);
-    REQUIRE(err.empty());
-    REQUIRE(out == "5\n5\n");
+    check_that(rc) == 0;
+    check_that(err).is_empty();
+    check_that(out) == "5\n5\n";
   }
-  SECTION("add -rr")
+  void test_add_rr()
   {
     const char* args[] = {"test1", "add", "-rr", "2", "3"};
     int         rc     = -1;
@@ -205,11 +171,11 @@ TEST_CASE("base-test")
     });
     std::println("stdout: {}", out);
     std::println("stderr: {}", err);
-    REQUIRE(rc == 0);
-    REQUIRE(err.empty());
-    REQUIRE(out == "5\n5\n5\n");
+    check_that(rc) == 0;
+    check_that(err).is_empty();
+    check_that(out) == "5\n5\n5\n";
   }
-  SECTION("sub")
+  void test_sub()
   {
     const char* args[] = {"test1", "-v", "sub", "2", "3"};
     int         rc     = -1;
@@ -218,30 +184,31 @@ TEST_CASE("base-test")
     });
     std::println("stdout: {}", out);
     std::println("stderr: {}", err);
-    REQUIRE(rc == 0);
-    REQUIRE(err.empty());
-    REQUIRE(out == "2 - 3 = -1\n");
+    check_that(rc) == 0;
+    check_that(err).is_empty();
+    check_that(out) == "2 - 3 = -1\n";
   }
-  SECTION("mult")
+  void test_mult()
   {
     const char* args[] = {"test1", "mult", "2", "3"};
     int         rc     = -1;
     auto [out, err]    = capture_out_err([&] { rc = c.run(arraysize(args), args); });
     std::println("stdout: {}", out);
     std::println("stderr: {}", err);
-    REQUIRE(rc == 0);
-    REQUIRE(err.empty());
-    REQUIRE(out == "6\n");
+    check_that(rc) == 0;
+    check_that(err).is_empty();
+    check_that(out) == "6\n";
   }
-  SECTION("div")
+  void test_div()
   {
     const char* args[] = {"test1", "div", "6", "3"};
     int         rc     = -1;
     auto [out, err]    = capture_out_err([&] { rc = c.run(arraysize(args), args); });
     std::println("stdout: {}", out);
     std::println("stderr: {}", err);
-    REQUIRE(rc == 0);
-    REQUIRE(err.empty());
-    REQUIRE(out == "2\n");
+    check_that(rc) == 0;
+    check_that(err).is_empty();
+    check_that(out) == "2\n";
   }
-}
+};
+} // namespace cli_calculator_tests

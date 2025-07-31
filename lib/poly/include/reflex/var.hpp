@@ -291,7 +291,7 @@ public:
   }
 
   template <typename T>
-    requires(not constructible_from<T>() and explicitly_constructible_from<T>())
+    requires((decay(^^T) != ^^var_impl) and not constructible_from<T>() and explicitly_constructible_from<T>())
   constexpr var_impl(T&& value) noexcept
   {
     template for(constexpr auto R : alternatives_)

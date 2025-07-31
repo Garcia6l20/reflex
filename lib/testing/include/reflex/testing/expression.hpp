@@ -20,6 +20,17 @@ template <typename T> struct expression
   }
 };
 
+// template <> struct expression<std::meta::info>
+// {
+//   std::meta::info  value;
+//   std::string_view str;
+
+//   consteval operator std::meta::info() noexcept
+//   {
+//     return value;
+//   }
+// };
+
 consteval bool is_expression(meta::info R)
 {
   return has_template_arguments(decay(R)) and template_of(decay(R)) == ^^expression;

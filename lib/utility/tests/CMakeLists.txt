@@ -1,10 +1,8 @@
-include(CPM)
-CPMAddPackage("gh:catchorg/Catch2@3.4.0")
-
-link_libraries(reflex.utility Catch2::Catch2WithMain)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+link_libraries(reflex.utility)
 
-add_executable(reflex-utility-tuple-test test-tuple.cpp)
-add_executable(reflex-utility-named-tuple-test test-named-tuple.cpp)
-add_executable(reflex-utility-error-code-test test-error-code.cpp)
-add_executable(reflex-utility-annotation-queries-test test-annotation-queries.cpp)
+reflex_add_test(reflex-utility-tuple-test test-tuple.cpp)
+
+reflex_add_test(reflex-utility-named-tuple-test test-named-tuple.cpp)
+reflex_add_test(reflex-utility-error-code-test test-error-code.cpp)
+reflex_add_test(reflex-utility-annotation-queries-test test-annotation-queries.cpp)

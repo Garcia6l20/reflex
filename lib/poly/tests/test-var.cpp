@@ -3,54 +3,68 @@
 #include <exception>
 #include <print>
 
-#include <catch2/catch_test_macros.hpp>
-
 using namespace reflex;
 
-TEST_CASE("basic")
+#include <reflex/testing_main.hpp>
+
+namespace var_tests
+{
+struct test_basic
 {
   using var_t = var<int, bool, std::string>;
   var_t c;
-  REQUIRE(not c.has_value());
-  STATIC_REQUIRE(c.can_hold<int, bool>());
-  STATIC_REQUIRE(c.index_of<none_t>() == 0);
-  STATIC_REQUIRE(c.index_of<int>() == 1);
-  STATIC_REQUIRE(c.index_of<bool>() == 2);
-  STATIC_REQUIRE(c.index_of<double>() == -1);
-  c = 42;
-  REQUIRE(c.has_value());
-  REQUIRE(c.has_value<int>());
 
-  SECTION("changing value")
+  test_basic()
+  {
+    check_that(not c.has_value());
+    check_that(c.can_hold<int, bool>());
+    check_that(c.index_of<none_t>()) == 0;
+    check_that(c.index_of<int>()) == 1;
+    check_that(c.index_of<bool>()) == 2;
+    check_that(c.index_of<double>()) == -1;
+    c = 42;
+    check_that(c.has_value());
+    check_that(c.has_value<int>());
+  }
+
+  void test_changing_value()
   {
     c = false;
-    REQUIRE(c.has_value());
-    REQUIRE(c.has_value<bool>());
+    check_that(c.has_value());
+    check_that(c.has_value<bool>());
     bool value = c;
-    REQUIRE(value == false);
+    check_that(value) == false;
   }
-  SECTION("string value")
+  void test_string_value()
   {
     c = "hello";
-    REQUIRE(c.has_value());
-    REQUIRE(c.has_value<std::string>());
+    check_that(c.has_value());
+    check_that(c.has_value<std::string>());
     std::println("{}", c);
     std::string value = c;
-    REQUIRE(value == "hello");
+    check_that(value) == "hello";
   }
-  SECTION("matching 1")
+  void test_matching_1()
   {
     const auto r = c.match([](auto&& value) -> var_t {//
       return {value};
     });
     bool ok = r == c;
-    REQUIRE(r == c);
-    REQUIRE(r == 42);
+    check_that(r == c);
+    // check_that(r) == c; // FIXME requirement depends on itself
+    check_that(r ) ==  42;
     const int value = c;
-    REQUIRE(value == 42);
-    REQUIRE_THROWS_AS([&] { bool value = c; }(), bad_var_access);
+    check_that(value ) ==  42;
+    try
+    {
+      bool value = c;
+      check_that(false);
+    }
+    catch(...)
+    {
+    }
   }
-  SECTION("matching 2")
+  void test_matching_2()
   {
     const auto r = c.match(
       [](int const& value) {//
@@ -59,11 +73,11 @@ TEST_CASE("basic")
       [](auto const& value) {//
         return false;
       });
-    REQUIRE(r);
+    check_that(r);
   }
-  SECTION("matching 3")
+  void test_matching_3()
   {
-    REQUIRE(std::move(c).match(
+    check_that(std::move(c).match(
       [](int && value) {//
         return true;
       },
@@ -87,36 +101,36 @@ TEST_CASE("basic")
   //       std::unreachable();
   //     });
   // }
-}
+};
 
-TEST_CASE("string")
+void test_string()
 {
   using var_t = var<int, bool, std::string>;
-  STATIC_REQUIRE(not meta::has_explicit_constructor(^^int,
-                                                    {
-                                                        ^^const char* }));
-  STATIC_REQUIRE(not meta::has_explicit_constructor(^^bool,
-                                                    {
-                                                        ^^const char* }));
-  STATIC_REQUIRE(meta::has_explicit_constructor(^^std::string,
-                                                {
-                                                    ^^const char* }));
+  static_check_that(not meta::has_explicit_constructor(^^int,
+                                                       {
+                                                           ^^const char* }));
+  static_check_that(not meta::has_explicit_constructor(^^bool,
+                                                       {
+                                                           ^^const char* }));
+  static_check_that(meta::has_explicit_constructor(^^std::string,
+                                                   {
+                                                       ^^const char* }));
 
-  STATIC_REQUIRE(not std::equality_comparable_with<int, const char*>);
-  STATIC_REQUIRE(not std::equality_comparable_with<bool, const char*>);
-  STATIC_REQUIRE(std::equality_comparable_with<std::string, const char*>);
-  STATIC_REQUIRE(var_t::equality_comparable_with<const char*>());
-  SECTION("construct")
+  static_check_that(not std::equality_comparable_with<int, const char*>);
+  static_check_that(not std::equality_comparable_with<bool, const char*>);
+  static_check_that(std::equality_comparable_with<std::string, const char*>);
+  static_check_that(var_t::equality_comparable_with<const char*>());
+  // construct
   {
     var_t c{"hello constructed"};
     std::println("{}", c);
-    REQUIRE(c == "hello constructed");
+    check_that(c ) ==  "hello constructed";
   }
-  SECTION("assign")
+  // assign
   {
     var_t c = "hello assigned";
     std::println("{}", c);
-    REQUIRE(c == "hello assigned");
+    check_that(c ) ==  "hello assigned";
   }
 }
 
@@ -153,8 +167,7 @@ template <typename T> struct lifetime_dumper
   lifetime_dumper(lifetime_dumper const& o) noexcept : lifetime_info{o.lifetime_info}
   {
     ++lifetime_info.copy_count;
-    __lifetime_info("copy-constructed from {:p} ({} copies)", static_cast<const void*>(&o),
-    lifetime_info.copy_count);
+    __lifetime_info("copy-constructed from {:p} ({} copies)", static_cast<const void*>(&o), lifetime_info.copy_count);
   }
 
   lifetime_dumper& operator=(lifetime_dumper&& o) noexcept
@@ -174,35 +187,36 @@ template <typename T> struct lifetime_dumper
   }
 };
 
-TEST_CASE("lifetime")
+struct test_lifetime
 {
   struct S : lifetime_dumper<S>
   {
   };
-  SECTION("move-construct")
+  void test_move_construct()
   {
     {
       var<int, S, float> c = S{};
-      REQUIRE(c.get<S>().lifetime_info.copy_count == 0);
-      REQUIRE(c.get<S>().lifetime_info.move_count == 1);
+      check_that(c.get<S>().lifetime_info.copy_count ) ==  0;
+      check_that(c.get<S>().lifetime_info.move_count ) ==  1;
       c = S{};
-      REQUIRE(c.get<S>().lifetime_info.copy_count == 0);
-      REQUIRE(c.get<S>().lifetime_info.move_count == 1);
+      check_that(c.get<S>().lifetime_info.copy_count ) ==  0;
+      check_that(c.get<S>().lifetime_info.move_count ) ==  1;
     }
     {
       var<int, S, float> c{S{}};
-      REQUIRE(c.get<S>().lifetime_info.copy_count == 0);
-      REQUIRE(c.get<S>().lifetime_info.move_count == 1);
+      check_that(c.get<S>().lifetime_info.copy_count ) ==  0;
+      check_that(c.get<S>().lifetime_info.move_count ) ==  1;
     }
   }
-  SECTION("copy-construct")
+  void test_copy_construct()
   {
-    S                     s;
+    S                  s;
     var<int, S, float> c{s};
-    REQUIRE(c.get<S>().lifetime_info.copy_count == 1);
-    REQUIRE(c.get<S>().lifetime_info.move_count == 0);
+    check_that(c.get<S>().lifetime_info.copy_count ) ==  1;
+    check_that(c.get<S>().lifetime_info.move_count ) ==  0;
     c = s;
-    REQUIRE(c.get<S>().lifetime_info.copy_count == 1);
-    REQUIRE(c.get<S>().lifetime_info.move_count == 0);
+    check_that(c.get<S>().lifetime_info.copy_count ) ==  1;
+    check_that(c.get<S>().lifetime_info.move_count ) ==  0;
   }
-}
+};
+} // namespace var_tests

@@ -1,6 +1,6 @@
 #include <reflex/meta.hpp>
 
-#include <catch2/catch_test_macros.hpp>
+// #include <catch2/catch_test_macros.hpp>
 
 using namespace reflex;
 
@@ -202,30 +202,30 @@ template <size_t I, typename... Ts> struct tuple_element<I, reflex::tuple<Ts...>
 
 using namespace reflex::literals;
 
-// int main()
-// {
-//   return 0;
-// }
+#include <reflex/testing_main.hpp>
 
-TEST_CASE("base")
+namespace tuple_tests
+{
+
+void base_test()
 {
   constexpr auto t = tuple{42, true};
-  STATIC_REQUIRE(tuple_c<decltype(t)>);
-  STATIC_REQUIRE(tuple_with_c<decltype(t), int, bool>);
+  assert_that(tuple_c<decltype(t)>);
+  assert_that((tuple_with_c<decltype(t), int, bool>));
 
   std::println("==== {} ====", display_string_of(decay(type_of(^^t))));
 
-  STATIC_REQUIRE(t.get<0>() == 42);
-  STATIC_REQUIRE(t.get<1>() == true);
+  assert_that(t.get<0>()) == 42;
+  assert_that(t.get<1>()) == true;
 
-  STATIC_REQUIRE(t.get(0_uz) == 42);
-  STATIC_REQUIRE(t.get(1_uz) == true);
+  assert_that(t.get(0_uz)) == 42;
+  assert_that(t.get(1_uz)) == true;
 
-  STATIC_REQUIRE(t.get(-1_sz) == true);
-  STATIC_REQUIRE(t.get(-2_sz) == 42);
+  assert_that(t.get(-1_sz)) == true;
+  assert_that(t.get(-2_sz)) == 42;
 
-  STATIC_REQUIRE(get<0>(t) == 42);
-  STATIC_REQUIRE(get<1>(t) == true);
+  assert_that(get<0>(t)) == 42;
+  assert_that(get<1>(t)) == true;
 
   template for(constexpr auto v : t.append(42.2, "hello"))
   {
@@ -242,33 +242,34 @@ TEST_CASE("base")
             std::println();
           });
 
-  SECTION("structured binding")
+  // structured binding
   {
     auto [a, b] = tuple{1, 2};
   }
-  SECTION("tie")
+  // tie
   {
     int a = -1, b = -1;
 
-    SECTION("rvalue tuple")
+    // rvalue tuple
     {
       tie(a, b) = tuple{1, 2};
-      REQUIRE(a == 1);
-      REQUIRE(b == 2);
+      assert_that(a) == 1;
+      assert_that(b) == 2;
     }
-    SECTION("lvalue tuple")
+    // lvalue tuple
     {
       auto t    = tuple{1, 2};
       tie(a, b) = t;
-      REQUIRE(a == 1);
-      REQUIRE(b == 2);
+      assert_that(a) == 1;
+      assert_that(b) == 2;
     }
-    SECTION("const lvalue tuple")
+    // const lvalue tuple
     {
       const auto t = tuple{1, 2};
       tie(a, b)    = t;
-      REQUIRE(a == 1);
-      REQUIRE(b == 2);
+      assert_that(a) == 1;
+      assert_that(b) == 2;
     }
   }
 }
+} // namespace tuple_tests

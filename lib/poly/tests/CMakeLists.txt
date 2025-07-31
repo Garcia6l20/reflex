@@ -1,8 +1,5 @@
 link_libraries(reflex.poly)
 
-include(CPM)
-CPMAddPackage("gh:catchorg/Catch2@3.4.0")
-
-link_libraries(reflex.cli Catch2::Catch2WithMain)
-add_executable(test-var test-var.cpp)
-add_executable(test-recursive-var test-recursive-var.cpp)
+link_libraries(reflex.cli)
+reflex_add_test(test-var test-var.cpp)
+reflex_add_test(test-recursive-var test-recursive-var.cpp)
