@@ -1,4 +1,15 @@
 
+macro(_reflex_discover_parse_args)
+  cmake_parse_arguments(
+    ""
+    ""
+    "TEST_PREFIX;TEST_SUFFIX;WORKING_DIRECTORY;TEST_LIST;REPORTER;OUTPUT_DIR;OUTPUT_PREFIX;OUTPUT_SUFFIX;DISCOVERY_MODE"
+    "TEST_SPEC;EXTRA_ARGS;PROPERTIES;DL_PATHS"
+    ${ARGN}
+  )
+endmacro()
+
+
 function(reflex_discover_tests TARGET)
 
   cmake_parse_arguments(
@@ -8,7 +19,6 @@ function(reflex_discover_tests TARGET)
     "TEST_SPEC;EXTRA_ARGS;PROPERTIES;DL_PATHS"
     ${ARGN}
   )
-
 
   if(NOT _WORKING_DIRECTORY)
     set(_WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
@@ -53,15 +63,9 @@ function(reflex_discover_tests TARGET)
     "endif()\n"
   )
 
-  # Add discovered tests as directory TEST_INCLUDE_FILE if possible
-  get_property(test_include_file_set DIRECTORY PROPERTY TEST_INCLUDE_FILE SET)
-  if(NOT ${test_include_file_set})
-    set_property(DIRECTORY
-      PROPERTY TEST_INCLUDE_FILE "${ctest_include_file}"
-    )
-  else()
-    message(FATAL_ERROR "Cannot set more than one TEST_INCLUDE_FILE")
-  endif()
+  set_property(DIRECTORY
+    APPEND PROPERTY TEST_INCLUDE_FILES "${ctest_include_file}"
+  )
 
 endfunction()
 
@@ -69,3 +73,20 @@ set(_REFLEX_DISCOVER_TESTS_SCRIPT
   ${CMAKE_CURRENT_LIST_DIR}/ReflexAddTests.cmake
   CACHE INTERNAL "Reflex full path to ReflexAddTests.cmake helper file"
 )
+
+
+function(reflex_add_test TARGET)
+
+  cmake_parse_arguments(
+    ""
+    ""
+    "TEST_PREFIX;TEST_SUFFIX;WORKING_DIRECTORY;TEST_LIST;REPORTER;OUTPUT_DIR;OUTPUT_PREFIX;OUTPUT_SUFFIX;DISCOVERY_MODE"
+    "TEST_SPEC;EXTRA_ARGS;PROPERTIES;DL_PATHS"
+    ${ARGN}
+  )
+  
+  add_executable(${TARGET} ${_UNPARSED_ARGUMENTS})
+  target_link_libraries(${TARGET} PRIVATE reflex.testing)
+  reflex_discover_tests(${TARGET} ${ARGN})
+
+endfunction()

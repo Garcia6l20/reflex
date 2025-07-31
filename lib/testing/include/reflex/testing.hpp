@@ -1,6 +1,7 @@
 #pragma once
 
 #include <reflex/testing/reflected_ref.hpp>
+#include <reflex/testing/view.hpp>
 
 #include <map>
 #include <meta>
@@ -165,7 +166,8 @@ inline static reporter_t reporter;
 
 template <typename Expr, meta::access_context Ctx> struct validator
 {
-  Expr const&                 e_;
+  Expr const& e_;
+  using expression_type = Expr;
   std::source_location const& l_;
   mutable bool                wip_          = true;
   const bool                  fatal_        = true;
@@ -336,10 +338,11 @@ template <typename Expr, meta::access_context Ctx> struct validator
     return *this;
   }
 
-  constexpr decltype(auto) view() const
+  constexpr decltype(auto) view() &&
     requires std::ranges::range<decltype(expression())>
   {
-    return expression();
+    wip_ = false;
+    return validation_view<validator>{std::move(*this)};
   }
 };
 } // namespace detail
@@ -363,7 +366,8 @@ consteval auto get_suites(std::meta::info NS)
 consteval auto get_cases(std::meta::info NS)
 {
   return members_of(NS, meta::access_context::unchecked()) |
-         std::views::filter([](auto R) { return is_function(R) and identifier_of(R).contains("test"); });
+         std::views::filter([](auto R)
+                            { return (is_function(R) or is_class_type(R)) and identifier_of(R).contains("test"); });
 }
 
 template <std::meta::info... NSs> int run_all(int argc, char** argv)

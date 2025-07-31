@@ -99,11 +99,16 @@ consteval auto
   }
 }
 
-consteval auto member_functions_annotated_with(info R, info A, access_context ctx = access_context::current())
+consteval auto member_functions_of(info R, access_context ctx = access_context::current())
 {
   return members_of(R, ctx)                           //
          | std::views::filter(meta::is_user_declared) //
-         | std::views::filter(meta::is_function)      //
+         | std::views::filter(meta::is_function);
+}
+
+consteval auto member_functions_annotated_with(info R, info A, access_context ctx = access_context::current())
+{
+  return member_functions_of(R, ctx) //
          | std::views::filter([A](auto fn) { return has_annotation(fn, A); });
 }
 

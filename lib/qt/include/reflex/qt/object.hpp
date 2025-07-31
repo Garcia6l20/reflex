@@ -394,7 +394,9 @@ private:
     auto qt_stringData = [&] constexpr
     {
       return [&]<std::size_t... I>(std::index_sequence<I...>)
-      { return QtMocHelpers::StringRefStorage{[:__strings<Tag>[I]:] ::data...}; }(std::make_index_sequence<__strings<Tag>.size()>());
+      {
+        return QtMocHelpers::StringRefStorage{[:__strings<Tag>[I]:] ::data...};
+      }(std::make_index_sequence<__strings<Tag>.size()>());
     }();
 
     size_t strings_index = 2;
@@ -446,13 +448,13 @@ private:
                   constexpr auto id = []
                   {
                     constexpr auto DR = remove_const(remove_reference(param_type));
-                    return meta::static_identifier_wrapper_of<DR>().template remove_if<[](auto c) { return c == ' '; }>();
+                    return meta::static_identifier_wrapper_of<DR>()
+                        .template remove_if<[](auto c) { return c == ' '; }>();
                   }();
-                  template for(constexpr auto ii :
-                               std::views::iota(size_t(0), __strings<Tag>.size()))
+                  template for(constexpr auto ii : std::views::iota(size_t(0), __strings<Tag>.size()))
                   {
                     constexpr auto s = __strings<Tag>[ii];
-                    if(id.view() == [:s:]::view())
+                    if(id.view() == [:s:] ::view())
                     {
                       return ii;
                     }
@@ -473,7 +475,7 @@ private:
           };
           return [&]<std::size_t... I>(std::index_sequence<I...>)
           {
-            return typename DataT::ParametersArray{make_parameter.template operator()<parameters[I]>()...};
+            return typename DataT::ParametersArray { make_parameter.template operator()<parameters[I]>()... };
           }(std::make_index_sequence<N>());
         };
 
@@ -536,8 +538,8 @@ private:
 
       const auto properties_notification_data = [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return std::tuple_cat(
-            make_data_impl.template operator()<^^object::propertyChanged<__properties<Tag>[I]>, QtMocConstants::MethodSignal>()...);
+        return std::tuple_cat(make_data_impl.template operator()<^^object::propertyChanged<__properties<Tag>[I]>,
+                                                                 QtMocConstants::MethodSignal>()...);
       }(std::make_index_sequence<__properties<Tag>.size()>());
 
       const auto slots_data = [&]<std::size_t... I>(std::index_sequence<I...>)
@@ -547,7 +549,8 @@ private:
 
       const auto invocables_data = [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return std::tuple_cat(make_data_impl.template operator()<__invocables<Tag>[I], QtMocConstants::MethodMethod>()...);
+        return std::tuple_cat(
+            make_data_impl.template operator()<__invocables<Tag>[I], QtMocConstants::MethodMethod>()...);
       }(std::make_index_sequence<__invocables<Tag>.size()>());
 
       return std::apply([]<typename... Args>(Args... args)
@@ -592,7 +595,7 @@ private:
 
       return [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return QtMocHelpers::UintData{make_data_impl.template operator()<__properties<Tag>[I]>()...};
+        return QtMocHelpers::UintData { make_data_impl.template operator()<__properties<Tag>[I]>()... };
       }(std::make_index_sequence<__properties<Tag>.size()>());
     }();
     QtMocHelpers::UintData qt_enums{};
@@ -898,7 +901,7 @@ public:
 
   int qt_metacall(QMetaObject::Call _c, int _id, void** _a) override
   {
-    static constexpr auto  signal_slot_count = [&]
+    static constexpr auto signal_slot_count = [&]
     {
       size_t count = 0;
       template for(constexpr auto s : __signals<tag>)
