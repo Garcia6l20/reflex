@@ -30,6 +30,8 @@ struct test_vector
   void test_copy_constructible()
   {
     c       = var_t::vec_t{1};
+    assert_that(c.has_value());
+    assert_that(c.has_value<var_t::vec_t>());
     var_t b = c;
     check_that(b) == expr(c);
     c.push_back(55);

@@ -29,6 +29,18 @@
       "inherits": "clang-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "REFLEX_BUILD_TESTS": "ON",
+        "REFLEX_BUILD_EXAMPLES": "ON",
+        "BUILD_TESTING": "ON"
+      }
+    },
+    {
+      "name": "ClangRelWithDebInfo",
+      "inherits": "clang-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "REFLEX_BUILD_TESTS": "ON",
+        "REFLEX_BUILD_EXAMPLES": "ON",
         "BUILD_TESTING": "ON"
       }
     }
@@ -41,6 +53,10 @@
     {
       "name": "ClangRelease",
       "configurePreset": "ClangRelease"
+    },
+    {
+      "name": "ClangRelWithDebInfo",
+      "configurePreset": "ClangRelWithDebInfo"
     }
   ],
   "testPresets": [
@@ -53,6 +69,12 @@
     {
       "name": "ClangRelease",
       "configurePreset": "ClangRelease",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": true }
+    },
+    {
+      "name": "ClangRelWithDebInfo",
+      "configurePreset": "ClangRelWithDebInfo",
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error", "stopOnFailure": true }
     }

@@ -37,6 +37,7 @@ struct test_basic
   }
   void test_string_value()
   {
+    check_that(not c.has_value<std::string>());
     c = "hello";
     check_that(c.has_value());
     check_that(c.has_value<std::string>());

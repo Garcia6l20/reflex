@@ -1,9 +1,9 @@
 #pragma once
 
+#include <reflex/match_patten.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/none.hpp>
 #include <reflex/utility.hpp>
-#include <reflex/match_patten.hpp>
 
 #include <array>
 #include <exception>
@@ -37,12 +37,10 @@ inline constexpr auto unreachable = [](auto&&...) { std::unreachable(); };
 namespace _var
 {
 
-template <auto __make_recursive_types = [](meta::info var_type) { return std::vector<meta::info>{}; }> struct config_t
+struct config_t
 {
-  static constexpr std::vector<meta::info> make_recursive_types(meta::info V)
-  {
-    return __make_recursive_types(V);
-  }
+  meta::info recursive_vec_template = meta::null;
+  meta::info recursive_map_template = meta::null;
 };
 
 template <config_t config, meta::info... types> class var_impl
@@ -56,45 +54,44 @@ private:
   static constexpr auto config_ = config;
   static constexpr auto ctx_    = meta::access_context::current();
 
-  static constexpr auto recursive_types_ = define_static_array(config.make_recursive_types(^^var_impl));
-  static constexpr auto recursive_types_template_ =
-      define_static_array(recursive_types_ | std::views::transform(meta::template_of));
-
-  static constexpr auto vec_type_ = [] constexpr
+  static constexpr auto vec_type_ = [] consteval
   {
-    template for(constexpr auto type : recursive_types_)
+    if constexpr(config.recursive_vec_template != meta::null)
     {
-      using T = [:type:];
-      if constexpr(requires(T v) {
-                     v.begin();
-                     v.end();
-                     typename T::value_type;
-                   })
-      {
-        return type;
-      }
+      return substitute(config.recursive_vec_template, {^^var_impl});
     }
-    return ^^void;
+    else
+    {
+      return ^^void;
+    }
   }();
 
-  static constexpr auto map_type_ = [] constexpr
+  static constexpr auto map_type_ = [] consteval
   {
-    template for(constexpr auto type : recursive_types_)
+    if constexpr(config.recursive_map_template != meta::null)
     {
-      using T = [:type:];
-      if constexpr(requires(T v) {
-                     v.begin();
-                     v.end();
-                     typename T::key_type;
-                     typename T::value_type;
-                     typename T::mapped_type;
-                   })
-      {
-        return type;
-      }
+      return substitute(config.recursive_map_template, {^^std::string, ^^var_impl});
     }
-    return ^^void;
+    else
+    {
+      return ^^void;
+    }
   }();
+
+  static constexpr auto recursive_types_ = define_static_array(
+      [] consteval
+      {
+        std::vector<meta::info> rt;
+        if constexpr(vec_type_ != ^^void)
+        {
+          rt.push_back(vec_type_);
+        }
+        if constexpr(map_type_ != ^^void)
+        {
+          rt.push_back(map_type_);
+        }
+        return rt;
+      }());
 
   static constexpr auto has_vec_ = vec_type_ != ^^void;
   static constexpr auto has_map_ = map_type_ != ^^void;
@@ -122,14 +119,24 @@ private:
     }
   }
 
-  static constexpr auto alternatives_ = define_static_array(
-      [] consteval
-      {
-        auto types_impl = std::array{^^none_t, types...} | std::views::transform(type_implementation_of) |
-                          std::ranges::to<std::vector>();
-        types_impl.append_range(recursive_types_);
-        return types_impl;
-      }());
+  static constexpr auto alternatives_ = std::array{^^none_t, types...};
+
+  static constexpr size_t vec_index_ = has_vec_ ? alternatives_.size() : -1;
+  static constexpr size_t map_index_ = has_map_ ? has_vec_ ? vec_index_ + 1 : alternatives_.size() : -1;
+
+  // static constexpr auto alternatives_ = define_static_array([] consteval
+  // {
+  //   auto tps = std::vector{^^none_t, types...};
+  //   if(has_vec_)
+  //   {
+  //     tps.push_back(vec_type_);
+  //   }
+  //   if(has_map_)
+  //   {
+  //     tps.push_back(map_type_);
+  //   }
+  //   return tps;
+  // }());
 
   static constexpr auto storage_size_ = [] constexpr
   {
@@ -137,6 +144,14 @@ private:
     template for(constexpr auto A : alternatives_)
     {
       sz = std::max(sz, sizeof(typename[:A:]));
+    }
+    if constexpr(has_vec_)
+    {
+      sz = std::max(sz, sizeof(typename[:vec_type_:]));
+    }
+    if constexpr(has_map_)
+    {
+      sz = std::max(sz, sizeof(typename[:map_type_:]));
     }
     return sz;
   }();
@@ -146,6 +161,14 @@ private:
     template for(constexpr auto A : alternatives_)
     {
       sz = std::max(sz, alignof(typename[:A:]));
+    }
+    if constexpr(has_vec_)
+    {
+      sz = std::max(sz, alignof(typename[:vec_type_:]));
+    }
+    if constexpr(has_map_)
+    {
+      sz = std::max(sz, alignof(typename[:map_type_:]));
     }
     return sz;
   }();
@@ -159,6 +182,10 @@ public:
 
   constexpr void reset() noexcept
   {
+    if(current_ == -1)
+    {
+      return;
+    }
     index_type index = 0;
     template for(constexpr auto R : alternatives_)
     {
@@ -166,15 +193,34 @@ public:
       {
         using T = [:R:];
         std::destroy_at(reinterpret_cast<T*>(storage_));
-        break;
+        current_ = -1;
+        return;
       }
       ++index;
+    }
+    if constexpr(has_vec_)
+    {
+      if(vec_index_ == current_)
+      {
+        std::destroy_at(reinterpret_cast<typename[:vec_type_:]*>(storage_));
+        current_ = -1;
+        return;
+      }
+    }
+    if constexpr(has_map_)
+    {
+      if(map_index_ == current_)
+      {
+        std::destroy_at(reinterpret_cast<typename[:map_type_:]*>(storage_));
+        current_ = -1;
+        return;
+      }
     }
   }
 
   constexpr bool has_value() noexcept
   {
-    return current_ != 0;
+    return current_ > 0;
   }
 
   static consteval bool is_equivalent_to(meta::info I, meta::info R) noexcept
@@ -190,6 +236,14 @@ public:
       {
         return true;
       }
+    }
+    if(is_equivalent_to(I, vec_type_))
+    {
+      return true;
+    }
+    if(is_equivalent_to(I, map_type_))
+    {
+      return true;
     }
     return false;
   }
@@ -238,6 +292,14 @@ public:
         return index;
       }
       ++index;
+    }
+    if constexpr(vec_type_ == ^^T)
+    {
+      return vec_index_;
+    }
+    if constexpr(map_type_ == ^^T)
+    {
+      return map_index_;
     }
     return index_type(-1);
   }
@@ -318,20 +380,31 @@ public:
     requires(constructible_from<T>())
   constexpr T& emplace(Args&&... args) noexcept
   {
+    reset();
     index_type index = 0;
     template for(constexpr auto R : alternatives_)
     {
       if constexpr(R == ^^T)
       {
-        auto* p = reinterpret_cast<typename[:R:]*>(storage_);
-        if(current_ != index)
-        {
-          reset();
-        }
         current_ = index;
+        auto* p  = reinterpret_cast<typename[:R:]*>(storage_);
         return *std::construct_at<T>(p, std::forward<Args>(args)...);
       }
       ++index;
+    }
+    if constexpr(^^T == vec_type_)
+    {
+      using U  = [:vec_type_:];
+      current_ = vec_index_;
+      auto* p  = reinterpret_cast<U*>(storage_);
+      return *std::construct_at<U>(p, std::forward<Args>(args)...);
+    }
+    if constexpr(^^T == map_type_)
+    {
+      using U  = [:map_type_:];
+      current_ = map_index_;
+      auto* p  = reinterpret_cast<U*>(storage_);
+      return *std::construct_at<U>(p, std::forward<Args>(args)...);
     }
     std::unreachable();
   }
@@ -358,10 +431,43 @@ public:
           *p = std::forward<T>(value);
         }
         current_ = index;
-        break;
+        return;
       }
       ++index;
     }
+    if constexpr(dt == vec_type_)
+    {
+      using U = [:vec_type_:];
+      auto* p = reinterpret_cast<U*>(storage_);
+      if(current_ != vec_index_)
+      {
+        reset();
+        std::construct_at<std::decay_t<T>>(p, std::forward<T>(value));
+      }
+      else
+      {
+        *p = std::forward<T>(value);
+      }
+      current_ = vec_index_;
+      return;
+    }
+    if constexpr(dt == map_type_)
+    {
+      using U = [:map_type_:];
+      auto* p = reinterpret_cast<U*>(storage_);
+      if(current_ != map_index_)
+      {
+        reset();
+        std::construct_at<std::decay_t<T>>(p, std::forward<T>(value));
+      }
+      else
+      {
+        *p = std::forward<T>(value);
+      }
+      current_ = map_index_;
+      return;
+    }
+    std::unreachable();
   }
 
   template <typename... Patterns, typename Self>
@@ -381,6 +487,38 @@ public:
       else
       {
         if(ii == self.current_)
+        {
+          throw bad_var_access{}; // no matching pattern
+        }
+      }
+    }
+    if constexpr(has_vec_)
+    {
+      if(self.current_ == vec_index_)
+      {
+        using U = [:vec_type_:];
+        auto* p = reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
+        if constexpr(requires { patterns(std::forward_like<Self>(*p)); })
+        {
+          return patterns(std::forward_like<Self>(*p));
+        }
+        else
+        {
+          throw bad_var_access{}; // no matching pattern
+        }
+      }
+    }
+    if constexpr(has_map_)
+    {
+      if(self.current_ == map_index_)
+      {
+        using U = [:map_type_:];
+        auto* p = reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
+        if constexpr(requires { patterns(std::forward_like<Self>(*p)); })
+        {
+          return patterns(std::forward_like<Self>(*p));
+        }
+        else
         {
           throw bad_var_access{}; // no matching pattern
         }
@@ -407,6 +545,16 @@ public:
           return *reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
         }
       }
+    }
+    if constexpr(is_equivalent_to(I, vec_type_))
+    {
+      using U = [:vec_type_:];
+      return *reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
+    }
+    if constexpr(is_equivalent_to(I, map_type_))
+    {
+      using U = [:map_type_:];
+      return *reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
     }
     throw bad_var_access{};
   }
@@ -435,6 +583,18 @@ public:
         return current_ == index and *p == value;
       }
       ++index;
+    }
+    if constexpr(dt == vec_type_)
+    {
+      using U = [:vec_type_:];
+      auto* p = reinterpret_cast<const U*>(storage_);
+      return current_ == vec_index_ and *p == value;
+    }
+    if constexpr(dt == map_type_)
+    {
+      using U = [:map_type_:];
+      auto* p = reinterpret_cast<const U*>(storage_);
+      return current_ == map_index_ and *p == value;
     }
     return false;
   }
@@ -485,6 +645,26 @@ public:
           return *op == *p;
         }
         ++index;
+      }
+      if constexpr(has_vec_)
+      {
+        if(self.current_ == vec_index_)
+        {
+          using U  = [:vec_type_:];
+          auto* op = reinterpret_cast<const U*>(other.storage_);
+          auto* p  = reinterpret_cast<const U*>(self.storage_);
+          return *op == *p;
+        }
+      }
+      if constexpr(has_map_)
+      {
+        if(self.current_ == map_index_)
+        {
+          using U  = [:map_type_:];
+          auto* op = reinterpret_cast<const U*>(other.storage_);
+          auto* p  = reinterpret_cast<const U*>(self.storage_);
+          return *op == *p;
+        }
       }
     }
     return false;
@@ -610,18 +790,12 @@ public:
 
 template <typename... Ts> using var = _var::var_impl<_var::config_t{}, ^^Ts...>;
 
-constexpr auto __make_recursive_var_types = [](meta::info V)
-{
-  return std::vector<meta::info>{substitute(^^std::vector,
-                                            {
-                                                V}),
-                                 substitute(^^std::map,
-                                            {
-                                                ^^std::string,
-                                                V})};
-};
-
-template <typename... Ts> using recursive_var = _var::var_impl<_var::config_t<__make_recursive_var_types>{}, ^^Ts...>;
+template <typename... Ts>
+using recursive_var = _var::var_impl<_var::config_t{
+                                         .recursive_vec_template = ^^std::vector,
+                                         .recursive_map_template = ^^std::map,
+                                     },
+                                     ^^Ts...>;
 
 template <typename T, typename Var>
 concept var_value_c = Var::template can_hold<std::decay_t<T>>();

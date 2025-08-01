@@ -119,8 +119,9 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
       }
       if(current_instance != nullptr)
       {
-        if constexpr(is_test_class_)
+        if constexpr(is_test_class_ and is_evaluator(^^Evaluator))
         {
+          // for evaluators: search for symbols in evaluated expression that are present in the parent class
           template for(constexpr auto M : define_static_array(nonstatic_data_members_of(parent_scope_, Ctx)))
           {
             using MemT = [:type_of(M):];
