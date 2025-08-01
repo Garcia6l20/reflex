@@ -84,9 +84,37 @@ function(reflex_add_test TARGET)
     "TEST_SPEC;EXTRA_ARGS;PROPERTIES;DL_PATHS"
     ${ARGN}
   )
-  
+
   add_executable(${TARGET} ${_UNPARSED_ARGUMENTS})
   target_link_libraries(${TARGET} PRIVATE reflex.testing)
   reflex_discover_tests(${TARGET} ${ARGN})
 
 endfunction()
+
+function(reflex_setup_library_test_directory library)
+
+  # Replace '::', '_', and '.' with '-'
+  string(REGEX REPLACE "::|[_.]" "-" library_name "${library}")
+
+  file(GLOB test_files "${CMAKE_CURRENT_SOURCE_DIR}/test-*.cpp")
+
+  foreach(file IN LISTS test_files)
+
+    # Get the filename without the path
+    get_filename_component(filename "${file}" NAME_WE)
+
+    # Strip "test-" prefix (i.e., "test-foo" -> "foo")
+    string(REGEX REPLACE "^test-" "" suffix "${filename}")
+
+    # Construct target name: ${library}-${suffix}-test
+    set(target "${library_name}-${suffix}-test")
+
+    message(STATUS "Test '${target}' added (${file})")
+
+    reflex_add_test(${target} "${file}")
+    target_link_libraries(${target} PRIVATE ${library})
+
+  endforeach()
+
+endfunction()
+

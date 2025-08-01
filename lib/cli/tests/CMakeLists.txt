@@ -1,4 +1,2 @@
-link_libraries(reflex.cli)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-
-reflex_add_test(reflex-cli-calculator-test test-calculator.cpp)
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+reflex_setup_library_test_directory(reflex.cli)
