@@ -1,19 +1,11 @@
 #include <reflex/testing_main.hpp>
 
-namespace fixure_tests
+namespace throwing_tests
 {
-struct with_simple_fixture_tests
+void test()
 {
-  std::vector<int> data = {2, 4, 6, 7};
-
-  void test1()
-  {
-    check_that(data).negate().is_empty();
-  }
-  [[=reflex::testing::fail_test]]
-  void test2()
-  {
-    check_that(data).negate().contains(2);
-  }
-};
+  check_that(42) == 42;
+  check_that(throw std::runtime_error{"yeah"}).throws<std::runtime_error>();
+  check_that(throw std::runtime_error{"yeah"}).negate().throws<std::bad_alloc>();
+}
 } // namespace fixure_tests

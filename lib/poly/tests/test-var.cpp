@@ -49,20 +49,14 @@ struct test_basic
     const auto r = c.match([](auto&& value) -> var_t {//
       return {value};
     });
-    bool ok = r == c;
-    check_that(r == c);
-    // check_that(r) == c; // FIXME requirement depends on itself
-    check_that(r ) ==  42;
-    const int value = c;
-    check_that(value ) ==  42;
-    try
-    {
-      bool value = c;
-      check_that(false);
-    }
-    catch(...)
-    {
-    }
+    check_that(r) == expr(c);
+    c = 55;
+    check_that(r) != expr(c);
+    check_that(r) == 42;
+    const int value = r;
+    check_that(value) == 42;
+    bool bvalue;
+    check_that(bvalue = c).throws<bad_var_access>();
   }
   void test_matching_2()
   {
@@ -124,13 +118,13 @@ void test_string()
   {
     var_t c{"hello constructed"};
     std::println("{}", c);
-    check_that(c ) ==  "hello constructed";
+    check_that(c) == "hello constructed";
   }
   // assign
   {
     var_t c = "hello assigned";
     std::println("{}", c);
-    check_that(c ) ==  "hello assigned";
+    check_that(c) == "hello assigned";
   }
 }
 
@@ -196,27 +190,27 @@ struct test_lifetime
   {
     {
       var<int, S, float> c = S{};
-      check_that(c.get<S>().lifetime_info.copy_count ) ==  0;
-      check_that(c.get<S>().lifetime_info.move_count ) ==  1;
+      check_that(c.get<S>().lifetime_info.copy_count) == 0;
+      check_that(c.get<S>().lifetime_info.move_count) == 1;
       c = S{};
-      check_that(c.get<S>().lifetime_info.copy_count ) ==  0;
-      check_that(c.get<S>().lifetime_info.move_count ) ==  1;
+      check_that(c.get<S>().lifetime_info.copy_count) == 0;
+      check_that(c.get<S>().lifetime_info.move_count) == 1;
     }
     {
       var<int, S, float> c{S{}};
-      check_that(c.get<S>().lifetime_info.copy_count ) ==  0;
-      check_that(c.get<S>().lifetime_info.move_count ) ==  1;
+      check_that(c.get<S>().lifetime_info.copy_count) == 0;
+      check_that(c.get<S>().lifetime_info.move_count) == 1;
     }
   }
   void test_copy_construct()
   {
     S                  s;
     var<int, S, float> c{s};
-    check_that(c.get<S>().lifetime_info.copy_count ) ==  1;
-    check_that(c.get<S>().lifetime_info.move_count ) ==  0;
+    check_that(c.get<S>().lifetime_info.copy_count) == 1;
+    check_that(c.get<S>().lifetime_info.move_count) == 0;
     c = s;
-    check_that(c.get<S>().lifetime_info.copy_count ) ==  1;
-    check_that(c.get<S>().lifetime_info.move_count ) ==  0;
+    check_that(c.get<S>().lifetime_info.copy_count) == 1;
+    check_that(c.get<S>().lifetime_info.move_count) == 0;
   }
 };
 } // namespace var_tests
