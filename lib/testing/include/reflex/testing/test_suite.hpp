@@ -2,6 +2,7 @@
 
 #include <reflex/enum.hpp>
 #include <reflex/meta.hpp>
+#include <reflex/testing/current.hpp>
 
 #include <functional>
 #include <print>
@@ -99,8 +100,10 @@ private:
               .fn =
                   []
               {
-                auto obj = CaseT{};
+                auto obj         = CaseT{};
+                detail::current_instance = &obj;
                 obj.[:fn:]();
+                detail::current_instance = nullptr;
               },
           });
         }

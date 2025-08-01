@@ -5,15 +5,6 @@
 
 #include <regex>
 
-template <typename T, typename CharT>
-struct std::formatter<std::reference_wrapper<T>, CharT> : std::formatter<std::decay_t<T>, CharT>
-{
-  auto format(auto const& r, auto& ctx) const
-  {
-    return std::formatter<std::decay_t<T>, CharT>::format(r.get(), ctx);
-  }
-};
-
 std::string fnmatch_to_regex(const std::string& pattern)
 {
   std::string regex = "^";

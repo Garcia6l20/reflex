@@ -1,5 +1,6 @@
 #pragma once
 
+#include <reflex/testing/current.hpp>
 #include <reflex/testing/evaluator.hpp>
 #include <reflex/testing/expression.hpp>
 #include <reflex/testing/reporter.hpp>
@@ -21,12 +22,16 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
   using value_type = typename Evaluator::value_type;
 
   // using expression_type = Expr;
-  std::source_location  l_;
-  mutable bool          wip_          = true;
-  const bool            fatal_        = true;
-  bool                  negated_      = false;
-  static constexpr auto is_fail_test_ = is_fail_test(Ctx.scope());
-  static constexpr auto has_value_    = Evaluator::has_value;
+  std::source_location                      l_;
+  bool                                      wip_     = true;
+  const bool                                fatal_   = true;
+  bool                                      negated_ = false;
+  std::vector<std::function<std::string()>> extra_descs_;
+  static constexpr auto                     scope_         = Ctx.scope();
+  static constexpr auto                     parent_scope_  = parent_of(scope_);
+  static constexpr auto                     is_test_class_ = is_type(parent_scope_) and is_class_type(parent_scope_);
+  static constexpr auto                     is_fail_test_  = is_fail_test(scope_);
+  static constexpr auto                     has_value_     = Evaluator::has_value;
 
   constexpr validator(Evaluator&& e, bool fatal, std::source_location const& l) : eval_{e}, l_{l}, fatal_{fatal}
   {
@@ -60,6 +65,18 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
     }
   }
 
+  template <typename... Expression>
+    requires(is_expression(^^Expression) and ...)
+  constexpr decltype(auto) with_extra(Expression&&... extra)
+  {
+    template for(constexpr auto ii : std::views::iota(0uz, sizeof...(Expression)))
+    {
+      extra_descs_.push_back([e = std::forward<decltype(extra...[ii])>(extra...[ii])]
+                             { return std::format("{}={}", e.str, e); });
+    }
+    return *this;
+  }
+
   constexpr decltype(auto) negate()
   {
     negated_ = !negated_;
@@ -81,7 +98,7 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
     return eval_.str();
   }
 
-  template <typename Fn> constexpr bool validate(Fn&& fn) const
+  template <typename Fn> constexpr bool validate(Fn&& fn)
   {
     wip_                     = false;
     validation_result result = fn(*this);
@@ -99,6 +116,38 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
       if(fatal_)
       {
         std::abort();
+      }
+      if(current_instance != nullptr)
+      {
+        if constexpr(is_test_class_)
+        {
+          template for(constexpr auto M : define_static_array(nonstatic_data_members_of(parent_scope_, Ctx)))
+          {
+            using MemT = [:type_of(M):];
+            if constexpr(std::formattable<MemT, char>)
+            {
+              constexpr auto s = display_string_of(M);
+              if(expression_string().find(s) != std::string_view::npos)
+              {
+                auto parent = static_cast<[:parent_scope_:]*>(current_instance);
+                with_extra(expression{std::ref(parent->[:M:]), s});
+              }
+            }
+          }
+        }
+      }
+      if(not extra_descs_.empty())
+      {
+        using std::ranges::to;
+        using std::views::join_with;
+        using std::views::transform;
+        using namespace std::string_view_literals;
+        std::format_to(std::back_inserter(result.expanded_expression),
+                       " (with: {})",
+                       std::move(extra_descs_)                                    //
+                           | transform([](auto&& fn) { return std::move(fn)(); }) //
+                           | join_with(", "sv)                                    //
+                           | to<std::string>());
       }
     }
     result.should_fail = is_fail_test_;
@@ -163,32 +212,33 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
   X(<, _is_less_than)              \
   X(<=, _is_less_or_equal_than)
 
-#define X(__op, __name)                                                           \
-  template <typename U> constexpr void __name(U const& expected) const            \
-  {                                                                               \
-    const auto expected_ex  = [&] { return expected_expression(expected); };      \
-    const auto expected_str = [&] { return format_expected(expected); };          \
-    validate(                                                                     \
-        [&](auto&)                                                                \
-        {                                                                         \
-          return detail::validation_result{                                       \
-              value() __op expected,                                              \
-              std::format("{} {} {}", expression_string(), #__op, expected_ex()), \
-              std::format("{} {} {}", format_value(), #__op, expected_str()),     \
-          };                                                                      \
-        });                                                                       \
-  }                                                                               \
-  template <typename U>                                                           \
-    requires(^^U != ^^validator)                                                  \
-  constexpr void operator __op(U const& expected) const                           \
-    requires requires() { value() __op expected; }                                \
-  {                                                                               \
-    __name(expected);                                                             \
+#define X(__op, __name)                                                                \
+  template <typename U> constexpr void __name(U const& expected)                       \
+  {                                                                                    \
+    const auto expected_ex  = [&] { return expected_expression(expected); };           \
+    const auto expected_str = [&] { return format_expected(expected); };               \
+    validate(                                                                          \
+        [&](auto&)                                                                     \
+        {                                                                              \
+          return detail::validation_result{                                            \
+              value() __op expected,                                                   \
+              std::format("{} {} {}", expression_string(), #__op, expected_ex()),      \
+              std::format("{} {} {} is false", format_value(), #__op, expected_str()), \
+          };                                                                           \
+        });                                                                            \
+  }                                                                                    \
+  template <typename U>                                                                \
+    requires(^^U != ^^validator)                                                       \
+  constexpr decltype(auto) operator __op(U const& expected)                            \
+    requires requires() { value() __op expected; }                                     \
+  {                                                                                    \
+    __name(expected);                                                                  \
+    return *this;                                                                      \
   }
   _X_TESTING_OPERATIONS(X)
 #undef X
 
-  constexpr decltype(auto) is_empty() const
+  constexpr decltype(auto) is_empty()
   {
     validate(
         [&](auto&)
@@ -196,12 +246,12 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
           return detail::validation_result{
               value().empty(),
               std::format("{} is empty", expression_string()),
-              std::format("{} is empty", value()),
+              std::format("{} is not empty", value()),
           };
         });
     return *this;
   }
-  constexpr decltype(auto) is_not_empty() const
+  constexpr decltype(auto) is_not_empty()
   {
     validate(
         [&](auto&)
@@ -209,12 +259,12 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
           return detail::validation_result{
               not value().empty(),
               std::format("{} is not empty", expression_string()),
-              std::format("{} is not empty", value()),
+              std::format("{} is empty", value()),
           };
         });
     return *this;
   }
-  template <typename U> constexpr decltype(auto) contains(U&& expected) const
+  template <typename U> constexpr decltype(auto) contains(U&& expected)
   {
     const auto expected_ex = [&] { return expected_expression(expected); };
     validate(
@@ -223,7 +273,7 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
           return detail::validation_result{
               std::ranges::contains(value(), expected),
               std::format("{} contains {}", expression_string(), expected_ex()),
-              std::format("{} contains {}", value(), expected),
+              std::format("{} does not contain {}", value(), expected),
           };
         });
     return *this;
