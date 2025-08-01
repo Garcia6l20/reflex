@@ -7,8 +7,11 @@ namespace reflex::testing
 
 template <typename T> struct expression
 {
+  using value_type                = T;
+  static constexpr bool has_value = true;
+
   T                value;
-  std::string_view str;
+  std::string_view expression_;
 
   decltype(auto) get(this auto& self)
   {
@@ -23,12 +26,20 @@ template <typename T> struct expression
   {
     return value;
   }
+
+  constexpr std::string_view str() const
+  {
+    return expression_;
+  }
 };
 
 template <typename T> struct expression<std::reference_wrapper<T>>
 {
+  using value_type                = T;
+  static constexpr bool has_value = true;
+
   std::reference_wrapper<T> value;
-  std::string_view          str;
+  std::string_view          expression_;
 
   decltype(auto) get(this auto& self)
   {
@@ -43,7 +54,20 @@ template <typename T> struct expression<std::reference_wrapper<T>>
   {
     return value.get();
   }
+
+  constexpr std::string_view str() const
+  {
+    return expression_;
+  }
 };
+
+template <typename T, typename Str> expression(T&, Str) -> expression<std::reference_wrapper<T>>;
+template <typename T, typename Str> expression(T const&, Str) -> expression<std::reference_wrapper<const T>>;
+template <typename T, typename Str> expression(T&&, Str) -> expression<T>;
+
+// template <typename T> struct expression<T&> : expression<std::reference_wrapper<T>>
+// {
+// };
 
 consteval bool is_expression(meta::info R)
 {
@@ -52,7 +76,6 @@ consteval bool is_expression(meta::info R)
 
 #define expr(...) reflex::testing::expression((__VA_ARGS__), #__VA_ARGS__)
 } // namespace reflex::testing
-
 
 template <typename T, typename CharT>
 struct std::formatter<std::reference_wrapper<T>, CharT> : std::formatter<std::decay_t<T>, CharT>

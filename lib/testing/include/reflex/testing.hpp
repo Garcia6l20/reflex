@@ -72,7 +72,7 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
     template for(constexpr auto ii : std::views::iota(0uz, sizeof...(Expression)))
     {
       extra_descs_.push_back([e = std::forward<decltype(extra...[ii])>(extra...[ii])]
-                             { return std::format("{}={}", e.str, e); });
+                             { return std::format("{}={}", e.str(), e); });
     }
     return *this;
   }
@@ -90,7 +90,7 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
 
   constexpr decltype(auto) value() const
   {
-    return eval_.value();
+    return eval_.get();
   }
 
   constexpr decltype(auto) expression_string() const
@@ -160,7 +160,7 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
   {
     if constexpr(is_expression(^^U))
     {
-      return expected.str;
+      return expected.str();
     }
     else if constexpr(decay(^^U) == ^^meta::info)
     {
@@ -287,7 +287,9 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
     // return validation_view<validator>{std::move(*this)};
   }
 
-  template <typename Exception> decltype(auto) throws() noexcept
+  template <typename Exception>
+    requires(is_evaluator(^^Evaluator)) // not available, use eval_check_that(...) instead !
+  decltype(auto) throws() noexcept
   {
 #define _REFLEX_X_KNOWN_EXCEPTIONS(X) \
   X(std::invalid_argument)            \
@@ -362,9 +364,17 @@ constexpr auto _static_ensure(std::string_view            expression_str,
 
 constexpr detail::__fail_test fail_test;
 
-#define __make_asserter(__fatal__, ...)                                                                  \
+#define __make_eval_asserter(__fatal__, ...)                                                             \
   reflex::testing::_ensure<std::meta::access_context::current()>(                                        \
       reflex::testing::detail::evaluator([&] -> decltype(auto) { return (__VA_ARGS__); }, #__VA_ARGS__), \
+      __fatal__)
+
+#define eval_assert_that(...) __make_eval_asserter(true, __VA_ARGS__)
+#define eval_check_that(...)  __make_eval_asserter(false, __VA_ARGS__)
+
+#define __make_asserter(__fatal__, ...)                           \
+  reflex::testing::_ensure<std::meta::access_context::current()>( \
+      reflex::testing::expression((__VA_ARGS__), #__VA_ARGS__),   \
       __fatal__)
 
 #define assert_that(...) __make_asserter(true, __VA_ARGS__)

@@ -56,7 +56,7 @@ struct test_basic
     const int value = r;
     check_that(value) == 42;
     bool bvalue;
-    check_that(bvalue = c).throws<bad_var_access>();
+    eval_check_that(bvalue = c).throws<bad_var_access>();
   }
   void test_matching_2()
   {

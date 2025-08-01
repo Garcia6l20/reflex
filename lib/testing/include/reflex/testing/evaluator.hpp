@@ -16,7 +16,7 @@ template <typename Fn> struct evaluator
   using value_type                       = [:value_info:];
   static constexpr bool has_value        = value_info != ^^void;
 
-  constexpr decltype(auto) value() const
+  constexpr decltype(auto) get() const
   {
     if constexpr(has_value)
     {
@@ -45,4 +45,9 @@ template <typename Fn> struct evaluator
     return expression_;
   }
 };
+
+consteval bool is_evaluator(meta::info R)
+{
+  return has_template_arguments(decay(R)) and template_of(decay(R)) == ^^evaluator;
+}
 } // namespace reflex::testing::detail

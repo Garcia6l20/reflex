@@ -61,9 +61,6 @@ void test_vec()
       auto value = 66;
       check_that(v).negate().contains(expr(value));
     }
-
-    // comming soon
-    // check_that(v).view() | std::views::filter([](const auto& i) { return i % 2 == 0; }) | is_length(1);
   }
 }
 [[= reflex::testing::fail_test]] void test_vec_failing()
