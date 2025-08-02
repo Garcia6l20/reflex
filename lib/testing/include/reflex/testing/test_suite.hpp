@@ -3,6 +3,8 @@
 #include <reflex/enum.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/testing/current.hpp>
+#include <reflex/testing/parametrize.hpp>
+#include <reflex/to_tuple.hpp>
 
 #include <functional>
 #include <print>
@@ -73,6 +75,45 @@ private:
     }
     return flags;
   }
+  template <meta::info S, meta::info C> static void do_call_test()
+  {
+    const auto caller = []
+    {
+      if constexpr(is_namespace(S))
+      {
+        return []<typename... Args>(Args&&... args) { return [:C:](std::forward<Args>(args)...); };
+      }
+      else
+      {
+        using CaseT = [:S:];
+        return []<typename... Args>(Args&&... args)
+        {
+          auto obj                 = CaseT{};
+          detail::current_instance = &obj;
+          obj.[:C:](std::forward<Args>(args)...);
+          detail::current_instance = nullptr;
+        };
+      }
+    }();
+    constexpr auto params_annotations = define_static_array(meta::annotations_of_with(C, ^^detail::parametrize_annotation));
+    if constexpr(params_annotations.size())
+    {
+      static_assert(params_annotations.size() == 1, "only 1 parametrize annotation supported");
+
+      constexpr auto annotation = constant_of(params_annotations[0]);
+
+      constexpr auto params = [:annotation:].fixture;
+
+      for(auto const& p : [:params:])
+      {
+        std::apply(caller, to_tuple(p));
+      }
+    }
+    else
+    {
+      caller();
+    }
+  }
 
   template <meta::info S> static void parse_suite(test_suite& root)
   {
@@ -80,33 +121,14 @@ private:
     {
       if constexpr(is_function(C))
       {
-        if constexpr(is_namespace(S))
-        {
-          root.tests.push_back(test_case{
-              .name  = std::string{display_string_of(C)},
-              .loc   = source_location_of(C),
-              .flags = get_flags(C),
-              .fn    = [FN = [:C:]] { FN(); },
-          });
-        }
-        else
-        {
-          using CaseT              = [:S:];
-          static constexpr auto fn = C;
-          root.tests.push_back(test_case{
-              .name  = std::string{display_string_of(C)},
-              .loc   = source_location_of(C),
-              .flags = get_flags(C),
-              .fn =
-                  []
-              {
-                auto obj         = CaseT{};
-                detail::current_instance = &obj;
-                obj.[:fn:]();
-                detail::current_instance = nullptr;
-              },
-          });
-        }
+        static constexpr auto suite = S;
+        static constexpr auto caze  = C;
+        root.tests.push_back(test_case{
+            .name  = std::string{display_string_of(C)},
+            .loc   = source_location_of(C),
+            .flags = get_flags(C),
+            .fn    = [] { do_call_test<suite, caze>(); },
+        });
       }
       else
       {

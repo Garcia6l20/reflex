@@ -15,24 +15,37 @@ template <auto... Values> constexpr templated_annotation_t<Values...> templated_
 namespace annotation_queries_tests
 {
 
+static constexpr struct _a1
+{
+} a1;
+static constexpr struct _a2
+{
+} a2;
+
+template <int V> struct _ta
+{
+  static constexpr int value = V;
+};
+template <int V> static constexpr _ta<V> ta;
+
 void test_simple_annotations()
 {
-  static constexpr struct
-  {
-  } a1;
-  static constexpr struct
-  {
-  } a2;
-
   struct S1
   {
-    [[= a1]] bool        a;
-    [[= a1]] int         b;
-    [[= a2]] std::string c;
-    [[= a2]] std::string d;
+    [[= a1]] bool            a;
+    [[= a1]] int             b;
+    [[= a2]] std::string     c;
+    [[= a2]] std::string     d;
+    [[= ta<42>]] std::string e;
+    [[= ta<55>]] std::string f;
   };
 
-  check_that(meta::has_annotation(^^S1::a, ^^a1));
+  static_assert(meta::has_annotation(^^S1::a, ^^_a1));
+  static_assert(meta::has_annotation(^^S1::a, ^^a1));
+  static_assert(meta::has_annotation(^^S1::b, ^^a1));
+  static_assert(meta::has_annotation(^^S1::e, ^^_ta));
+  static_assert(meta::has_annotation(^^S1::e, ^^ta<42>));
+
   {
     constexpr auto members = define_static_array(meta::nonstatic_data_members_annotated_with(^^S1, ^^a1));
     // auto checker = static_check_that(members.size());
@@ -46,6 +59,16 @@ void test_simple_annotations()
     static_check_that(members.size() == 2);
     static_check_that(members[0] == ^^S1::c);
     static_check_that(members[1] == ^^S1::d);
+  }
+  {
+    constexpr auto members = define_static_array(meta::nonstatic_data_members_annotated_with(^^S1, ^^_ta));
+    static_check_that(members.size() == 2);
+    static_check_that(members[0] == ^^S1::e);
+    static_check_that(members[1] == ^^S1::f);
+  }
+  {
+    constexpr auto members = define_static_array(meta::nonstatic_data_members_annotated_with(^^S1, ^^ta<42>));
+    static_check_that(members.size() == 1);
   }
 }
 void test_templated_annotations()

@@ -16,8 +16,7 @@ struct[[= specs<"CLI calculator.">]] //
       [[= specs<":lhs:", "The left value.">]]                                    //
       [[= specs<":rhs:", "The right value.">]]                                   //
       [[= specs<":repeat:", "-r/--repeat", "Repeat output N times.">, = _count]] //
-      int
-      add(float lhs, float rhs, std::optional<int> repeat) const noexcept
+      int add(float lhs, float rhs, std::optional<int> repeat) const noexcept
   {
     for(int ii = 0; ii < repeat.value_or(0) + 1; ++ii)
     {
@@ -75,140 +74,99 @@ struct[[= specs<"CLI calculator.">]] //
 
 #include <reflex/testing_main.hpp>
 
+using namespace std::string_view_literals;
+
 namespace cli_calculator_tests
 {
 struct base_tests
 {
   calculator c{};
 
-  // void experiments_test_1()
-  // {
-  //   constexpr auto I = ^^calculator;
+  using output_check_fn = std::function<void(std::string_view, std::string_view)>;
+  struct fixture_type
+  {
+    std::vector<std::string_view> args;
+    int                           result       = 0;
+    output_check_fn               output_check = nullptr;
+  };
+  static constexpr auto            prog_name      = "test";
+  static const inline fixture_type help_fixture[] = {
+      {.args = {prog_name, "-h"}, .result = 0, .output_check = nullptr},
+      {.args = {prog_name, "add", "-h"}, .result = 0, .output_check = nullptr},
+      {.args = {prog_name, "sub", "-h"}, .result = 0, .output_check = nullptr},
+      {.args = {prog_name, "mult", "-h"}, .result = 0, .output_check = nullptr},
+      {.args = {prog_name, "div", "-h"}, .result = 0, .output_check = nullptr},
+      {.args         = {prog_name, "undefined"},
+       .result       = 1,
+       .output_check = [](auto out, auto err)
+       { eval_check_that(err.contains("unexpected argument: undefined")).with_extra(expr(err)); }},
 
-  //   constexpr auto Expected = ^^detail::specs;
+      {.args   = {prog_name, "add", "2", "3"},
+       .result = 0,
+       .output_check =
+           [](auto out, auto err)
+       {
+         check_that(err).is_empty();
+         check_that(out) == "5\n";
+       }},
+      {.args   = {prog_name, "add", "--repeat", "2", "3"},
+       .result = 0,
+       .output_check =
+           [](auto out, auto err)
+       {
+         check_that(err).is_empty();
+         check_that(out) == "5\n5\n";
+       }},
+      {.args   = {prog_name, "add", "-rr", "2", "3"},
+       .result = 0,
+       .output_check =
+           [](auto out, auto err)
+       {
+         check_that(err).is_empty();
+         check_that(out) == "5\n5\n5\n";
+       }},
+      {.args   = {prog_name, "-v", "sub", "2", "3"},
+       .result = 0,
+       .output_check =
+           [](auto out, auto err)
+       {
+         check_that(err).is_empty();
+         check_that(out) == "2 - 3 = -1\n";
+       }},
+      {.args   = {prog_name, "mult", "2", "3"},
+       .result = 0,
+       .output_check =
+           [](auto out, auto err)
+       {
+         check_that(err).is_empty();
+         check_that(out) == "6\n";
+       }},
+      {.args   = {prog_name, "div", "6", "3"},
+       .result = 0,
+       .output_check =
+           [](auto out, auto err)
+       {
+         check_that(err).is_empty();
+         check_that(out) == "2\n";
+       }},
+  };
 
-  //   constexpr auto members = define_static_array(
-  //       members_of(I, meta::access_context::current()) |
-  //       std::views::filter([](auto M)
-  //                          { return is_nonstatic_data_member(M) or (is_user_declared(M) and is_function(M)); }));
-  //   template for(constexpr auto M : members)
-  //   {
-  //     std::println("{}", display_string_of(M));
-
-  //     constexpr auto specs_annotations = define_static_array(meta::template_annotations_of<M, ^^detail::specs>());
-  //     template for(constexpr auto S : specs_annotations)
-  //     {
-  //       std::println("-- {}", display_string_of(S));
-  //     }
-  //   }
-  // }
-  // void getting_flags_test()
-  // {
-  //   {
-  //     constexpr auto flags = detail::flags_of<^^calculator, ^^calculator::verbose>();
-  //     template for(constexpr auto flg : flags)
-  //     {
-  //       println("{}", display_string_of(flg));
-  //     }
-  //     STATIC_REQUIRE(detail::has_flag<^^calculator, ^^calculator::verbose, ^^_count>);
-  //   }
-  //   {
-  //     constexpr auto add_params = define_static_array(parameters_of(^^calculator::add));
-  //     constexpr auto flags      = detail::flags_of<^^calculator::add, add_params[2]>();
-  //     template for(constexpr auto flg : flags)
-  //     {
-  //       println("{}", display_string_of(flg));
-  //     }
-  //     STATIC_REQUIRE(detail::has_flag<^^calculator::add, add_params[2], ^^_count>);
-  //   }
-  // }
-
-  void test_help()
+  [[= testing::parametrize<^^help_fixture>]] void
+      test(std::vector<std::string_view> const& args, int result, output_check_fn const& check)
   {
-    const char* args[] = {"test1", "-h"};
-    check_that(c.run(arraysize(args), args)) == 0;
-  }
-  void test_add_help()
-  {
-    const char* args[] = {"test1", "add", "-h"};
-    check_that(c.run(arraysize(args), args)) == 0;
-  }
-  void test_sub_help()
-  {
-    const char* args[] = {"test1", "sub", "-h"};
-    check_that(c.run(arraysize(args), args) == 0);
-  }
-  void test_add()
-  {
-    const char* args[] = {"test1", "add", "2", "3"};
-    int         rc     = -1;
-    auto [out, err]    = capture_out_err([&] { rc = c.run(arraysize(args), args); });
-    std::println("stdout: {}", out);
-    std::println("stderr: {}", err);
-    check_that(rc) == 0;
-    check_that(err).is_empty();
-    check_that(out) == "5\n";
-  }
-  void test_add_repeat()
-  {
-    const char* args[] = {"test1", "add", "--repeat", "2", "3"};
-    int         rc     = -1;
-    auto [out, err]    = capture_out_err([&] {//
-      rc = c.run(arraysize(args), args);
-    });
-    std::println("stdout: {}", out);
-    std::println("stderr: {}", err);
-    check_that(rc) == 0;
-    check_that(err).is_empty();
-    check_that(out) == "5\n5\n";
-  }
-  void test_add_rr()
-  {
-    const char* args[] = {"test1", "add", "-rr", "2", "3"};
-    int         rc     = -1;
-    auto [out, err]    = capture_out_err([&] {//
-      rc = c.run(arraysize(args), args);
-    });
-    std::println("stdout: {}", out);
-    std::println("stderr: {}", err);
-    check_that(rc) == 0;
-    check_that(err).is_empty();
-    check_that(out) == "5\n5\n5\n";
-  }
-  void test_sub()
-  {
-    const char* args[] = {"test1", "-v", "sub", "2", "3"};
-    int         rc     = -1;
-    auto [out, err]    = capture_out_err([&] {//
-      rc = c.run(arraysize(args), args);
-    });
-    std::println("stdout: {}", out);
-    std::println("stderr: {}", err);
-    check_that(rc) == 0;
-    check_that(err).is_empty();
-    check_that(out) == "2 - 3 = -1\n";
-  }
-  void test_mult()
-  {
-    const char* args[] = {"test1", "mult", "2", "3"};
-    int         rc     = -1;
-    auto [out, err]    = capture_out_err([&] { rc = c.run(arraysize(args), args); });
-    std::println("stdout: {}", out);
-    std::println("stderr: {}", err);
-    check_that(rc) == 0;
-    check_that(err).is_empty();
-    check_that(out) == "6\n";
-  }
-  void test_div()
-  {
-    const char* args[] = {"test1", "div", "6", "3"};
-    int         rc     = -1;
-    auto [out, err]    = capture_out_err([&] { rc = c.run(arraysize(args), args); });
-    std::println("stdout: {}", out);
-    std::println("stderr: {}", err);
-    check_that(rc) == 0;
-    check_that(err).is_empty();
-    check_that(out) == "2\n";
+    const char* aa[args.size()];
+    int         ii = 0;
+    for(auto const& a : args)
+    {
+      aa[ii++] = a.data();
+    }
+    int rc          = -1;
+    auto [out, err] = capture_out_err([&] { rc = c.run(args.size(), aa); });
+    check_that(rc) == result;
+    if(check)
+    {
+      check(out, err);
+    }
   }
 };
 } // namespace cli_calculator_tests

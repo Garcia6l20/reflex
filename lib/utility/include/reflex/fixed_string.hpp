@@ -34,6 +34,11 @@ template <size_t N> struct fixed_string
   {
     return N;
   }
+
+  constexpr operator std::string_view() const
+  {
+    return view();
+  }
 };
 template <size_t N> fixed_string(const char (&s)[N]) -> fixed_string<N>;
 

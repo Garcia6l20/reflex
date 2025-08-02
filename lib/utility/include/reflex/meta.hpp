@@ -35,48 +35,29 @@ consteval auto tuple_for(std::ranges::range auto elems) -> meta::info
   return substitute(^^std::tuple, elems | std::views::transform(remove_cvref) | std::ranges::to<std::vector>());
 }
 
-template <info I, info Expected> consteval auto template_annotations_of()
+consteval auto annotations_of_with(info R, info A)
 {
-  return annotations_of(I) //
-         | std::views::filter(
-               [&](auto A)
-               {
-                 auto AT = type_of(A);
-                 return has_template_arguments(AT) and template_of(AT) == Expected;
-               }) //
-         | std::views::transform(std::meta::constant_of);
-}
-
-consteval auto template_annotations_of(info I, info Expected)
-{
-  return annotations_of(I) //
-         | std::views::filter(
-               [&](auto A)
-               {
-                 auto AT = type_of(A);
-                 return has_template_arguments(AT) and template_of(AT) == Expected;
-               }) //
-         | std::views::transform(constant_of);
+  return annotations_of(R) | std::views::filter(
+                                 [A](auto R)
+                                 {
+                                   if(is_template(A))
+                                   {
+                                     return has_template_arguments(type_of(R)) and template_of(type_of(R)) == A;
+                                   }
+                                   else if(is_type(A))
+                                   {
+                                     return type_of(R) == A;
+                                   }
+                                   else
+                                   {
+                                     return constant_of(R) == constant_of(A);
+                                   }
+                                 });
 }
 
 consteval bool has_annotation(info R, info A)
 {
-  if(is_template(A))
-  {
-    return std::ranges::contains(annotations_of(R)                                      //
-                                     | std::views::transform(meta::type_of)             //
-                                     | std::views::filter(meta::has_template_arguments) //
-                                     | std::views::transform(meta::template_of),
-                                 A);
-  }
-  else if(is_type(A))
-  {
-    return std::ranges::contains(annotations_of(R) | std::views::transform(type_of), A);
-  }
-  else
-  {
-    return std::ranges::contains(annotations_of(R) | std::views::transform(constant_of), constant_of(A));
-  }
+  return not std::ranges::empty(annotations_of_with(R, A));
 }
 
 consteval auto nonstatic_data_members_annotated_with(info R, info A, access_context ctx = access_context::current())

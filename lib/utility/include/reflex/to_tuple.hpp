@@ -45,8 +45,16 @@ template <typename From> constexpr auto struct_to_tuple(From const& from)
 }
 } // namespace detail
 
-template <typename From> constexpr auto to_tuple(From const& from)
+template <typename From> constexpr decltype(auto) to_tuple(From const& from)
 {
-  return detail::get_struct_to_tuple_helper<From>()(from);
+  constexpr auto R = decay(^^From);
+  if constexpr(has_template_arguments(R) and template_of(R) == ^^std::tuple)
+  {
+    return from;
+  }
+  else
+  {
+    return detail::get_struct_to_tuple_helper<From>()(from);
+  }
 }
 } // namespace reflex

@@ -120,22 +120,22 @@ template <std::meta::info I, std::meta::info M> constexpr auto specs_of()
 {
   if constexpr(is_function(I))
   {
-    constexpr auto               fn_annotations = define_static_array(meta::template_annotations_of<I, ^^specs>());
+    constexpr auto               fn_annotations = define_static_array(meta::annotations_of_with(I, ^^specs));
     std::vector<std::meta::info> member_annotations;
     const auto                   name = identifier_of(M);
     template for(constexpr auto a : fn_annotations)
     {
-      constexpr auto s = [:a:];
+      constexpr auto s = [:constant_of(a):];
       if(s.field == name)
       {
         member_annotations.push_back(a);
       }
     }
-    return define_static_array(member_annotations)[0];
+    return constant_of(member_annotations.front());
   }
   else
   {
-    return define_static_array(meta::template_annotations_of<M, ^^specs>())[0];
+    return constant_of(meta::annotations_of_with(M, ^^specs).front());
   }
 }
 
@@ -219,13 +219,13 @@ template <std::meta::info I> static constexpr auto parse()
 
   if constexpr(is_function(I))
   {
-    constexpr auto specs_annotations = define_static_array(meta::template_annotations_of<I, ^^detail::specs>());
+    constexpr auto specs_annotations = define_static_array(meta::annotations_of_with(I, ^^detail::specs));
     template for(constexpr auto p : define_static_array(parameters_of(I)))
     {
       constexpr auto name = identifier_of(p);
       template for(constexpr auto a : specs_annotations)
       {
-        constexpr auto s = [:a:];
+        constexpr auto s = [:constant_of(a):];
         if(s.field == name)
         {
           if(s.is_opt)
@@ -248,11 +248,11 @@ template <std::meta::info I> static constexpr auto parse()
                            { return is_nonstatic_data_member(M) or (is_user_declared(M) and is_function(M)); }));
     template for(constexpr auto mem : members)
     {
-      constexpr auto specs_annotations = define_static_array(meta::template_annotations_of<mem, ^^detail::specs>());
+      constexpr auto specs_annotations = define_static_array(meta::annotations_of_with(mem, ^^detail::specs));
       if constexpr(!specs_annotations.empty())
       {
         constexpr auto mem_type = type_of(mem);
-        if constexpr([:specs_annotations[0]:].is_opt)
+        if constexpr([:constant_of(specs_annotations[0]):].is_opt)
         {
           options.push_back(mem);
         }
