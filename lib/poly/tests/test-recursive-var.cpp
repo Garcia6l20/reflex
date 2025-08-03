@@ -24,18 +24,18 @@ struct test_vector
 
   void test_empty()
   {
-    check_that(c.has_value()).negate();
+    CHECK_THAT(c.has_value()).negate();
   }
   
   void test_copy_constructible()
   {
     c       = var_t::vec_t{1};
-    assert_that(c.has_value());
-    assert_that(c.has_value<var_t::vec_t>());
+    ASSERT_THAT(c.has_value());
+    ASSERT_THAT(c.has_value<var_t::vec_t>());
     var_t b = c;
-    check_that(b) == expr(c);
+    CHECK_THAT(b) == expr(c);
     c.push_back(55);
-    check_that(b) != expr(c);
+    CHECK_THAT(b) != expr(c);
   }
 
   void test_base()
@@ -55,12 +55,12 @@ struct test_vector
     }
     std::println("{:j}", c);
     std::println("{:j}", c[1]);
-    check_that(c[0]) == 1;
-    check_that(c[1]) == "2";
-    check_that(c[2]) == 3;
-    check_that(c.at(0)) == 1;
-    check_that(c.at(1)) == "2";
-    check_that(c.at(2)) == 3;
+    CHECK_THAT(c[0]) == 1;
+    CHECK_THAT(c[1]) == "2";
+    CHECK_THAT(c[2]) == 3;
+    CHECK_THAT(c.at(0)) == 1;
+    CHECK_THAT(c.at(1)) == "2";
+    CHECK_THAT(c.at(2)) == 3;
     for(auto const& v : c.vec())
     {
       v.match([](std::string const& v) { std::println("- string: \"{}\"", v); }, //
@@ -71,7 +71,7 @@ struct test_vector
                 std::unreachable();
               });
     }
-    check_that(c) == var_t::vec_t{1, "2", 3};
+    CHECK_THAT(c) == var_t::vec_t{1, "2", 3};
   }
   void test_implicit_init()
   {
@@ -79,11 +79,11 @@ struct test_vector
     c[3] = 43; // implicitly adds 2 x none
     c.push_back(true);
     std::println("vec: {:jp}", c);
-    check_that(c[0]) == 42;
-    check_that(c[1]) == none;
-    check_that(c[2]) == none;
-    check_that(c[3]) == 43;
-    check_that(c[4]) == true;
+    CHECK_THAT(c[0]) == 42;
+    CHECK_THAT(c[1]) == none;
+    CHECK_THAT(c[2]) == none;
+    CHECK_THAT(c[3]) == 43;
+    CHECK_THAT(c[4]) == true;
   }
 };
 
@@ -96,16 +96,16 @@ struct test_map
   {
     std::println("{}", display_string_of(dealias(^^var_t::map_t)));
     c = var_t::map_t{{"1", 1}, {"2", "2"}, {"3", 3}};
-    check_that(c.has_value<var_t::map_t>());
-    check_that(c.has_value<std::map>());
+    CHECK_THAT(c.has_value<var_t::map_t>());
+    CHECK_THAT(c.has_value<std::map>());
     auto& tmp = c["1"];
     std::println("{}", tmp);
-    check_that(c["1"]) == 1;
-    check_that(c["2"]) == "2";
-    check_that(c["3"]) == 3;
-    check_that(c.at("1")) == 1;
-    check_that(c.at("2")) == "2";
-    check_that(c.at("3")) == 3;
+    CHECK_THAT(c["1"]) == 1;
+    CHECK_THAT(c["2"]) == "2";
+    CHECK_THAT(c["3"]) == 3;
+    CHECK_THAT(c.at("1")) == 1;
+    CHECK_THAT(c.at("2")) == "2";
+    CHECK_THAT(c.at("3")) == 3;
     std::println("{:j}", c);
     for(auto const& [k, v] : c.map())
     {
@@ -117,7 +117,7 @@ struct test_map
                 std::unreachable();
               });
     }
-    check_that(c) == var_t::map_t{{"1", 1}, {"2", "2"}, {"3", 3}};
+    CHECK_THAT(c) == var_t::map_t{{"1", 1}, {"2", "2"}, {"3", 3}};
   }
   void test_implicit_init()
   {

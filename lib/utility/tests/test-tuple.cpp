@@ -210,22 +210,22 @@ namespace tuple_tests
 void base_test()
 {
   constexpr auto t = tuple{42, true};
-  assert_that(tuple_c<decltype(t)>);
-  assert_that((tuple_with_c<decltype(t), int, bool>));
+  ASSERT_THAT(tuple_c<decltype(t)>);
+  ASSERT_THAT((tuple_with_c<decltype(t), int, bool>));
 
   std::println("==== {} ====", display_string_of(decay(type_of(^^t))));
 
-  assert_that(t.get<0>()) == 42;
-  assert_that(t.get<1>()) == true;
+  ASSERT_THAT(t.get<0>()) == 42;
+  ASSERT_THAT(t.get<1>()) == true;
 
-  assert_that(t.get(0_uz)) == 42;
-  assert_that(t.get(1_uz)) == true;
+  ASSERT_THAT(t.get(0_uz)) == 42;
+  ASSERT_THAT(t.get(1_uz)) == true;
 
-  assert_that(t.get(-1_sz)) == true;
-  assert_that(t.get(-2_sz)) == 42;
+  ASSERT_THAT(t.get(-1_sz)) == true;
+  ASSERT_THAT(t.get(-2_sz)) == 42;
 
-  assert_that(get<0>(t)) == 42;
-  assert_that(get<1>(t)) == true;
+  ASSERT_THAT(get<0>(t)) == 42;
+  ASSERT_THAT(get<1>(t)) == true;
 
   template for(constexpr auto v : t.append(42.2, "hello"))
   {
@@ -253,22 +253,22 @@ void base_test()
     // rvalue tuple
     {
       tie(a, b) = tuple{1, 2};
-      assert_that(a) == 1;
-      assert_that(b) == 2;
+      ASSERT_THAT(a) == 1;
+      ASSERT_THAT(b) == 2;
     }
     // lvalue tuple
     {
       auto t    = tuple{1, 2};
       tie(a, b) = t;
-      assert_that(a) == 1;
-      assert_that(b) == 2;
+      ASSERT_THAT(a) == 1;
+      ASSERT_THAT(b) == 2;
     }
     // const lvalue tuple
     {
       const auto t = tuple{1, 2};
       tie(a, b)    = t;
-      assert_that(a) == 1;
-      assert_that(b) == 2;
+      ASSERT_THAT(a) == 1;
+      ASSERT_THAT(b) == 2;
     }
   }
 }

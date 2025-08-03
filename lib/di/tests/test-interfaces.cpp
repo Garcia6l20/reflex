@@ -70,14 +70,14 @@ struct test_base
   {
     auto ods1 = injector.make_shared<^^one_dep_service>();
     auto ods2 = injector.make_shared<^^one_dep_service>();
-    check_that(ods1) == ods2;
+    CHECK_THAT(ods1) == ods2;
   }
   void test_unique_objects_are_not_persistant()
   {
     auto ods1 = injector.make_unique<^^one_dep_service>();
     auto ods2 = injector.make_unique<^^one_dep_service>();
-    check_that(ods1) != ods2;
-    check_that(&ods1->p) == &ods2->p;
+    CHECK_THAT(ods1) != ods2;
+    CHECK_THAT(&ods1->p) == &ods2->p;
   }
 };
 } // namespace di_interface_tests

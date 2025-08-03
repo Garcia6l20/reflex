@@ -48,27 +48,27 @@ void test_simple_annotations()
 
   {
     constexpr auto members = define_static_array(meta::nonstatic_data_members_annotated_with(^^S1, ^^a1));
-    // auto checker = static_check_that(members.size());
+    // auto checker = STATIC_CHECK_THAT(members.size());
     // std::println("{}", display_string_of(type_of(^^checker)));
-    static_check_that(members.size()) == 2;
-    static_check_that(members[0] == ^^S1::a);
-    static_check_that(members[1] == ^^S1::b);
+    STATIC_CHECK_THAT(members.size()) == 2;
+    STATIC_CHECK_THAT(members[0] == ^^S1::a);
+    STATIC_CHECK_THAT(members[1] == ^^S1::b);
   }
   {
     constexpr auto members = define_static_array(meta::nonstatic_data_members_annotated_with(^^S1, ^^a2));
-    static_check_that(members.size() == 2);
-    static_check_that(members[0] == ^^S1::c);
-    static_check_that(members[1] == ^^S1::d);
+    STATIC_CHECK_THAT(members.size() == 2);
+    STATIC_CHECK_THAT(members[0] == ^^S1::c);
+    STATIC_CHECK_THAT(members[1] == ^^S1::d);
   }
   {
     constexpr auto members = define_static_array(meta::nonstatic_data_members_annotated_with(^^S1, ^^_ta));
-    static_check_that(members.size() == 2);
-    static_check_that(members[0] == ^^S1::e);
-    static_check_that(members[1] == ^^S1::f);
+    STATIC_CHECK_THAT(members.size() == 2);
+    STATIC_CHECK_THAT(members[0] == ^^S1::e);
+    STATIC_CHECK_THAT(members[1] == ^^S1::f);
   }
   {
     constexpr auto members = define_static_array(meta::nonstatic_data_members_annotated_with(^^S1, ^^ta<42>));
-    static_check_that(members.size() == 1);
+    STATIC_CHECK_THAT(members.size() == 1);
   }
 }
 void test_templated_annotations()
@@ -94,16 +94,16 @@ void test_templated_annotations()
   {
     constexpr auto members =
         define_static_array(meta::nonstatic_data_members_annotated_with(^^S1, ^^templated_annotation_t));
-    static_check_that(members.size() == 4);
-    static_check_that(members[0] == ^^S1::b);
-    static_check_that(members[1] == ^^S1::d);
-    static_check_that(members[2] == ^^S1::e);
-    static_check_that(members[3] == ^^S1::f);
+    STATIC_CHECK_THAT(members.size() == 4);
+    STATIC_CHECK_THAT(members[0] == ^^S1::b);
+    STATIC_CHECK_THAT(members[1] == ^^S1::d);
+    STATIC_CHECK_THAT(members[2] == ^^S1::e);
+    STATIC_CHECK_THAT(members[3] == ^^S1::f);
   }
   {
     constexpr auto member = meta::first_nonstatic_data_member_annotated_with(^^S1, ^^templated_annotation<51>);
-    static_check_that(member != meta::null);
-    static_check_that(member == ^^S1::d);
+    STATIC_CHECK_THAT(member != meta::null);
+    STATIC_CHECK_THAT(member == ^^S1::d);
   }
 }
 } // namespace annotation_queries_tests

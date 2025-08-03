@@ -8,10 +8,10 @@ void test_simple_context()
 {
   int a = 42;
   int b = 43;
-  check_context(a, b);
-  check_that(a == b);
-  check_that(a > b);
-  check_that(a < b);
+  CHECK_CONTEXT(a, b);
+  CHECK_THAT(a == b);
+  CHECK_THAT(a > b);
+  CHECK_THAT(a < b);
 }
 
 } // namespace parametrize_tests

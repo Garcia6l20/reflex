@@ -99,55 +99,55 @@ struct base_tests
       {.args         = {prog_name, "undefined"},
        .result       = 1,
        .output_check = [](auto out, auto err)
-       { eval_check_that(err.contains("unexpected argument: undefined")).with_extra(expr(err)); }},
+       { CHECK_THAT_LAZY(err.contains("unexpected argument: undefined")); }},
 
       {.args   = {prog_name, "add", "2", "3"},
        .result = 0,
        .output_check =
            [](auto out, auto err)
        {
-         check_that(err).is_empty();
-         check_that(out) == "5\n";
+         CHECK_THAT(err).is_empty();
+         CHECK_THAT(out) == "5\n";
        }},
       {.args   = {prog_name, "add", "--repeat", "2", "3"},
        .result = 0,
        .output_check =
            [](auto out, auto err)
        {
-         check_that(err).is_empty();
-         check_that(out) == "5\n5\n";
+         CHECK_THAT(err).is_empty();
+         CHECK_THAT(out) == "5\n5\n";
        }},
       {.args   = {prog_name, "add", "-rr", "2", "3"},
        .result = 0,
        .output_check =
            [](auto out, auto err)
        {
-         check_that(err).is_empty();
-         check_that(out) == "5\n5\n5\n";
+         CHECK_THAT(err).is_empty();
+         CHECK_THAT(out) == "5\n5\n5\n";
        }},
       {.args   = {prog_name, "-v", "sub", "2", "3"},
        .result = 0,
        .output_check =
            [](auto out, auto err)
        {
-         check_that(err).is_empty();
-         check_that(out) == "2 - 3 = -1\n";
+         CHECK_THAT(err).is_empty();
+         CHECK_THAT(out) == "2 - 3 = -1\n";
        }},
       {.args   = {prog_name, "mult", "2", "3"},
        .result = 0,
        .output_check =
            [](auto out, auto err)
        {
-         check_that(err).is_empty();
-         check_that(out) == "6\n";
+         CHECK_THAT(err).is_empty();
+         CHECK_THAT(out) == "6\n";
        }},
       {.args   = {prog_name, "div", "6", "3"},
        .result = 0,
        .output_check =
            [](auto out, auto err)
        {
-         check_that(err).is_empty();
-         check_that(out) == "2\n";
+         CHECK_THAT(err).is_empty();
+         CHECK_THAT(out) == "2\n";
        }},
   };
 
@@ -161,8 +161,10 @@ struct base_tests
       aa[ii++] = a.data();
     }
     int rc          = -1;
-    auto [out, err] = capture_out_err([&] { rc = c.run(args.size(), aa); });
-    check_that(rc) == result;
+    std::string out, err;
+    std::tie(out, err) = capture_out_err([&] { rc = c.run(args.size(), aa); });
+    CHECK_CONTEXT(out, err);
+    CHECK_THAT(rc) == result;
     if(check)
     {
       check(out, err);

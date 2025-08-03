@@ -10,12 +10,12 @@ namespace named_tuple_tests
 void test_make_named_tuple_explicit()
 {
   constexpr auto t = make_named_tuple<"hello", "world">(1, 2);
-  check_that(t.hello) == 1;
-  check_that(t.get<"hello">()) == 1;
-  check_that(get<"hello">(t)) == 1;
-  check_that(t.world) == 2;
-  check_that(t.get<"world">()) == 2;
-  check_that(get<"world">(t)) == 2;
+  CHECK_THAT(t.hello) == 1;
+  CHECK_THAT(t.get<"hello">()) == 1;
+  CHECK_THAT(get<"hello">(t)) == 1;
+  CHECK_THAT(t.world) == 2;
+  CHECK_THAT(t.get<"world">()) == 2;
+  CHECK_THAT(get<"world">(t)) == 2;
 
   std::println("============= all members =============");
   constexpr auto T = type_of(^^t);
@@ -47,12 +47,12 @@ void test_make_named_tuple_from_struct()
     int   i;
   };
   constexpr auto t = make_named_tuple(test_s{42.2f, 42});
-  check_that(t.f) == 42.2f;
-  check_that(t.get<"f">()) == 42.2f;
-  check_that(get<"f">(t)) == 42.2f;
-  check_that(t.i) == 42;
-  check_that(t.get<"i">()) == 42;
-  check_that(get<"i">(t)) == 42;
+  CHECK_THAT(t.f) == 42.2f;
+  CHECK_THAT(t.get<"f">()) == 42.2f;
+  CHECK_THAT(get<"f">(t)) == 42.2f;
+  CHECK_THAT(t.i) == 42;
+  CHECK_THAT(t.get<"i">()) == 42;
+  CHECK_THAT(get<"i">(t)) == 42;
 }
 
 void test_non_constexpr_to_tuple()
@@ -63,12 +63,12 @@ void test_non_constexpr_to_tuple()
     int   i;
   };
   auto t = make_named_tuple(test_s{42.2f, 42});
-  check_that(t.f) == 42.2f;
-  check_that(t.get<"f">()) == 42.2f;
-  check_that(get<"f">(t)) == 42.2f;
-  check_that(t.i) == 42;
-  check_that(t.get<"i">()) == 42;
-  check_that(get<"i">(t)) == 42;
+  CHECK_THAT(t.f) == 42.2f;
+  CHECK_THAT(t.get<"f">()) == 42.2f;
+  CHECK_THAT(get<"f">(t)) == 42.2f;
+  CHECK_THAT(t.i) == 42;
+  CHECK_THAT(t.get<"i">()) == 42;
+  CHECK_THAT(get<"i">(t)) == 42;
 
   auto tt = to_tuple(t);
 }

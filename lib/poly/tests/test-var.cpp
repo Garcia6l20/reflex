@@ -16,48 +16,48 @@ struct test_basic
 
   test_basic()
   {
-    check_that(not c.has_value());
-    check_that(c.can_hold<int, bool>());
-    check_that(c.index_of<none_t>()) == 0;
-    check_that(c.index_of<int>()) == 1;
-    check_that(c.index_of<bool>()) == 2;
-    check_that(c.index_of<double>()) == -1;
+    CHECK_THAT(not c.has_value());
+    CHECK_THAT(c.can_hold<int, bool>());
+    CHECK_THAT(c.index_of<none_t>()) == 0;
+    CHECK_THAT(c.index_of<int>()) == 1;
+    CHECK_THAT(c.index_of<bool>()) == 2;
+    CHECK_THAT(c.index_of<double>()) == -1;
     c = 42;
-    check_that(c.has_value());
-    check_that(c.has_value<int>());
+    CHECK_THAT(c.has_value());
+    CHECK_THAT(c.has_value<int>());
   }
 
   void test_changing_value()
   {
     c = false;
-    check_that(c.has_value());
-    check_that(c.has_value<bool>());
+    CHECK_THAT(c.has_value());
+    CHECK_THAT(c.has_value<bool>());
     bool value = c;
-    check_that(value) == false;
+    CHECK_THAT(value) == false;
   }
   void test_string_value()
   {
-    check_that(not c.has_value<std::string>());
+    CHECK_THAT(not c.has_value<std::string>());
     c = "hello";
-    check_that(c.has_value());
-    check_that(c.has_value<std::string>());
+    CHECK_THAT(c.has_value());
+    CHECK_THAT(c.has_value<std::string>());
     std::println("{}", c);
     std::string value = c;
-    check_that(value) == "hello";
+    CHECK_THAT(value) == "hello";
   }
   void test_matching_1()
   {
     const auto r = c.match([](auto&& value) -> var_t {//
       return {value};
     });
-    check_that(r) == expr(c);
+    CHECK_THAT(r) == expr(c);
     c = 55;
-    check_that(r) != expr(c);
-    check_that(r) == 42;
+    CHECK_THAT(r) != expr(c);
+    CHECK_THAT(r) == 42;
     const int value = r;
-    check_that(value) == 42;
+    CHECK_THAT(value) == 42;
     bool bvalue;
-    eval_check_that(bvalue = c).throws<bad_var_access>();
+    CHECK_THAT_LAZY(bvalue = c).throws<bad_var_access>();
   }
   void test_matching_2()
   {
@@ -68,11 +68,11 @@ struct test_basic
       [](auto const& value) {//
         return false;
       });
-    check_that(r);
+    CHECK_THAT(r);
   }
   void test_matching_3()
   {
-    check_that(std::move(c).match(
+    CHECK_THAT(std::move(c).match(
       [](int && value) {//
         return true;
       },
@@ -101,31 +101,31 @@ struct test_basic
 void test_string()
 {
   using var_t = var<int, bool, std::string>;
-  static_check_that(not meta::has_explicit_constructor(^^int,
+  STATIC_CHECK_THAT(not meta::has_explicit_constructor(^^int,
                                                        {
                                                            ^^const char* }));
-  static_check_that(not meta::has_explicit_constructor(^^bool,
+  STATIC_CHECK_THAT(not meta::has_explicit_constructor(^^bool,
                                                        {
                                                            ^^const char* }));
-  static_check_that(meta::has_explicit_constructor(^^std::string,
+  STATIC_CHECK_THAT(meta::has_explicit_constructor(^^std::string,
                                                    {
                                                        ^^const char* }));
 
-  static_check_that(not std::equality_comparable_with<int, const char*>);
-  static_check_that(not std::equality_comparable_with<bool, const char*>);
-  static_check_that(std::equality_comparable_with<std::string, const char*>);
-  static_check_that(var_t::equality_comparable_with<const char*>());
+  STATIC_CHECK_THAT(not std::equality_comparable_with<int, const char*>);
+  STATIC_CHECK_THAT(not std::equality_comparable_with<bool, const char*>);
+  STATIC_CHECK_THAT(std::equality_comparable_with<std::string, const char*>);
+  STATIC_CHECK_THAT(var_t::equality_comparable_with<const char*>());
   // construct
   {
     var_t c{"hello constructed"};
     std::println("{}", c);
-    check_that(c) == "hello constructed";
+    CHECK_THAT(c) == "hello constructed";
   }
   // assign
   {
     var_t c = "hello assigned";
     std::println("{}", c);
-    check_that(c) == "hello assigned";
+    CHECK_THAT(c) == "hello assigned";
   }
 }
 
@@ -191,27 +191,27 @@ struct test_lifetime
   {
     {
       var<int, S, float> c = S{};
-      check_that(c.get<S>().lifetime_info.copy_count) == 0;
-      check_that(c.get<S>().lifetime_info.move_count) == 1;
+      CHECK_THAT(c.get<S>().lifetime_info.copy_count) == 0;
+      CHECK_THAT(c.get<S>().lifetime_info.move_count) == 1;
       c = S{};
-      check_that(c.get<S>().lifetime_info.copy_count) == 0;
-      check_that(c.get<S>().lifetime_info.move_count) == 1;
+      CHECK_THAT(c.get<S>().lifetime_info.copy_count) == 0;
+      CHECK_THAT(c.get<S>().lifetime_info.move_count) == 1;
     }
     {
       var<int, S, float> c{S{}};
-      check_that(c.get<S>().lifetime_info.copy_count) == 0;
-      check_that(c.get<S>().lifetime_info.move_count) == 1;
+      CHECK_THAT(c.get<S>().lifetime_info.copy_count) == 0;
+      CHECK_THAT(c.get<S>().lifetime_info.move_count) == 1;
     }
   }
   void test_copy_construct()
   {
     S                  s;
     var<int, S, float> c{s};
-    check_that(c.get<S>().lifetime_info.copy_count) == 1;
-    check_that(c.get<S>().lifetime_info.move_count) == 0;
+    CHECK_THAT(c.get<S>().lifetime_info.copy_count) == 1;
+    CHECK_THAT(c.get<S>().lifetime_info.move_count) == 0;
     c = s;
-    check_that(c.get<S>().lifetime_info.copy_count) == 1;
-    check_that(c.get<S>().lifetime_info.move_count) == 0;
+    CHECK_THAT(c.get<S>().lifetime_info.copy_count) == 1;
+    CHECK_THAT(c.get<S>().lifetime_info.move_count) == 0;
   }
 };
 } // namespace var_tests

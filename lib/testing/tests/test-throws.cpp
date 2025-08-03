@@ -4,8 +4,8 @@ namespace throwing_tests
 {
 void test()
 {
-  check_that(42) == 42;
-  eval_check_that(throw std::runtime_error{"yeah"}).throws<std::runtime_error>();
-  eval_check_that(throw std::runtime_error{"yeah"}).negate().throws<std::bad_alloc>();
+  CHECK_THAT(42) == 42;
+  CHECK_THAT_LAZY(throw std::runtime_error{"yeah"}).throws<std::runtime_error>();
+  CHECK_THAT_LAZY(throw std::runtime_error{"yeah"}).negate().throws<std::bad_alloc>();
 }
-} // namespace fixure_tests
+} // namespace throwing_tests

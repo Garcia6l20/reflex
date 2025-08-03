@@ -12,10 +12,10 @@ namespace my_test_suite {
 
   // case function must contain "test"
   void my_first_test() {
-    check_that(true) == true; // pass
-    assert_that(true) == true; // pass
-    check_that(true) == false; // fails (execution continues)
-    check_that(true) == false; // fails (execution stopped)
+    CHECK_THAT(true) == true; // pass
+    ASSERT_THAT(true) == true; // pass
+    CHECK_THAT(true) == false; // fails (execution continues)
+    CHECK_THAT(true) == false; // fails (execution stopped)
     std::unreachable();
   }
 }

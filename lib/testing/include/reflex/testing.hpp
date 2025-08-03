@@ -305,7 +305,7 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
   }
 
   template <typename Exception>
-    requires(is_evaluator(^^Evaluator)) // not available, use eval_check_that(...) instead !
+    requires(is_evaluator(^^Evaluator)) // not available, use CHECK_THAT_LAZY(...) instead !
   decltype(auto) throws() noexcept
   {
 #define _REFLEX_X_KNOWN_EXCEPTIONS(X) \
@@ -381,32 +381,32 @@ constexpr auto _static_ensure(std::string_view            expression_str,
 
 constexpr detail::__fail_test fail_test;
 
-#define __make_eval_asserter(__fatal__, ...)                                                             \
+#define __MAKE_LAZY_ASSERTER(__fatal__, ...)                                                             \
   reflex::testing::_ensure<std::meta::access_context::current()>(                                        \
       reflex::testing::detail::evaluator([&] -> decltype(auto) { return (__VA_ARGS__); }, #__VA_ARGS__), \
       __fatal__)
 
-#define eval_assert_that(...) __make_eval_asserter(true, __VA_ARGS__)
-#define eval_check_that(...)  __make_eval_asserter(false, __VA_ARGS__)
+#define ASSERT_THAT_LAZY(...) __MAKE_LAZY_ASSERTER(true, __VA_ARGS__)
+#define CHECK_THAT_LAZY(...)  __MAKE_LAZY_ASSERTER(false, __VA_ARGS__)
 
-#define __make_asserter(__fatal__, ...)                           \
+#define __MAKE_ASSERTER(__fatal__, ...)                           \
   reflex::testing::_ensure<std::meta::access_context::current()>( \
       reflex::testing::expression((__VA_ARGS__), #__VA_ARGS__),   \
       __fatal__)
 
-#define assert_that(...) __make_asserter(true, __VA_ARGS__)
-#define check_that(...)  __make_asserter(false, __VA_ARGS__)
+#define ASSERT_THAT(...) __MAKE_ASSERTER(true, __VA_ARGS__)
+#define CHECK_THAT(...)  __MAKE_ASSERTER(false, __VA_ARGS__)
 
-#define __reflexpr(item) ^^item
-#define __make_variadic_relexpr(...) PP_COMMA_JOIN(__reflexpr, __VA_ARGS__)
+#define __REFLEXPR(item) ^^item
+#define __MAKE_VARIADIC_RELEXPR(...) PP_COMMA_JOIN(__REFLEXPR, __VA_ARGS__)
 
-#define check_context(...)                                               \
-  const auto __ctx = detail::eval_context<__make_variadic_relexpr(__VA_ARGS__)> \
+#define CHECK_CONTEXT(...)                                               \
+  const auto __ctx = reflex::testing::detail::eval_context<__MAKE_VARIADIC_RELEXPR(__VA_ARGS__)> \
   {                                                                             \
     __VA_ARGS__                                                                 \
   }
 
-#define static_check_that(...) \
+#define STATIC_CHECK_THAT(...) \
   reflex::testing::_static_ensure<(__VA_ARGS__), std::meta::access_context::current()>(#__VA_ARGS__, false)
 
 template <std::meta::info... NSs> int run_all(int argc, char** argv)
