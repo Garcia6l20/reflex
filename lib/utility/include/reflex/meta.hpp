@@ -254,4 +254,19 @@ template <meta::info R> static consteval auto static_identifier_wrapper_type_of(
   return type_of(^^wrapper);
 }
 
+consteval bool is_structural_type(meta::info R)
+{
+  using std::ranges::all_of;
+  const auto ctx = meta::access_context::unchecked();
+  return is_scalar_type(R) or is_lvalue_reference_type(R) or
+         is_class_type(R) and
+             all_of(bases_of(R, ctx), [](info o) { return is_public(o) and is_structural_type(type_of(o)); }) and
+             all_of(nonstatic_data_members_of(R, ctx),
+                    [](info o)
+                    {
+                      return is_public(o) and not is_mutable_member(o) and
+                             is_structural_type(remove_all_extents(type_of(o)));
+                    });
+}
+
 } // namespace reflex::meta
