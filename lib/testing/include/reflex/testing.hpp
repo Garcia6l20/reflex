@@ -1,9 +1,11 @@
 #pragma once
 
-#include <reflex/testing/current.hpp>
+#include <reflex/testing/context.hpp>
 #include <reflex/testing/evaluator.hpp>
 #include <reflex/testing/expression.hpp>
 #include <reflex/testing/reporter.hpp>
+
+#include <reflex/pp.hpp>
 
 #include <functional>
 #include <map>
@@ -136,6 +138,21 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
             }
           }
         }
+      }
+      std::vector<std::string> context_values;
+      detail::base_eval_context::search(expression_string(),
+                                        [&](std::string_view name, std::string_view value)
+                                        { context_values.push_back(std::format("{} = {}", name, value)); });
+      if(not context_values.empty())
+      {
+        using std::ranges::to;
+        using std::views::join_with;
+        using namespace std::string_view_literals;
+        std::format_to(std::back_inserter(result.expanded_expression),
+                       " (with: {})",
+                       std::move(context_values) //
+                           | join_with(", "sv)   //
+                           | to<std::string>());
       }
       if(not extra_descs_.empty())
       {
@@ -285,7 +302,6 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
   {
     wip_ = false;
     return value();
-    // return validation_view<validator>{std::move(*this)};
   }
 
   template <typename Exception>
@@ -380,6 +396,15 @@ constexpr detail::__fail_test fail_test;
 
 #define assert_that(...) __make_asserter(true, __VA_ARGS__)
 #define check_that(...)  __make_asserter(false, __VA_ARGS__)
+
+#define __reflexpr(item) ^^item
+#define __make_variadic_relexpr(...) PP_COMMA_JOIN(__reflexpr, __VA_ARGS__)
+
+#define check_context(...)                                               \
+  const auto __ctx = detail::eval_context<__make_variadic_relexpr(__VA_ARGS__)> \
+  {                                                                             \
+    __VA_ARGS__                                                                 \
+  }
 
 #define static_check_that(...) \
   reflex::testing::_static_ensure<(__VA_ARGS__), std::meta::access_context::current()>(#__VA_ARGS__, false)

@@ -1,0 +1,70 @@
+#pragma once
+
+#include <reflex/meta.hpp>
+
+#include <format>
+#include <functional>
+#include <span>
+#include <string>
+#include <string_view>
+
+namespace reflex::testing::detail
+{
+struct base_eval_context
+{
+  base_eval_context() : parent_{current}
+  {
+    current = this;
+  }
+  ~base_eval_context()
+  {
+    current = parent_;
+  }
+
+  using on_match = std::function<void(std::string_view, std::string_view)>;
+  virtual void do_search(std::string_view expression, on_match const&) const = 0;
+
+  static void search(std::string_view expression, on_match const& m)
+  {
+    auto tmp = current;
+    while(tmp != nullptr)
+    {
+      tmp->do_search(expression, m);
+      tmp = tmp->parent_;
+    }
+  }
+
+  const base_eval_context*               parent_ = nullptr;
+  inline static const base_eval_context* current = nullptr;
+};
+template <meta::info... Items> struct eval_context : base_eval_context
+{
+  [:substitute(^^std::tuple,
+               std::array{
+                   Items...}                                           //
+                   | std::views::transform(meta::type_of)              //
+                   | std::views::transform(meta::add_lvalue_reference) //
+                   | std::views::transform(meta::add_const)):] items_;
+  eval_context(auto&... items) : base_eval_context{}, items_{items...}
+  {
+  }
+  void do_search(std::string_view expression, on_match const& m) const final
+  {
+    template for(constexpr auto ii : std::views::iota(0uz, sizeof...(Items)))
+    {
+      constexpr auto I = Items...[ii];
+      using ItemT      = [:type_of(I):];
+      if constexpr(std::formattable<ItemT, char>)
+      {
+        constexpr auto s = display_string_of(I);
+        if(expression.find(s) != std::string_view::npos)
+        {
+          m(s, std::format("{}", std::get<ii>(items_)));
+        }
+      }
+    }
+  }
+};
+
+static inline void* current_instance = nullptr;
+} // namespace reflex::testing::detail
