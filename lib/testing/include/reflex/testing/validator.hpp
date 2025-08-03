@@ -112,26 +112,6 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
       {
         std::abort();
       }
-      if(current_instance != nullptr)
-      {
-        if constexpr(is_test_class_ and is_evaluator(^^Evaluator))
-        {
-          // for evaluators: search for symbols in evaluated expression that are present in the parent class
-          template for(constexpr auto M : define_static_array(nonstatic_data_members_of(parent_scope_, Ctx)))
-          {
-            using MemT = [:type_of(M):];
-            if constexpr(std::formattable<MemT, char>)
-            {
-              constexpr auto s = display_string_of(M);
-              if(expression_string().find(s) != std::string_view::npos)
-              {
-                auto parent = static_cast<[:parent_scope_:]*>(current_instance);
-                with_extra(expression{std::ref(parent->[:M:]), s});
-              }
-            }
-          }
-        }
-      }
       std::vector<std::string> context_values;
       detail::base_eval_context::search(expression_string(),
                                         [&](std::string_view name, std::string_view value)

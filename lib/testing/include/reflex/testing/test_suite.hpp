@@ -30,7 +30,8 @@ consteval auto get_cases(std::meta::info S)
            std::views::filter(
                [](auto R)
                {
-                 return (is_function(R) or (is_type(R) and is_class_type(R))) and identifier_of(R).contains("test");
+                 return (is_function(R) or is_function_template(R) or (is_type(R) and is_class_type(R))) and
+                        identifier_of(R).contains("test");
                }) |
            std::ranges::to<std::vector>();
   }
@@ -56,6 +57,11 @@ struct test_case
   std::function<void()> fn;
 };
 
+struct any_arg
+{
+  template <typename T> operator T&();
+};
+
 struct test_suite
 {
   std::string          name;
@@ -75,27 +81,50 @@ private:
     }
     return flags;
   }
-  template <meta::info S, meta::info C> static void do_call_test()
+  template <meta::info S, meta::info C, meta::info dummy = meta::null, size_t arg_count = 0> static void do_call_test()
   {
     const auto caller = []
     {
       if constexpr(is_namespace(S))
       {
-        return []<typename... Args>(Args&&... args) { return [:C:](std::forward<Args>(args)...); };
+        return []<typename... Args>(Args&&... args)
+        {
+          if constexpr(is_function_template(C))
+          {
+            constexpr auto instanciation = substitute(C, std::array{^^Args...});
+            return [:instanciation:](std::forward<Args>(args)...);
+          }
+          else
+          {
+            return [:C:](std::forward<Args>(args)...);
+          }
+        };
       }
       else
       {
-        using CaseT = [:S:];
+        using CaseT        = [:S:];
+        using context_type = detail::class_eval_context<S>;
         return []<typename... Args>(Args&&... args)
         {
-          auto obj                 = CaseT{};
+          auto       obj           = CaseT{};
+          const auto ctx           = context_type{obj};
           detail::current_instance = &obj;
-          obj.[:C:](std::forward<Args>(args)...);
+
+          if constexpr(is_function_template(C))
+          {
+            constexpr auto instanciation = substitute(C, std::array{^^Args...});
+            obj.[:instanciation:](std::forward<Args>(args)...);
+          }
+          else
+          {
+            obj.[:C:](std::forward<Args>(args)...);
+          }
           detail::current_instance = nullptr;
         };
       }
     }();
-    constexpr auto params_annotations = define_static_array(meta::annotations_of_with(C, ^^detail::parametrize_annotation));
+    constexpr auto params_annotations = define_static_array(
+        meta::annotations_of_with(dummy == meta::null ? C : dummy, ^^detail::parametrize_annotation));
     if constexpr(params_annotations.size())
     {
       static_assert(params_annotations.size() == 1, "only 1 parametrize annotation supported");
@@ -104,14 +133,28 @@ private:
 
       constexpr auto params = [:annotation:].fixture;
 
-      using context_type = detail::fn_eval_context<C>;
-
       for(auto const& p : [:params:])
       {
-        const auto args = to_tuple(p);
-        auto ctx = std::apply([]<typename ...Args>(Args const& ...args) {
-          return context_type{args...};
-        }, args);
+        const auto args  = to_tuple(p);
+        using tuple_type = decltype(args);
+
+        constexpr auto context_type = []
+        {
+          if constexpr(is_function_template(C))
+          {
+            constexpr auto instanciation = substitute(C, template_arguments_of(^^tuple_type));
+            return substitute(^^detail::fn_eval_context,
+                              {
+                                  ^^instanciation});
+          }
+          else
+          {
+            return ^^detail::fn_eval_context<C>;
+          }
+        }();
+        using ContextT = [:context_type:];
+
+        const auto ctx = std::apply([]<typename... Args>(Args const&... args) { return ContextT{args...}; }, args);
 
         std::apply(caller, args);
       }
@@ -137,6 +180,34 @@ private:
             .fn    = [] { do_call_test<suite, caze>(); },
         });
       }
+      else if constexpr(is_function_template(C))
+      {
+        static constexpr auto Tmpl      = C;
+        static constexpr auto arg_count = []
+        {
+          static constexpr auto max_args = 16uz;
+          template for(constexpr auto ii : std::views::iota(1uz, max_args))
+          {
+            constexpr auto n = max_args - ii - 1;
+            if constexpr(can_substitute(Tmpl, std::views::repeat(^^any_arg) | std::views::take(n)))
+            {
+              return n;
+            }
+          }
+          std::unreachable();
+        }();
+
+        static constexpr auto dummy = substitute(Tmpl, std::views::repeat(^^any_arg) | std::views::take(arg_count));
+
+        static constexpr auto tsuite = S;
+        static constexpr auto tcaze  = C;
+        root.tests.push_back(test_case{
+            .name  = std::string{display_string_of(C)},
+            .loc   = source_location_of(C),
+            .flags = get_flags(dummy),
+            .fn    = [] { do_call_test<tsuite, tcaze, dummy, arg_count>(); },
+        });
+      }
       else
       {
         test_suite caze{
@@ -146,6 +217,19 @@ private:
         };
         parse_suite<C>(caze);
         root.tests.push_back(caze);
+      }
+    }
+    if constexpr(is_namespace(S))
+    {
+      template for(constexpr auto SubSuite : define_static_array(get_suites(S)))
+      {
+        test_suite subsuite{
+            .name  = std::string{display_string_of(SubSuite)},
+            .loc   = meta::source_location_of(SubSuite),
+            .flags = get_flags(SubSuite),
+        };
+        parse_suite<SubSuite>(subsuite);
+        root.tests.push_back(subsuite);
       }
     }
   }

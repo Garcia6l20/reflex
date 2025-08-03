@@ -15,8 +15,12 @@ namespace my_test_suite {
     CHECK_THAT(true) == true; // pass
     ASSERT_THAT(true) == true; // pass
     CHECK_THAT(true) == false; // fails (execution continues)
-    CHECK_THAT(true) == false; // fails (execution stopped)
+    ASSERT_THAT(true) == false; // fails (execution stopped)
     std::unreachable();
   }
 }
 ```
+
+Checkout examples:
+  - [hello-world](./examples/hello-world.cpp)
+  - [fixtures](./examples/fixtures.cpp)

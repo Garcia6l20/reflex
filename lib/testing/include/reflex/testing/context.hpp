@@ -7,7 +7,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <print>
 
 namespace reflex::testing::detail
 {
@@ -95,6 +94,32 @@ template <meta::info Fn> struct fn_eval_context : base_eval_context
         if(expression.find(s) != std::string_view::npos)
         {
           m(s, std::format("{}", std::get<ii>(items_)));
+        }
+      }
+    }
+  }
+};
+
+template <meta::info Cls> struct class_eval_context : base_eval_context
+{
+  static constexpr auto members_ =
+      define_static_array(nonstatic_data_members_of(Cls, meta::access_context::unchecked()));
+  [:Cls:] const& obj_;
+  class_eval_context(auto const& object) : base_eval_context{}, obj_{object}
+  {
+  }
+  void do_search(std::string_view expression, on_match const& m) const final
+  {
+    template for(constexpr auto ii : std::views::iota(0uz, members_.size()))
+    {
+      constexpr auto I = members_[ii];
+      using ItemT      = [:type_of(I):];
+      if constexpr(std::formattable<ItemT, char>)
+      {
+        constexpr auto s = identifier_of(I);
+        if(expression.find(s) != std::string_view::npos)
+        {
+          m(s, std::format("{}", obj_.[:I:]));
         }
       }
     }

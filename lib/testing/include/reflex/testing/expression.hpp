@@ -1,5 +1,6 @@
 #pragma once
 
+#include <reflex/format/reference_wrapper.hpp>
 #include <reflex/meta.hpp>
 
 namespace reflex::testing
@@ -76,15 +77,6 @@ consteval bool is_expression(meta::info R)
 
 #define expr(...) reflex::testing::expression((__VA_ARGS__), #__VA_ARGS__)
 } // namespace reflex::testing
-
-template <typename T, typename CharT>
-struct std::formatter<std::reference_wrapper<T>, CharT> : std::formatter<std::decay_t<T>, CharT>
-{
-  auto format(std::reference_wrapper<T> const& r, auto& ctx) const
-  {
-    return std::formatter<std::decay_t<T>, CharT>::format(r.get(), ctx);
-  }
-};
 
 template <typename T, typename CharT>
 struct std::formatter<reflex::testing::expression<T>, CharT> : std::formatter<T, CharT>

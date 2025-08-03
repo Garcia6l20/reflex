@@ -16,3 +16,6 @@
 #define __PP_COMMA_JOIN_HELPER(macro, a1, ...) \
   macro(a1) __VA_OPT__(, ) __VA_OPT__(__PP_COMMA_JOIN_AGAIN __PP_PARENS(macro, __VA_ARGS__))
 #define __PP_COMMA_JOIN_AGAIN() __PP_COMMA_JOIN_HELPER
+
+#define __PP_CONCAT(__l__, __r__) __l__##__r__
+#define PP_CONCAT(__l__, __r__)   __PP_CONCAT(__l__, __r__)

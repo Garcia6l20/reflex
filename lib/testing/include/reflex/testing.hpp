@@ -52,7 +52,7 @@ constexpr detail::__fail_test fail_test;
 #define __MAKE_VARIADIC_RELEXPR(...) PP_COMMA_JOIN(__REFLEXPR, __VA_ARGS__)
 
 #define CHECK_CONTEXT(...)                                                                       \
-  const auto __ctx = reflex::testing::detail::eval_context<__MAKE_VARIADIC_RELEXPR(__VA_ARGS__)> \
+  const auto PP_CONCAT(__ctx_, __LINE__) = reflex::testing::detail::eval_context<__MAKE_VARIADIC_RELEXPR(__VA_ARGS__)> \
   {                                                                                              \
     __VA_ARGS__                                                                                  \
   }
