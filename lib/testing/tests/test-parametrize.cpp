@@ -19,7 +19,7 @@ static const auto fixture_data = std::array{//
 
 [[= parametrize<^^fixture_data>]] void test_diff(int a, int b, int expected)
 {
-  CHECK_THAT(a - b) == expr(expected);
+  CHECK_THAT(a - b == expected);
 }
 
 static const auto fixture_data2 = std::array{//
@@ -30,6 +30,6 @@ static const auto fixture_data2 = std::array{//
 
 [[= parametrize<^^fixture_data2>]] void test_diff2(int a, int b, int expected)
 {
-  CHECK_THAT(a - b) == expr(expected);
+  CHECK_THAT(a - b == expected);
 }
 } // namespace parametrize_tests

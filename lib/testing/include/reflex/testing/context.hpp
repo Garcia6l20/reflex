@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <print>
 
 namespace reflex::testing::detail
 {
@@ -39,13 +40,17 @@ struct base_eval_context
 };
 template <meta::info... Items> struct eval_context : base_eval_context
 {
-  [:substitute(^^std::tuple,
-               std::array{
-                   Items...}                                           //
-                   | std::views::transform(meta::type_of)              //
-                   | std::views::transform(meta::add_lvalue_reference) //
-                   | std::views::transform(meta::add_const)):] items_;
+  using ItemsType = [:substitute(^^std::tuple,
+                                 std::array{
+                                     Items...}                                //
+                                     | std::views::transform(meta::type_of)   //
+                                     | std::views::transform(meta::add_const) //
+                                     | std::views::transform(meta::add_lvalue_reference)):];
+  ItemsType items_;
   eval_context(auto&... items) : base_eval_context{}, items_{items...}
+  {
+  }
+  eval_context(ItemsType const& items) : base_eval_context{}, items_{items}
   {
   }
   void do_search(std::string_view expression, on_match const& m) const final
@@ -57,6 +62,36 @@ template <meta::info... Items> struct eval_context : base_eval_context
       if constexpr(std::formattable<ItemT, char>)
       {
         constexpr auto s = display_string_of(I);
+        if(expression.find(s) != std::string_view::npos)
+        {
+          m(s, std::format("{}", std::get<ii>(items_)));
+        }
+      }
+    }
+  }
+};
+
+template <meta::info Fn> struct fn_eval_context : base_eval_context
+{
+  static constexpr auto params_ = define_static_array(parameters_of(Fn));
+  using ItemsType               = [:substitute(^^std::tuple,
+                                 params_                                      //
+                                     | std::views::transform(meta::type_of)   //
+                                     | std::views::transform(meta::add_const) //
+                                     | std::views::transform(meta::add_lvalue_reference)):];
+  ItemsType items_;
+  fn_eval_context(auto const&... items) : base_eval_context{}, items_{items...}
+  {
+  }
+  void do_search(std::string_view expression, on_match const& m) const final
+  {
+    template for(constexpr auto ii : std::views::iota(0uz, std::tuple_size_v<ItemsType>))
+    {
+      constexpr auto I = params_[ii];
+      using ItemT      = [:type_of(I):];
+      if constexpr(std::formattable<ItemT, char>)
+      {
+        constexpr auto s = identifier_of(I);
         if(expression.find(s) != std::string_view::npos)
         {
           m(s, std::format("{}", std::get<ii>(items_)));

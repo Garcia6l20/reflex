@@ -104,9 +104,16 @@ private:
 
       constexpr auto params = [:annotation:].fixture;
 
+      using context_type = detail::fn_eval_context<C>;
+
       for(auto const& p : [:params:])
       {
-        std::apply(caller, to_tuple(p));
+        const auto args = to_tuple(p);
+        auto ctx = std::apply([]<typename ...Args>(Args const& ...args) {
+          return context_type{args...};
+        }, args);
+
+        std::apply(caller, args);
       }
     }
     else
