@@ -5,9 +5,10 @@
 
 #include <regex>
 
-std::string fnmatch_to_regex(const std::string& pattern)
+std::string fnmatch_to_regex(std::string_view pattern)
 {
   std::string regex = "^";
+  regex.reserve(pattern.size());
   for(char c : pattern)
   {
     switch(c)
@@ -41,10 +42,21 @@ std::string fnmatch_to_regex(const std::string& pattern)
   return regex;
 }
 
-bool fnmatch(const std::string& pattern, const std::string& str)
+inline auto make_fnmatch_impl(std::string_view pattern)
 {
-  std::regex re(fnmatch_to_regex(pattern));
-  return std::regex_match(str, re);
+  return [re = std::regex(fnmatch_to_regex(pattern))](std::string_view str) //
+  { return std::regex_match(str.data(), re); };
+}
+using fnmatch_t = decltype(make_fnmatch_impl(std::declval<std::string_view>()));
+
+inline fnmatch_t make_fnmatch(std::string_view pattern)
+{
+  return make_fnmatch_impl(pattern);
+}
+
+bool fnmatch(std::string_view pattern, std::string_view str)
+{
+  return make_fnmatch(pattern)(str);
 }
 
 namespace reflex::testing
@@ -96,9 +108,13 @@ struct[[= cli::specs<"reflex test runner.">]] //
 
   [[= cli::specs<"Run tests.">, = cli::_default]]                      //
       [[= cli::specs<":match:", "-m/--match", "Run matching tests.">]] //
-      int
-      exec(std::optional<std::string> match) const noexcept
+      int exec(std::optional<std::string_view> match) const noexcept
   {
+    std::optional<fnmatch_t> matcher;
+    if(match.has_value())
+    {
+      matcher.emplace(make_fnmatch(match.value()));
+    }
     visit(
         [&](const auto& parents, const test_case& caze)
         {
@@ -107,7 +123,7 @@ struct[[= cli::specs<"reflex test runner.">]] //
               | std::views::transform([](auto const& suite) { return std::string_view{suite.get().name}; }) //
               | std::views::join_with(':') | std::ranges::to<std::string>();
           const auto test_id = std::format("{}:{}", suite_name, caze.name);
-          if(match.has_value() and not fnmatch(match.value(), test_id))
+          if(matcher and not matcher.value()(test_id))
           {
             return;
           }
@@ -118,8 +134,7 @@ struct[[= cli::specs<"reflex test runner.">]] //
   }
 
   [[= cli::specs<"List tests.">]] //
-      int
-      discover() const noexcept
+      int discover() const noexcept
   {
     visit(
         [&](const auto& parents, const test_case& caze)
