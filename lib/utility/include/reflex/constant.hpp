@@ -45,6 +45,10 @@ inline constexpr constant_value_t<T> object = []
   {
     return constant_wrapper<T>::unwrap(Is...);
   }
+  else if constexpr(requires { constant_wrapper<T>::template unwrap<Is...>(); })
+  {
+    return constant_wrapper<T>::template unwrap<Is...>();
+  }
   else if constexpr(sizeof...(Is) == 1)
   {
     return extract<constant_value_t<T>>(Is...[0]);
@@ -139,6 +143,28 @@ template <typename... Ts> struct constant_wrapper<std::tuple<Ts...>>
   template <typename... Infos> static consteval value_type unwrap(Infos... r)
   {
     return value_type(extract<constant_value_or_ref_t<Ts>>(r)...);
+  }
+};
+
+template <typename... Ts> struct constant_wrapper<std::variant<Ts...>>
+{
+  using value_type = std::variant<constant_value_or_ref_t<Ts>...>;
+  static consteval value_type const& wrap(std::variant<Ts...> const& v)
+  {
+    template for(constexpr auto ii : std::views::iota(0uz, sizeof...(Ts)))
+    {
+      if(v.index() == ii)
+      {
+        using T = Ts...[ii];
+        return make_object<value_type>(object_reflection(v.index()),
+                                       object_reflection(constant_wrapper<std::decay_t<T>>::wrap(std::get<ii>(v))));
+      }
+    }
+    std::unreachable();
+  }
+  template <meta::info ii, meta::info r> static consteval value_type unwrap()
+  {
+    return value_type(std::in_place_index<([:ii:])>, [:r:]);
   }
 };
 

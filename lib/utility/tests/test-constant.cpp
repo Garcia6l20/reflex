@@ -116,4 +116,22 @@ void test_strings()
   CHECK_THAT(std::get<1>(v.v).data() == constant_string{"hello"}->data());
 }
 } // namespace tuple_tests
+namespace variant_tests
+{
+using var = std::variant<bool, int, std::string_view>;
+template <constant<var> V> struct use_variant
+{
+  static constexpr auto v = V.get();
+};
+void test_int()
+{
+  static constexpr auto v = use_variant<42>{};
+  static_assert(std::get<int>(v.v) == 42);
+}
+void test_str()
+{
+  static constexpr auto v = use_variant<"hello">{};
+  static_assert(std::get<std::string_view>(v.v) == "hello");
+}
+} // namespace tuple_tests
 } // namespace constant_tests
