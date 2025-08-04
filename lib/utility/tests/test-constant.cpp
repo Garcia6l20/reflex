@@ -69,9 +69,9 @@ void test()
   }
 }
 } // namespace string_literal_tests
-namespace vector_tests
+namespace range_tests
 {
-template <constant V> struct use_vec
+template <constant V> struct use_range
 {
   using value_type                              = typename std::decay_t<decltype(V)>::value_type;
   static constexpr bool has_span_representation = template_of(^^value_type) == ^^std::span;
@@ -80,16 +80,22 @@ template <constant V> struct use_vec
 void test()
 {
   {
-    static constexpr auto with_vec = use_vec<std::vector{1, 2, 3}>{};
+    static constexpr auto with_vec = use_range<std::vector{1, 2, 3}>{};
     std::println("v = {}", with_vec.v);
     STATIC_CHECK_THAT(std::ranges::equal(with_vec.v, std::array{1, 2, 3}));
     STATIC_CHECK_THAT(with_vec.has_span_representation);
   }
   {
-    static constexpr auto with_array = use_vec<std::array{1, 2, 3}>{};
+    static constexpr auto with_array = use_range<std::array{1, 2, 3}>{};
     STATIC_CHECK_THAT(std::ranges::equal(with_array.v, std::array{1, 2, 3}));
     STATIC_CHECK_THAT(not with_array.has_span_representation); // array uses structural representation
   }
+}
+void test_deduction()
+{
+  static constexpr auto with_array = use_range<{1, 2, 3}>{};
+  STATIC_CHECK_THAT(std::ranges::equal(with_array.v, std::array{1, 2, 3}));
+  STATIC_CHECK_THAT(not with_array.has_span_representation); // array uses structural representation
 }
 } // namespace vector_tests
 namespace tuple_tests
@@ -115,6 +121,11 @@ void test_strings()
   CHECK_THAT(p == p2);
   CHECK_THAT(std::get<1>(v.v).data() == constant_string{"hello"}->data());
 }
+void test_deduction()
+{
+  static constexpr auto v1 = use_tuple<{42, true}>{};
+  static constexpr auto v2 = use_tuple<{42, "hello"}>{};
+}
 } // namespace tuple_tests
 namespace variant_tests
 {
@@ -133,5 +144,5 @@ void test_str()
   static constexpr auto v = use_variant<"hello">{};
   static_assert(std::get<std::string_view>(v.v) == "hello");
 }
-} // namespace tuple_tests
+} // namespace variant_tests
 } // namespace constant_tests

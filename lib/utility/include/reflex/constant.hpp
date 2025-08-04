@@ -112,6 +112,14 @@ struct constant_wrapper<R>
     return make_object<value_type>(std::meta::reflect_constant(reflect_constant_array(v)));
   }
 
+  template <typename ...Ts>
+    requires(std::same_as<element_type, Ts> and ...)
+  static consteval value_type const& wrap(Ts const& ...v)
+  {
+    return wrap(R{v...});
+  }
+
+
   static consteval value_type unwrap(std::meta::info r)
   {
     return value_type(extract<element_type const*>(r), extent(type_of(r)));
@@ -133,13 +141,18 @@ template <typename T> consteval decltype(auto) object_reflection(T&& obj)
 template <typename... Ts> struct constant_wrapper<std::tuple<Ts...>>
 {
   using value_type = std::tuple<constant_value_or_ref_t<Ts>...>;
+
+  static consteval value_type const& wrap(Ts const&... items)
+  {
+    return make_object<value_type>(object_reflection(constant_wrapper<Ts>::wrap(items))...);
+  }
+
   static consteval value_type const& wrap(std::tuple<Ts...> const& v)
   {
-    return std::apply(
-        [&](Ts const&... items) -> value_type const&
-        { return make_object<value_type>(object_reflection(constant_wrapper<std::decay_t<Ts>>::wrap(items))...); },
-        v);
+    auto const& [... items] = v;
+    return wrap(items...);
   }
+
   template <typename... Infos> static consteval value_type unwrap(Infos... r)
   {
     return value_type(extract<constant_value_or_ref_t<Ts>>(r)...);
@@ -187,6 +200,13 @@ template <typename T> struct constant
   {
   }
 
+  template <typename... Us>
+  consteval constant(Us const&... v)
+    requires requires { detail::constant_wrapper<T>::wrap(v...); }
+      : value{detail::constant_wrapper<T>::wrap(v...)}
+  {
+  }
+
   consteval value_type const& get() const
   {
     return value;
@@ -209,6 +229,21 @@ template <typename T> struct constant
 template <size_t N> constant(const char (&s)[N]) -> constant<std::string_view>;
 constant(std::string const& s) -> constant<std::string_view>;
 
+template <typename... Ts>
+concept unique_type_pack_c = (std::same_as<Ts...[0], Ts> and ...);
+
+template <typename... Ts>
+concept non_unique_type_pack_c = not unique_type_pack_c<Ts...>;
+
+template <typename... Ts>
+  requires(sizeof...(Ts) > 1 and non_unique_type_pack_c<Ts...>)
+constant(Ts const&...) -> constant<std::tuple<Ts...>>;
+
+
+template <typename... Ts>
+  requires(sizeof...(Ts) > 1 and unique_type_pack_c<Ts...>)
+constant(Ts const&...) -> constant<std::array<Ts...[0], sizeof...(Ts)>>;
+
 template <typename T>
   requires(is_structural_type(^^T))
 struct constant<T>
@@ -217,6 +252,13 @@ struct constant<T>
   value_type value;
 
   consteval constant(T const& v) : value{v}
+  {
+  }
+
+  template <typename... Us>
+  consteval constant(Us const&... v)
+    requires requires { value_type{v...}; }
+      : value{v...}
   {
   }
 
