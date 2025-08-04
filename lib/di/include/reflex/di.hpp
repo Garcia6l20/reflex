@@ -1,6 +1,5 @@
 #pragma once
 
-#include <reflex/fixed_string.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/to_tuple.hpp>
 #include <reflex/utility.hpp>

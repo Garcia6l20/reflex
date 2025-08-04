@@ -1,6 +1,6 @@
 #pragma once
 
-#include <reflex/fixed_string.hpp>
+#include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
 
 #include <system_error>
@@ -10,11 +10,11 @@ namespace reflex
 namespace error
 {
 
-template <fixed_string Name, typename ErrorCode> struct error_category_t final : std::error_category
+template <constant_string Name, typename ErrorCode> struct error_category_t final : std::error_category
 {
   [[nodiscard]] const char* name() const noexcept final
   {
-    return Name.view().data();
+    return Name->data();
   }
   [[nodiscard]] std::string message(int error) const noexcept final
   {
@@ -22,14 +22,14 @@ template <fixed_string Name, typename ErrorCode> struct error_category_t final :
   }
 };
 
-template <int Value, fixed_string Message> struct code
+template <int Value, constant_string Message> struct code
 {
-  static constexpr auto message = Message.view();
-  static constexpr auto value   = Value;
+  static constexpr std::string_view message = Message;
+  static constexpr auto             value   = Value;
 };
 } // namespace error
 
-template <fixed_string Category, typename Codes>
+template <constant_string Category, typename Codes>
   requires(is_aggregate_type(^^Codes))
 struct error_code : std::error_code
 {

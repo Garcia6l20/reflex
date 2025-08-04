@@ -1,6 +1,6 @@
 #pragma once
 
-#include <reflex/fixed_string.hpp>
+#include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/to_tuple.hpp>
 #include <reflex/utility.hpp>
@@ -10,11 +10,11 @@
 namespace reflex
 {
 
-template <class T, fixed_string Name> struct named_type
+template <class T, constant_string Name> struct named_type
 {
   static constexpr auto name() -> std::string_view
   {
-    return Name.view();
+    return Name;
   }
   using type = T;
 };
@@ -23,12 +23,12 @@ template <typename Impl> struct named_tuple : Impl
 {
   using impl_type = Impl;
 
-  template <fixed_string name> static consteval bool has() noexcept
+  template <constant_string name> static consteval bool has() noexcept
   {
     template for(constexpr auto item :
                  define_static_array(nonstatic_data_members_of(^^Impl, meta::access_context::unchecked())))
     {
-      if constexpr(name.view() == identifier_of(item))
+      if constexpr(name == identifier_of(item))
       {
         return true;
       }
@@ -36,12 +36,12 @@ template <typename Impl> struct named_tuple : Impl
     return false;
   }
 
-  template <fixed_string name> static consteval meta::info _get() noexcept
+  template <constant_string name> static consteval meta::info _get() noexcept
   {
     template for(constexpr auto item :
                  define_static_array(nonstatic_data_members_of(^^Impl, meta::access_context::unchecked())))
     {
-      if constexpr(name.view() == identifier_of(item))
+      if constexpr(name.get() == identifier_of(item))
       {
         return item;
       }
@@ -49,7 +49,7 @@ template <typename Impl> struct named_tuple : Impl
     return meta::info{};
   }
 
-  template <fixed_string name, typename Self> constexpr decltype(auto) get(this Self& self) noexcept
+  template <constant_string name, typename Self> constexpr decltype(auto) get(this Self& self) noexcept
   {
     if constexpr(has<name>())
     {
@@ -103,7 +103,7 @@ template <typename Impl> struct named_tuple : Impl
   }
 };
 
-template <fixed_string name, typename NamedTuple>
+template <constant_string name, typename NamedTuple>
   requires(template_of(^^NamedTuple) == ^^named_tuple)
 constexpr decltype(auto) get(NamedTuple t) noexcept
 {
@@ -133,7 +133,7 @@ template <class... Items, class... Values> consteval auto make_named_tuple(Value
   return named_tuple<tuple_t>{values...};
 }
 
-template <fixed_string... Names, class... Values> consteval auto make_named_tuple(Values... values)
+template <constant_string... Names, class... Values> consteval auto make_named_tuple(Values... values)
 {
   return make_named_tuple<named_type<Values, Names>...>(values...);
 }

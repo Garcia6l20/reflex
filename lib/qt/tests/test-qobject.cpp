@@ -77,6 +77,8 @@ private:
   std::println("> {}", #__VA_ARGS__); \
   __VA_ARGS__
 
+#include <bit>
+
 int main(int argc, char** argv)
 {
   static_assert(qt::detail::static_meta_type_id_of(^^int) == QMetaType::Type::Int);
@@ -84,50 +86,9 @@ int main(int argc, char** argv)
   // static_assert(qt::detail::static_meta_type_id_of(^^QQmlEngine*) == qt::detail::custom_type);
   static_assert(qt::detail::static_meta_type_id_of(^^TestMessage) == qt::detail::custom_type);
 
-  // template for(constexpr auto T : ml_object::__custom_types())
+  // template for(constexpr auto S : ml_object::__strings<ml_object::tag>)
   // {
-  //   std::println("{}", display_string_of(T));
-  // }
-
-  // static constexpr auto data = ml_object::__introspection_data();
-
-  // template for(constexpr auto ii : std::views::iota(size_t(0), std::tuple_size_v<decltype(data.strings)>))
-  // {
-  //   constexpr auto s    = std::get<ii>(data.strings);
-  //   constexpr auto size = s.size();
-  //   std::println("{} (size={}, offset={})", s.view(), size, ii);
-  // }
-  // template for(constexpr auto R : std::array{^^TestMessage const&, ^^QQmlEngine* })
-  // {
-  //   // constexpr auto id = []
-  //   // {
-  //   //   if(has_identifier(R))
-  //   //   {
-  //   //     return identifier_of(R);
-  //   //   }
-  //   //   else if(is_type(R))
-  //   //   {
-  //   //     return display_string_of(remove_const(remove_reference(R)));
-  //   //   }
-  //   //   std::unreachable();
-  //   // }();
-  //   // std::print("{} identifier: {}...", display_string_of(R), id);
-  //   // bool found = false;
-  //   // template for(constexpr auto ii : std::views::iota(size_t(0), std::tuple_size_v<decltype(data.strings)>))
-  //   // {
-  //   //   if(id == std::get<ii>(data.strings).view())
-  //   //   {
-  //   //     std::println(" found at offset {} !", ii);
-  //   //     found = true;
-  //   //   }
-  //   // }
-  //   // if(not found)
-  //   // {
-  //   //   std::println(" not found !");
-  //   // }
-  //   constexpr auto offset = data.template custom_type_offset_of<R>();
-  //   constexpr auto str    = data.template string_view_at<offset>();
-  //   std::println("{} at {}: {}", display_string_of(R), offset, str);
+  //   std::println("{}", *S);
   // }
 
   QTestObject to;

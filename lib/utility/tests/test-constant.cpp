@@ -45,15 +45,30 @@ namespace constant_tests
   }
   namespace string_literal_tests
   {
-    // NOTE inner type (ie.: char[N]) cannot be specified
-    template <string_literal_constant V> struct use_string_constant
+    template <constant V> struct use_string_constant
     {
-      // v is std::string_view
       static constexpr std::string_view v = V;
     };
     void test()
     {
-      STATIC_CHECK_THAT(use_string_constant<"hello">::v == "hello");
+      using namespace std::literals;
+      use_string_constant<"hello"> c;
+      std::println("{}", c.v.size());
+      STATIC_CHECK_THAT(c.v == "hello");
+      {
+        constexpr use_string_constant<"hello"sv> c2;
+        STATIC_CHECK_THAT(c2.v == "hello");
+        const void *p = c.v.data();
+        const void *p2 = c2.v.data();
+        CHECK_THAT(p == p2);
+      }
+      {
+        constexpr use_string_constant<"hello"s> c2;
+        STATIC_CHECK_THAT(c2.v == "hello");
+        const void *p = c.v.data();
+        const void *p2 = c2.v.data();
+        CHECK_THAT(p == p2);
+      }
     }
   }
   namespace vector_tests

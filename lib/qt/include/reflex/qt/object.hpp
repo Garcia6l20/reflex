@@ -1,5 +1,6 @@
 #pragma once
 
+#include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/to_tuple.hpp>
 #include <reflex/utility.hpp>
@@ -13,6 +14,7 @@
 #include <QtCore/qxptype_traits.h>
 
 #include <any>
+#include <bit>
 #include <memory>
 #include <print>
 
@@ -105,12 +107,12 @@ struct invocable
 {
 };
 
-template <fixed_string... spec> struct property
+template <constant_string... spec> struct property
 {
   static constexpr auto _specs      = std::tuple{spec...};
-  static constexpr auto _read_pos   = std::get<0>(_specs).view().find('r');
-  static constexpr auto _write_pos  = std::get<0>(_specs).view().find('w');
-  static constexpr auto _notify_pos = std::get<0>(_specs).view().find('n');
+  static constexpr auto _read_pos   = std::get<0>(_specs).get().find('r');
+  static constexpr auto _write_pos  = std::get<0>(_specs).get().find('w');
+  static constexpr auto _notify_pos = std::get<0>(_specs).get().find('n');
 
   static constexpr auto readable = _read_pos != std::string_view::npos;
   static constexpr auto writable = _write_pos != std::string_view::npos;
@@ -132,6 +134,17 @@ template <meta::info of> struct getter_of
 struct timer_event
 {
 };
+
+template <size_t N> struct string_storage_wrapper
+{
+  char data[N + 1];
+
+  constexpr string_storage_wrapper(char const* s)
+  {
+    std::copy(s, s + N, data);
+    data[N] = '\0'; // FIXME why is it necessary ??
+  }
+};
 } // namespace detail
 
 template <typename Super, typename ParentT> struct object : ParentT
@@ -148,12 +161,12 @@ public:
   static constexpr detail::invocable   invocable;
   static constexpr detail::timer_event timer_event;
 
-  template <fixed_string... spec> static constexpr detail::property<spec...> prop;
-  template <meta::info of> static constexpr detail::listener_of<of>          listener_of;
-  template <meta::info of> static constexpr detail::getter_of<of>            getter_of;
-  template <meta::info of> static constexpr detail::setter_of<of>            setter_of;
+  template <constant_string... spec> static constexpr detail::property<spec...> prop;
+  template <meta::info of> static constexpr detail::listener_of<of>                        listener_of;
+  template <meta::info of> static constexpr detail::getter_of<of>                          getter_of;
+  template <meta::info of> static constexpr detail::setter_of<of>                          setter_of;
 
-public:
+private:
   template <typename Tag>
   static constexpr auto __signals = [] consteval
   {
@@ -162,6 +175,18 @@ public:
         | std::views::filter(
               [&](auto M)
               { return has_template_arguments(type_of(M)) and template_of(type_of(M)) == ^^detail::signal_decl; }));
+  }();
+
+  template <typename Tag>
+  static constexpr auto __signal_count = [] consteval
+  {
+    size_t count = 0;
+    template for(constexpr auto s : __signals<Tag>)
+    {
+      using CurrentSignalT = [:type_of(s):];
+      count += CurrentSignalT::defaulted_args_count_ + 1;
+    }
+    return count;
   }();
 
   template <typename Tag>
@@ -174,12 +199,36 @@ public:
   }();
 
   template <typename Tag>
+  static constexpr auto __slot_count = [] consteval
+  {
+    size_t count = 0;
+    template for(constexpr auto s : __slots<Tag>)
+    {
+      constexpr size_t n_overloads = 1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
+      count += n_overloads;
+    }
+    return count;
+  }();
+
+  template <typename Tag>
   static constexpr auto __invocables = [] consteval
   {
     return define_static_array(                        //
         meta::member_functions_annotated_with(^^Super, //
                                               ^^detail::invocable,
                                               meta::access_context::unchecked()));
+  }();
+
+  template <typename Tag>
+  static constexpr auto __invocable_count = [] consteval
+  {
+    size_t count = 0;
+    template for(constexpr auto s : __invocables<Tag>)
+    {
+      constexpr size_t n_overloads = 1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
+      count += n_overloads;
+    }
+    return count;
   }();
 
   template <typename Tag>
@@ -190,6 +239,8 @@ public:
                                                     ^^detail::property,
                                                     meta::access_context::unchecked()));
   }();
+
+  template <typename Tag> static constexpr auto __property_count = __properties<Tag>.size();
 
   template <typename Tag>
   static constexpr auto __timer_events = [] consteval
@@ -255,41 +306,41 @@ public:
   template <typename Tag>
   static constexpr auto __strings = [] consteval
   {
-    std::vector<meta::info> strings;
+    std::vector<constant_string> strings;
 
-    strings.push_back(meta::static_identifier_wrapper_type_of<^^Super>());
-    strings.push_back(^^meta::static_string_wrapper<>); // add an empty entry
+    strings.push_back(identifier_of(^^Super));
+    strings.push_back(""); // add an empty entry
 
     template for(constexpr auto s : __signals<Tag>)
     {
-      strings.push_back(meta::static_identifier_wrapper_type_of<s>());
+      strings.push_back(identifier_of(s));
     }
 
     template for(constexpr auto p : __properties<Tag>)
     {
-      constexpr auto id = meta::static_identifier_wrapper_of<p>().template with_suffix<"Changed">();
-      strings.push_back(type_of(^^id));
+      strings.push_back(std::string{identifier_of(p)} + "Changed");
     }
 
     template for(constexpr auto s : __slots<Tag>)
     {
-      strings.push_back(meta::static_identifier_wrapper_type_of<s>());
+      strings.push_back(identifier_of(s));
     }
 
     template for(constexpr auto i : __invocables<Tag>)
     {
-      strings.push_back(meta::static_identifier_wrapper_type_of<i>());
+      strings.push_back(identifier_of(i));
     }
 
     template for(constexpr auto p : __properties<Tag>)
     {
-      strings.push_back(meta::static_identifier_wrapper_type_of<p>());
+      strings.push_back(identifier_of(p));
     }
 
     template for(constexpr auto t : __custom_types<Tag>)
     {
-      constexpr auto id = meta::static_identifier_wrapper_of<t>().template remove_if<[](auto c) { return c == ' '; }>();
-      strings.push_back(type_of(^^id));
+      auto id =
+          display_string_of(t) | std::views::filter([](auto c) { return c != ' '; }) | std::ranges::to<std::string>();
+      strings.push_back(id);
     }
     return define_static_array(strings);
   }();
@@ -379,23 +430,28 @@ public:
   QT_WARNING_PUSH
   Q_OBJECT_NO_OVERRIDE_WARNING
   QT_TR_FUNCTIONS
-private:
-  template <typename Tag> static constexpr auto make_data()
-  {
-    return __introspection_data<Tag>();
-  }
-  template <typename MetaObjectTagType>
-  static constexpr inline auto qt_introspectionData = make_data<MetaObjectTagType>();
-
+public:
   template <typename Tag> static constexpr auto qt_create_metaobjectdata()
   {
     namespace QMC = QtMocConstants;
+
+    // FIXME: we should be able to pass  __strings<Tag>[I]->data() directly to StringRefStorage
+    constexpr auto string_wrappers = [&]
+    {
+      return [&]<std::size_t... I>(std::index_sequence<I...>)
+      {
+        return std::make_tuple(detail::string_storage_wrapper<__strings<Tag>[I] -> size()>
+                               { __strings<Tag>[I] -> data() }...);
+      }(std::make_index_sequence<__strings<Tag>.size()>());
+    }();
 
     auto qt_stringData = [&] constexpr
     {
       return [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return QtMocHelpers::StringRefStorage{[:__strings<Tag>[I]:] ::data...};
+        return QtMocHelpers::StringRefStorage{std::get<I>(string_wrappers).data...};
+        // FIXME: should be:
+        // return QtMocHelpers::StringRefStorage{__strings<Tag>[I]->data()...};
       }(std::make_index_sequence<__strings<Tag>.size()>());
     }();
 
@@ -448,13 +504,16 @@ private:
                   constexpr auto id = []
                   {
                     constexpr auto DR = remove_const(remove_reference(param_type));
-                    return meta::static_identifier_wrapper_of<DR>()
-                        .template remove_if<[](auto c) { return c == ' '; }>();
+                    return constant_string{display_string_of(DR) | std::views::filter([](auto c) { return c != ' '; }) |
+                                           std::ranges::to<std::string>()};
+                    //
+                    // return meta::static_identifier_wrapper_of<DR>()
+                    //     .template remove_if<[](auto c) { return c == ' '; }>();
                   }();
                   template for(constexpr auto ii : std::views::iota(size_t(0), __strings<Tag>.size()))
                   {
                     constexpr auto s = __strings<Tag>[ii];
-                    if(id.view() == [:s:] ::view())
+                    if(*id == *s)
                     {
                       return ii;
                     }
@@ -475,7 +534,7 @@ private:
           };
           return [&]<std::size_t... I>(std::index_sequence<I...>)
           {
-            return typename DataT::ParametersArray { make_parameter.template operator()<parameters[I]>()... };
+            return typename DataT::ParametersArray{make_parameter.template operator()<parameters[I]>()...};
           }(std::make_index_sequence<N>());
         };
 
@@ -595,7 +654,7 @@ private:
 
       return [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return QtMocHelpers::UintData { make_data_impl.template operator()<__properties<Tag>[I]>()... };
+        return QtMocHelpers::UintData{make_data_impl.template operator()<__properties<Tag>[I]>()...};
       }(std::make_index_sequence<__properties<Tag>.size()>());
     }();
     QtMocHelpers::UintData qt_enums{};
@@ -652,10 +711,6 @@ private:
     constexpr auto invocs = __invocables<tag>;
     constexpr auto slts   = __slots<tag>;
     constexpr auto props  = __properties<tag>;
-
-    constexpr auto sig_count  = sigs.size();
-    constexpr auto slts_count = slts.size();
-    constexpr auto prop_count = props.size();
 
     const auto do_invoke = []<meta::info R, size_t N>(Super* self, void** args)
     {
@@ -719,7 +774,7 @@ private:
         _id -= local_signal_index;
       }
 
-      template for(constexpr auto ii : std::views::iota(size_t(0), prop_count))
+      template for(constexpr auto ii : std::views::iota(size_t(0), props.size()))
       {
         if(ii == _id)
         {
@@ -729,7 +784,7 @@ private:
           return;
         }
       }
-      _id -= prop_count;
+      _id -= __property_count<tag>;
 
       {
         size_t local_slot_index = 0;
@@ -775,7 +830,7 @@ private:
       auto*          result       = reinterpret_cast<QMetaType*>(_a[0]);
       constexpr auto custom_types = __custom_types<tag>;
 
-      template for(constexpr auto ii : std::views::iota(size_t(0), sig_count))
+      template for(constexpr auto ii : std::views::iota(size_t(0), sigs.size()))
       {
         if(ii == _id)
         {
@@ -796,7 +851,7 @@ private:
           }
         }
       }
-      _id -= sig_count;
+      _id -= __signal_count<tag>;
 
       *result = QMetaType();
     }
@@ -831,14 +886,14 @@ private:
         static constexpr auto p = props[ii];
         static constexpr auto s = ^^object::propertyChanged<p>;
         using signature_type    = [:meta::signature_of<s, ^^object>():];
-        if(QtMocHelpers::indexOfMethod<signature_type>(_a, &[:s:], ii + sig_count))
+        if(QtMocHelpers::indexOfMethod<signature_type>(_a, &[:s:], ii + __signal_count<tag>))
         {
           return;
         }
-        static constexpr auto fixed_name = meta::static_identifier_wrapper_of<p>().to_fixed();
-        static constexpr auto s2         = ^^object::propertyChanged<fixed_name>;
-        using signature_type2            = [:meta::signature_of<s2, ^^object>():];
-        if(QtMocHelpers::indexOfMethod<signature_type>(_a, &[:s2:], ii + sig_count))
+
+        static constexpr auto s2 = ^^object::propertyChanged<constant{identifier_of(p)}>;
+        using signature_type2    = [:meta::signature_of<s2, ^^object>():];
+        if(QtMocHelpers::indexOfMethod<signature_type>(_a, &[:s2:], ii + __signal_count<tag>))
         {
           return;
         }
@@ -904,22 +959,10 @@ public:
     static constexpr auto signal_slot_count = [&]
     {
       size_t count = 0;
-      template for(constexpr auto s : __signals<tag>)
-      {
-        using CurrentSignalT = [:type_of(s):];
-        count += CurrentSignalT::defaulted_args_count_ + 1;
-      }
+      count += __signal_count<tag>;
       count += __properties<tag>.size(); // no args for property notifiers
-      template for(constexpr auto s : __slots<tag>)
-      {
-        constexpr size_t n_overloads = 1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
-        count += n_overloads;
-      }
-      template for(constexpr auto s : __invocables<tag>)
-      {
-        constexpr size_t n_overloads = 1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
-        count += n_overloads;
-      }
+      count += __slot_count<tag>;
+      count += __invocable_count<tag>;
       return count;
     }();
 
@@ -975,10 +1018,10 @@ public:
     }
   }
 
-  template <fixed_string name> auto property(this auto& self)
+  template <constant_string name> auto property(this auto& self)
   {
     using std::ranges::contains;
-    static constexpr auto prop = meta::member_named(^^Super, name.view(), meta::access_context::unchecked());
+    static constexpr auto prop = meta::member_named(^^Super, *name, meta::access_context::unchecked());
     static_assert(prop != meta::null, "no such property");
     return self.template property<prop>();
   }
@@ -1018,16 +1061,7 @@ public:
       }
 
       static constexpr auto relative_offset         = std::distance(begin(props), it);
-      static constexpr auto notifier_signals_offset = [&]
-      {
-        size_t count = 0;
-        template for(constexpr auto s : __signals<tag>)
-        {
-          using CurrentSignalT = [:type_of(s):];
-          count += CurrentSignalT::defaulted_args_count_ + 1;
-        }
-        return count;
-      }();
+      static constexpr auto notifier_signals_offset = __signal_count<tag>;
       QMetaObject::activate<void>(&self, &staticMetaObject, notifier_signals_offset + relative_offset, nullptr);
     }
     else
@@ -1036,20 +1070,15 @@ public:
     }
   }
 
-  template <fixed_string name, typename T> void setProperty(this auto& self, T&& value)
+  template <constant_string name, typename T> void setProperty(this auto& self, T&& value)
   {
     using std::ranges::contains;
-    static constexpr auto prop = meta::member_named(^^Super, name.view(), meta::access_context::unchecked());
+    static constexpr auto prop = meta::member_named(^^Super, *name, meta::access_context::unchecked());
     static_assert(prop != meta::null, "no such property");
     self.template setProperty<prop>(std::forward<T>(value));
   }
 
-  template <meta::info Property> void propertyChanged()
-  {
-    std::unreachable(); // NOTE: actually unused, just to allow QObject::connect to match the auto-generated signal
-  }
-
-  template <fixed_string name> void propertyChanged()
+  template <constant prop> void propertyChanged()
   {
     std::unreachable(); // NOTE: actually unused, just to allow QObject::connect to match the auto-generated signal
   }

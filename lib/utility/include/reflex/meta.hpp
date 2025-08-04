@@ -1,10 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <meta>
 #include <ranges>
 #include <vector>
-
-#include <reflex/fixed_string.hpp>
 
 namespace reflex::meta
 {
@@ -122,12 +121,6 @@ consteval bool has_explicit_constructor(meta::info                        R,
   }
 }
 
-template <std::meta::info I> consteval auto fixed_identifier_of() noexcept
-{
-  constexpr auto name = identifier_of(I);
-  return fixed_string<name.size()>(name.data());
-}
-
 consteval auto members_of_r(info I, access_context ctx) -> std::vector<info>
 {
   std::vector<info> members;
@@ -187,71 +180,6 @@ template <meta::info R, meta::info Class, size_t N = size_t(-1)> static constexp
   using wrapper_type     = [:wrapper:];
   using class_type       = [:Class:];
   return ^^typename wrapper_type::template method_type<class_type>;
-}
-
-template <auto... chars> struct static_string_wrapper
-{
-  static constexpr char data[sizeof...(chars) + 1] = {chars..., '\0'};
-  static constexpr auto size()
-  {
-    return sizeof...(chars);
-  }
-  static constexpr std::string_view view()
-  {
-    return {data, size()};
-  }
-  template <fixed_string prefix> static constexpr auto with_prefix()
-  {
-    return [&]<size_t... I>(std::index_sequence<I...>)
-    { return static_string_wrapper<prefix[I]..., chars...>{}; }(std::make_index_sequence<prefix.size() - 1>());
-  }
-  template <fixed_string suffix> static constexpr auto with_suffix()
-  {
-    return [&]<size_t... I>(std::index_sequence<I...>)
-    { return static_string_wrapper<chars..., suffix[I]...>{}; }(std::make_index_sequence<suffix.size() - 1>());
-  }
-  template <auto filter> static constexpr auto remove_if()
-  {
-    constexpr auto result_type = [] consteval
-    {
-      return substitute(template_of(^^static_string_wrapper),
-                        view()                           //
-                            | std::views::filter(filter) //
-                            | std::views::transform([](char c) { return reflect_constant(c); }));
-    }();
-    using ResultT = [:result_type:];
-    return ResultT{};
-  }
-
-  static constexpr fixed_string<size() + 1> to_fixed()
-  {
-    return data;
-  }
-};
-
-template <meta::info R> static consteval auto static_identifier_wrapper_of()
-{
-  constexpr auto name = []
-  {
-    if(has_identifier(R))
-    {
-      return identifier_of(R);
-    }
-    else if(is_type(R))
-    {
-      return display_string_of(R);
-    }
-    std::unreachable();
-  }();
-  constexpr auto size = name.size();
-  return [&]<size_t... I>(std::index_sequence<I...>)
-  { return static_string_wrapper<name.data()[I]...>{}; }(std::make_index_sequence<name.size()>());
-}
-
-template <meta::info R> static consteval auto static_identifier_wrapper_type_of()
-{
-  constexpr auto wrapper = static_identifier_wrapper_of<R>();
-  return type_of(^^wrapper);
 }
 
 consteval bool is_structural_type(meta::info R)

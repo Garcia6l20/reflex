@@ -31,36 +31,22 @@ template <class T, std::meta::info... Is>
 inline constexpr constant_value_t<T> object = [] { return constant_wrapper<T>::unwrap(Is...); }();
 } // namespace representation_object
 
-template <typename Str> struct string_wrapper
+template <> struct constant_wrapper<std::string_view>
 {
-  using T          = Str;
   using value_type = std::string_view;
-  static consteval decltype(auto) wrap(T const& s)
+  static consteval decltype(auto) wrap(std::string_view const& s)
   {
     return extract<value_type const&>(
         object_of(substitute(^^representation_object::object,
                              {
-                                 ^^T,
+                                 ^^value_type,
                                  std::meta::reflect_constant(std::meta::reflect_constant_string(s))})));
   }
   static consteval value_type unwrap(std::meta::info r)
   {
-    return value_type(extract<char const*>(r), extent(type_of(r)) - 1);
+    return value_type(extract<char const*>(r));
+    // return value_type(extract<char const*>(r), extent(type_of(r)) - 1);
   }
-};
-
-template <> struct constant_wrapper<std::string> : string_wrapper<std::string>
-{
-};
-template <> struct constant_wrapper<std::string_view> : string_wrapper<std::string_view>
-{
-};
-
-template <size_t N> struct constant_wrapper<const char[N]> : string_wrapper<const char[N]>
-{
-};
-template <size_t N> struct constant_wrapper<char[N]> : string_wrapper<char[N]>
-{
 };
 
 template <std::ranges::input_range R> inline constexpr auto reflect_constant_array(R&& r)
@@ -107,6 +93,13 @@ template <typename T> struct constant
   {
   }
 
+  template <typename U>
+  consteval constant(U const& v)
+    requires requires { detail::constant_wrapper<T>::wrap(v); }
+      : value{detail::constant_wrapper<T>::wrap(v)}
+  {
+  }
+
   consteval value_type const& get() const
   {
     return value;
@@ -124,6 +117,10 @@ template <typename T> struct constant
     return std::addressof(value);
   }
 };
+
+// avoid extra overloading for string types, forwarded them to constant<std::string_view>
+template <size_t N> constant(const char (&s)[N]) -> constant<std::string_view>;
+constant(std::string const& s) -> constant<std::string_view>;
 
 template <typename T>
   requires(is_structural_type(^^T))
@@ -154,11 +151,10 @@ struct constant<T>
   }
 };
 
-template <size_t N> using string_literal_constant = constant<const char[N]>;
 } // namespace meta
 
 template <typename T> using constant = meta::constant<T>;
 
-template <size_t N> using string_literal_constant = meta::string_literal_constant<N>;
+using constant_string = meta::constant<std::string_view>;
 
 } // namespace reflex

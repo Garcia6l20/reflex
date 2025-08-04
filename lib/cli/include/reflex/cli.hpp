@@ -1,6 +1,6 @@
 #pragma once
 
-#include <reflex/fixed_string.hpp>
+#include <reflex/constant.hpp>
 #include <reflex/from_string.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/named_tuple.hpp>
@@ -37,44 +37,43 @@ struct specs_impl
   std::string_view field;
 };
 
-template <auto... Specs> struct specs
+template <constant_string... Specs> struct specs
 {
   static constexpr auto specs_ = std::make_tuple(Specs...);
 
-  template <fixed_string s> static constexpr auto __get_opt_switches()
+  static consteval auto __get_opt_switches(std::string_view s)
   {
     static constexpr auto npos  = std::string_view::npos;
-    auto                  v     = s.view();
-    constexpr auto        slash = s.find('/');
+    auto        slash = s.find('/');
 
     std::string_view short_switch;
     std::string_view long_switch;
 
-    if constexpr(slash != npos)
+    if (slash != npos)
     {
       size_t short_begin = 0;
       size_t long_begin  = 0;
-      if(v[1] == '-')
+      if(s[1] == '-')
       {
-        long_switch  = v.substr(0, slash);
-        short_switch = v.substr(slash + 1);
+        long_switch  = s.substr(0, slash);
+        short_switch = s.substr(slash + 1);
       }
       else
       {
-        short_switch = v.substr(0, slash);
-        long_switch  = v.substr(slash + 1);
+        short_switch = s.substr(0, slash);
+        long_switch  = s.substr(slash + 1);
       }
     }
     else
     {
       // No slash
-      if(v[1] == '-')
+      if(s[1] == '-')
       {
-        long_switch = v;
+        long_switch = s;
       }
       else
       {
-        short_switch = v;
+        short_switch = s;
       }
     }
     return std::make_tuple(short_switch, long_switch);
@@ -85,24 +84,23 @@ template <auto... Specs> struct specs
     specs_impl i = {};
 
     constexpr auto ctx = std::meta::access_context::current();
-    template for(constexpr auto s : std::make_tuple(Specs...))
+    template for(constexpr auto S : std::make_tuple(Specs...))
     {
-      constexpr auto type = type_of(^^s);
-      if constexpr(template_of(type) == ^^fixed_string)
+      constexpr std::string_view s = S;
+      if constexpr(s[0] == '-')
       {
-        if constexpr(s[0] == '-')
-        {
-          std::tie(i.short_switch, i.long_switch) = __get_opt_switches<s>();
-        }
-        else if constexpr(s[0] == ':')
-        {
-          i.field = extract<s, 1, -1>();
-        }
-        else
-        {
-          // assume help
-          i.help = extract<s>();
-        }
+        std::tie(i.short_switch, i.long_switch) = __get_opt_switches(s);
+      }
+      else if constexpr(s[0] == ':')
+      {
+        i.field = s;
+        i.field.remove_prefix(1);
+        i.field.remove_suffix(1);
+      }
+      else
+      {
+        // assume help
+        i.help = s;
       }
     }
     return i;
@@ -616,7 +614,7 @@ std::optional<int> process_cmdline(std::string_view program, auto it, auto end, 
 }
 } // namespace detail
 
-template <fixed_string... Specs> constexpr detail::specs<Specs...> specs;
+template <constant_string... Specs> constexpr detail::specs<Specs...> specs;
 
 constexpr auto _count   = detail::_count;
 constexpr auto _default = detail::_default;
@@ -661,7 +659,8 @@ public:
 
           if constexpr(is_function(mem))
           {
-            if(it != end and std::ranges::find_if(std::next(it), end, [](auto it) { return it == "-h" or it == "--help"; }) != end)
+            if(it != end and
+               std::ranges::find_if(std::next(it), end, [](auto it) { return it == "-h" or it == "--help"; }) != end)
             {
               detail::usage_of<mem>(std::format("{} {}", program, view));
               return 0;
