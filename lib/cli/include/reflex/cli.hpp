@@ -18,102 +18,86 @@ namespace reflex::cli
 
 class command;
 
-namespace detail
+struct specs : constant<std::vector<std::string_view>>
 {
-enum class spec_kind
-{
-  unknown,
-  option,
-  argument,
-  command,
-};
+  using constant<std::vector<std::string_view>>::constant;
 
-struct specs_impl
-{
-  // spec_kind kind;
-  std::string_view short_switch;
-  std::string_view long_switch;
-  std::string_view help;
-  std::string_view field;
-};
-
-template <constant_string... Specs> struct specs
-{
-  static constexpr auto specs_ = std::make_tuple(Specs...);
-
-  static consteval auto __get_opt_switches(std::string_view s)
+  struct specs_impl
   {
-    static constexpr auto npos  = std::string_view::npos;
-    auto        slash = s.find('/');
+    constexpr specs_impl(auto const& desc)
+    {
+      for(std::string_view s : desc.get())
+      {
+        if(s[0] == '-')
+        {
+          __process_opt_switches(s);
+          is_opt = true;
+        }
+        else if(s[0] == ':')
+        {
+          field = s;
+          field.remove_prefix(1);
+          field.remove_suffix(1);
+          is_field = true;
+        }
+        else
+        {
+          // assume help
+          help = s;
+        }
+      }
+    }
 
+    constexpr void __process_opt_switches(std::string_view s)
+    {
+      static constexpr auto npos  = std::string_view::npos;
+      auto                  slash = s.find('/');
+
+      if(slash != npos)
+      {
+        size_t short_begin = 0;
+        size_t long_begin  = 0;
+        if(s[1] == '-')
+        {
+          long_switch  = s.substr(0, slash);
+          short_switch = s.substr(slash + 1);
+        }
+        else
+        {
+          short_switch = s.substr(0, slash);
+          long_switch  = s.substr(slash + 1);
+        }
+      }
+      else
+      {
+        // No slash
+        if(s[1] == '-')
+        {
+          long_switch = s;
+        }
+        else
+        {
+          short_switch = s;
+        }
+      }
+    }
+    // spec_kind kind;
+    bool             is_field = false;
+    bool             is_opt   = false;
     std::string_view short_switch;
     std::string_view long_switch;
+    std::string_view help;
+    std::string_view field;
+  };
 
-    if (slash != npos)
-    {
-      size_t short_begin = 0;
-      size_t long_begin  = 0;
-      if(s[1] == '-')
-      {
-        long_switch  = s.substr(0, slash);
-        short_switch = s.substr(slash + 1);
-      }
-      else
-      {
-        short_switch = s.substr(0, slash);
-        long_switch  = s.substr(slash + 1);
-      }
-    }
-    else
-    {
-      // No slash
-      if(s[1] == '-')
-      {
-        long_switch = s;
-      }
-      else
-      {
-        short_switch = s;
-      }
-    }
-    return std::make_tuple(short_switch, long_switch);
-  }
-
-  static constexpr auto i = []() consteval
+  consteval specs_impl impl() const
   {
-    specs_impl i = {};
-
-    constexpr auto ctx = std::meta::access_context::current();
-    template for(constexpr auto S : std::make_tuple(Specs...))
-    {
-      constexpr std::string_view s = S;
-      if constexpr(s[0] == '-')
-      {
-        std::tie(i.short_switch, i.long_switch) = __get_opt_switches(s);
-      }
-      else if constexpr(s[0] == ':')
-      {
-        i.field = s;
-        i.field.remove_prefix(1);
-        i.field.remove_suffix(1);
-      }
-      else
-      {
-        // assume help
-        i.help = s;
-      }
-    }
-    return i;
-  }();
-
-  static constexpr bool is_opt       = not specs::i.short_switch.empty() or not specs::i.long_switch.empty();
-  static constexpr bool is_field     = not specs::i.field.empty();
-  static constexpr auto short_switch = specs::i.short_switch;
-  static constexpr auto long_switch  = specs::i.long_switch;
-  static constexpr auto help         = specs::i.help;
-  static constexpr auto field        = specs::i.field;
+    return specs_impl(*this);
+  };
 };
 
+namespace detail
+{
 template <std::meta::info I, std::meta::info M> constexpr auto specs_of()
 {
   if constexpr(is_function(I))
@@ -123,7 +107,7 @@ template <std::meta::info I, std::meta::info M> constexpr auto specs_of()
     const auto                   name = identifier_of(M);
     template for(constexpr auto a : fn_annotations)
     {
-      constexpr auto s = [:constant_of(a):];
+      constexpr auto s = [:constant_of(a):].impl();
       if(s.field == name)
       {
         member_annotations.push_back(a);
@@ -162,9 +146,9 @@ template <meta::info I, meta::info M> consteval auto flags_of()
     {
       constexpr auto A  = annotations[ii];
       constexpr auto AT = type_of(A);
-      if constexpr(has_template_arguments(AT) and template_of(AT) == ^^detail::specs)
+      if constexpr(AT == ^^specs)
       {
-        constexpr auto s = [:constant_of(A):];
+        constexpr auto s = [:constant_of(A):].impl();
         if constexpr(s.field == name)
         {
           template for(constexpr auto jj : std::views::iota(size_t(ii + 1), annotations.size()))
@@ -178,27 +162,26 @@ template <meta::info I, meta::info M> consteval auto flags_of()
             }
             else
             {
-              return define_static_array(member_annotations);
+              return member_annotations;
             }
           }
         }
       }
     }
-    return define_static_array(member_annotations);
+    return member_annotations;
   }
   else
   {
-    return define_static_array( //
-        annotations_of(M)       //
-        | std::views::filter(
-              [&](auto A)
-              {
-                auto AT     = type_of(A);
-                auto parent = parent_of(AT);
-                return parent == ^^_flags;
-              })                                    //
-        | std::views::transform(std::meta::type_of) //
-        | std::views::transform(std::meta::remove_const));
+    return annotations_of(M) //
+           | std::views::filter(
+                 [&](auto A)
+                 {
+                   auto AT     = type_of(A);
+                   auto parent = parent_of(AT);
+                   return parent == ^^_flags;
+                 })                                    //
+           | std::views::transform(std::meta::type_of) //
+           | std::views::transform(std::meta::remove_const);
   }
 }
 
@@ -217,13 +200,13 @@ template <std::meta::info I> static constexpr auto parse()
 
   if constexpr(is_function(I))
   {
-    constexpr auto specs_annotations = define_static_array(meta::annotations_of_with(I, ^^detail::specs));
+    constexpr auto specs_annotations = define_static_array(meta::annotations_of_with(I, ^^specs));
     template for(constexpr auto p : define_static_array(parameters_of(I)))
     {
       constexpr auto name = identifier_of(p);
       template for(constexpr auto a : specs_annotations)
       {
-        constexpr auto s = [:constant_of(a):];
+        constexpr auto s = [:constant_of(a):].impl();
         if(s.field == name)
         {
           if(s.is_opt)
@@ -246,11 +229,11 @@ template <std::meta::info I> static constexpr auto parse()
                            { return is_nonstatic_data_member(M) or (is_user_declared(M) and is_function(M)); }));
     template for(constexpr auto mem : members)
     {
-      constexpr auto specs_annotations = define_static_array(meta::annotations_of_with(mem, ^^detail::specs));
+      constexpr auto specs_annotations = define_static_array(meta::annotations_of_with(mem, ^^specs));
       if constexpr(!specs_annotations.empty())
       {
         constexpr auto mem_type = type_of(mem);
-        if constexpr([:constant_of(specs_annotations[0]):].is_opt)
+        if constexpr([:constant_of(specs_annotations[0]):].impl().is_opt)
         {
           options.push_back(mem);
         }
@@ -365,24 +348,29 @@ template <std::meta::info I> static void usage_of(std::string_view program)
     size_t max_id_size = min_id_size;
     template for(constexpr auto mem : options)
     {
-      constexpr auto mem_spec = [:detail::specs_of<I, mem>():];
+      constexpr auto mem_spec = [:detail::specs_of<I, mem>():].impl();
       max_id_size             = std::max(max_id_size, mem_spec.short_switch.size() + mem_spec.long_switch.size() + 1);
     }
     std::println("  {:{}} {}", "-h/--help", max_id_size, "Print this message and exit.");
     template for(constexpr auto mem : options)
     {
-      constexpr auto mem_spec     = [:detail::specs_of<I, mem>():];
+      constexpr auto mem_spec     = [:detail::specs_of<I, mem>():].impl();
       auto           switches_str = std::format("{}/{}", mem_spec.short_switch, mem_spec.long_switch);
       std::println("  {:{}} {}", switches_str, max_id_size, mem_spec.help);
-      constexpr auto flags = detail::flags_of<I, mem>();
+      constexpr auto flags = define_static_array(detail::flags_of<I, mem>());
       if constexpr(flags.size())
       {
-        std::print("    -> flags: ");
-        template for(constexpr auto flg : flags)
-        {
-          std::print("{}, ", identifier_of(flg));
-        }
-        std::println();
+        using namespace std::string_view_literals;
+        using std::views::join_with;
+        using std::views::transform;
+        constexpr auto ids = define_static_array( //
+            flags                                 //
+            | transform(std::meta::identifier_of) //
+            | transform([](auto id) { return constant_string{id}; }));
+        std::println("      flags: {}",
+                     ids | transform([](auto const& s) { return *s; }) //
+                         | join_with(", "sv)                           //
+                         | std::ranges::to<std::string>());
       }
     }
   }
@@ -397,7 +385,7 @@ template <std::meta::info I> static void usage_of(std::string_view program)
     }
     template for(constexpr auto mem : arguments)
     {
-      constexpr auto mem_spec = [:detail::specs_of<I, mem>():];
+      constexpr auto mem_spec = [:detail::specs_of<I, mem>():].impl();
       std::println("  {:{}} {}", identifier_of(mem), max_id_size, mem_spec.help);
     }
   }
@@ -412,7 +400,7 @@ template <std::meta::info I> static void usage_of(std::string_view program)
     }
     template for(constexpr auto mem : commands)
     {
-      constexpr auto mem_spec = [:detail::specs_of<I, mem>():];
+      constexpr auto mem_spec = [:detail::specs_of<I, mem>():].impl();
       std::println("  {:{}} {}", identifier_of(mem), max_id_size, mem_spec.help);
     }
   }
@@ -463,7 +451,7 @@ std::optional<int> process_cmdline(std::string_view program, auto it, auto end, 
       }
       template for(constexpr auto mem : options)
       {
-        constexpr auto mem_spec   = [:detail::specs_of<I, mem>():];
+        constexpr auto mem_spec   = [:detail::specs_of<I, mem>():].impl();
         constexpr bool is_counter = detail::has_flag<I, mem, ^^_count>();
 
         if(view == mem_spec.short_switch or view == mem_spec.long_switch or
@@ -614,7 +602,7 @@ std::optional<int> process_cmdline(std::string_view program, auto it, auto end, 
 }
 } // namespace detail
 
-template <constant_string... Specs> constexpr detail::specs<Specs...> specs;
+// template <constant_string... Specs> constexpr detail::specs<Specs...> specs;
 
 constexpr auto _count   = detail::_count;
 constexpr auto _default = detail::_default;

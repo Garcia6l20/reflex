@@ -70,7 +70,7 @@ reporter_t& get_reporter()
 }
 } // namespace detail
 
-struct[[= cli::specs<"reflex test runner.">]] //
+struct[[= cli::specs{"reflex test runner."}]] //
     command_line : cli::command
 {
   command_line(test_suite const& suite) : cli::command{}, root{suite}
@@ -103,11 +103,11 @@ struct[[= cli::specs<"reflex test runner.">]] //
     visit(fn, {root});
   }
 
-  [[= cli::specs<"-v/--verbose", "Show more details.">, = cli::_count]] //
+  [[= cli::specs{"-v/--verbose", "Show more details."}, = cli::_count]] //
       int verbose = false;
 
-  [[= cli::specs<"Run tests.">, = cli::_default]]                      //
-      [[= cli::specs<":match:", "-m/--match", "Run matching tests.">]] //
+  [[= cli::specs{"Run tests."}, = cli::_default]]                      //
+      [[= cli::specs{":match:", "-m/--match", "Run matching tests."}]] //
       int exec(std::optional<std::string_view> match) const noexcept
   {
     std::optional<fnmatch_t> matcher;
@@ -133,7 +133,7 @@ struct[[= cli::specs<"reflex test runner.">]] //
     return detail::get_reporter().finish();
   }
 
-  [[= cli::specs<"List tests.">]] //
+  [[= cli::specs{"List tests."}]] //
       int discover() const noexcept
   {
     visit(

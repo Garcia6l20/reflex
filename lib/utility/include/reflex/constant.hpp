@@ -86,44 +86,11 @@ template <> struct constant_wrapper<const char*> : constant_wrapper<std::string_
 template <size_t N> struct constant_wrapper<const char[N]> : constant_wrapper<std::string_view>
 {
 };
+template <size_t N> struct constant_wrapper<char[N]> : constant_wrapper<std::string_view>
+{
+};
 template <> struct constant_wrapper<std::string> : constant_wrapper<std::string_view>
 {
-};
-
-template <std::ranges::input_range R> inline constexpr auto reflect_constant_array(R&& r)
-{
-  std::vector<std::meta::info> elems = {^^std::ranges::range_value_t<R>};
-  for(auto&& e : r)
-  {
-    elems.push_back(reflect_constant(reflect_constant(e)));
-  }
-  return substitute(^^representation_object::array, elems);
-};
-
-template <std::ranges::input_range R>
-  requires(not is_structural_type(^^R)) // use direct representation for structural ranges (ie.: std::array)
-struct constant_wrapper<R>
-{
-  using element_type = std::ranges::range_value_t<R>;
-  using value_type   = std::span<std::add_const_t<element_type>>;
-
-  static consteval value_type const& wrap(R const& v)
-  {
-    return make_object<value_type>(std::meta::reflect_constant(reflect_constant_array(v)));
-  }
-
-  template <typename ...Ts>
-    requires(std::same_as<element_type, Ts> and ...)
-  static consteval value_type const& wrap(Ts const& ...v)
-  {
-    return wrap(R{v...});
-  }
-
-
-  static consteval value_type unwrap(std::meta::info r)
-  {
-    return value_type(extract<element_type const*>(r), extent(type_of(r)));
-  }
 };
 
 template <typename T> consteval decltype(auto) object_reflection(T&& obj)
@@ -138,13 +105,59 @@ template <typename T> consteval decltype(auto) object_reflection(T&& obj)
   }
 }
 
+template <std::ranges::input_range R> inline constexpr auto reflect_constant_array(R&& r)
+{
+  using wrapper                      = constant_wrapper<std::ranges::range_value_t<R>>;
+  std::vector<std::meta::info> elems = {^^std::ranges::range_value_t<R>};
+  for(auto&& e : r)
+  {
+    elems.push_back(object_reflection(wrapper::wrap(e)));
+  }
+  return substitute(^^representation_object::array, elems);
+};
+
+template <std::ranges::input_range R>
+  requires(not is_structural_type(^^R)) // use direct representation for structural ranges (ie.: std::array)
+struct constant_wrapper<R>
+{
+  using element_type = std::add_const_t<constant_value_or_ref_t<std::ranges::range_value_t<R>>>;
+  using value_type   = std::span<element_type>;
+
+  template <std::ranges::input_range R2>
+    requires(std::constructible_from<element_type, std::ranges::range_value_t<R2>>)
+  static consteval value_type const& wrap(R2 const& v)
+  {
+    return make_object<value_type>(std::meta::reflect_constant(reflect_constant_array(v)));
+  }
+
+  // construct range from single value
+  template <typename T>
+    requires(std::constructible_from<element_type, T>)
+  static consteval value_type const& wrap(T const& v)
+  {
+    return wrap(R{v});
+  }
+
+  template <typename... Ts>
+    requires(std::constructible_from<element_type, Ts> and ...)
+  static consteval value_type const& wrap(Ts const&... v)
+  {
+    return wrap(R{v...});
+  }
+
+  static consteval value_type unwrap(std::meta::info r)
+  {
+    return value_type(extract<element_type const*>(r), extent(type_of(r)));
+  }
+};
+
 template <typename... Ts> struct constant_wrapper<std::tuple<Ts...>>
 {
   using value_type = std::tuple<constant_value_or_ref_t<Ts>...>;
 
-  static consteval value_type const& wrap(Ts const&... items)
+  template <typename... Us> static consteval value_type const& wrap(Us const&... items)
   {
-    return make_object<value_type>(object_reflection(constant_wrapper<Ts>::wrap(items))...);
+    return make_object<value_type>(object_reflection(constant_wrapper<Us>::wrap(items))...);
   }
 
   static consteval value_type const& wrap(std::tuple<Ts...> const& v)
@@ -238,7 +251,6 @@ concept non_unique_type_pack_c = not unique_type_pack_c<Ts...>;
 template <typename... Ts>
   requires(sizeof...(Ts) > 1 and non_unique_type_pack_c<Ts...>)
 constant(Ts const&...) -> constant<std::tuple<Ts...>>;
-
 
 template <typename... Ts>
   requires(sizeof...(Ts) > 1 and unique_type_pack_c<Ts...>)

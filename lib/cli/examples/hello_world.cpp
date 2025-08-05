@@ -3,11 +3,25 @@
 using namespace reflex;
 
 [[
-  = cli::specs<"Hello world example">, //
-  = cli::specs<":who:", "The one I shall great !">
-]] int greater_cli(std::optional<std::string_view> who)
+  = cli::specs{"hello world example"},
+  = cli::specs{":who:", "The one I shall great !"},
+  = cli::specs{":verbose:", "-v/--verbose", "Let me talk much more !"}, = cli::_count
+]] int greater_cli(std::optional<std::string_view> who, std::optional<int> verbose)
 {
-  std::println("hello {} !", who.value_or("cli"));
+  const auto v = verbose.value_or(0);
+  const auto w = who.value_or("cli");
+  switch(v)
+  {
+    case 0:
+      std::println("hello {} !", w);
+      break;
+    case 1:
+      std::println("hello my dear {} !", w);
+      break;
+    default:
+      std::println("come on !");
+      break;
+  }
   return 0;
 }
 

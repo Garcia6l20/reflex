@@ -6,16 +6,16 @@
 using namespace reflex;
 using namespace reflex::cli;
 
-struct[[= specs<"CLI calculator.">]] //
+struct[[= specs{"CLI calculator."}]] //
     calculator : command
 {
-  [[= specs<"-v/--verbose", "Show more details.">, = _count]] //
+  [[= specs{"-v/--verbose", "Show more details."}, = _count]] //
       int verbose = false;
 
-  [[= specs<"Add `LHS` to `RHS`.">]]                                             //
-      [[= specs<":lhs:", "The left value.">]]                                    //
-      [[= specs<":rhs:", "The right value.">]]                                   //
-      [[= specs<":repeat:", "-r/--repeat", "Repeat output N times.">, = _count]] //
+  [[= specs{"Add `LHS` to `RHS`."}]]                                             //
+      [[= specs{":lhs:", "The left value."}]]                                    //
+      [[= specs{":rhs:", "The right value."}]]                                   //
+      [[= specs{":repeat:", "-r/--repeat", "Repeat output N times."}, = _count]] //
       int add(float lhs, float rhs, std::optional<int> repeat) const noexcept
   {
     for(int ii = 0; ii < repeat.value_or(0) + 1; ++ii)
@@ -27,14 +27,14 @@ struct[[= specs<"CLI calculator.">]] //
 
   struct base_subcommand : command
   {
-    [[= specs<"Left hand side value.">]] //
+    [[= specs{"Left hand side value."}]] //
         float lhs;
 
-    [[= specs<"Right hand side value.">]] //
+    [[= specs{"Right hand side value."}]] //
         float rhs;
   };
 
-  [[= specs<"Substract `RHS` from `LHS`.">]] struct _sub : base_subcommand
+  [[= specs{"Substract `RHS` from `LHS`."}]] struct _sub : base_subcommand
   {
     int operator()(this auto const& self) noexcept
     {
@@ -47,7 +47,7 @@ struct[[= specs<"CLI calculator.">]] //
     }
   } sub;
 
-  [[= specs<"Multiplies `LHS` with `RHS`.">]] struct _mult : base_subcommand
+  [[= specs{"Multiplies `LHS` with `RHS`."}]] struct _mult : base_subcommand
   {
     int operator()() const noexcept
     {
@@ -57,7 +57,7 @@ struct[[= specs<"CLI calculator.">]] //
 
   } mult;
 
-  [[= specs<"Divides `LHS` by `RHS`.">]] struct _div : base_subcommand
+  [[= specs{"Divides `LHS` by `RHS`."}]] struct _div : base_subcommand
   {
     int operator()() const noexcept
     {
@@ -67,10 +67,6 @@ struct[[= specs<"CLI calculator.">]] //
 
   } div;
 };
-
-#define arraysize(__a__) (sizeof(__a__) / sizeof(__a__[0]))
-
-#define DUMP_STR_OF(__I__) std::println(#__I__ ": {}", display_string_of(__I__))
 
 #include <reflex/testing_main.hpp>
 

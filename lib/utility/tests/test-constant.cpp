@@ -67,6 +67,14 @@ void test()
     const void* p2 = c2.v.data();
     CHECK_THAT(p == p2);
   }
+  {
+    constexpr use_string_constant<"world"s> c2;
+    STATIC_CHECK_THAT(c2.v == "world");
+    const void* p  = c.v.data();
+    const void* p2 = c2.v.data();
+    CHECK_THAT(p != p2);
+    std::println("world: {}", c2.v);
+  }
 }
 } // namespace string_literal_tests
 namespace range_tests
@@ -97,7 +105,42 @@ void test_deduction()
   STATIC_CHECK_THAT(std::ranges::equal(with_array.v, std::array{1, 2, 3}));
   STATIC_CHECK_THAT(not with_array.has_span_representation); // array uses structural representation
 }
-} // namespace vector_tests
+void test_strings()
+{
+  {
+    static constexpr auto with_vec = use_range<std::vector{"hello", "world"}>{};
+    for(auto const& value : with_vec.v)
+    {
+      std::println("v = {}", value);
+    }
+    std::println("v = {}", with_vec.v);
+  }
+}
+template <constant<std::vector<std::string>> V> struct use_strings
+{
+  static constexpr auto v = V.get();
+};
+void test_explicit_strings()
+{
+  {
+    static constexpr auto strs = use_strings<std::vector{"hello", "world"}>{};
+    std::println("strs = {}", strs.v);
+    STATIC_CHECK_THAT(strs.v[0] == "hello");
+    STATIC_CHECK_THAT(strs.v[1] == "world");
+  }
+  {
+    static constexpr auto strs = use_strings<{"noop", "test"}>{};
+    std::println("strs = {}", strs.v);
+    STATIC_CHECK_THAT(strs.v[0] == "noop");
+    STATIC_CHECK_THAT(strs.v[1] == "test");
+  }
+  {
+    static constexpr auto strs = constant<std::vector<std::string>>{"hello world example"};
+    std::println("strs = {}", strs.get());
+    STATIC_CHECK_THAT(strs.get()[0] == "hello world example");
+  }
+}
+} // namespace range_tests
 namespace tuple_tests
 {
 template <constant V> struct use_tuple

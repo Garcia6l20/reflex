@@ -5,76 +5,37 @@ Command line interface for c++26.
 ## Example
 
 ```cpp
-struct calculator : cli::command
+#include <reflex/cli.hpp>
+
+using namespace reflex;
+
+[[
+  = cli::specs{"hello world example"},
+  = cli::specs{":who:", "The one I shall great !"},
+  = cli::specs{":verbose:", "-v/--verbose", "Let me talk much more !"}, = cli::_count
+]] int greater_cli(std::optional<std::string_view> who, std::optional<int> verbose)
 {
-    static constexpr auto description = "CLI calculator";
+  const auto v = verbose.value_or(0);
+  const auto w = who.value_or("cli");
+  switch(v)
+  {
+    case 0:
+      std::println("hello {} !", w);
+      break;
+    case 1:
+      std::println("hello my dear {} !", w);
+      break;
+    default:
+      std::println("come on !");
+      break;
+  }
+  return 0;
+}
 
-    [[= option<"-h/--help", "Print this message and exit.", _help>]] //
-        bool show_help = false;
-
-    [[= option<"-v/--verbose", "Show more details.", _repeat>]] //
-        int verbose = false;
-
-    struct base_subcommand : cli::command
-    {
-        [[= option<"-h/--help", "Print this message and exit.", _help>]] //
-            bool show_help = false;
-
-        [[= argument<"Left hand side value.">]] //
-            float lhs;
-
-        [[= argument<"Right hand side value.">]] //
-            float rhs;
-    };
-
-    [[= sub_command]] struct _add : base_subcommand
-    {
-        static constexpr auto description = "Adds `LHS` to `RHS`.";
-
-        int operator()() const noexcept
-        {
-            std::println("{}", lhs + rhs);
-            return 0;
-        }
-
-    } add;
-
-    [[= sub_command]] struct _sub : base_subcommand
-    {
-        static constexpr auto description = "Substracts `RHS` from `LHS`.";
-
-        int operator()() const noexcept
-        {
-            std::println("{}", lhs - rhs);
-            return 0;
-        }
-
-    } sub;
-
-    [[= sub_command]] struct _mult : base_subcommand
-    {
-        static constexpr auto description = "Multiplies `LHS` by `RHS`.";
-
-        int operator()() const noexcept
-        {
-            std::println("{}", lhs * rhs);
-            return 0;
-        }
-
-    } mult;
-
-    [[= sub_command]] struct _div : base_subcommand
-    {
-        static constexpr auto description = "Divide `LHS` by `RHS`.";
-
-        int operator()() const noexcept
-        {
-            std::println("{}", lhs / rhs);
-            return 0;
-        }
-
-    } div;
-};
+int main(int argc, const char** argv)
+{
+  return cli::run<^^greater_cli>(argc, argv);
+}
 ```
 
 > See [tests](tests) for more examples.
