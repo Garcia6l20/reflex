@@ -62,6 +62,61 @@ struct any_arg
   template <typename T> operator T&();
 };
 
+consteval bool is_tuple_type(meta::info R)
+{
+  const auto RR = decay(R);
+  return has_template_arguments(RR) and (template_of(RR) == ^^std::tuple);
+}
+
+consteval bool is_variant_type(meta::info R)
+{
+  const auto RR = decay(R);
+  return has_template_arguments(RR) and (template_of(RR) == ^^std::variant);
+}
+
+template <typename T>
+concept variant_c = is_variant_type(^^T);
+
+template <typename T>
+concept non_variant_c = not variant_c<T>;
+
+template <typename Fn, typename... Ts, typename Var = std::variant<Ts...>>
+constexpr decltype(auto) visit(Fn&& fn, Var&& v)
+{
+  template for(constexpr auto ii : std::views::iota(0uz, std::variant_size_v<std::decay_t<Var>>))
+  {
+    if(v.index() == ii)
+    {
+      return std::forward<Fn>(fn)(std::get<ii>(std::forward<Var>(v)));
+    }
+  }
+  std::unreachable();
+}
+
+template <typename Fn, typename Head, typename... Tail>
+constexpr decltype(auto) visit(Fn&& fn, Head&& head, Tail&&... tail)
+{
+  if constexpr(variant_c<Head>)
+  {
+    return visit([&]<typename T>(T&& val)
+                      {//
+                         return visit(std::forward<Fn>(fn), std::forward<T>(val), std::forward<Tail>(tail)...);
+                      },
+                      std::forward<Head>(head));
+  }
+  else if constexpr((non_variant_c<Tail> and ...))
+  {
+    return std::forward<Fn>(fn)(std::forward<Head>(head), std::forward<Tail>(tail)...);
+  }
+  else
+  {
+    static_assert(non_variant_c<Head>);
+    return visit([&]<typename... Ts>(Ts&&... rest_unpacked) -> decltype(auto)
+                 { return std::forward<Fn>(fn)(std::forward<Head>(head), std::forward<Ts>(rest_unpacked)...); },
+                 std::forward<Tail>(tail)...);
+  }
+}
+
 struct test_suite
 {
   std::string          name;
@@ -91,11 +146,18 @@ private:
         {
           if constexpr(is_function_template(C))
           {
-            constexpr auto instanciation = substitute(C, std::array{^^Args...});
-            return [:instanciation:](std::forward<Args>(args)...);
+            visit(
+                []<typename... Ts>(Ts&&... args)
+                {
+                  constexpr auto instanciation = substitute(C, std::array{^^Ts...});
+                  const auto     ctx           = detail::fn_eval_context<instanciation>{args...};
+                  return [:instanciation:](std::forward<Ts>(args)...);
+                },
+                std::forward<Args>(args)...);
           }
           else
           {
+            const auto ctx = detail::fn_eval_context<C>{args...};
             return [:C:](std::forward<Args>(args)...);
           }
         };
@@ -112,12 +174,19 @@ private:
 
           if constexpr(is_function_template(C))
           {
-            constexpr auto instanciation = substitute(C, std::array{^^Args...});
-            obj.[:instanciation:](std::forward<Args>(args)...);
+            visit(
+                [&obj]<typename... Ts>(Ts&&... args)
+                {
+                  constexpr auto instanciation = substitute(C, std::array{^^Ts...});
+                  const auto     ctx           = detail::fn_eval_context<instanciation>{args...};
+                  return obj.[:instanciation:](std::forward<Ts>(args)...);
+                },
+                std::forward<Args>(args)...);
           }
           else
           {
-            obj.[:C:](std::forward<Args>(args)...);
+            const auto ctx = detail::fn_eval_context<C>{args...};
+            obj.[:C:](args...);
           }
           detail::current_instance = nullptr;
         };
@@ -131,32 +200,22 @@ private:
 
       constexpr auto annotation = constant_of(params_annotations[0]);
 
-      constexpr auto params = [:annotation:].fixture;
-
-      for(auto const& p : [:params:])
+      constexpr auto fixture = [:annotation:].fixture;
+      if constexpr(is_tuple_type(type_of(fixture)))
       {
-        const auto args  = to_tuple(p);
-        using tuple_type = decltype(args);
-
-        constexpr auto context_type = []
+        // std::abort();
+        template for (const auto row : [:fixture:]) {
+          // const auto [... args] = row;
+          // caller(std::move(args)...);
+          std::apply(caller, std::move(row));
+        }
+      }
+      else
+      {
+        for(const auto [... args] : [:fixture:])
         {
-          if constexpr(is_function_template(C))
-          {
-            constexpr auto instanciation = substitute(C, template_arguments_of(^^tuple_type));
-            return substitute(^^detail::fn_eval_context,
-                              {
-                                  ^^instanciation});
-          }
-          else
-          {
-            return ^^detail::fn_eval_context<C>;
-          }
-        }();
-        using ContextT = [:context_type:];
-
-        const auto ctx = std::apply([]<typename... Args>(Args const&... args) { return ContextT{args...}; }, args);
-
-        std::apply(caller, args);
+          caller(std::move(args)...);
+        }
       }
     }
     else

@@ -81,9 +81,10 @@ consteval auto
 
 consteval auto member_functions_of(info R, access_context ctx = access_context::current())
 {
-  return members_of(R, ctx)                           //
-         | std::views::filter(meta::is_user_declared) //
-         | std::views::filter(meta::is_function);
+  return members_of(R, ctx) |
+         std::views::filter(
+             [](auto R)
+             { return not is_constructor(R) and ((is_user_declared(R) and is_function(R)) or is_function_template(R)); });
 }
 
 consteval auto member_functions_annotated_with(info R, info A, access_context ctx = access_context::current())

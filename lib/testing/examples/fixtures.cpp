@@ -1,12 +1,12 @@
-#include <reflex/testing_main.hpp>
 #include <reflex/format/variant.hpp>
+#include <reflex/testing_main.hpp>
 
 using namespace reflex::testing;
 
 namespace fixture_tests
 {
 
-const std::tuple<std::string_view, std::string_view> hello_fixture[] = {
+constexpr std::tuple<std::string_view, std::string_view> hello_fixture[] = {
     {"hello", "world"},
     {"hello", "hello"},
     {"world", "world"},
@@ -17,15 +17,11 @@ const std::tuple<std::string_view, std::string_view> hello_fixture[] = {
   CHECK_THAT(l == r); // l and r will be expanded since they are added to execution context
 }
 
-// template-functions are also supported !
-[[= parametrize<^^hello_fixture>]] void test_hello_template(auto l, auto r)
-{
-  CHECK_THAT(l == r);
-}
-
 using var = std::variant<int, double>;
 
-const std::tuple<var, var> var_fixture[] = {
+using var_fixture_row_type = std::array<var, 2>;
+// using var_fixture_row_type = std::tuple<var, var>; // functionally equivalent
+constexpr var_fixture_row_type var_fixture[] = {
     {42, 42.3},
     {42, 42.2},
     {42.2, 42.3},
@@ -33,10 +29,27 @@ const std::tuple<var, var> var_fixture[] = {
     {42, 42},
     {42.2, 42.2},
 };
-[[= parametrize<^^var_fixture>]] void test_var_template(auto l, auto r)
+[[= parametrize<^^var_fixture>]] void test_var_template(auto&& l, auto&& r)
 {
-  // for now l and r are variants, but it is planned to unwrap them into its actual type
   CHECK_THAT(l == r);
+  STATIC_CHECK_THAT(type_of(^^l) == type_of(^^r));
 }
 
+constexpr auto tuple_fixture = std::tuple{
+    std::tuple{42, 42.3},
+    std::tuple{42, 42.2},
+    std::tuple{42.2, 42.3},
+    std::tuple{42, 42.2},
+    std::tuple{42, 42},
+    std::tuple{42.2, 42.2},
+};
+
+struct struct_based_test
+{
+  [[= parametrize<^^tuple_fixture>]] void test(auto&& l, auto&& r)
+  {
+    CHECK_THAT(l == r);
+    STATIC_CHECK_THAT(type_of(^^l) == type_of(^^r));
+  }
+};
 } // namespace fixture_tests
