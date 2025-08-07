@@ -48,7 +48,7 @@ template <typename From> constexpr auto struct_to_tuple(From const& from)
 template <typename From> constexpr decltype(auto) to_tuple(From const& from)
 {
   constexpr auto R = decay(^^From);
-  if constexpr(has_template_arguments(R) and template_of(R) == ^^std::tuple)
+  if constexpr(meta::is_template_instance_of(R, ^^std::tuple))
   {
     return from;
   }

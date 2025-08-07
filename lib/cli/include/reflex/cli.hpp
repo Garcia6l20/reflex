@@ -470,7 +470,7 @@ std::optional<int> process_cmdline(std::string_view program, auto it, auto end, 
           {
             if constexpr(is_counter)
             {
-              if constexpr(has_template_arguments(type) and template_of(type) == ^^std::optional)
+              if constexpr(meta::is_template_instance_of(type, ^^std::optional))
               {
                 if(not target.has_value())
                 {
@@ -557,7 +557,7 @@ std::optional<int> process_cmdline(std::string_view program, auto it, auto end, 
       if(ii >= current_pos_arg)
       {
         constexpr auto type = type_of(arguments[ii]);
-        if constexpr(has_template_arguments(type) and template_of(type) == ^^std::optional)
+        if constexpr(meta::is_template_instance_of(type, ^^std::optional))
         {
           ++current_pos_arg;
         }

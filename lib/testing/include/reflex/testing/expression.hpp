@@ -72,7 +72,7 @@ template <typename T, typename Str> expression(T&&, Str) -> expression<T>;
 
 consteval bool is_expression(meta::info R)
 {
-  return has_template_arguments(decay(R)) and template_of(decay(R)) == ^^expression;
+  return meta::is_template_instance_of(decay(R), ^^expression);
 }
 
 #define expr(...) reflex::testing::expression((__VA_ARGS__), #__VA_ARGS__)

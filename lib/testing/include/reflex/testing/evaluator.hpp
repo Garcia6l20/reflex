@@ -48,6 +48,6 @@ template <typename Fn> struct evaluator
 
 consteval bool is_evaluator(meta::info R)
 {
-  return has_template_arguments(decay(R)) and template_of(decay(R)) == ^^evaluator;
+  return meta::is_template_instance_of(decay(R), ^^evaluator);
 }
 } // namespace reflex::testing::detail

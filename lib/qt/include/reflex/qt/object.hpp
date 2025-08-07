@@ -58,7 +58,7 @@ private:
                                        ^^Args...} |
                                        std::views::filter(
                                            [](auto R)
-                                           { return has_template_arguments(R) and template_of(R) == ^^defaulted; }) |
+                                           { return meta::is_template_instance_of(R, ^^defaulted); }) |
                                        std::views::transform([](auto R) { return template_arguments_of(R)[0]; })):];
 
   const default_tuple_type defaults_;
@@ -174,7 +174,7 @@ private:
         nonstatic_data_members_of(^^Super, meta::access_context::unchecked()) //
         | std::views::filter(
               [&](auto M)
-              { return has_template_arguments(type_of(M)) and template_of(type_of(M)) == ^^detail::signal_decl; }));
+              { return meta::is_template_instance_of(type_of(M), ^^detail::signal_decl); }));
   }();
 
   template <typename Tag>
@@ -259,7 +259,7 @@ private:
     auto try_push = [&types](auto R)
     {
       auto T = decay(R);
-      if(has_template_arguments(T) and template_of(T) == ^^detail::defaulted)
+      if(meta::is_template_instance_of(T, ^^detail::defaulted))
       {
         T = decay(template_arguments_of(T)[0]);
       }
@@ -1165,7 +1165,7 @@ namespace QtPrivate
 consteval bool is_reflex_object(std::meta::info R)
 {
   const auto first_base_type = type_of(bases_of(R, std::meta::access_context::current())[0]);
-  if(has_template_arguments(first_base_type) and template_of(first_base_type) == ^^reflex::qt::object)
+  if(reflex::meta::is_template_instance_of(first_base_type, ^^reflex::qt::object))
   {
     return true;
   }

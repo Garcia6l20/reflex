@@ -34,6 +34,11 @@ consteval auto tuple_for(std::ranges::range auto elems) -> meta::info
   return substitute(^^std::tuple, elems | std::views::transform(remove_cvref) | std::ranges::to<std::vector>());
 }
 
+consteval bool is_template_instance_of(info R, info T)
+{
+  return has_template_arguments(R) and template_of(R) == T;
+}
+
 consteval auto annotations_of_with(info R, info A)
 {
   return annotations_of(R) | std::views::filter(
@@ -41,7 +46,7 @@ consteval auto annotations_of_with(info R, info A)
                                  {
                                    if(is_template(A))
                                    {
-                                     return has_template_arguments(type_of(R)) and template_of(type_of(R)) == A;
+                                     return is_template_instance_of(type_of(R), A);
                                    }
                                    else if(is_type(A))
                                    {
@@ -81,10 +86,12 @@ consteval auto
 
 consteval auto member_functions_of(info R, access_context ctx = access_context::current())
 {
-  return members_of(R, ctx) |
-         std::views::filter(
-             [](auto R)
-             { return not is_constructor(R) and ((is_user_declared(R) and is_function(R)) or is_function_template(R)); });
+  return members_of(R, ctx) | std::views::filter(
+                                  [](auto R)
+                                  {
+                                    return not is_constructor(R) and
+                                           ((is_user_declared(R) and is_function(R)) or is_function_template(R));
+                                  });
 }
 
 consteval auto member_functions_annotated_with(info R, info A, access_context ctx = access_context::current())

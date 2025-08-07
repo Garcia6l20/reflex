@@ -23,17 +23,6 @@ struct bad_var_access : std::exception
   }
 };
 
-namespace patterns
-{
-template <auto return_value>
-inline constexpr auto unreachable_r = [](auto&&...)
-{
-  std::unreachable();
-  return return_value;
-};
-inline constexpr auto unreachable = [](auto&&...) { std::unreachable(); };
-} // namespace patterns
-
 namespace _var
 {
 
@@ -225,7 +214,7 @@ public:
 
   static consteval bool is_equivalent_to(meta::info I, meta::info R) noexcept
   {
-    return ((R == dealias(I)) or (is_template(I) and has_template_arguments(R) and template_of(R) == I));
+    return ((R == dealias(I)) or (is_template(I) and meta::is_template_instance_of(R, I)));
   }
 
   static consteval bool can_hold(meta::info I) noexcept
@@ -880,7 +869,7 @@ struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
           {
             constexpr auto yielded_type = dealias(std::meta::decay(^^decltype(*std::begin(value))));
             using YieldedT              = [:yielded_type:];
-            if constexpr(has_template_arguments(yielded_type) and template_of(yielded_type) == ^^std::pair)
+            if constexpr(reflex::meta::is_template_instance_of(yielded_type, ^^std::pair))
             {
               auto out = ctx.out();
               *out++   = '{';

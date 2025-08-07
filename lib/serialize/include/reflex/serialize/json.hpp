@@ -178,8 +178,7 @@ consteval bool is_loadable_object(meta::info R)
 
 consteval bool is_loadable_array(meta::info R)
 {
-  auto D = dealias(R);
-  return has_template_arguments(D) and template_of(D) == ^^std::vector;
+  return meta::is_template_instance_of(dealias(R), ^^std::vector);
 }
 
 template <meta::info R>

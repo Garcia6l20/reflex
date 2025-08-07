@@ -30,7 +30,7 @@ template <arithmetic_c T> struct string_loader<T>
 };
 
 template <typename Optional>
-  requires(has_template_arguments(^^Optional) and template_of(^^Optional) == ^^std::optional)
+  requires(meta::is_template_instance_of(^^Optional, ^^std::optional))
 struct string_loader<Optional>
 {
   using value_type = typename Optional::value_type;
