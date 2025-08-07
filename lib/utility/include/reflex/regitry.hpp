@@ -14,14 +14,26 @@ template <class scope, size_t I> struct registered_type_tag
 template <class scope, size_t I>
 constexpr meta::info registered_type = [] consteval { return resolve(registered_type_tag<scope, I>()); }();
 
-template <class scope, auto = [] {}> consteval size_t count()
+template <class scope, size_t I, auto = [] {}> consteval bool is_resolved()
+{
+  if constexpr(requires {
+                 { resolve(registered_type_tag<scope, I>()) } -> std::same_as<meta::info>;
+               })
+  {
+    return true;
+  }
+  else
+  {
+    return false;
+  }
+}
+
+template <class scope, auto defer = [] {}> consteval size_t count()
 {
   static constexpr auto max_types = 512uz;
   template for(constexpr auto ii : std::views::iota(0uz, max_types)) // iota's unreachable sentinel dont work here
   {
-    if constexpr(requires {
-                   { resolve(registered_type_tag<scope, ii>()) } -> std::same_as<meta::info>;
-                 })
+    if constexpr(is_resolved<scope, ii, defer>())
     {
       // pass
     }
@@ -33,7 +45,7 @@ template <class scope, auto = [] {}> consteval size_t count()
   std::unreachable();
 }
 
-template <class scope, auto always = []{}> consteval auto types()
+template <class scope, auto always = [] {}> consteval auto types()
 {
   return std::views::iota(0uz, count<scope, always>()) |
          std::views::transform(
@@ -82,8 +94,17 @@ template <class scope> struct registry
     return registry_detail::count<scope, defer>();
   }
 
-  template <auto defer = []{}>
-  static consteval auto all()
+  template <size_t index, auto defer = [] {}> static consteval auto has_index()
+  {
+    return registry_detail::is_resolved<scope, index, defer>();
+  }
+
+  template <size_t index, auto defer = [] {}> static consteval auto at()
+  {
+    return registry_detail::types<scope, defer>()[index];
+  }
+
+  template <auto defer = [] {}> static consteval auto all()
   {
     return registry_detail::types<scope, defer>();
   }
