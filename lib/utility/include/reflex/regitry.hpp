@@ -6,6 +6,8 @@ namespace reflex::meta
 {
 namespace registry_detail
 {
+struct not_found {};
+
 template <class scope, size_t I> struct registered_type_tag
 {
   consteval friend auto resolve(registered_type_tag<scope, I>);
@@ -71,6 +73,8 @@ template <class T, class scope> struct registerer
 
 template <class scope> struct registry
 {
+  static constexpr size_t npos = size_t(-1);
+
   template <typename T> static consteval auto __enroll()
   {
     return registry_detail::registerer<T, scope>{};
@@ -102,6 +106,31 @@ template <class scope> struct registry
   template <size_t index, auto defer = [] {}> static consteval auto at()
   {
     return registry_detail::types<scope, defer>()[index];
+  }
+
+  template <auto defer = [] {}> static constexpr auto at(size_t index)
+  {
+    return registry_detail::types<scope, defer>()[index];
+  }
+
+  template <meta::info type, auto defer = [] {}> static consteval auto index_of()
+  {
+    auto range = registry_detail::types<scope, defer>();
+    auto it    = std::ranges::find(range, type);
+    return it == std::ranges::end(range) ? npos : std::ranges::distance(std::ranges::begin(range), it);
+  }
+
+  template <typename Fn, auto defer = ^^Fn> static constexpr auto visit(size_t index, Fn const& fn)
+  {
+    template for(constexpr size_t ii : std::views::iota(0uz, size<defer>()))
+    {
+      if(ii == index)
+      {
+        using T = typename[:at<ii, defer>():];
+        return fn(std::type_identity<T>{});
+      }
+    }
+    return fn(std::type_identity<registry_detail::not_found>{});
   }
 
   template <auto defer = [] {}> static consteval auto all()

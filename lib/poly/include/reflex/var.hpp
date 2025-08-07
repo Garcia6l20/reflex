@@ -7,10 +7,9 @@
 
 #include <array>
 #include <exception>
-#include <flat_map>
 #include <format>
 #include <map>
-#include <unordered_map>
+#include <system_error>
 #include <vector>
 
 namespace reflex
@@ -207,7 +206,7 @@ public:
     }
   }
 
-  constexpr bool has_value() noexcept
+  constexpr bool has_value() const noexcept
   {
     return current_ > 0;
   }
@@ -293,14 +292,26 @@ public:
     return index_type(-1);
   }
 
-  template <typename T> constexpr bool has_value() noexcept
+  template <typename T> constexpr bool has_value() const noexcept
   {
     return current_ == index_of<T>();
   }
 
-  template <template <typename...> typename T> constexpr bool has_value() noexcept
+  template <template <typename...> typename T> constexpr bool has_value() const noexcept
   {
     return current_ == index_of<typename[:type_implementation_of(^^T):]>();
+  }
+
+  constexpr bool has_error() const noexcept
+    requires(can_hold<std::error_code>())
+  {
+    return has_value<std::error_code>();
+  }
+
+  constexpr std::error_code error() const noexcept
+    requires(can_hold<std::error_code>())
+  {
+    return get<std::error_code>();
   }
 
   constexpr var_impl() noexcept
@@ -462,7 +473,7 @@ public:
   template <typename... Patterns, typename Self>
   decltype(auto) match(this Self&& self, match_pattern<Patterns...>&& patterns)
   {
-    template for(constexpr auto ii : std::views::iota(size_t(0), self.alternatives_.size()))
+    template for(constexpr auto ii : std::views::iota(0uz, self.alternatives_.size()))
     {
       constexpr auto R = self.alternatives_[ii];
       auto*          p = reinterpret_cast<const_like_t<Self, typename[:R:]>*>(self.storage_);
@@ -523,7 +534,7 @@ public:
 
   template <meta::info I, typename Self> constexpr decltype(auto) get(this Self&& self)
   {
-    template for(constexpr auto ii : std::views::iota(size_t(0), self.alternatives_.size()))
+    template for(constexpr auto ii : std::views::iota(0uz, self.alternatives_.size()))
     {
       constexpr auto R = self.alternatives_[ii];
       if constexpr(is_equivalent_to(I, R))
@@ -788,6 +799,11 @@ using recursive_var = _var::var_impl<_var::config_t{
 
 template <typename T, typename Var>
 concept var_value_c = Var::template can_hold<std::decay_t<T>>();
+
+consteval bool is_var_type(meta::info R)
+{
+  return meta::is_template_instance_of(dealias(decay(R)), ^^_var::var_impl);
+}
 
 } // namespace reflex
 
