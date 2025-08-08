@@ -1,5 +1,5 @@
 #include <print>
-#include <reflex/match_patten.hpp>
+#include <reflex/match.hpp>
 #include <reflex/regitry.hpp>
 
 using namespace reflex;
@@ -68,7 +68,7 @@ int main(int argc, const char** argv)
     std::string_view requested = argv[1];
     auto             var       = awesome_plugin_registry::make(requested);
     std::visit(
-        match_pattern{
+        match{
             []<typename Plugin>(Plugin const& plugin)
               requires(awesome_plugin_registry::contains<Plugin>())
             { std::println("plugin name is: {}", plugin.say_your_name()); },

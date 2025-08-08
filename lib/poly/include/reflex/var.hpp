@@ -1,9 +1,12 @@
 #pragma once
 
-#include <reflex/match_patten.hpp>
+#include <reflex/concepts.hpp>
+#include <reflex/fwd.hpp>
+#include <reflex/match.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/none.hpp>
 #include <reflex/utility.hpp>
+#include <reflex/visit.hpp>
 
 #include <array>
 #include <exception>
@@ -22,64 +25,95 @@ struct bad_var_access : std::exception
   }
 };
 
+template <template <class...> class T> struct recursive
+{
+  static constexpr auto tmpl = ^^T;
+};
+
+constexpr auto is_recursive_type = meta::make_template_tester(^^recursive);
+
 namespace _var
 {
 
-struct config_t
-{
-  meta::info recursive_vec_template = meta::null;
-  meta::info recursive_map_template = meta::null;
-};
-
-template <config_t config, meta::info... types> class var_impl
+template <typename... Ts> class var_impl
 {
 public:
   using index_type = int;
 
   friend std::formatter<var_impl>;
+  friend visitor<var_impl>;
 
 private:
-  static constexpr auto config_ = config;
-  static constexpr auto ctx_    = meta::access_context::current();
+  static constexpr auto ctx_ = meta::access_context::current();
 
-  static constexpr auto vec_type_ = [] consteval
-  {
-    if constexpr(config.recursive_vec_template != meta::null)
-    {
-      return substitute(config.recursive_vec_template, {^^var_impl});
-    }
-    else
-    {
-      return ^^void;
-    }
-  }();
+  static constexpr auto types_ = std::array{^^none_t, ^^Ts...};
 
-  static constexpr auto map_type_ = [] consteval
-  {
-    if constexpr(config.recursive_map_template != meta::null)
-    {
-      return substitute(config.recursive_map_template, {^^std::string, ^^var_impl});
-    }
-    else
-    {
-      return ^^void;
-    }
-  }();
+  static constexpr auto basic_types_ =
+      define_static_array(types_ | std::views::filter([](auto R) { return not is_recursive_type(R); }));
+
+  static constexpr auto recursive_templates_ = define_static_array(
+      [] consteval
+      {
+        meta::vector rt;
+        template for(constexpr auto t : types_)
+        {
+          if constexpr(is_recursive_type(t))
+          {
+            using RT = [:t:];
+            rt.push_back(RT::tmpl);
+          }
+        }
+        return rt;
+      }());
 
   static constexpr auto recursive_types_ = define_static_array(
       [] consteval
       {
-        std::vector<meta::info> rt;
-        if constexpr(vec_type_ != ^^void)
+        meta::vector rt;
+        template for(constexpr auto t : recursive_templates_)
         {
-          rt.push_back(vec_type_);
-        }
-        if constexpr(map_type_ != ^^void)
-        {
-          rt.push_back(map_type_);
+          if constexpr(can_substitute(t, {^^var_impl}))
+          {
+            rt.push_back(substitute(t, {^^var_impl}));
+          }
+          else if constexpr(can_substitute(t, {^^std::string, ^^var_impl}))
+          {
+            rt.push_back(substitute(t, {^^std::string, ^^var_impl}));
+          }
+          else
+          {
+            static_assert(always_false<var_impl>, "unhandled recursive type");
+          }
         }
         return rt;
       }());
+
+  static constexpr auto alternatives_ =
+      define_static_array(std::array{basic_types_, recursive_types_} | std::views::join);
+
+  static constexpr auto vec_type_ = [] consteval
+  {
+    template for(constexpr auto t : recursive_types_)
+    {
+      if constexpr(template_of(t) == ^^std::vector)
+      {
+        return t;
+      }
+    }
+    return ^^void;
+  }();
+
+  static constexpr auto map_type_ = [] consteval
+  {
+    template for(constexpr auto t : recursive_types_)
+    {
+      if constexpr(template_of(t) == ^^std::map)
+      {
+        return t;
+      }
+    }
+    return ^^void;
+  }();
 
   static constexpr auto has_vec_ = vec_type_ != ^^void;
   static constexpr auto has_map_ = map_type_ != ^^void;
@@ -107,25 +141,6 @@ private:
     }
   }
 
-  static constexpr auto alternatives_ = std::array{^^none_t, types...};
-
-  static constexpr size_t vec_index_ = has_vec_ ? alternatives_.size() : -1;
-  static constexpr size_t map_index_ = has_map_ ? has_vec_ ? vec_index_ + 1 : alternatives_.size() : -1;
-
-  // static constexpr auto alternatives_ = define_static_array([] consteval
-  // {
-  //   auto tps = std::vector{^^none_t, types...};
-  //   if(has_vec_)
-  //   {
-  //     tps.push_back(vec_type_);
-  //   }
-  //   if(has_map_)
-  //   {
-  //     tps.push_back(map_type_);
-  //   }
-  //   return tps;
-  // }());
-
   static constexpr auto storage_size_ = [] constexpr
   {
     size_t sz = 0;
@@ -143,6 +158,7 @@ private:
     }
     return sz;
   }();
+
   static constexpr auto storage_align_ = [] constexpr
   {
     size_t sz = 0;
@@ -165,8 +181,36 @@ private:
   index_type current_ = 0;
 
 public:
+  template <template <class...> class T>
+  using recursive_t = [:[]
+                       {
+                         constexpr auto R = ^^T;
+                         if constexpr(std::ranges::contains(recursive_templates_, R))
+                         {
+                           if constexpr(can_substitute(R, {^^var_impl}))
+                           {
+                             return substitute(R, {^^var_impl});
+                           }
+                           else if(can_substitute(R, {^^var_impl}))
+                           {
+                             return substitute(R, {^^std::string, ^^var_impl});
+                           }
+                         }
+                         return ^^void;
+                       }():];
+
   using vec_t = [:vec_type_:];
   using map_t = [:map_type_:];
+
+  static constexpr size_t alternative_count() noexcept
+  {
+    return alternatives_.size();
+  }
+
+  static consteval meta::info alternative_at(size_t ii) noexcept
+  {
+    return alternatives_[ii];
+  }
 
   constexpr void reset() noexcept
   {
@@ -180,29 +224,14 @@ public:
       if(index == current_)
       {
         using T = [:R:];
-        std::destroy_at(reinterpret_cast<T*>(storage_));
+        if constexpr(not is_reference_type(R))
+        {
+          std::destroy_at(reinterpret_cast<T*>(storage_));
+        }
         current_ = -1;
         return;
       }
       ++index;
-    }
-    if constexpr(has_vec_)
-    {
-      if(vec_index_ == current_)
-      {
-        std::destroy_at(reinterpret_cast<typename[:vec_type_:]*>(storage_));
-        current_ = -1;
-        return;
-      }
-    }
-    if constexpr(has_map_)
-    {
-      if(map_index_ == current_)
-      {
-        std::destroy_at(reinterpret_cast<typename[:map_type_:]*>(storage_));
-        current_ = -1;
-        return;
-      }
     }
   }
 
@@ -281,14 +310,6 @@ public:
       }
       ++index;
     }
-    if constexpr(vec_type_ == ^^T)
-    {
-      return vec_index_;
-    }
-    if constexpr(map_type_ == ^^T)
-    {
-      return map_index_;
-    }
     return index_type(-1);
   }
 
@@ -319,24 +340,37 @@ public:
     emplace<none_t>();
   }
 
+  template <typename Fn, typename Self> inline constexpr decltype(auto) visit(this Self&& self, Fn&& fn)
+  {
+    template for(constexpr auto ii : std::views::iota(0uz, self.alternatives_.size()))
+    {
+      if(ii == self.current_)
+      {
+        static constexpr auto R = self.alternatives_[ii];
+        return reflex_fwd(fn)(reflex_fwd(self).template get<typename[:R:]>());
+      }
+    }
+    std::unreachable();
+  }
+
   constexpr var_impl(var_impl&& o) noexcept
   {
-    std::move(o).match([this]<typename T>(T&& value) { assign(std::move(value)); });
+    std::move(o).visit([this]<typename T>(T&& value) { assign(std::move(value)); });
   }
   constexpr var_impl(var_impl const& o) noexcept
   {
-    o.match([this]<typename T>(T const& value) { assign(value); });
+    o.visit([this]<typename T>(T&& value) { assign(value); });
   }
 
   constexpr var_impl& operator=(var_impl&& o) noexcept
   {
-    std::move(o).match([this]<typename T>(T&& value) { assign(std::move(value)); });
+    std::move(o).visit([this]<typename T>(T&& value) { assign(std::move(value)); });
     return *this;
   }
 
   constexpr var_impl& operator=(var_impl const& o) noexcept
   {
-    o.match([this]<typename T>(T const& value) { assign(value); });
+    o.visit([this]<typename T>(T&& value) { assign(value); });
     return *this;
   }
 
@@ -392,20 +426,6 @@ public:
       }
       ++index;
     }
-    if constexpr(^^T == vec_type_)
-    {
-      using U  = [:vec_type_:];
-      current_ = vec_index_;
-      auto* p  = reinterpret_cast<U*>(storage_);
-      return *std::construct_at<U>(p, std::forward<Args>(args)...);
-    }
-    if constexpr(^^T == map_type_)
-    {
-      using U  = [:map_type_:];
-      current_ = map_index_;
-      auto* p  = reinterpret_cast<U*>(storage_);
-      return *std::construct_at<U>(p, std::forward<Args>(args)...);
-    }
     std::unreachable();
   }
 
@@ -435,101 +455,7 @@ public:
       }
       ++index;
     }
-    if constexpr(dt == vec_type_)
-    {
-      using U = [:vec_type_:];
-      auto* p = reinterpret_cast<U*>(storage_);
-      if(current_ != vec_index_)
-      {
-        reset();
-        std::construct_at<std::decay_t<T>>(p, std::forward<T>(value));
-      }
-      else
-      {
-        *p = std::forward<T>(value);
-      }
-      current_ = vec_index_;
-      return;
-    }
-    if constexpr(dt == map_type_)
-    {
-      using U = [:map_type_:];
-      auto* p = reinterpret_cast<U*>(storage_);
-      if(current_ != map_index_)
-      {
-        reset();
-        std::construct_at<std::decay_t<T>>(p, std::forward<T>(value));
-      }
-      else
-      {
-        *p = std::forward<T>(value);
-      }
-      current_ = map_index_;
-      return;
-    }
     std::unreachable();
-  }
-
-  template <typename... Patterns, typename Self>
-  decltype(auto) match(this Self&& self, match_pattern<Patterns...>&& patterns)
-  {
-    template for(constexpr auto ii : std::views::iota(0uz, self.alternatives_.size()))
-    {
-      constexpr auto R = self.alternatives_[ii];
-      auto*          p = reinterpret_cast<const_like_t<Self, typename[:R:]>*>(self.storage_);
-      if constexpr(requires { patterns(std::forward_like<Self>(*p)); })
-      {
-        if(ii == self.current_)
-        {
-          return patterns(std::forward_like<Self>(*p));
-        }
-      }
-      else
-      {
-        if(ii == self.current_)
-        {
-          throw bad_var_access{}; // no matching pattern
-        }
-      }
-    }
-    if constexpr(has_vec_)
-    {
-      if(self.current_ == vec_index_)
-      {
-        using U = [:vec_type_:];
-        auto* p = reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
-        if constexpr(requires { patterns(std::forward_like<Self>(*p)); })
-        {
-          return patterns(std::forward_like<Self>(*p));
-        }
-        else
-        {
-          throw bad_var_access{}; // no matching pattern
-        }
-      }
-    }
-    if constexpr(has_map_)
-    {
-      if(self.current_ == map_index_)
-      {
-        using U = [:map_type_:];
-        auto* p = reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
-        if constexpr(requires { patterns(std::forward_like<Self>(*p)); })
-        {
-          return patterns(std::forward_like<Self>(*p));
-        }
-        else
-        {
-          throw bad_var_access{}; // no matching pattern
-        }
-      }
-    }
-    std::unreachable();
-  }
-
-  template <typename... Patterns, typename Self> decltype(auto) match(this Self&& self, Patterns&&... patterns) noexcept
-  {
-    return std::forward<Self>(self).match(match_pattern{std::forward<Patterns>(patterns)...});
   }
 
   template <meta::info I, typename Self> constexpr decltype(auto) get(this Self&& self)
@@ -542,7 +468,14 @@ public:
         if(ii == self.current_)
         {
           using U = [:type_implementation_of(R):];
-          return *reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
+          if constexpr(is_reference_type(R))
+          {
+            return *reinterpret_cast<const_like_t<Self, std::decay_t<U>>*>(self.storage_);
+          }
+          else
+          {
+            return *reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
+          }
         }
       }
     }
@@ -583,18 +516,6 @@ public:
         return current_ == index and *p == value;
       }
       ++index;
-    }
-    if constexpr(dt == vec_type_)
-    {
-      using U = [:vec_type_:];
-      auto* p = reinterpret_cast<const U*>(storage_);
-      return current_ == vec_index_ and *p == value;
-    }
-    if constexpr(dt == map_type_)
-    {
-      using U = [:map_type_:];
-      auto* p = reinterpret_cast<const U*>(storage_);
-      return current_ == map_index_ and *p == value;
     }
     return false;
   }
@@ -646,32 +567,12 @@ public:
         }
         ++index;
       }
-      if constexpr(has_vec_)
-      {
-        if(self.current_ == vec_index_)
-        {
-          using U  = [:vec_type_:];
-          auto* op = reinterpret_cast<const U*>(other.storage_);
-          auto* p  = reinterpret_cast<const U*>(self.storage_);
-          return *op == *p;
-        }
-      }
-      if constexpr(has_map_)
-      {
-        if(self.current_ == map_index_)
-        {
-          using U  = [:map_type_:];
-          auto* op = reinterpret_cast<const U*>(other.storage_);
-          auto* p  = reinterpret_cast<const U*>(self.storage_);
-          return *op == *p;
-        }
-      }
     }
     return false;
   }
 
-  template <config_t ocfg, meta::info... otypes>
-  friend constexpr bool operator==(var_impl const& self, var_impl<ocfg, otypes...> const& other) noexcept
+  template <typename... Us>
+  friend constexpr bool operator==(var_impl const& self, var_impl<Us...> const& other) noexcept
   {
     index_type index = 0;
     template for(constexpr auto R : self.alternatives_)
@@ -785,17 +686,134 @@ public:
   {
     return std::forward<Self>(self).map().at(key);
   }
+
+#define REFLEX_VAR_X_OPS(X) X(+) X(-) X(*)
+
+#define X(__op__)                                                                                          \
+  template <typename Self, typename Other> decltype(auto) operator __op__(this Self&& self, Other&& other) \
+  {                                                                                                        \
+    var_impl result;                                                                                       \
+    reflex::visit(                                                                                         \
+        match{                                                                                           \
+            [&result](auto&& lhs, auto&& rhs)                                                              \
+              requires requires { result = lhs __op__ rhs; } { result = lhs __op__ rhs; },                 \
+            patterns::ignore,                                                                              \
+            },                                                                                             \
+            reflex_fwd(self),                                                                              \
+            reflex_fwd(other));                                                                            \
+    return result;                                                                                         \
+  }                                                                                                        \
+  template <decays_to_c<var_impl> Self, typename Other>                                                    \
+    requires(not meta::is_template_instance_of(decay(^^Other), template_of(^^var_impl)))                   \
+  friend decltype(auto) operator __op__(Other&& other, Self&& self)                                        \
+  {                                                                                                        \
+    std::decay_t<Other> result;                                                                            \
+    reflex::visit(                                                                                         \
+        match{                                                                                           \
+            [&result](auto&& lhs, auto&& rhs)                                                              \
+              requires requires { result = lhs __op__ rhs; } { result = lhs __op__ rhs; },                 \
+            patterns::ignore,                                                                              \
+            },                                                                                             \
+            reflex_fwd(other),                                                                             \
+            reflex_fwd(self));                                                                             \
+    return result;                                                                                         \
+  }
+  REFLEX_VAR_X_OPS(X)
+#undef X
+
+#define REFLEX_VAR_X_NZERO_OPS(X) X(/) X(%)
+
+#define X(__op__)                                                                                          \
+  template <typename Self, typename Other> decltype(auto) operator __op__(this Self&& self, Other&& other) \
+  {                                                                                                        \
+    var_impl result;                                                                                       \
+    reflex::visit(                                                                                         \
+        match{                                                                                           \
+            [&result]<typename L, typename R>(L&& lhs, R&& rhs)                                            \
+              requires(not decays_to_c<R, none_t>) and requires { result = lhs __op__ rhs; }               \
+            {                                                                                              \
+              if(rhs != 0)                                                                                 \
+              {                                                                                            \
+                result = lhs __op__ rhs;                                                                   \
+              }                                                                                            \
+            },                                                                                             \
+            patterns::ignore,                                                                              \
+            },                                                                                             \
+            reflex_fwd(self),                                                                              \
+            reflex_fwd(other));                                                                            \
+    return result;                                                                                         \
+  }                                                                                                        \
+  template <decays_to_c<var_impl> Self, typename Other>                                                    \
+    requires(not meta::is_template_instance_of(decay(^^Other), template_of(^^var_impl)))                   \
+  friend decltype(auto) operator __op__(Other&& other, Self&& self)                                        \
+  {                                                                                                        \
+    std::decay_t<Other> result;                                                                            \
+    reflex::visit(                                                                                         \
+        match{                                                                                           \
+            [&result]<typename L, typename R>(L&& lhs, R&& rhs)                                            \
+              requires(not decays_to_c<R, none_t>) and requires { result = lhs __op__ rhs; }               \
+            {                                                                                              \
+              if(rhs != 0)                                                                                 \
+              {                                                                                            \
+                result = lhs __op__ rhs;                                                                   \
+              }                                                                                            \
+            },                                                                                             \
+            patterns::ignore,                                                                              \
+            },                                                                                             \
+            reflex_fwd(other),                                                                             \
+            reflex_fwd(self));                                                                             \
+    return result;                                                                                         \
+  }
+  REFLEX_VAR_X_NZERO_OPS(X)
+#undef X
+
+#define REFLEX_VAR_X_SELF_OPS(X) X(+=) X(-=) X(*=)
+
+#define X(__op__)                                                                                          \
+  template <typename Self, typename Other> decltype(auto) operator __op__(this Self&& self, Other&& other) \
+  {                                                                                                        \
+    reflex::visit(                                                                                         \
+        match{                                                                                           \
+            [](auto&& lhs, auto&& rhs)                                                                     \
+              requires requires { lhs __op__ rhs; } { lhs __op__ rhs; },                                   \
+            patterns::ignore,                                                                              \
+            },                                                                                             \
+            reflex_fwd(self),                                                                              \
+            reflex_fwd(other));                                                                            \
+    return self;                                                                                           \
+  }
+  REFLEX_VAR_X_SELF_OPS(X)
+#undef X
+
+#define REFLEX_VAR_X_SELF_NZERO_OPS(X) X(/=) X(%=)
+
+#define X(__op__)                                                                                          \
+  template <typename Self, typename Other> decltype(auto) operator __op__(this Self&& self, Other&& other) \
+  {                                                                                                        \
+    reflex::visit(                                                                                         \
+        match{                                                                                           \
+            []<typename L, typename R>(L&& lhs, R&& rhs)                                                   \
+              requires(not decays_to_c<R, none_t>) and requires { lhs __op__ rhs; }                        \
+            {                                                                                              \
+              if(rhs != 0)                                                                                 \
+              {                                                                                            \
+                lhs __op__ rhs;                                                                            \
+              }                                                                                            \
+            },                                                                                             \
+            patterns::ignore,                                                                              \
+            },                                                                                             \
+            reflex_fwd(self),                                                                              \
+            reflex_fwd(other));                                                                            \
+    return self;                                                                                           \
+  }
+  REFLEX_VAR_X_SELF_NZERO_OPS(X)
+#undef X
 };
 } // namespace _var
 
-template <typename... Ts> using var = _var::var_impl<_var::config_t{}, ^^Ts...>;
+template <typename... Ts> using var = _var::var_impl<Ts...>;
 
-template <typename... Ts>
-using recursive_var = _var::var_impl<_var::config_t{
-                                         .recursive_vec_template = ^^std::vector,
-                                         .recursive_map_template = ^^std::map,
-                                     },
-                                     ^^Ts...>;
+template <typename... Ts> using recursive_var = _var::var_impl<Ts..., recursive<std::vector>, recursive<std::map>>;
 
 template <typename T, typename Var>
 concept var_value_c = Var::template can_hold<std::decay_t<T>>();
@@ -807,10 +825,9 @@ consteval bool is_var_type(meta::info R)
 
 } // namespace reflex
 
-template <typename CharT, reflex::_var::config_t config, reflex::meta::info... types>
-struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
+template <typename CharT, typename... Ts> struct std::formatter<reflex::_var::var_impl<Ts...>, CharT>
 {
-  using var_type = reflex::_var::var_impl<config, types...>;
+  using var_type = reflex::_var::var_impl<Ts...>;
 
   enum class mode
   {
@@ -877,11 +894,11 @@ struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
     auto do_close_indent = [indent](auto& out) { return std::format_to(out, "\n{:{}}", "", indent); };
     indent += indent_;
     auto do_indent = [indent](auto& out) { return std::format_to(out, "\n{:{}}", "", indent); };
-    return c.match( //
+    return reflex::visit( //
         [&]<typename T>(T const& value)
         {
           constexpr auto type = dealias(std::meta::decay(^^T));
-          if constexpr(std::ranges::contains(c.recursive_types_, type))
+          if constexpr(std::ranges::contains(c.recursive_types_, type) and requires { std::begin(value); })
           {
             constexpr auto yielded_type = dealias(std::meta::decay(^^decltype(*std::begin(value))));
             using YieldedT              = [:yielded_type:];
@@ -966,7 +983,7 @@ struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
               return out;
             }
           }
-          else
+          else if constexpr(requires { std::formatter<T>{}; })
           {
             if constexpr(requires {
                            { value.data() } -> std::same_as<const char*>;
@@ -987,6 +1004,11 @@ struct std::formatter<reflex::_var::var_impl<config, types...>, CharT>
             }
             return std::format_to(ctx.out(), "{}", value);
           }
-        });
+          else
+          {
+            return std::format_to(ctx.out(), "<unformattable[{}]>", display_string_of(^^T));
+          }
+        },
+        c);
   }
 };

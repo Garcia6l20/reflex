@@ -47,9 +47,9 @@ struct test_basic
   }
   void test_matching_1()
   {
-    const auto r = c.match([](auto&& value) -> var_t {//
+    const auto r = visit([](auto&& value) -> var_t {//
       return {value};
-    });
+    }, c);
     CHECK_THAT(r) == expr(c);
     c = 55;
     CHECK_THAT(r) != expr(c);
@@ -61,24 +61,24 @@ struct test_basic
   }
   void test_matching_2()
   {
-    const auto r = c.match(
+    const auto r = visit(match{
       [](int const& value) {//
         return true;
       },
       [](auto const& value) {//
         return false;
-      });
+      }}, c);
     CHECK_THAT(r);
   }
   void test_matching_3()
   {
-    CHECK_THAT(std::move(c).match(
+    CHECK_THAT(visit(match{
       [](int && value) {//
         return true;
       },
       [](auto && value) {//
         return false;
-      }));
+      }}, std::move(c)));
   }
 
   //// WARNING: following lines crashes clang...

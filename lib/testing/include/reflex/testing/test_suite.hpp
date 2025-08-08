@@ -5,6 +5,7 @@
 #include <reflex/testing/context.hpp>
 #include <reflex/testing/parametrize.hpp>
 #include <reflex/to_tuple.hpp>
+#include <reflex/visit.hpp>
 
 #include <functional>
 #include <print>
@@ -66,55 +67,6 @@ consteval bool is_tuple_type(meta::info R)
 {
   const auto RR = decay(R);
   return has_template_arguments(RR) and (template_of(RR) == ^^std::tuple);
-}
-
-consteval bool is_variant_type(meta::info R)
-{
-  const auto RR = decay(R);
-  return has_template_arguments(RR) and (template_of(RR) == ^^std::variant);
-}
-
-template <typename T>
-concept variant_c = is_variant_type(^^T);
-
-template <typename T>
-concept non_variant_c = not variant_c<T>;
-
-template <typename Fn, typename... Ts, typename Var = std::variant<Ts...>>
-constexpr decltype(auto) visit(Fn&& fn, Var&& v)
-{
-  template for(constexpr auto ii : std::views::iota(0uz, std::variant_size_v<std::decay_t<Var>>))
-  {
-    if(v.index() == ii)
-    {
-      return std::forward<Fn>(fn)(std::get<ii>(std::forward<Var>(v)));
-    }
-  }
-  std::unreachable();
-}
-
-template <typename Fn, typename Head, typename... Tail>
-constexpr decltype(auto) visit(Fn&& fn, Head&& head, Tail&&... tail)
-{
-  if constexpr(variant_c<Head>)
-  {
-    return visit([&]<typename T>(T&& val)
-                      {//
-                         return visit(std::forward<Fn>(fn), std::forward<T>(val), std::forward<Tail>(tail)...);
-                      },
-                      std::forward<Head>(head));
-  }
-  else if constexpr((non_variant_c<Tail> and ...))
-  {
-    return std::forward<Fn>(fn)(std::forward<Head>(head), std::forward<Tail>(tail)...);
-  }
-  else
-  {
-    static_assert(non_variant_c<Head>);
-    return visit([&]<typename... Ts>(Ts&&... rest_unpacked) -> decltype(auto)
-                 { return std::forward<Fn>(fn)(std::forward<Head>(head), std::forward<Ts>(rest_unpacked)...); },
-                 std::forward<Tail>(tail)...);
-  }
 }
 
 struct test_suite
@@ -203,8 +155,8 @@ private:
       constexpr auto fixture = [:annotation:].fixture;
       if constexpr(is_tuple_type(type_of(fixture)))
       {
-        // std::abort();
-        template for (const auto row : [:fixture:]) {
+        template for(const auto row : [:fixture:])
+        {
           // const auto [... args] = row;
           // caller(std::move(args)...);
           std::apply(caller, std::move(row));

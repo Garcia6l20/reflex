@@ -1,3 +1,4 @@
+#include <reflex/format/memory.hpp> // for printing shared_ptr...
 #include <reflex/var.hpp>
 
 #include <exception>
@@ -14,6 +15,7 @@ namespace recursive_var_tests
 struct test_vector
 {
   using var_t = recursive_var<int, bool, std::string>;
+  static_assert(is_recursive_type(^^recursive<std::vector>));
   var_t c;
 
   static_assert(var_t::can_hold<int>());
@@ -26,10 +28,22 @@ struct test_vector
   {
     CHECK_THAT(c.has_value()).negate();
   }
-  
+
   void test_copy_constructible()
   {
-    c       = var_t::vec_t{1};
+    c = var_t::vec_t{1};
+    ASSERT_THAT(c.has_value());
+    ASSERT_THAT(c.has_value<var_t::vec_t>());
+    var_t b = c;
+    CHECK_THAT(b) == expr(c);
+    c.push_back(55);
+    CHECK_THAT(b) != expr(c);
+  }
+
+  void test_move_constructible()
+  {
+    var_t v = var_t::vec_t{1};
+    c = std::move(v);
     ASSERT_THAT(c.has_value());
     ASSERT_THAT(c.has_value<var_t::vec_t>());
     var_t b = c;
@@ -63,13 +77,14 @@ struct test_vector
     CHECK_THAT(c.at(2)) == 3;
     for(auto const& v : c.vec())
     {
-      v.match([](std::string const& v) { std::println("- string: \"{}\"", v); }, //
-              [](int const& v) { std::println("- int: {}", v); },                //
-              [](auto const& v)
-              {
-                std::println("unexpected {} ({})", v, display_string_of(type_of(^^v)));
-                std::unreachable();
-              });
+      visit(match{[](std::string const& v) { std::println("- string: \"{}\"", v); }, //
+                    [](int const& v) { std::println("- int: {}", v); },                //
+                    [](auto const& v)
+                    {
+                      std::println("unexpected {} ({})", v, display_string_of(type_of(^^v)));
+                      std::unreachable();
+                    }},
+            v);
     }
     CHECK_THAT(c) == var_t::vec_t{1, "2", 3};
   }
@@ -109,13 +124,14 @@ struct test_map
     std::println("{:j}", c);
     for(auto const& [k, v] : c.map())
     {
-      v.match([&k](std::string const& v) { std::println("- string: \"{}\" -> \"{}\"", k, v); }, //
-              [&k](int const& v) { std::println("- int: \"{}\" -> {}", k, v); },                //
-              [&k](auto const& v)
-              {
-                std::println("unexpected {} -> {} ({})", k, v, display_string_of(type_of(^^v)));
-                std::unreachable();
-              });
+      visit(match{[&k](std::string const& v) { std::println("- string: \"{}\" -> \"{}\"", k, v); }, //
+                    [&k](int const& v) { std::println("- int: \"{}\" -> {}", k, v); },                //
+                    [&k](auto const& v)
+                    {
+                      std::println("unexpected {} -> {} ({})", k, v, display_string_of(type_of(^^v)));
+                      std::unreachable();
+                    }},
+            v);
     }
     CHECK_THAT(c) == var_t::map_t{{"1", 1}, {"2", "2"}, {"3", 3}};
   }
@@ -129,6 +145,41 @@ struct test_map
     c["nested"]["str"] = "yup";
     // std::println("{:j12}", c); // format_error: indent value has only 1 digit
     std::println("{:jp}", c); // pretty print with default indent
+  }
+};
+
+struct S
+{
+  int value;
+};
+
+struct test_raw_pointer
+{
+  using var_t = var<int, bool, S, S*, void*>;
+  var_t c;
+
+  void test1()
+  {
+    c = static_cast<void*>(nullptr);
+    CHECK_THAT(c.has_value<void*>());
+    CHECK_THAT(c == static_cast<void*>(nullptr));
+    std::println("{}", c);
+  }
+};
+
+
+struct test_ptr
+{
+  using var_t = var<bool, int, std::string, recursive<std::shared_ptr>>;
+
+  var_t c;
+
+  void test_base()
+  {
+    c = var_t::recursive_t<std::shared_ptr>{new var_t{42}};
+    std::println("{}", c);
+    // c = std::shared_ptr<var_t>{new var_t{42}};
+    // CHECK_THAT(*c == 42);
   }
 };
 } // namespace recursive_var_tests

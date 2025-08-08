@@ -9,6 +9,8 @@ namespace reflex::meta
 {
 using namespace std::meta;
 
+using vector = std::vector<meta::info>;
+
 constexpr std::meta::info null;
 
 consteval auto member_named(meta::info R, std::string_view name, access_context ctx = access_context::current())
@@ -37,6 +39,11 @@ consteval auto tuple_for(std::ranges::range auto elems) -> meta::info
 consteval bool is_template_instance_of(info R, info T)
 {
   return has_template_arguments(R) and template_of(R) == T;
+}
+
+consteval auto make_template_tester(info T)
+{
+  return [T](info R) consteval { return is_template_instance_of(R, T); };
 }
 
 consteval bool is_subclass_of(info R, info C, access_context const& ctx = access_context::current())

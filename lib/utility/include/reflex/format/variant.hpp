@@ -3,7 +3,7 @@
 #include <format>
 #include <variant>
 
-#include <reflex/match_patten.hpp>
+#include <reflex/match.hpp>
 
 template <typename... Ts, typename CharT>
   requires(std::formattable<Ts, CharT> and ...)
@@ -22,7 +22,7 @@ struct std::formatter<std::variant<Ts...>, CharT>
   auto format(std::variant<Ts...> const& v, auto& ctx) const
   {
     return std::visit(
-        reflex::match_pattern{
+        reflex::match{
             [&ctx](std::monostate const&) { return std::format_to(ctx.out(), "<empty>"); },
             [&ctx]<typename T>(T const& v) { return std::formatter<T>{}.format(v, ctx); },
         },

@@ -1,5 +1,5 @@
 #include <reflex/cli.hpp>
-#include <reflex/match_patten.hpp>
+#include <reflex/match.hpp>
 #include <reflex/testing.hpp>
 #include <reflex/testing/test_suite.hpp>
 
@@ -87,7 +87,7 @@ struct[[= cli::specs{"reflex test runner."}]] //
     for(const auto& test : parents.back().get().tests)
     {
       std::visit(
-          match_pattern{
+          match{
               [&](test_suite const& suite)
               {
                 auto child_parents = parents;
