@@ -3,6 +3,7 @@
 #include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
 
+#include <print>
 #include <system_error>
 
 namespace reflex
@@ -10,66 +11,114 @@ namespace reflex
 namespace error
 {
 
-template <constant_string Name, typename ErrorCode> struct error_category_t final : std::error_category
+template <typename Codes> struct error_category_t final : std::error_category
 {
   [[nodiscard]] const char* name() const noexcept final
   {
-    return Name->data();
+    static constexpr auto category_mem = meta::member_named(^^Codes, "category");
+    static_assert(category_mem != meta::null, "A (static constexpr std::string_view) 'category' member must be specified");
+    return [:category_mem:].data();
   }
   [[nodiscard]] std::string message(int error) const noexcept final
   {
-    return std::string{ErrorCode::message_of(error)};
+    return std::string{Codes::message_of(error)};
   }
 };
 
-template <int Value, constant_string Message> struct code
+template <typename Codes> struct code_type
 {
-  static constexpr std::string_view message = Message;
-  static constexpr auto             value   = Value;
-};
-} // namespace error
-
-template <constant_string Category, typename Codes>
-  requires(is_aggregate_type(^^Codes))
-struct error_code : std::error_code
-{
-private:
-  static constexpr auto codes_ = define_static_array(members_of(^^Codes, meta::access_context::current()) //
-                                                     | std::views::filter(meta::is_static_member)         //
-                                                     | std::views::transform(meta::constant_of));
-
-public:
-  static inline error::error_category_t<Category, error_code> category;
-  static constexpr std::string_view                           message_of(int value) noexcept
+  constant_string value;
+  consteval code_type(auto const& v) : value{v}
   {
-    template for(constexpr auto code_r : codes_)
+  }
+};
+
+template <typename Super> struct codes;
+
+template <typename Codes> constexpr bool operator==(std::error_code const& err, error::code_type<Codes> const& code)
+{
+  return err.category() == Codes::template category_<typename Codes::tag> and err.value() == Codes::value_of(code);
+}
+
+template <typename Super> struct codes
+{
+  using code = code_type<Super>;
+
+  struct tag {};
+
+  template <typename>
+  static constexpr auto codes_ =
+      define_static_array(members_of(^^Super, meta::access_context::current())                                       //
+                          | std::views::filter([](auto R) {//
+                              return is_static_member(R) and meta::is_template_instance_of(type_of(R) , ^^code_type);
+                            }) //
+                          | std::views::transform(meta::constant_of));
+
+  template <typename> static inline auto category_ = error::error_category_t<Super>{};
+
+  static std::string_view message_of(int value) noexcept
+  {
+    int num = 0;
+    template for(constexpr auto code_r : codes_<tag>)
     {
-      constexpr auto code = [:code_r:];
-      if(value == code.value)
+      if(num == value)
       {
-        return code.message;
+        return *[:code_r:].value;
       }
+      ++num;
     }
     return "<unknown>";
   }
 
-  template <auto code> static constexpr std::error_code make() noexcept
+  static int value_of(code const& c) noexcept
   {
-    template for(constexpr auto code_r : codes_)
+    int num = 0;
+    template for(constexpr auto code_r : codes_<tag>)
     {
-      constexpr auto c = [:code_r:];
-      if constexpr(c.value == code.value)
+      if(std::addressof(*c.value) == std::addressof(*[:code_r:].value))
       {
-        return std::error_code(c.value, category);
+        return num;
       }
+      ++num;
     }
-    return std::error_code(-1, category);
+    return -1;
   }
 
-  template <auto code> static constexpr void raise()
+  template <meta::info code> static std::error_code make() noexcept
+  {
+    int num = 0;
+    template for(constexpr auto c : codes_<tag>)
+    {
+      if constexpr(c == constant_of(code))
+      {
+        break;
+      }
+      ++num;
+    }
+    return std::error_code(num, category_<tag>);
+  }
+
+  template <meta::info code> static void raise()
   {
     throw std::system_error{make<code>()};
   }
 };
+} // namespace error
+
+template <meta::info err>
+auto make_error_code()
+  requires(meta::is_subclass_of(parent_of(err), ^^error::codes))
+{
+  using ParentT = typename[:parent_of(err):];
+  return ParentT::template make<err>();
+}
+
+template <meta::info err>
+auto raise()
+  requires(meta::is_subclass_of(parent_of(err), ^^error::codes))
+{
+  using ParentT = typename[:parent_of(err):];
+  return ParentT::template raise<err>();
+}
 
 } // namespace reflex

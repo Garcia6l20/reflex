@@ -220,19 +220,19 @@ template <typename T> struct constant
   {
   }
 
-  consteval value_type const& get() const
+  constexpr value_type const& get() const
   {
     return value;
   }
-  consteval operator value_type const&() const
+  constexpr operator value_type const&() const
   {
     return value;
   }
-  consteval value_type const& operator*() const
+  constexpr value_type const& operator*() const
   {
     return value;
   }
-  consteval value_type const* operator->() const
+  constexpr value_type const* operator->() const
   {
     return std::addressof(value);
   }

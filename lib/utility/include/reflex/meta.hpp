@@ -39,6 +39,27 @@ consteval bool is_template_instance_of(info R, info T)
   return has_template_arguments(R) and template_of(R) == T;
 }
 
+consteval bool is_subclass_of(info R, info C, access_context const& ctx = access_context::current())
+{
+  if(not is_type(R) or not is_class_type(R))
+  {
+    return false;
+  }
+  for(auto b : bases_of(R, ctx))
+  {
+    auto c = type_of(b);
+    if(c == C or is_template_instance_of(c, C))
+    {
+      return true;
+    }
+    if(is_class_type(c) and is_subclass_of(c, C))
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
 consteval auto annotations_of_with(info R, info A)
 {
   return annotations_of(R) | std::views::filter(
