@@ -3,6 +3,7 @@
 #include <reflex/testing.hpp>
 #include <reflex/testing/test_suite.hpp>
 
+// #include <stacktrace>
 #include <regex>
 
 std::string fnmatch_to_regex(std::string_view pattern)
@@ -128,7 +129,22 @@ struct[[= cli::specs{"reflex test runner."}]] //
             return;
           }
           std::println("Running {}...", test_id);
-          caze.fn();
+          try
+          {
+            caze.fn();
+          }
+          catch(std::exception const& err)
+          {
+            detail::get_reporter().append(suite_name,
+                                          caze.name,
+                                          detail::validation_result{
+                                              .result     = false,
+                                              .expression = std::format("case thrown an exception: {}", err.what()),
+                                              // .expanded_expression = std::format("{}", std::stacktrace::current()),
+                                              .location = source_location_of(^^caze),
+                                              // .location = err.where(),
+                                          });
+          }
         });
     return detail::get_reporter().finish();
   }

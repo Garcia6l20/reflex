@@ -35,11 +35,8 @@ consteval bool is_fail_test(meta::info R)
 
 struct reporter_t
 {
-  template <auto ctx> void append(validation_result&& result)
+  void append(std::string const& test_suite, std::string const& test_case, validation_result&& result)
   {
-    constexpr auto scope      = ctx.scope();
-    auto           test_suite = std::string{display_string_of(parent_of(scope))};
-    auto           test_case  = std::string{display_string_of(scope)};
     if(not results.contains(test_suite))
     {
       results[test_suite] = std::map<std::string, std::vector<validation_result>>{};
@@ -49,6 +46,13 @@ struct reporter_t
       results[test_suite][test_case] = std::vector<validation_result>{};
     }
     results[test_suite][test_case].push_back(std::move(result));
+  }
+  template <auto ctx> void append(validation_result&& result)
+  {
+    constexpr auto scope      = ctx.scope();
+    auto           test_suite = std::string{display_string_of(parent_of(scope))};
+    auto           test_case  = std::string{display_string_of(scope)};
+    append(test_suite, test_case, std::move(result));
   }
 
   int finish() const
