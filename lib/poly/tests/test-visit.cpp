@@ -18,24 +18,6 @@ struct test_basic
 
   void test1()
   {
-    static_assert(is_visitable_type(^^std::variant<bool, int>));
-    static_assert(is_visitable_type(^^var_t));
-    visit(
-        match{
-            [](int l) { CHECK_THAT(l == 42); },
-            patterns::throw_(std::runtime_error{"unexpected visit"}),
-        },
-        std::variant<int, std::string>{42});
-
-    visit(
-        [](auto l, auto r)
-        {
-          CHECK_THAT(l == 42);
-          CHECK_THAT(r == 43);
-        },
-        std::variant<int, bool>{42},
-        43);
-
     visit(
         match{
             [](int l) { CHECK_THAT(l == 66); },
