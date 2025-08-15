@@ -43,13 +43,13 @@ struct test_vector
   void test_move_constructible()
   {
     var_t v = var_t::vec_t{1};
+    auto *p = v.vec().data();
     c = std::move(v);
+    ASSERT_THAT(v.vec().size() == 0);
     ASSERT_THAT(c.has_value());
     ASSERT_THAT(c.has_value<var_t::vec_t>());
-    var_t b = c;
-    CHECK_THAT(b) == expr(c);
-    c.push_back(55);
-    CHECK_THAT(b) != expr(c);
+    CHECK_THAT(c) != expr(v);
+    CHECK_THAT(p) == expr(c.vec().data());
   }
 
   void test_base()

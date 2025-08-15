@@ -34,6 +34,16 @@ constexpr auto is_recursive_type = meta::make_template_tester(^^recursive);
 
 namespace _var
 {
+template <typename... Ts> class var_impl;
+}
+
+consteval bool is_var_type(meta::info R)
+{
+  return meta::is_template_instance_of(dealias(decay(R)), ^^_var::var_impl);
+}
+
+namespace _var
+{
 
 template <typename... Ts> class var_impl
 {
@@ -353,24 +363,24 @@ public:
     std::unreachable();
   }
 
-  constexpr var_impl(var_impl&& o) noexcept
+  template <typename Var>
+    requires(is_var_type(^^Var))
+  constexpr var_impl(Var&& o) noexcept
   {
-    std::move(o).visit([this]<typename T>(T&& value) { assign(std::move(value)); });
-  }
-  constexpr var_impl(var_impl const& o) noexcept
-  {
-    o.visit([this]<typename T>(T&& value) { assign(value); });
-  }
-
-  constexpr var_impl& operator=(var_impl&& o) noexcept
-  {
-    std::move(o).visit([this]<typename T>(T&& value) { assign(std::move(value)); });
-    return *this;
+    reflex_fwd(o).visit(match{[this]<typename T>
+                                requires(constructible_from<T>())
+                              (T&& value) { assign(reflex_fwd(value)); },
+                              patterns::ignore});
   }
 
-  constexpr var_impl& operator=(var_impl const& o) noexcept
+  template <typename Var>
+    requires(is_var_type(^^Var))
+  constexpr var_impl& operator=(Var&& o) noexcept
   {
-    o.visit([this]<typename T>(T&& value) { assign(value); });
+    reflex_fwd(o).visit(match{[this]<typename T>
+                                requires(constructible_from<T>())
+                              (T&& value) { assign(reflex_fwd(value)); },
+                              patterns::ignore});
     return *this;
   }
 
@@ -387,7 +397,7 @@ public:
   }
 
   template <typename T>
-    requires((decay(^^T) != ^^var_impl) and not constructible_from<T>() and explicitly_constructible_from<T>())
+    requires(not is_var_type(^^T) and not constructible_from<T>() and explicitly_constructible_from<T>())
   constexpr var_impl(T&& value) noexcept
   {
     template for(constexpr auto R : alternatives_)
@@ -470,24 +480,14 @@ public:
           using U = [:type_implementation_of(R):];
           if constexpr(is_reference_type(R))
           {
-            return *reinterpret_cast<const_like_t<Self, std::decay_t<U>>*>(self.storage_);
+            return std::forward_like<Self>(*reinterpret_cast<const_like_t<Self, std::decay_t<U>>*>(self.storage_));
           }
           else
           {
-            return *reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
+            return std::forward_like<Self>(*reinterpret_cast<const_like_t<Self, U>*>(self.storage_));
           }
         }
       }
-    }
-    if constexpr(is_equivalent_to(I, vec_type_))
-    {
-      using U = [:vec_type_:];
-      return *reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
-    }
-    if constexpr(is_equivalent_to(I, map_type_))
-    {
-      using U = [:map_type_:];
-      return *reinterpret_cast<const_like_t<Self, U>*>(self.storage_);
     }
     throw bad_var_access{};
   }
@@ -676,7 +676,14 @@ public:
     {
       m = &std::forward<Self>(self).map();
     }
-    return (*m)[key];
+    if constexpr(requires { (*m)[key]; })
+    {
+      return (*m)[key];
+    }
+    else
+    {
+      return (*m)[typename map_t::key_type{key}];
+    }
   }
 
   template <typename Self, typename KeyT>
@@ -694,7 +701,7 @@ public:
   {                                                                                                        \
     var_impl result;                                                                                       \
     reflex::visit(                                                                                         \
-        match{                                                                                           \
+        match{                                                                                             \
             [&result](auto&& lhs, auto&& rhs)                                                              \
               requires requires { result = lhs __op__ rhs; } { result = lhs __op__ rhs; },                 \
             patterns::ignore,                                                                              \
@@ -709,7 +716,7 @@ public:
   {                                                                                                        \
     std::decay_t<Other> result;                                                                            \
     reflex::visit(                                                                                         \
-        match{                                                                                           \
+        match{                                                                                             \
             [&result](auto&& lhs, auto&& rhs)                                                              \
               requires requires { result = lhs __op__ rhs; } { result = lhs __op__ rhs; },                 \
             patterns::ignore,                                                                              \
@@ -728,7 +735,7 @@ public:
   {                                                                                                        \
     var_impl result;                                                                                       \
     reflex::visit(                                                                                         \
-        match{                                                                                           \
+        match{                                                                                             \
             [&result]<typename L, typename R>(L&& lhs, R&& rhs)                                            \
               requires(not decays_to_c<R, none_t>) and requires { result = lhs __op__ rhs; }               \
             {                                                                                              \
@@ -749,7 +756,7 @@ public:
   {                                                                                                        \
     std::decay_t<Other> result;                                                                            \
     reflex::visit(                                                                                         \
-        match{                                                                                           \
+        match{                                                                                             \
             [&result]<typename L, typename R>(L&& lhs, R&& rhs)                                            \
               requires(not decays_to_c<R, none_t>) and requires { result = lhs __op__ rhs; }               \
             {                                                                                              \
@@ -773,7 +780,7 @@ public:
   template <typename Self, typename Other> decltype(auto) operator __op__(this Self&& self, Other&& other) \
   {                                                                                                        \
     reflex::visit(                                                                                         \
-        match{                                                                                           \
+        match{                                                                                             \
             [](auto&& lhs, auto&& rhs)                                                                     \
               requires requires { lhs __op__ rhs; } { lhs __op__ rhs; },                                   \
             patterns::ignore,                                                                              \
@@ -791,7 +798,7 @@ public:
   template <typename Self, typename Other> decltype(auto) operator __op__(this Self&& self, Other&& other) \
   {                                                                                                        \
     reflex::visit(                                                                                         \
-        match{                                                                                           \
+        match{                                                                                             \
             []<typename L, typename R>(L&& lhs, R&& rhs)                                                   \
               requires(not decays_to_c<R, none_t>) and requires { lhs __op__ rhs; }                        \
             {                                                                                              \
@@ -817,11 +824,6 @@ template <typename... Ts> using recursive_var = _var::var_impl<Ts..., recursive<
 
 template <typename T, typename Var>
 concept var_value_c = Var::template can_hold<std::decay_t<T>>();
-
-consteval bool is_var_type(meta::info R)
-{
-  return meta::is_template_instance_of(dealias(decay(R)), ^^_var::var_impl);
-}
 
 } // namespace reflex
 

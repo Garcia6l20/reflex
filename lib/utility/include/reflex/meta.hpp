@@ -5,13 +5,111 @@
 #include <ranges>
 #include <vector>
 
+#include <reflex/views/cartesian_product.hpp>
+
 namespace reflex::meta
 {
 using namespace std::meta;
 
-using vector = std::vector<meta::info>;
+using vector           = std::vector<meta::info>;
+using initializer_list = std::initializer_list<meta::info>;
 
 constexpr std::meta::info null;
+
+/** @brief an helper type convertible to any type
+ *
+ * Usefull for inspecting other types (ie.: deducing function templates argument count)
+ */
+struct any_arg
+{
+  template <typename T> constexpr operator T() const
+  {
+    return T{};
+  }
+};
+
+namespace detail
+{
+template <typename T> consteval bool has_call_operator()
+{
+  static constexpr auto any_value = meta::any_arg{};
+
+  if constexpr(requires { ^^T::operator(); })
+  {
+    return true;
+  }
+  else
+  {
+    if constexpr(requires { ^^T::template operator(); })
+    {
+      static_assert(is_function_template(^^T::template operator()));
+      return true;
+    }
+  }
+  return false;
+}
+} // namespace detail
+
+template <size_t template_max_args = 16> consteval bool has_call_operator(meta::info R)
+{
+  if(is_function(R))
+  {
+    return false;
+  }
+  else if(is_function_template(R))
+  {
+    return false;
+  }
+  else if(is_template(R))
+  {
+    static constexpr auto items = std::array{^^any_arg, reflect_constant(any_arg{})};
+
+    template for(constexpr auto n_args : std::views::iota(1uz, template_max_args))
+    {
+      // compute permutation between type-template-parameters and non-type-template-parameters
+      for(const auto& p : items | views::cartesian_product<n_args>)
+      {
+        if(can_substitute(R, p))
+        {
+          return has_call_operator(substitute(R, p));
+        }
+      }
+    }
+    return false;
+  }
+  else
+  {
+    auto type = is_type(R) ? R : type_of(R);
+    return extract<bool>(reflect_invoke(substitute(^^detail::has_call_operator,
+                                                   {
+                                                       type}),
+                                        {}));
+  }
+}
+
+/** @brief functional detector
+ *
+ * Returns true on:
+ *  - functions
+ *  - function templates
+ *  - functors/lambda
+ */
+constexpr bool is_functional(auto R)
+{
+  if(is_function(R))
+  {
+    return true;
+  }
+  else if(is_function_template(R))
+  {
+    return true;
+  }
+  else if(has_call_operator(R))
+  {
+    return true;
+  }
+  return false;
+}
 
 consteval auto member_named(meta::info R, std::string_view name, access_context ctx = access_context::current())
     -> meta::info
@@ -43,7 +141,7 @@ consteval bool is_template_instance_of(info R, info T)
 
 consteval auto make_template_tester(info T)
 {
-  return [T](info R) consteval { return is_template_instance_of(R, T); };
+  return [T](info R) consteval { return is_template_instance_of(decay(R), T); };
 }
 
 consteval bool is_subclass_of(info R, info C, access_context const& ctx = access_context::current())

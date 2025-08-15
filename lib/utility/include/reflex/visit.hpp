@@ -79,35 +79,18 @@ consteval bool is_visitable_type(meta::info t)
   return false;
 }
 
-template <typename Fn, typename T> inline constexpr decltype(auto) visit(Fn&& fn, T&& value)
-{
-  if constexpr(is_visitable_type(^^T))
-  {
-    return visitor<std::decay_t<T>>::operator()([&](auto&& val)
-                      {//
-                         return reflex_fwd(fn)(reflex_fwd(val));
-                      },
-                      reflex_fwd(value));
-  }
-  else
-  {
-    return reflex_fwd(fn)(reflex_fwd(value));
-  }
-}
-
 template <typename Fn, typename Head, typename... Tail>
-  requires(sizeof...(Tail) > 0)
 inline constexpr decltype(auto) visit(Fn&& fn, Head&& head, Tail&&... tail)
 {
   if constexpr(is_visitable_type(^^Head))
   {
     return visitor<std::decay_t<Head>>::operator()(
-        [&](auto&& val) { //
+        [&](auto&& val) -> decltype(auto) { //
           if constexpr(sizeof...(Tail) == 0)
           {
             return reflex_fwd(fn)(reflex_fwd(val));
           } else {
-            return visit([&](auto &&...rest){
+            return visit([&](auto &&...rest) -> decltype(auto) {
               return reflex_fwd(fn)(reflex_fwd(val), reflex_fwd(rest)...);
             }, reflex_fwd(tail)...);
           }
@@ -123,7 +106,7 @@ inline constexpr decltype(auto) visit(Fn&& fn, Head&& head, Tail&&... tail)
     else
     {
       return visit( //
-          [&](auto&&... rest) { return reflex_fwd(fn)(reflex_fwd(head), reflex_fwd(rest)...); },
+          [&](auto&&... rest) -> decltype(auto) { return reflex_fwd(fn)(reflex_fwd(head), reflex_fwd(rest)...); },
           reflex_fwd(tail)...);
     }
   }

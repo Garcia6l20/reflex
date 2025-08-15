@@ -7,10 +7,30 @@
 using namespace reflex;
 using namespace std::string_literals;
 
+auto make_variant_array(auto&&... values)
+{
+  using variant_type = [:substitute(^^std::variant,
+                                    {
+                                        decay(^^decltype(values))...}):];
+  return std::array{variant_type{reflex_fwd(values)}...};
+}
+
+using namespace std::string_view_literals;
+
 namespace visit_tests
 {
 struct test_basic
 {
+  void test_variant_array()
+  {
+    for(auto const& item : make_variant_array(42, true, "hello"sv))
+    {
+      visit(match{[](int v) { CHECK_THAT(v == 42); },
+                  [](bool v) { CHECK_THAT(v == true); },
+                  [](std::string_view v) { CHECK_THAT(v == "hello"); }},
+            item);
+    }
+  }
   void test_non_variant_visit()
   {
     visit([](int l) { CHECK_THAT(l == 42); }, 42);
