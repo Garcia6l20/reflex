@@ -36,7 +36,10 @@ template <typename Evaluator, meta::access_context Ctx> struct validator
   {
     if(wip_)
     {
-      if constexpr(has_value_ and requires() { *this == true; })
+      if constexpr(has_value_ and requires() {
+                     *this == true;
+                     value() == true;
+                   })
       {
         validate(
             [this](auto&)

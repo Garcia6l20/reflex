@@ -44,3 +44,19 @@ void test2()
   STATIC_CHECK_THAT(registered_type<scope, 3> == ^^self_registered2);
 }
 } // namespace meta_registry_tests
+
+REFLEX_LOCK_REGISTRY(scope)
+
+// template <> const reg::runtime_t reg::runtime = reg::lock();
+
+namespace meta_registry_locked_tests
+{
+
+void test_lock_reg()
+{
+  for(auto const& entry : reg::runtime.entries)
+  {
+    std::println("- {}", entry.name);
+  }
+}
+} // namespace meta_registry_locked_tests

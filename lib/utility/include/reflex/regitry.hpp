@@ -1,12 +1,16 @@
 #pragma once
 
 #include <reflex/meta.hpp>
+#include <reflex/constant.hpp>
+#include <typeindex>
 
 namespace reflex::meta
 {
 namespace registry_detail
 {
-struct not_found {};
+struct not_found
+{
+};
 
 template <class scope, size_t I> struct registered_type_tag
 {
@@ -151,5 +155,32 @@ template <class scope> struct registry
   template <typename T, auto = __enroll<T>()> struct auto_
   {
   };
+
+  struct runtime_t
+  {
+    struct entry
+    {
+      std::type_index  index;
+      std::string_view name;
+    };
+    const std::vector<entry> entries;
+  };
+  template <auto defer = [] {}> static inline constexpr runtime_t lock() noexcept
+  {
+    std::vector<typename runtime_t::entry> entries;
+    template for(constexpr auto t : all<defer>())
+    {
+      using T = [:t:];
+      entries.push_back(typename runtime_t::entry{typeid(T), display_string_of(t)});
+    }
+    return runtime_t{
+        .entries = entries,
+    };
+  }
+  const static runtime_t runtime;
 };
+
+#define REFLEX_LOCK_REGISTRY(__scope) \
+  template <> const reflex::meta::registry<__scope>::runtime_t reflex::meta::registry<__scope>::runtime = reflex::meta::registry<__scope>::lock();
+
 } // namespace reflex::meta

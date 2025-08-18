@@ -21,10 +21,33 @@ struct test_basic
     CHECK_THAT(c.index_of<none_t>()) == 0;
     CHECK_THAT(c.index_of<int>()) == 1;
     CHECK_THAT(c.index_of<bool>()) == 2;
-    CHECK_THAT(c.index_of<double>()) == -1;
+    CHECK_THAT(c.index_of<double>()) == var_t::npos;
     c = 42;
     CHECK_THAT(c.has_value());
     CHECK_THAT(c.has_value<int>());
+  }
+
+  void test_sizes() {
+    auto show_size = [](auto v) {
+      std::println("{} size is {} bytes", display_string_of(^^decltype(v)), sizeof(v));
+    };
+    show_size(var<char>{});
+    show_size(var<char, std::uint32_t>{});
+    show_size(var<char, std::uint64_t>{});
+    show_size(var<char, std::string>{});
+  }
+
+  void test_copy_constructible() {
+    var_t v = 42;
+    c = v;
+    CHECK_THAT(v == 42);
+    CHECK_THAT(c == 42);
+  }
+
+  void test_move_constructible() {
+    var_t v = 42;
+    c = std::move(v);
+    CHECK_THAT(c == 42);
   }
 
   void test_changing_value()
@@ -127,6 +150,13 @@ void test_string()
     std::println("{}", c);
     CHECK_THAT(c) == "hello assigned";
   }
+}
+
+void test_var_of_vars() {
+  using var_t = var<bool, int>;
+  using var_of_vars_t = var<bool, var_t>;
+  var_of_vars_t vov = var_t{42};
+  CHECK_THAT(vov.get<var_t>() == 42);
 }
 
 template <typename T> struct lifetime_dumper

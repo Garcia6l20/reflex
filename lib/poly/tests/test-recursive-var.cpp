@@ -15,6 +15,7 @@ namespace recursive_var_tests
 struct test_vector
 {
   using var_t = recursive_var<int, bool, std::string>;
+  using vec_t = var_t::vec_t;
   static_assert(is_recursive_type(^^recursive<std::vector>));
   var_t c;
 
@@ -31,10 +32,13 @@ struct test_vector
 
   void test_copy_constructible()
   {
-    c = var_t::vec_t{1};
+    c = vec_t{1};
     ASSERT_THAT(c.has_value());
-    ASSERT_THAT(c.has_value<var_t::vec_t>());
+    ASSERT_THAT(c.has_value<vec_t>());
     var_t b = c;
+    CHECK_CONTEXT(b);
+    CHECK_THAT(c[0] == 1);
+    CHECK_THAT(b[0] == 1);
     CHECK_THAT(b) == expr(c);
     c.push_back(55);
     CHECK_THAT(b) != expr(c);
@@ -42,12 +46,12 @@ struct test_vector
 
   void test_move_constructible()
   {
-    var_t v = var_t::vec_t{1};
+    var_t v = vec_t{1};
     auto *p = v.vec().data();
     c = std::move(v);
     ASSERT_THAT(v.vec().size() == 0);
     ASSERT_THAT(c.has_value());
-    ASSERT_THAT(c.has_value<var_t::vec_t>());
+    ASSERT_THAT(c.has_value<vec_t>());
     CHECK_THAT(c) != expr(v);
     CHECK_THAT(p) == expr(c.vec().data());
   }
@@ -58,7 +62,7 @@ struct test_vector
     std::println("{}", c);
 
     std::println("{}", c.get<std::string>());
-    c = var_t::vec_t{1, "2", 3};
+    c = vec_t{1, "2", 3};
     // printable element
     {
       auto& tmp = c.get<std::vector>()[0];
@@ -86,7 +90,7 @@ struct test_vector
                     }},
             v);
     }
-    CHECK_THAT(c) == var_t::vec_t{1, "2", 3};
+    CHECK_THAT(c) == vec_t{1, "2", 3};
   }
   void test_implicit_init()
   {
@@ -105,13 +109,14 @@ struct test_vector
 struct test_map
 {
   using var_t = recursive_var<int, bool, std::string>;
+  using map_t = var_t::map_t;
   var_t c;
 
   void test_base()
   {
-    std::println("{}", display_string_of(dealias(^^var_t::map_t)));
-    c = var_t::map_t{{"1", 1}, {"2", "2"}, {"3", 3}};
-    CHECK_THAT(c.has_value<var_t::map_t>());
+    std::println("{}", display_string_of(dealias(^^map_t)));
+    c = map_t{{"1", 1}, {"2", "2"}, {"3", 3}};
+    CHECK_THAT(c.has_value<map_t>());
     CHECK_THAT(c.has_value<std::map>());
     auto& tmp = c["1"];
     std::println("{}", tmp);
@@ -133,7 +138,7 @@ struct test_map
                     }},
             v);
     }
-    CHECK_THAT(c) == var_t::map_t{{"1", 1}, {"2", "2"}, {"3", 3}};
+    CHECK_THAT(c) == map_t{{"1", 1}, {"2", "2"}, {"3", 3}};
   }
   void test_implicit_init()
   {
@@ -167,6 +172,49 @@ struct test_raw_pointer
   }
 };
 
+consteval bool is_invocable_lambda(auto fn, std::initializer_list<meta::info> types)
+{
+  for(auto M :
+      members_of(type_of(^^fn), meta::access_context::current()) | std::views::filter(meta::is_function_template))
+  {
+    if(can_substitute(M, types))
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+#define REFLEX_EXPRESSION_CHECKER(__args__, __body__) \
+  [] __args__                                         \
+    requires requires __body__ {}
+#define REFLEX_IS_VALID_EXPRESSION(__args__, __body__, __types__) \
+  is_invocable_lambda(REFLEX_EXPRESSION_CHECKER(__args__, __body__), __types__)
+
+static_assert(is_invocable_lambda(REFLEX_EXPRESSION_CHECKER((auto v), { v.data(); }), {^^std::string}));
+static_assert(REFLEX_IS_VALID_EXPRESSION((auto v), { v.data(); }, {^^std::string}));
+static_assert(not REFLEX_IS_VALID_EXPRESSION((auto v), { v.data(); }, {^^bool}));
+
+static_assert(is_invocable_lambda([](auto v)
+                                    requires requires { v.data(); } {},
+                                  {^^std::string}));
+static_assert(not is_invocable_lambda([](auto v)
+                                        requires requires { v.data(); } {},
+                                      {^^bool}));
+
+void test()
+{
+  int  a = 42;
+  auto f = [&a](auto v) { v.data(); };
+  template for(constexpr auto M : define_static_array(members_of(type_of(^^f), meta::access_context::current()) |
+                                                      std::views::filter(meta::is_function_template)))
+  {
+    if constexpr(can_substitute(M, {^^std::string}))
+    {
+      std::println("{}", display_string_of(M));
+    }
+  }
+}
 
 struct test_ptr
 {

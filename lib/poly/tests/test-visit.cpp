@@ -37,5 +37,25 @@ struct test_basic
         c,
         std::variant<int, std::string>{42});
   }
+  void test2()
+  {
+    using var2 = var<var_t, var_t*>;
+    var2 v = var_t{42};
+    v = &c;
+    auto p = v.get<var_t*>();
+    CHECK_THAT(p == &c);
+
+    visit(
+        match{
+            [&](var_t* l, int&& r)
+            {
+              CHECK_THAT(l == &c);
+              CHECK_THAT(r == 42);
+            },
+            patterns::throw_(std::runtime_error{"unexpected visit"}),
+        },
+        var2{&c},
+        var_t{42});
+  }
 };
 } // namespace var_visit_tests

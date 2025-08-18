@@ -1,6 +1,7 @@
 #pragma once
 
 #include <reflex/concepts.hpp>
+#include <reflex/detail/portable.hpp>
 #include <reflex/fwd.hpp>
 #include <reflex/match.hpp>
 #include <reflex/meta.hpp>
@@ -45,10 +46,101 @@ consteval bool is_var_type(meta::info R)
 namespace _var
 {
 
+constexpr auto is_reference_wrapper_type = meta::make_template_tester(^^std::reference_wrapper);
+
+template <size_t, bool, typename...> union variadic_union;
+
+template <size_t index, bool trivially_destructible> union variadic_union<index, trivially_destructible>
+{
+};
+
+template <size_t index, bool trivially_destructible, typename Head, typename... Tail>
+union variadic_union<index, trivially_destructible, Head, Tail...>
+{
+public:
+  REFLEX_FORCE_INLINE constexpr variadic_union() noexcept : dummy_{}
+  {
+  }
+
+  REFLEX_FORCE_INLINE constexpr variadic_union(std::index_sequence<index>) : head_{}
+  {
+  }
+
+  template <size_t I>
+    requires(I != index)
+  REFLEX_FORCE_INLINE constexpr variadic_union(std::index_sequence<I> seq) : tail_{seq}
+  {
+  }
+
+  template <typename... Args>
+  REFLEX_FORCE_INLINE constexpr variadic_union(std::index_sequence<index>, Args&&... args) : head_(reflex_fwd(args)...)
+  {
+  }
+
+  template <size_t I, typename... Args>
+    requires(I != index)
+  REFLEX_FORCE_INLINE constexpr variadic_union(std::index_sequence<I> seq, Args&&... args)
+      : tail_{seq, reflex_fwd(args)...}
+  {
+  }
+
+  constexpr ~variadic_union() noexcept
+    requires(trivially_destructible)
+  = default;
+
+  constexpr ~variadic_union() noexcept
+    requires(not trivially_destructible)
+  {
+  }
+
+  template <typename T>
+    requires(std::same_as<T, Head>)
+  REFLEX_FORCE_INLINE constexpr decltype(auto) get(this auto&& self) noexcept
+  {
+    return std::forward_like<decltype(self)>(self.head_);
+  }
+
+  template <typename T>
+    requires(not std::same_as<T, Head>)
+  REFLEX_FORCE_INLINE constexpr decltype(auto) get(this auto&& self) noexcept
+  {
+    return std::forward_like<decltype(self)>(self.tail_).template get<T>();
+  }
+
+  constexpr variadic_union(const variadic_union&)            = default;
+  constexpr variadic_union(variadic_union&&)                 = default;
+  constexpr variadic_union& operator=(const variadic_union&) = default;
+  constexpr variadic_union& operator=(variadic_union&&)      = default;
+
+  char                                                       dummy_;
+  Head                                                       head_;
+  variadic_union<index + 1, trivially_destructible, Tail...> tail_;
+};
+
 template <typename... Ts> class var_impl
 {
 public:
-  using index_type = int;
+  using index_type           = [:[]
+                      {
+                        if constexpr(sizeof...(Ts) < std::numeric_limits<uint8_t>::max())
+                        {
+                          return ^^uint8_t;
+                        }
+                        else if constexpr(sizeof...(Ts) < std::numeric_limits<uint16_t>::max())
+                        {
+                          return ^^uint16_t;
+                        }
+                        else if constexpr(sizeof...(Ts) < std::numeric_limits<uint32_t>::max())
+                        {
+                          return ^^uint32_t;
+                        }
+                        else
+                        {
+                          static_assert(sizeof...(Ts) < std::numeric_limits<size_t>::max(), "too much types");
+                          return ^^size_t;
+                        }
+                      }():];
+  static constexpr auto npos = std::numeric_limits<index_type>::max();
 
   friend std::formatter<var_impl>;
   friend visitor<var_impl>;
@@ -59,7 +151,17 @@ private:
   static constexpr auto types_ = std::array{^^none_t, ^^Ts...};
 
   static constexpr auto basic_types_ =
-      define_static_array(types_ | std::views::filter([](auto R) { return not is_recursive_type(R); }));
+      define_static_array(types_                                                                //
+                          | std::views::filter([](auto R) { return not is_recursive_type(R); }) //
+                          | std::views::transform(
+                                [](auto R)
+                                {
+                                  return is_reference_type(R) ? substitute(^^std::reference_wrapper,
+                                                                           {
+                                                                               remove_reference(R)})
+                                                              : R;
+                                }) //
+      );
 
   static constexpr auto recursive_templates_ = define_static_array(
       [] consteval
@@ -151,44 +253,21 @@ private:
     }
   }
 
-  static constexpr auto storage_size_ = [] constexpr
-  {
-    size_t sz = 0;
-    template for(constexpr auto A : alternatives_)
-    {
-      sz = std::max(sz, sizeof(typename[:A:]));
-    }
-    if constexpr(has_vec_)
-    {
-      sz = std::max(sz, sizeof(typename[:vec_type_:]));
-    }
-    if constexpr(has_map_)
-    {
-      sz = std::max(sz, sizeof(typename[:map_type_:]));
-    }
-    return sz;
-  }();
+  static constexpr auto indexes_ = std::views::iota(0uz, alternatives_.size());
 
-  static constexpr auto storage_align_ = [] constexpr
-  {
-    size_t sz = 0;
-    template for(constexpr auto A : alternatives_)
-    {
-      sz = std::max(sz, alignof(typename[:A:]));
-    }
-    if constexpr(has_vec_)
-    {
-      sz = std::max(sz, alignof(typename[:vec_type_:]));
-    }
-    if constexpr(has_map_)
-    {
-      sz = std::max(sz, alignof(typename[:map_type_:]));
-    }
-    return sz;
-  }();
+  static constexpr auto trivially_destructible_ =
+      std::ranges::all_of(alternatives_, [](auto R) { return is_trivially_destructible_type(R); });
 
-  alignas(storage_align_) std::byte storage_[storage_size_];
-  index_type current_ = 0;
+  using storage_t = [:[]
+                     {
+                       meta::vector args = {meta::reflect_constant(size_t(0)),
+                                            meta::reflect_constant(trivially_destructible_)};
+                       args.append_range(alternatives_);
+                       return substitute(^^variadic_union, args);
+                     }():];
+
+  storage_t  storage_{};
+  index_type current_ = npos;
 
 public:
   template <template <class...> class T>
@@ -224,24 +303,19 @@ public:
 
   constexpr void reset() noexcept
   {
-    if(current_ == -1)
+    if(current_ == npos)
     {
       return;
     }
-    index_type index = 0;
-    template for(constexpr auto R : alternatives_)
+    template for(constexpr auto index : indexes_)
     {
       if(index == current_)
       {
-        using T = [:R:];
-        if constexpr(not is_reference_type(R))
-        {
-          std::destroy_at(reinterpret_cast<T*>(storage_));
-        }
-        current_ = -1;
+        constexpr auto R = alternatives_[index];
+        storage_.~storage_t();
+        current_ = npos;
         return;
       }
-      ++index;
     }
   }
 
@@ -252,7 +326,8 @@ public:
 
   static consteval bool is_equivalent_to(meta::info I, meta::info R) noexcept
   {
-    return ((R == dealias(I)) or (is_template(I) and meta::is_template_instance_of(R, I)));
+    return ((R == dealias(I)) or (is_reference_wrapper_type(R) and unwrap_reference(R) == dealias(I)) or
+            (is_template(I) and meta::is_template_instance_of(R, I)));
   }
 
   static consteval bool can_hold(meta::info I) noexcept
@@ -314,13 +389,13 @@ public:
     index_type index = 0;
     template for(constexpr auto R : alternatives_)
     {
-      if constexpr(R == ^^T)
+      if constexpr(R == ^^T or (is_reference_wrapper_type(R) and unwrap_reference(R) == ^^T))
       {
         return index;
       }
       ++index;
     }
-    return index_type(-1);
+    return index_type(npos);
   }
 
   template <typename T> constexpr bool has_value() const noexcept
@@ -350,141 +425,208 @@ public:
     emplace<none_t>();
   }
 
-  template <typename Fn, typename Self> inline constexpr decltype(auto) visit(this Self&& self, Fn&& fn)
+  template <typename Fn, typename Self, bool adapt_references = true>
+  inline constexpr decltype(auto) visit(this Self&& self, Fn&& fn, std::bool_constant<adapt_references> = {})
   {
     template for(constexpr auto ii : std::views::iota(0uz, self.alternatives_.size()))
     {
       if(ii == self.current_)
       {
         static constexpr auto R = self.alternatives_[ii];
-        return reflex_fwd(fn)(reflex_fwd(self).template get<typename[:R:]>());
+        if constexpr(adapt_references)
+        {
+          if constexpr(is_reference_wrapper_type(R) and
+                       requires { reflex_fwd(fn)(reflex_fwd(self).template get<unwrap_reference(R)>()); })
+          {
+            return reflex_fwd(fn)(reflex_fwd(self).template get<unwrap_reference(R)>());
+          }
+          else
+          {
+            return reflex_fwd(fn)(reflex_fwd(self).template get<R>());
+          }
+        }
+        else if constexpr(requires { reflex_fwd(fn)(reflex_fwd(self).template get<R>()); })
+        {
+          return reflex_fwd(fn)(reflex_fwd(self).template get<R>());
+        }
+        else
+        {
+          static_assert(always_false<Self>, "unvisitable");
+        }
       }
     }
     std::unreachable();
   }
 
+  constexpr var_impl(var_impl&& o) noexcept
+  {
+    std::move(o).visit([this]<typename T>(T&& value) { assign(std::move(value)); }, std::false_type{});
+  }
+
+  constexpr var_impl& operator=(var_impl&& o) noexcept
+  {
+    std::move(o).visit([this]<typename T>(T&& value) { assign(std::move(value)); }, std::false_type{});
+    return *this;
+  }
+
+  constexpr var_impl(var_impl const& o) noexcept
+  {
+    o.visit([this]<typename T>(T const& value) { assign(value); }, std::false_type{});
+  }
+
+  constexpr var_impl& operator=(var_impl const& o) noexcept
+  {
+    o.visit([this]<typename T>(T const& value) { assign(value); }, std::false_type{});
+    return *this;
+  }
+
+  template <typename T> static consteval bool convertible_from()
+  {
+    return (decay(^^T) != ^^var_impl) and (constructible_from<T>() or explicitly_constructible_from<T>());
+  }
+
   template <typename Var>
-    requires(is_var_type(^^Var))
+    requires(is_var_type(^^Var) and not convertible_from<Var>())
   constexpr var_impl(Var&& o) noexcept
   {
     reflex_fwd(o).visit(match{[this]<typename T>
                                 requires(constructible_from<T>())
-                              (T&& value) { assign(reflex_fwd(value)); },
-                              patterns::ignore});
+                              (T&& value) {//
+                                 assign(reflex_fwd(value));
+                              },
+                              patterns::ignore}, std::false_type{});
   }
 
   template <typename Var>
-    requires(is_var_type(^^Var))
+    requires(is_var_type(^^Var) and not convertible_from<Var>())
   constexpr var_impl& operator=(Var&& o) noexcept
   {
     reflex_fwd(o).visit(match{[this]<typename T>
                                 requires(constructible_from<T>())
-                              (T&& value) { assign(reflex_fwd(value)); },
-                              patterns::ignore});
+                              (T&& value) {//
+                                 assign(reflex_fwd(value));
+                              },
+                              patterns::ignore}, std::false_type{});
     return *this;
   }
 
   constexpr ~var_impl() noexcept
+    requires(not trivially_destructible_)
   {
     reset();
   }
 
-  template <typename T>
-    requires(constructible_from<T>())
-  constexpr var_impl(T&& value) noexcept
-  {
-    emplace<std::decay_t<T>>(std::forward<T>(value));
-  }
+  constexpr ~var_impl() noexcept
+    requires(trivially_destructible_)
+  = default;
 
   template <typename T>
-    requires(not is_var_type(^^T) and not constructible_from<T>() and explicitly_constructible_from<T>())
+    requires(convertible_from<T>())
   constexpr var_impl(T&& value) noexcept
   {
-    template for(constexpr auto R : alternatives_)
+    if constexpr(constructible_from<T>())
     {
-      if constexpr(meta::has_explicit_constructor(R, {^^T}))
-      {
-        using U = [:R:];
-        emplace<U>(std::forward<T>(value));
-        return;
-      }
+      assign(reflex_fwd(value));
     }
-    std::unreachable();
+    else
+    {
+      template for(constexpr auto R : alternatives_)
+      {
+        if constexpr(meta::has_explicit_constructor(R, {^^T}))
+        {
+          using U = [:R:];
+          emplace<U>(std::forward<T>(value));
+          return;
+        }
+      }
+      std::unreachable();
+    }
   }
 
   template <typename T>
-    requires(constructible_from<T>())
+    requires(convertible_from<T>())
   constexpr var_impl& operator=(T&& value) noexcept
   {
-    assign(std::forward<T>(value));
-    return *this;
+    if constexpr(constructible_from<T>())
+    {
+      assign(std::forward<T>(value));
+      return *this;
+    }
+    else
+    {
+      template for(constexpr auto R : alternatives_)
+      {
+        if constexpr(meta::has_explicit_constructor(R, {^^T}))
+        {
+          using U = [:R:];
+          emplace<U>(std::forward<T>(value));
+          return *this;
+        }
+      }
+      std::unreachable();
+    }
   }
 
   template <typename T, typename... Args>
-    requires(constructible_from<T>())
+    requires(constructible_from<T>() or explicitly_constructible_from<T>())
   constexpr T& emplace(Args&&... args) noexcept
   {
     reset();
-    index_type index = 0;
-    template for(constexpr auto R : alternatives_)
+    template for(constexpr auto index : indexes_)
     {
+      constexpr auto R = alternatives_[index];
       if constexpr(R == ^^T)
       {
         current_ = index;
-        auto* p  = reinterpret_cast<typename[:R:]*>(storage_);
-        return *std::construct_at<T>(p, std::forward<Args>(args)...);
+
+        new(&storage_) storage_t(std::index_sequence<index>{}, std::forward<Args>(args)...);
+        return storage_.template get<T>();
       }
-      ++index;
     }
     std::unreachable();
   }
 
   template <typename T>
-    requires(constructible_from<T>())
+    requires(constructible_from<T>() or explicitly_constructible_from<T>())
   constexpr void assign(T&& value) noexcept
   {
     constexpr auto dt = dealias(decay(^^T));
 
     index_type index = 0;
-    template for(constexpr auto R : alternatives_)
+    template for(constexpr auto index : indexes_)
     {
+      constexpr auto R = alternatives_[index];
       if constexpr(R == dt)
       {
-        auto* p = reinterpret_cast<typename[:R:]*>(storage_);
         if(current_ != index)
         {
           reset();
-          std::construct_at<std::decay_t<T>>(p, std::forward<T>(value));
         }
-        else
-        {
-          *p = std::forward<T>(value);
-        }
+        new(&storage_) storage_t(std::index_sequence<index>{}, std::forward<T>(value));
         current_ = index;
         return;
       }
-      ++index;
     }
     std::unreachable();
   }
 
   template <meta::info I, typename Self> constexpr decltype(auto) get(this Self&& self)
   {
-    template for(constexpr auto ii : std::views::iota(0uz, self.alternatives_.size()))
+    template for(constexpr auto index : indexes_)
     {
-      constexpr auto R = self.alternatives_[ii];
+      constexpr auto R = self.alternatives_[index];
       if constexpr(is_equivalent_to(I, R))
       {
-        if(ii == self.current_)
+        if(index == self.current_)
         {
-          using U = [:type_implementation_of(R):];
-          if constexpr(is_reference_type(R))
+          using T = [:R:];
+          if constexpr(is_reference_wrapper_type(R) and not is_reference_wrapper_type(decay(I)))
           {
-            return std::forward_like<Self>(*reinterpret_cast<const_like_t<Self, std::decay_t<U>>*>(self.storage_));
+            return std::forward_like<Self>(self.storage_.template get<T>().get());
           }
           else
           {
-            return std::forward_like<Self>(*reinterpret_cast<const_like_t<Self, U>*>(self.storage_));
+            return std::forward_like<Self>(self.storage_.template get<T>());
           }
         }
       }
@@ -506,16 +648,22 @@ public:
     requires(constructible_from<T>())
   constexpr bool operator==(T&& value) const noexcept
   {
-    index_type     index = 0;
-    constexpr auto dt    = dealias(decay(^^T));
-    template for(constexpr auto R : alternatives_)
+    constexpr auto dt = dealias(decay(^^T));
+    template for(constexpr auto index : indexes_)
     {
-      if constexpr(R == dt)
+      if(current_ == index)
       {
-        auto* p = reinterpret_cast<const typename[:R:]*>(storage_);
-        return current_ == index and *p == value;
+        constexpr auto R = alternatives_[index];
+        using U          = [:R:];
+        if constexpr(R == dt)
+        {
+          return storage_.template get<U>() == value;
+        }
+        else if constexpr(is_reference_wrapper_type(R) and not is_reference_wrapper_type(decay(^^T)))
+        {
+          return storage_.template get<U>().get() == value;
+        }
       }
-      ++index;
     }
     return false;
   }
@@ -524,9 +672,10 @@ public:
   {
     constexpr auto R = dealias(decay(^^T));
 
-    template for(constexpr auto A : alternatives_)
+    template for(constexpr auto index : indexes_)
     {
-      using U = [:A:];
+      constexpr auto R = alternatives_[index];
+      using U          = [:R:];
       if constexpr(std::equality_comparable_with<U, T>)
       {
         return true;
@@ -540,13 +689,13 @@ public:
   constexpr bool operator==(T&& value) const noexcept
   {
     constexpr auto R = dealias(decay(^^T));
-    template for(constexpr auto A : alternatives_)
+    template for(constexpr auto index : indexes_)
     {
-      using U = [:A:];
+      constexpr auto R = alternatives_[index];
+      using U          = [:R:];
       if constexpr(std::equality_comparable_with<U, T>)
       {
-        auto* p = reinterpret_cast<const typename[:A:]*>(storage_);
-        return value == *p;
+        return storage_.template get<U>() == value;
       }
     }
     std::unreachable();
@@ -556,16 +705,13 @@ public:
   {
     if(other.current_ == self.current_)
     {
-      index_type index = 0;
-      template for(constexpr auto R : self.alternatives_)
+      template for(constexpr auto index : indexes_)
       {
+        constexpr auto R = alternatives_[index];
         if(self.current_ == index)
         {
-          auto* op = reinterpret_cast<const typename[:R:]*>(other.storage_);
-          auto* p  = reinterpret_cast<const typename[:R:]*>(self.storage_);
-          return *op == *p;
+          return other == self.storage_.template get<typename[:R:]>();
         }
-        ++index;
       }
     }
     return false;
@@ -574,16 +720,15 @@ public:
   template <typename... Us>
   friend constexpr bool operator==(var_impl const& self, var_impl<Us...> const& other) noexcept
   {
-    index_type index = 0;
-    template for(constexpr auto R : self.alternatives_)
+    template for(constexpr auto index : indexes_)
     {
-      using T = [:R:];
+      constexpr auto R = alternatives_[index];
+      using T          = [:R:];
       if constexpr(other.template can_hold<T>())
       {
         if(self.current_ == index)
         {
-          auto* p = reinterpret_cast<const typename[:R:]*>(self.storage_);
-          return other == *p;
+          return other == self.storage_.template get<T>();
         }
       }
       else
@@ -593,7 +738,6 @@ public:
           return false;
         }
       }
-      ++index;
     }
     return false;
   }
@@ -614,7 +758,7 @@ public:
 
   template <typename Self>
     requires(has_vec_)
-  decltype(auto) operator[](this Self&& self, size_t index)
+  constexpr decltype(auto) operator[](this Self&& self, size_t index)
   {
     const_like_t<Self, vec_t>* v;
     if(not self.template has_value<vec_t>())
@@ -664,7 +808,7 @@ public:
 
   template <typename Self, typename KeyT>
     requires(has_map_)
-  decltype(auto) operator[](this Self&& self, KeyT&& key)
+  constexpr decltype(auto) operator[](this Self&& self, KeyT&& key)
     requires(std::constructible_from<typename map_t::key_type, KeyT>)
   {
     const_like_t<Self, map_t>* m;

@@ -98,6 +98,8 @@ function(reflex_setup_library_test_directory library)
 
   file(GLOB test_files "${CMAKE_CURRENT_SOURCE_DIR}/test-*.cpp")
 
+  add_custom_target(${library}-tests)
+
   foreach(file IN LISTS test_files)
 
     # Get the filename without the path
@@ -113,6 +115,8 @@ function(reflex_setup_library_test_directory library)
 
     reflex_add_test(${target} "${file}")
     target_link_libraries(${target} PRIVATE ${library})
+
+    add_dependencies(${library}-tests ${target})
 
   endforeach()
 

@@ -55,18 +55,15 @@ struct visitor<Tmpl<Ts...>>
 
 namespace detail
 {
-template <typename T> struct any_visitor
+struct any_visitor
 {
-  void operator()(T&&);
+  inline void operator()(auto&&) {}
 };
 } // namespace detail
 
 consteval bool is_visitable_type(meta::info t)
 {
-  auto type         = decay(t);
-  auto visitor_type = substitute(^^detail::any_visitor,
-                                 {
-                                     type});
+  auto type = decay(t);
   if(can_substitute(^^visitor,
                     {
                         type}))
@@ -74,7 +71,7 @@ consteval bool is_visitable_type(meta::info t)
     return is_invocable_type(substitute(^^visitor,
                                         {
                                             type}),
-                             {visitor_type, type});
+                             {^^detail::any_visitor, type});
   }
   return false;
 }
