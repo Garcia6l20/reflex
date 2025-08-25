@@ -27,26 +27,27 @@ struct test_basic
     CHECK_THAT(c.has_value<int>());
   }
 
-  void test_sizes() {
-    auto show_size = [](auto v) {
-      std::println("{} size is {} bytes", display_string_of(^^decltype(v)), sizeof(v));
-    };
+  void test_sizes()
+  {
+    auto show_size = [](auto v) { std::println("{} size is {} bytes", display_string_of(^^decltype(v)), sizeof(v)); };
     show_size(var<char>{});
     show_size(var<char, std::uint32_t>{});
     show_size(var<char, std::uint64_t>{});
     show_size(var<char, std::string>{});
   }
 
-  void test_copy_constructible() {
+  void test_copy_constructible()
+  {
     var_t v = 42;
-    c = v;
+    c       = v;
     CHECK_THAT(v == 42);
     CHECK_THAT(c == 42);
   }
 
-  void test_move_constructible() {
+  void test_move_constructible()
+  {
     var_t v = 42;
-    c = std::move(v);
+    c       = std::move(v);
     CHECK_THAT(c == 42);
   }
 
@@ -84,41 +85,25 @@ struct test_basic
   }
   void test_matching_2()
   {
-    const auto r = visit(match{
+    const auto r = c | match{
       [](int const& value) {//
         return true;
       },
       [](auto const& value) {//
         return false;
-      }}, c);
+      }};
     CHECK_THAT(r);
   }
   void test_matching_3()
   {
-    CHECK_THAT(visit(match{
+    CHECK_THAT(std::move(c) | match{
       [](int && value) {//
-        return true;
+      return true;
       },
       [](auto && value) {//
-        return false;
-      }}, std::move(c)));
+      return false;
+      }});
   }
-
-  //// WARNING: following lines crashes clang...
-  // struct S
-  // {
-  // };
-  // c.match(
-  //     [](S const& value) {//
-  //       std::unreachable();
-  //     });
-  // SECTION("matching 4")
-  // {
-  //   c.match(
-  //     [](std::string const& value) {//
-  //       std::unreachable();
-  //     });
-  // }
 };
 
 void test_string()
@@ -152,10 +137,11 @@ void test_string()
   }
 }
 
-void test_var_of_vars() {
-  using var_t = var<bool, int>;
+void test_var_of_vars()
+{
+  using var_t         = var<bool, int>;
   using var_of_vars_t = var<bool, var_t>;
-  var_of_vars_t vov = var_t{42};
+  var_of_vars_t vov   = var_t{42};
   CHECK_THAT(vov.get<var_t>() == 42);
 }
 

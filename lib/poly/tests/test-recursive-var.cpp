@@ -47,8 +47,8 @@ struct test_vector
   void test_move_constructible()
   {
     var_t v = vec_t{1};
-    auto *p = v.vec().data();
-    c = std::move(v);
+    auto* p = v.vec().data();
+    c       = std::move(v);
     ASSERT_THAT(v.vec().size() == 0);
     ASSERT_THAT(c.has_value());
     ASSERT_THAT(c.has_value<vec_t>());
@@ -81,14 +81,13 @@ struct test_vector
     CHECK_THAT(c.at(2)) == 3;
     for(auto const& v : c.vec())
     {
-      visit(match{[](std::string const& v) { std::println("- string: \"{}\"", v); }, //
-                    [](int const& v) { std::println("- int: {}", v); },                //
-                    [](auto const& v)
-                    {
-                      std::println("unexpected {} ({})", v, display_string_of(type_of(^^v)));
-                      std::unreachable();
-                    }},
-            v);
+      v | match{[](std::string const& v) { std::println("- string: \"{}\"", v); }, //
+                [](int const& v) { std::println("- int: {}", v); },                //
+                [](auto const& v)
+                {
+                  std::println("unexpected {} ({})", v, display_string_of(type_of(^^v)));
+                  std::unreachable();
+                }};
     }
     CHECK_THAT(c) == vec_t{1, "2", 3};
   }
@@ -129,14 +128,13 @@ struct test_map
     std::println("{:j}", c);
     for(auto const& [k, v] : c.map())
     {
-      visit(match{[&k](std::string const& v) { std::println("- string: \"{}\" -> \"{}\"", k, v); }, //
-                    [&k](int const& v) { std::println("- int: \"{}\" -> {}", k, v); },                //
-                    [&k](auto const& v)
-                    {
-                      std::println("unexpected {} -> {} ({})", k, v, display_string_of(type_of(^^v)));
-                      std::unreachable();
-                    }},
-            v);
+      v | match{[&k](std::string const& v) { std::println("- string: \"{}\" -> \"{}\"", k, v); }, //
+                [&k](int const& v) { std::println("- int: \"{}\" -> {}", k, v); },                //
+                [&k](auto const& v)
+                {
+                  std::println("unexpected {} -> {} ({})", k, v, display_string_of(type_of(^^v)));
+                  std::unreachable();
+                }};
     }
     CHECK_THAT(c) == map_t{{"1", 1}, {"2", "2"}, {"3", 3}};
   }

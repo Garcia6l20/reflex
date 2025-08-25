@@ -1,5 +1,7 @@
 #pragma once
 
+#include <reflex/visit.hpp>
+
 #include <exception>
 #include <utility>
 #include <variant>
@@ -45,4 +47,16 @@ inline constexpr auto terminate_r = [](auto&&...)
 };
 template <auto return_value> inline constexpr auto ignore_r = [](auto&&...) { return return_value; };
 } // namespace patterns
+
+template <typename T, typename... Fns> inline constexpr decltype(auto) operator|(T&& v, match<Fns...>&& m)
+{
+  return visit(reflex_fwd(m), reflex_fwd(v));
+}
+
+template <typename... Ts, typename... Fns>
+inline constexpr decltype(auto) operator|(std::tuple<Ts...>&& v, match<Fns...>&& m)
+{
+  return std::apply([&m](auto&&... values) { return visit(reflex_fwd(m), reflex_fwd(values)...); }, reflex_fwd(v));
+}
+
 } // namespace reflex

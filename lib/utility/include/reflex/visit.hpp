@@ -57,9 +57,18 @@ namespace detail
 {
 struct any_visitor
 {
-  inline void operator()(auto&&) {}
+  inline void operator()(auto&&)
+  {
+  }
 };
 } // namespace detail
+
+template <typename T>
+concept visitable_c = requires(T&& v) {
+  {
+    visitor<std::decay_t<T>>::operator()([](auto&&) {}, reflex_fwd(v))
+  };
+};
 
 consteval bool is_visitable_type(meta::info t)
 {
@@ -79,7 +88,7 @@ consteval bool is_visitable_type(meta::info t)
 template <typename Fn, typename Head, typename... Tail>
 inline constexpr decltype(auto) visit(Fn&& fn, Head&& head, Tail&&... tail)
 {
-  if constexpr(is_visitable_type(^^Head))
+  if constexpr(visitable_c<Head>)
   {
     return visitor<std::decay_t<Head>>::operator()(
         [&](auto&& val) -> decltype(auto) { //
