@@ -1,43 +1,7 @@
-#include <QPushButton>
-#include <QSignalSpy>
-#include <QTest>
-#include <QVBoxLayout>
-#include <QWidget>
-
 #include <reflex/qt.hpp>
 #include <reflex/qt/dump.hpp>
 
-namespace reflex::qt
-{
-template <typename Super> using widget = object<Super, QWidget>;
-};
-
-using namespace reflex;
-
-class SimpleWidget : public qt::widget<SimpleWidget>
-{
-public:
-  SimpleWidget(QWidget* parent = nullptr) : qt::widget<SimpleWidget>{parent}
-  {
-    auto* l   = new QVBoxLayout{this};
-    auto* btn = new QPushButton{"click me !"};
-    btn->setCheckable(true);
-    l->addWidget(btn);
-    connect(btn, &QPushButton::clicked, this, &SimpleWidget::onBtnClick);
-  }
-
-  bool clicked = false;
-
-  signal<bool> btnClicked{this};
-
-private:
-  [[= slot]] void onBtnClick(bool on)
-  {
-    std::println("btnClicked !!");
-    clicked = true;
-    btnClicked(on);
-  }
-};
+#include <SimpleWidget.hpp>
 
 class WidgetTests : public qt::object<WidgetTests>
 {
@@ -52,5 +16,9 @@ class WidgetTests : public qt::object<WidgetTests>
     QVERIFY(spy.takeFirst().at(0).toBool() == true);
   }
 };
+
+// local moc instanciation
+#include <reflex/qt/detail/object_impl.hpp>
+REFLEX_QT_OBJECT_IMPL(WidgetTests)
 
 QTEST_MAIN(WidgetTests)

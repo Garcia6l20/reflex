@@ -1,100 +1,74 @@
 #pragma once
 
-#include <QDebug>
-#include <QObject>
-#include <QProperty>
-#include <QQmlEngine>
+#include <reflex/qt.hpp>
 
-class TestType
+#include <ref_object.hpp>
+
+#include <print>
+
+using namespace reflex;
+
+struct test_object : qt::object<test_object>
 {
-public:
-  TestType()                              = default;
-  ~TestType()                             = default;
-  TestType(const TestType&)            = default;
-  TestType& operator=(const TestType&) = default;
+  signal<>                    emptySig{this};
+  signal<int, defaulted<int>> intSig{this, 42};
+  // signal<int, defaulted<int>> intSig{this}; // Missing default argument(s)
+  // signal<int, defaulted<int>> intSig{this, 42, 43}; // Too much default argument(s)
 
-};
-Q_DECLARE_METATYPE(TestType);
+  [[= slot]] void emptySlot()
+  {
+    std::println("test_object: emptySlot called");
+  }
 
-class TestMessage
-{
-public:
-  TestMessage()                              = default;
-  ~TestMessage()                             = default;
-  TestMessage(const TestMessage&)            = default;
-  TestMessage& operator=(const TestMessage&) = default;
+  [[= slot]] void intSlot(int value = 0, int value2 = 1)
+  {
+    std::println("test_object: intSlot called: {} and {}", value, value2);
+  }
 
-  TestMessage(const QString& body, const QStringList& headers) : m_body{body}, m_headers{headers}
+  [[= slot]] void handleMessage(TestMessage const& value)
+  {
+    std::println("test_object: TestMessage: {} ({})", value.body(), value.headers());
+  }
+
+  [[= slot]] void handleObject(QObject* obj)
+  {
+    qDebug() << "test_object: handleObject:" << obj->objectName();
+  }
+
+  [[= slot]] void handleQmlEngine(QQmlEngine* engine)
+  {
+    qDebug() << "test_object: handleQmlEngine:" << engine->objectName();
+  }
+
+  [[= slot]] void qmlEngineAvailable(QQmlEngine* engine)
   {
   }
 
-  QString const& body() const
+  [[= invocable]] bool sayTheTruth(bool lie = false)
   {
-    return m_body;
-  }
-  QStringList headers() const
-  {
-    return m_headers;
+    std::println("test_object: I'm{}lying !", lie ? " " : " not ");
+    return lie;
   }
 
 private:
-  QString     m_body;
-  QStringList m_headers;
-};
-Q_DECLARE_METATYPE(TestMessage);
+  [[= prop<"rwn">]] int intProp = 42;
 
-class QTestObject : public QObject
-{
-  Q_OBJECT
-  Q_PROPERTY(int intProperty READ intValue WRITE intSlot NOTIFY intChanged)
-
-public:
-  QTestObject()          = default;
-  virtual ~QTestObject() = default;
-
-  int intValue()
+  [[= listener_of<^^intProp>]] void intPropListener()
   {
-    return 42;
+    std::println("test_object: intProp is now {}", intProp);
   }
 
-  Q_INVOKABLE bool sayTheTruth()
+  [[= prop<"rwn">]] double      power = 42;
+  [[= setter_of<^^power>]] void setPower(double dB)
   {
-    return true;
+    power = std::pow(10.0, dB / 10.0);
   }
-
-  void doSendMessage(TestMessage const& m)
+  [[= getter_of<^^power>]] double getPower()
   {
-    emit sendMessage(m);
+    return 10.0 * std::log10(power);
   }
-
-signals:
-  void emptySig();
-  // void emptySig2();
-  void intSig(int value, int value2 = 42);
-  void intChanged();
-  void sendMessage(TestMessage const&);
-
-public slots:
-  void emtpySlot()
+  [[= listener_of<^^power>]] void powerListener()
   {
-    qDebug() << "emtpySlot called";
+    std::println("test_object: power is now {}", power);
   }
-  void intSlot(int value = 42, int value2 = 0)
-  {
-    qDebug() << "intSlot called with" << value << "and" << value2;
-    emit intChanged();
-  }
-
-  void handleMessage(TestMessage const& message)
-  {
-    qDebug() << "message.body =" << message.body();
-    qDebug() << "message.headers =" << message.headers();
-  }
-
-  void handleQmlEngine(QQmlEngine *engine)
-  {
-  }
-
-public:
-  QProperty<int> intProp{42};
 };

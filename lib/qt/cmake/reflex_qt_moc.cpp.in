@@ -1,0 +1,6 @@
+#include <reflex/qt/detail/object_impl.hpp>
+
+// #define __REFLEX_QT_ENABLE_TYPE_REGISTRY  true
+@INCLUDES@
+
+@TYPE_IMPLEMENTATIONS@

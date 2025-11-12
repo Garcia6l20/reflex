@@ -171,7 +171,8 @@ consteval bool is_loadable_object(meta::info R)
   auto D = dealias(R);
   return is_aggregate_type(D)
 #if REFLEX_JSON_POLY_SUPPORT
-         or D == dealias(^^object)
+      or D
+      == dealias(^^object)
 #endif
       ;
 }
@@ -367,8 +368,16 @@ constexpr Out dump_to(Out out, T const& value)
     template for(constexpr auto ii : std::views::iota(size_t(0), member_count))
     {
       constexpr auto member = members[ii];
-      out                   = std::format_to(out, "\"{}\": ", identifier_of(member));
-      out                   = dump_to(out, value.[:member:]);
+      constexpr auto mtype  = dealias(decay(type_of(member)));
+      if constexpr(meta::is_template_instance_of(mtype, ^^std::optional))
+      {
+        if(not value.[:member:].has_value())
+        {
+          continue;
+        }
+      }
+      out = std::format_to(out, "\"{}\": ", identifier_of(member));
+      out = dump_to(out, value.[:member:]);
       if(ii != member_count - 1)
       {
         out = ',';
@@ -390,6 +399,14 @@ constexpr Out dump_to(Out out, T const& value)
       }
     }
     out = ']';
+    return out;
+  }
+  else if constexpr(meta::is_template_instance_of(da_type, ^^std::optional))
+  {
+    if(value.has_value())
+    {
+      return dump_to(out, value.value());
+    }
     return out;
   }
   else

@@ -88,6 +88,43 @@ class obj : qt::object<obj> {
 };
 ```
 
+- ✔️ **QML types registration** using cmake `reflex_qt_add_qml_module` function (overload of `qt_add_qml_module`)
+  - ✔️ Works with QML Language Server
+
+```cmake
+add_executable(reflex-qt-example1
+  src/main.cpp
+
+  # 1. add headers to your target
+  src/Example.hpp
+)
+target_link_libraries(reflex-qt-example1 PRIVATE reflex.qt Qt6::Gui Qt6::Qml)
+
+# 2. include ReflexQt module
+include(ReflexQt)
+
+# 3. create your module
+reflex_qt_add_qml_module(reflex-qt-example1
+  URI Example1
+  VERSION 1.0
+  TYPES
+    Example # 4. inform types to export
+  QML_FILES
+    qml/App.qml
+  RESOURCE_PREFIX /reflex
+  OUTPUT_DIRECTORY ${QML_IMPORT_PATH}/Example1
+  DEPENDENCIES QtQuick
+)
+```
+
+
 - ✔️ Custom types: regular Qt custom type registration.
 - ❌ Enums: not handled yet.
+- ❌ Gadgets: not handled yet.
+
 - ❓ Missing something ???
+
+## Examples
+
+ - [Clock](examples/clock/): simple clock application demonstrating QML/c++ property interaction.
+ - [Sandbox](examples/example1/): A sandbox example that shows almost all features.

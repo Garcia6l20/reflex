@@ -108,7 +108,7 @@ public:
     engine->rootContext()->setContextProperty("invocableTestController", new InvocableTestController(engine));
     engine->rootContext()->setContextProperty("getSetPropertyController", new GetSetPropertyController(engine));
 
-    engine->rootContext()->setContextProperty("signalSlotController", qt::dump(new SignalSlotController(engine)));
+    engine->rootContext()->setContextProperty("signalSlotController", new SignalSlotController(engine));
   }
 
   [[= slot]] void cleanupTestCase()
@@ -116,5 +116,9 @@ public:
     // Implement custom resource cleanup
   }
 };
+
+// local moc instanciation
+#include <reflex/qt/detail/object_impl.hpp>
+REFLEX_QT_OBJECT_IMPL(Setup)
 
 QUICK_TEST_MAIN_WITH_SETUP(qml - tests, Setup)

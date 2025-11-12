@@ -1,0 +1,16 @@
+#include <reflex/qt/dump.hpp>
+
+// #define __REFLEX_QT_ENABLE_TYPE_REGISTRY  true
+@INCLUDES@
+
+using namespace reflex;
+
+int main() {
+  template for (constexpr auto t : std::array{@TYPES@})
+  {
+    using Type = [:t:];
+    qt::dump<Type>();
+  }
+  return 0;
+}
+

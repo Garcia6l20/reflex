@@ -7,16 +7,14 @@
 
 namespace reflex::qt
 {
-inline decltype(auto) dump(auto& object)
+inline void dump(QMetaObject const * const metaObject)
 {
-  const QMetaObject* metaObject = object.metaObject();
-
-  qDebug() << "Class: " << metaObject->className();
+  qDebug() << "============= 📦" << metaObject->className() << "📦 =============";
 
   for(int i = 0; i < metaObject->classInfoCount(); ++i)
   {
     QMetaClassInfo info = metaObject->classInfo(i);
-    qDebug() << "  Info:" << info.name() << info.value();
+    qDebug().nospace() << " 💡       Info: " << info.name() << ": " << info.value();
   }
 
   // --- Signals/Slots/Invocables ---
@@ -49,11 +47,19 @@ inline decltype(auto) dump(auto& object)
     QMetaProperty property = metaObject->property(i);
     qDebug() << " 🏷️    Property:" << property.name() << "-" << property.typeName();
   }
-  return object;
 }
-inline auto dump(auto* object)
+
+inline void dump(auto& object) {
+  dump(object.metaObject());
+}
+
+template <typename T>
+inline void dump() {
+  dump(&T::staticMetaObject);
+}
+
+inline void dump(auto* object)
 {
   dump(*object);
-  return object;
 }
 } // namespace reflex::qt

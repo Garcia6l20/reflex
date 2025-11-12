@@ -1,0 +1,23 @@
+#include <reflex/qt/detail/moc.hpp>
+
+// #define __REFLEX_QT_ENABLE_TYPE_REGISTRY  true
+@INCLUDES@
+
+using namespace reflex;
+
+int main() {
+  // TODO: find a way to create metaObjects from object_reg types
+  // static constexpr auto types = std::define_static_array(qt::detail::object_reg::all());
+  // [&]<size_t... I>(std::index_sequence<I...>)
+  // {
+  //   qt::moc::export_json<typename[:types[I]:]...>("@ARGS_OUTPUT_DIRECTORY@",
+  //                                                 "@ARGS_URI@");
+  // }(std::make_index_sequence<types.size()>());
+
+  qt::moc::export_json<@TYPES@>(
+    "@ARGS_OUTPUT_DIRECTORY@",
+    "@ARGS_URI@");
+
+  return 0;
+}
+

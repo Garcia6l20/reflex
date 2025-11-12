@@ -8,14 +8,16 @@
 
 #include <chrono>
 
+using namespace reflex;
+
 int main(int argc, char** argv)
 {
   QGuiApplication app(argc, argv);
   app.setOrganizationName("reflex");
   app.setOrganizationDomain("examples");
-  app.setApplicationName("clock-example");
+  app.setApplicationName("example1");
 
   QQmlApplicationEngine engine;
-  engine.loadFromModule("Clock", "App");
+  engine.loadFromModule("Example1", "App");
   return app.exec();
 }
