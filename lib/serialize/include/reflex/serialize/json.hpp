@@ -365,6 +365,7 @@ constexpr Out dump_to(Out out, T const& value)
         define_static_array(meta::nonstatic_data_members_of_r(type, std::meta::access_context::current()));
     out                         = '{';
     constexpr auto member_count = members.size();
+    bool           first        = true;
     template for(constexpr auto ii : std::views::iota(size_t(0), member_count))
     {
       constexpr auto member = members[ii];
@@ -376,12 +377,16 @@ constexpr Out dump_to(Out out, T const& value)
           continue;
         }
       }
-      out = std::format_to(out, "\"{}\": ", identifier_of(member));
-      out = dump_to(out, value.[:member:]);
-      if(ii != member_count - 1)
+      if(not first)
       {
         out = ',';
       }
+      else
+      {
+        first = false;
+      }
+      out = std::format_to(out, "\"{}\": ", identifier_of(member));
+      out = dump_to(out, value.[:member:]);
     }
     out = '}';
     return out;

@@ -1,3 +1,5 @@
+#pragma once
+
 #include <QDebug>
 #include <QMetaClassInfo>
 #include <QMetaMethod>
@@ -7,7 +9,7 @@
 
 namespace reflex::qt
 {
-inline void dump(QMetaObject const * const metaObject)
+inline void dump(QMetaObject const* const metaObject)
 {
   qDebug() << "============= 📦" << metaObject->className() << "📦 =============";
 
@@ -49,17 +51,19 @@ inline void dump(QMetaObject const * const metaObject)
   }
 }
 
-inline void dump(auto& object) {
+inline void dump(QObject const& object)
+{
   dump(object.metaObject());
 }
 
-template <typename T>
-inline void dump() {
-  dump(&T::staticMetaObject);
-}
-
-inline void dump(auto* object)
+inline void dump(QObject* object)
 {
   dump(*object);
 }
+
+template <typename T> inline void dump()
+{
+  dump(&T::staticMetaObject);
+}
+
 } // namespace reflex::qt

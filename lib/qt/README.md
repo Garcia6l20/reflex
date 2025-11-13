@@ -107,7 +107,7 @@ include(ReflexQt)
 reflex_qt_add_qml_module(reflex-qt-example1
   URI Example1
   VERSION 1.0
-  TYPES
+  OBJECTS
     Example # 4. inform types to export
   QML_FILES
     qml/App.qml

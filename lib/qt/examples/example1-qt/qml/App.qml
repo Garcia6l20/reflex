@@ -12,7 +12,7 @@ ApplicationWindow {
     visible: true
     width: 800
     height: 600
-    title: qsTr("Example1")
+    title: qsTr("Example1 (pure Qt)")
 
     Example {
         id: example
@@ -23,7 +23,8 @@ ApplicationWindow {
         spacing: 8
 
         Label {
-            text: example.clockText
+            // text: example.clockText
+            text: "disabled"
             font.pixelSize: 24
             font.family: "Consolas"
         }

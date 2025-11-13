@@ -43,6 +43,6 @@ int main(int argc, char** argv)
   qDebug() << readGadgetProperty(m, "body");
 
   QQmlApplicationEngine engine;
-  engine.loadFromModule("Example1", "App");
+  engine.loadFromModule("Example1Qt", "App");
   return app.exec();
 }

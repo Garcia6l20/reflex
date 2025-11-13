@@ -6,7 +6,12 @@
 using namespace reflex;
 
 int main() {
-  template for (constexpr auto t : std::array{@TYPES@})
+  template for (constexpr auto t : std::array{@OBJECTS@})
+  {
+    using Type = [:t:];
+    qt::dump<Type>();
+  }
+  template for (constexpr auto t : std::array{@GADGETS@})
   {
     using Type = [:t:];
     qt::dump<Type>();

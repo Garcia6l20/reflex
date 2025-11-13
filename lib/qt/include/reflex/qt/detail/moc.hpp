@@ -28,14 +28,15 @@ struct property_meta
   bool        final;
   int         index;
   std::string name;
-  std::string notify;
-  std::string read;
   bool        required;
   bool        scriptable;
   bool        stored;
   std::string type;
   bool        user;
-  std::string write;
+  std::optional<std::string> read;
+  std::optional<std::string> write;
+  std::optional<std::string> notify;
+  std::optional<std::string> member;
 };
 struct meta_argument
 {
@@ -60,7 +61,8 @@ struct class_meta
   std::vector<named_value>     classInfos;
   std::string                  className;
   int                          lineNumber;
-  bool                         object;
+  std::optional<bool>          object;
+  std::optional<bool>          gadget;
   std::vector<property_meta>   properties;
   std::string                  qualifiedClassName;
   std::vector<method_meta>     signals;
@@ -91,16 +93,26 @@ template <typename... Types> void export_json(fs::path const& output, std::strin
 
   template for(constexpr auto type : {^^Types...})
   {
-    using Type                       = typename[:type:];
-    static constexpr auto loc        = source_location_of(type);
-    static const auto     filepath   = std::filesystem::path(loc.file_name());
-    const QMetaObject*    metaObject = &Type::staticMetaObject;
+    using Type                            = typename[:type:];
+    static constexpr auto loc             = source_location_of(type);
+    static const auto     filepath        = std::filesystem::path(loc.file_name());
+    const QMetaObject*    metaObject      = &Type::staticMetaObject;
+    auto const* const     superMetaObject = metaObject->superClass();
+    const bool            is_object       = superMetaObject != nullptr;
+    const bool            is_gadget       = not is_object;
 
     class_meta infos;
     infos.className          = metaObject->className();
     infos.qualifiedClassName = metaObject->className(); // TODO resolve qualified name
     infos.lineNumber         = loc.line();
-    infos.object             = true;
+    if(is_object)
+    {
+      infos.object = true;
+    }
+    else
+    {
+      infos.gadget = true;
+    }
 
     for(int i = metaObject->classInfoOffset(); i < metaObject->classInfoCount(); ++i)
     {
@@ -112,21 +124,29 @@ template <typename... Types> void export_json(fs::path const& output, std::strin
     for(int i = metaObject->propertyOffset(); i < metaObject->propertyCount(); ++i)
     {
       QMetaProperty property = metaObject->property(i);
-      infos.properties.push_back(property_meta{
+      property_meta desc{
           .constant   = false,
           .designable = true,
           .final      = false,
           .index      = i,
           .name       = property.name(),
-          .notify     = std::format("{}Changed", property.name()),
-          .read       = property.name(),
           .required   = false,
           .scriptable = true,
           .stored     = true,
           .type       = property.typeName(),
           .user       = false,
-          .write      = std::format("set{}", property.name()),
-      });
+      };
+      if(is_object)
+      {
+        desc.read   = property.name();
+        desc.notify = std::format("{}Changed", property.name());
+        desc.write  = std::format("set{}", property.name());
+      }
+      else
+      {
+        desc.member = property.name();
+      }
+      infos.properties.push_back(std::move(desc));
     }
 
     // --- Signals/Slots/Invocables ---
@@ -187,8 +207,10 @@ template <typename... Types> void export_json(fs::path const& output, std::strin
       minfos.returnType = QMetaType(method.returnType()).name();
     }
 
-    auto const* const superMetaObject = metaObject->superClass();
-    infos.superClasses.emplace_back("public", superMetaObject->className());
+    if(superMetaObject)
+    {
+      infos.superClasses.emplace_back("public", superMetaObject->className());
+    }
 
     auto& filemeta = metadata[filepath.filename()];
     filemeta.classes.push_back(std::move(infos));

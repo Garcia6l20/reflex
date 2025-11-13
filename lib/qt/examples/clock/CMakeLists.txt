@@ -25,7 +25,7 @@ reflex_qt_add_qml_module(reflex-qclock
   VERSION 1.0
   QML_FILES
     qml/App.qml
-  TYPES ClockController
+  OBJECTS ClockController
   RESOURCE_PREFIX /clock
   OUTPUT_DIRECTORY ${QML_IMPORT_PATH}/Clock
   DEPENDENCIES QtQuick

@@ -21,7 +21,7 @@ function(_get_includes target headers_var include_dirs_var includes_var)
     endforeach()
 
     list(REMOVE_DUPLICATES include_dirs)
-    
+
     set(${headers_var} ${headers} PARENT_SCOPE)
     set(${include_dirs_var} ${include_dirs} PARENT_SCOPE)
     set(${includes_var} ${includes} PARENT_SCOPE)
@@ -36,18 +36,24 @@ function(reflex_qt_moc target)
         TYPE_IMPLEMENTATIONS_OUTPUT_VAR
     )
     set(multiValueArgs
-        TYPES
+        OBJECTS
+        GADGETS
     )
     cmake_parse_arguments(ARGS "${options}" "${singleValueArgs}" "${multiValueArgs}" ${ARGN})
 
     _get_includes(${target} headers include_dirs INCLUDES)
 
     set(TYPE_IMPLEMENTATIONS)
-    foreach(type IN LISTS ARGS_TYPES)
+    foreach(type IN LISTS ARGS_OBJECTS)
         list(APPEND TYPE_IMPLEMENTATIONS "REFLEX_QT_OBJECT_IMPL(${type})")
     endforeach()
 
-    list(JOIN ARGS_TYPES ", " TYPES)
+    foreach(type IN LISTS ARGS_GADGETS)
+        list(APPEND TYPE_IMPLEMENTATIONS "REFLEX_QT_GADGET_IMPL(${type})")
+    endforeach()
+
+    list(JOIN ARGS_OBJECTS ", " OBJECTS)
+    list(JOIN ARGS_GADGETS ", " GADGETS)
     list(JOIN TYPE_IMPLEMENTATIONS "\n" TYPE_IMPLEMENTATIONS)
 
     #
@@ -64,17 +70,17 @@ function(reflex_qt_moc target)
     target_include_directories(${target}-moc PRIVATE ${include_dirs})
 
     get_target_property(target_include_dirs ${target} INCLUDE_DIRECTORIES)
-    if (target_include_dirs)
+    if(target_include_dirs)
         target_include_directories(${target}-moc PRIVATE ${target_include_dirs})
     endif()
 
     get_target_property(target_link_libs ${target} LINK_LIBRARIES)
-    if (target_link_libs)
+    if(target_link_libs)
         target_link_libraries(${target}-moc PRIVATE ${target_link_libs})
     endif()
 
     get_target_property(target_compile_defs ${target} COMPILE_DEFINITIONS)
-    if (target_compile_defs)
+    if(target_compile_defs)
         target_compile_definitions(${target}-moc PRIVATE ${target_compile_defs})
     endif()
 
@@ -88,7 +94,7 @@ function(reflex_qt_moc target)
     target_link_libraries(${target} PUBLIC ${target}-moc)
     target_include_directories(${target} PRIVATE ${include_dirs})
 
-    if (ARGS_TYPE_IMPLEMENTATIONS_OUTPUT_VAR)
+    if(ARGS_TYPE_IMPLEMENTATIONS_OUTPUT_VAR)
         set(${ARGS_TYPE_IMPLEMENTATIONS_OUTPUT_VAR} ${TYPE_IMPLEMENTATIONS} PARENT_SCOPE)
     endif()
 
@@ -106,20 +112,21 @@ function(reflex_qt_add_qml_module target)
         DEPENDENCIES
     )
     set(multiValueArgs
-        TYPES
+        OBJECTS
+        GADGETS
         QML_FILES
     )
     cmake_parse_arguments(ARGS "${options}" "${singleValueArgs}" "${multiValueArgs}" ${ARGN})
 
-    if (NOT ARGS_URI)
+    if(NOT ARGS_URI)
         message(FATAL_ERROR "Module URI is required")
     endif()
 
-    if (NOT ARGS_VERSION)
+    if(NOT ARGS_VERSION)
         set(ARGS_VERSION 1.0)
     endif()
 
-    if (NOT ARGS_OUTPUT_DIRECTORY)
+    if(NOT ARGS_OUTPUT_DIRECTORY)
         set(ARGS_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${ARGS_URI})
     endif()
 
@@ -129,7 +136,13 @@ function(reflex_qt_add_qml_module target)
 
     _get_includes(${target} headers include_dirs INCLUDES)
 
-    list(JOIN ARGS_TYPES ", " TYPES)
+    set(TYPES)
+    list(APPEND TYPES ${ARGS_GADGETS})
+    list(APPEND TYPES ${ARGS_OBJECTS})
+
+    list(JOIN ARGS_OBJECTS ", " OBJECTS)
+    list(JOIN ARGS_GADGETS ", " GADGETS)
+    list(JOIN TYPES ", " TYPES)
 
     set(JSON_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.json)
     set(QML_TYPES_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.qmltypes)
@@ -140,7 +153,7 @@ function(reflex_qt_add_qml_module target)
     #
     # MOC objects
     #
-    reflex_qt_moc(${target} TYPES ${ARGS_TYPES} TYPE_IMPLEMENTATIONS_OUTPUT_VAR TYPE_IMPLEMENTATIONS)
+    reflex_qt_moc(${target} OBJECTS ${ARGS_OBJECTS} GADGETS ${ARGS_GADGETS} TYPE_IMPLEMENTATIONS_OUTPUT_VAR TYPE_IMPLEMENTATIONS)
 
     #
     # JSON export
@@ -161,11 +174,11 @@ function(reflex_qt_add_qml_module target)
 
     add_custom_command(OUTPUT ${QML_TYPE_REGISTRATION_OUTPUT_FILE}
         COMMAND /usr/lib/qt6/qmltyperegistrar ${JSON_OUTPUT_FILE}
-            --import-name        ${ARGS_URI}
-            --generate-qmltypes  ${QML_TYPES_OUTPUT_FILE}
-            --major-version      ${MAJOR_VERSION}
-            --minor-version      ${MINOR_VERSION}
-            -o                   ${QML_TYPE_REGISTRATION_OUTPUT_FILE}
+        --import-name ${ARGS_URI}
+        --generate-qmltypes ${QML_TYPES_OUTPUT_FILE}
+        --major-version ${MAJOR_VERSION}
+        --minor-version ${MINOR_VERSION}
+        -o ${QML_TYPE_REGISTRATION_OUTPUT_FILE}
         DEPENDS ${JSON_OUTPUT_FILE}
         COMMENT "Generating ${target} qml registration..."
     )
@@ -181,11 +194,11 @@ function(reflex_qt_add_qml_module target)
     #
 
     set(EXTRA_ARGS)
-    if (ARGS_PLUGIN_TARGET)
+    if(ARGS_PLUGIN_TARGET)
         list(APPEND EXTRA_ARGS PLUGIN_TARGET ${ARGS_PLUGIN_TARGET})
     endif()
 
-    if (ARGS_DEPENDENCIES)
+    if(ARGS_DEPENDENCIES)
         list(APPEND EXTRA_ARGS DEPENDENCIES ${ARGS_DEPENDENCIES})
     endif()
 
@@ -211,14 +224,18 @@ function(reflex_qt_add_dump target)
     set(singleValueArgs
     )
     set(multiValueArgs
-        TYPES
+        OBJECTS
+        GADGETS
     )
     cmake_parse_arguments(ARGS "${options}" "${singleValueArgs}" "${multiValueArgs}" ${ARGN})
-    
+
     _get_includes(${target} headers include_dirs INCLUDES)
 
-    list(JOIN ARGS_TYPES ", ^^" TYPES)
-    set(TYPES "^^${TYPES}")
+    list(JOIN ARGS_OBJECTS ", ^^" OBJECTS)
+    set(OBJECTS "^^${OBJECTS}")
+
+    list(JOIN ARGS_GADGETS ", ^^" GADGETS)
+    set(GADGETS "^^${GADGETS}")
 
     #
     # DUMP objects
