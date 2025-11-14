@@ -154,48 +154,16 @@ template <typename Tag, typename Super> struct meta_strings
     return define_static_array(types);
   }();
 
-  template <std::meta::info R>
-  static constexpr void __serializeClassInfos(std::vector<constant_string>& strings, std::string_view parent = "")
-  {
-    template for(constexpr auto field :
-                 std::define_static_array(std::meta::members_of(R, meta::access_context::unchecked())
-                                          | std::views::filter(std::meta::has_identifier)))
-    {
-      std::string key;
-      if(not parent.empty())
-      {
-        key = parent;
-        key += ".";
-        key += identifier_of(field);
-      }
-      else
-      {
-        key = identifier_of(field);
-      }
-      if constexpr(field == meta::null)
-      {
-        continue;
-      }
-      else if constexpr(meta::is_type(field))
-      {
-        __serializeClassInfos<field>(strings, key);
-      }
-      else
-      {
-        strings.push_back(key);
-        strings.push_back([:field:]);
-      }
-    }
-  };
-
   static constexpr auto classinfo_strings = [] consteval
   {
     std::vector<constant_string> strings;
 
-    constexpr auto ci = meta::member_named(^^Super, "ClassInfos", meta::access_context::unchecked());
-    if constexpr(ci != meta::null)
+    constexpr auto annotations = define_static_array(meta::annotations_of_with(^^Super, ^^qt::classinfo)
+                                                     | std::views::transform(meta::constant_of));
+    template for(constexpr auto a : annotations)
     {
-      __serializeClassInfos<ci>(strings);
+      strings.push_back([:a:].key);
+      strings.push_back([:a:].value);
     }
 
     return define_static_array(strings);

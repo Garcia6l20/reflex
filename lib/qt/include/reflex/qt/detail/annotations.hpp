@@ -154,4 +154,9 @@ using object_reg = meta::registry<objects_scope>;
 
 } // namespace detail
 
+struct classinfo {
+  constant_string key;
+  constant_string value;
+};
+
 } // namespace reflex::qt

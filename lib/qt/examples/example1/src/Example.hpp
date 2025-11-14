@@ -5,33 +5,21 @@
 
 using namespace reflex;
 
-struct Message : qt::gadget<Message>
+struct                                                                                           //
+    [[= qt::classinfo{"QML.Element", "message"}]]                                                //
+    [[= qt::classinfo{"Creatable", "false"}]]                                                    //
+    [[= qt::classinfo{"UncreatableReason", "A message may only be emitted by Example objects"}]] //
+    Message : qt::gadget<Message>
 {
-  struct ClassInfos
-  {
-    struct QML
-    {
-      static constexpr auto Element           = "message";
-      static constexpr auto Creatable         = "false";
-      static constexpr auto UncreatableReason = "Just because";
-    };
-  };
-
   [[= prop<"rwn">]] QString subject;
   [[= prop<"rwn">]] QString body;
 };
 
-class Example : public qt::object<Example>
+class                                          //
+    [[= qt::classinfo{"QML.Element", "auto"}]] //
+    [[= qt::classinfo{"Creatable", "true"}]]   //
+    Example : public qt::object<Example>
 {
-  struct ClassInfos
-  {
-    struct QML
-    {
-      static constexpr auto Element   = "auto";
-      static constexpr auto Creatable = "true";
-    };
-  };
-
 public:
   Example(QObject* parent = nullptr) : qt::object<Example>{parent}
   {
@@ -44,7 +32,7 @@ public:
   [[= prop<"rwn">]] QString clockText = "00:00:00";
 
   signal<int, defaulted<int>> intSig{this, 42};
-  signal<Message> send{this};
+  signal<Message>             send{this};
 
   [[= slot]] void slot1(int value)
   {

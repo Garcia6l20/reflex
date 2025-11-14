@@ -4,17 +4,11 @@
 
 using namespace reflex;
 
-class ClockController : public qt::object<ClockController>
+class                                          //
+    [[= qt::classinfo{"QML.Element", "auto"}]] //
+    [[= qt::classinfo{"Creatable", "true"}]]   //
+    ClockController : public qt::object<ClockController>
 {
-  struct ClassInfos
-  {
-    struct QML
-    {
-      static constexpr auto Element = "auto";
-      static constexpr auto Creatable = "true";
-    };
-  };
-
 public:
   ClockController(QObject* parent = nullptr) : qt::object<ClockController>{parent}
   {
