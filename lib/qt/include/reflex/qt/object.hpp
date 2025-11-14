@@ -5,10 +5,6 @@
 #include <reflex/to_tuple.hpp>
 #include <reflex/utility.hpp>
 
-#ifdef __REFLEX_QT_ENABLE_TYPE_REGISTRY
-#include <reflex/regitry.hpp>
-#endif
-
 #include <reflex/qt/detail/annotations.hpp>
 #include <reflex/qt/detail/meta_strings.hpp>
 #include <reflex/qt/detail/metatype.hpp>
@@ -26,17 +22,9 @@
 
 namespace reflex::qt
 {
-
 template <typename Super, typename ParentT> struct object : ParentT, gadget<Super>
 {
   friend detail::object_impl<Super, ParentT>;
-
-#ifdef __REFLEX_QT_ENABLE_TYPE_REGISTRY
-  consteval
-  {
-    detail::object_reg::add(^^Super);
-  };
-#endif
 
 public:
   using parent_type = ParentT;
@@ -256,9 +244,6 @@ protected:
     ParentT::timerEvent(e);
   }
 };
-
-#define REFLEX_QT_OBJECT_IMPL(__type__) template class reflex::qt::object<__type__, typename __type__::parent_type>;
-
 } // namespace reflex::qt
 
 namespace QtPrivate

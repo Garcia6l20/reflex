@@ -1,7 +1,6 @@
 #pragma once
 
 #include <reflex/qt.hpp>
-
 #include <ref_object.hpp>
 
 #include <print>

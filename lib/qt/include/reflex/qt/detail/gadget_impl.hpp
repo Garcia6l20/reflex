@@ -2,10 +2,10 @@
 
 #include <reflex/meta.hpp>
 
-#include <reflex/qt/detail/meta_strings.hpp>
-
 #include <reflex/qt/gadget.hpp>
 #include <reflex/qt/object.hpp>
+
+#include <reflex/qt/detail/meta_strings.hpp>
 
 #undef signals
 #undef slots
@@ -318,11 +318,5 @@ template <typename Super> struct gadget_impl
   }
 };
 } // namespace detail
-
-template <typename Super> void gadget<Super>::qt_static_metacall(QObject* _o, QMetaObject::Call _c, int _id, void** _a)
-{
-  return detail::gadget_impl<Super>::qt_static_metacall(_o, _c, _id, _a);
-}
-template <typename T> constinit const QMetaObject gadget<T>::staticMetaObject = detail::gadget_impl<T>::metaObject();
 
 } // namespace reflex::qt

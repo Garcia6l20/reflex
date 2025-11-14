@@ -2,8 +2,8 @@
 
 #include <reflex/qt/object.hpp>
 
-#include <reflex/qt/detail/metatype.hpp>
 #include <reflex/qt/detail/gadget_impl.hpp>
+#include <reflex/qt/detail/metatype.hpp>
 
 #include <QObject>
 #include <QTimerEvent>
@@ -88,3 +88,10 @@ int object<Super, Parent>::qt_metacall(QMetaObject::Call _c, int _id, void** _a)
 }
 
 } // namespace reflex::qt
+
+#define REFLEX_QT_OBJECT_IMPL(__type__)                                \
+  template <typename T> QMetaObject reflex::qt::detail::metaObjectOf() \
+  {                                                                    \
+    static auto mo = detail::gadget_impl<T>::metaObject();             \
+    return mo;                                                         \
+  }

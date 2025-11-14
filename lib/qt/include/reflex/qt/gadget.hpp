@@ -6,20 +6,41 @@
 
 #include <reflex/qt/detail/annotations.hpp>
 #include <reflex/qt/detail/meta_strings.hpp>
+#include <reflex/utility.hpp>
+
+#ifdef __REFLEX_QT_ENABLE_TYPE_REGISTRY
+#include <reflex/regitry.hpp>
+#endif
 
 namespace reflex::qt
 {
+namespace detail
+{
+#ifdef __REFLEX_QT_ENABLE_TYPE_REGISTRY
+struct objects_scope
+{
+};
+using object_reg = meta::registry<objects_scope>;
+#endif
+
+template <typename T> QMetaObject metaObjectOf();
+
+} // namespace detail
+
 template <typename Super> class gadget
 {
 public:
-  static constinit const QMetaObject staticMetaObject;
+  static inline const QMetaObject staticMetaObject = detail::metaObjectOf<Super>();
+
+  static void qt_static_metacall(QObject* _o, QMetaObject::Call _c, int _id, void** _a)
+  {
+    return detail::gadget_impl<Super>::qt_static_metacall(_o, _c, _id, _a);
+  }
 
   // NOTE: QtGadgetHelper/qt_check_for_QGADGET_macro are required for gadget registration
   //       This is the way Qt checks for Q_GADGET macro, hacked !
   void         qt_check_for_QGADGET_macro();
   typedef void QtGadgetHelper;
-
-  static void qt_static_metacall(QObject*, QMetaObject::Call, int, void**);
 
 private:
   friend class detail::gadget_impl<Super>;
@@ -28,6 +49,13 @@ private:
   struct tag
   {
   };
+
+#ifdef __REFLEX_QT_ENABLE_TYPE_REGISTRY
+  consteval
+  {
+    detail::object_reg::add(^^Super);
+  };
+#endif
 
 protected:
   static constexpr detail::invocable invocable;

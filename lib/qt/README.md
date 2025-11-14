@@ -107,10 +107,6 @@ include(ReflexQt)
 reflex_qt_add_qml_module(reflex-qt-example1
   URI Example1
   VERSION 1.0
-  OBJECTS
-    Example # 4. inform types to export
-  QML_FILES
-    qml/App.qml
   RESOURCE_PREFIX /reflex
   OUTPUT_DIRECTORY ${QML_IMPORT_PATH}/Example1
   DEPENDENCIES QtQuick

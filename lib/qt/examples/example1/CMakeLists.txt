@@ -29,12 +29,6 @@ include(ReflexQt)
 reflex_qt_add_qml_module(reflex-qt-example1
   URI Example1
   VERSION 1.0
-  # 4. inform types to export
-  OBJECTS
-    Example
-  GADGETS
-    Message
-
   QML_FILES
     qml/App.qml
   RESOURCE_PREFIX /reflex
@@ -42,8 +36,5 @@ reflex_qt_add_qml_module(reflex-qt-example1
   DEPENDENCIES QtQuick
 )
 
-# 5. (optional) create dump target
-reflex_qt_add_dump(reflex-qt-example1
-  OBJECTS Example
-  GADGETS Message
-)
+# 4. (optional) create dump target
+reflex_qt_add_dump(reflex-qt-example1)

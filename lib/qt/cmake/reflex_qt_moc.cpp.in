@@ -1,7 +1,29 @@
+#define __REFLEX_QT_ENABLE_TYPE_REGISTRY true
+
 #include <reflex/qt/detail/object_impl.hpp>
 #include <reflex/qt/detail/gadget_impl.hpp>
 
-// #define __REFLEX_QT_ENABLE_TYPE_REGISTRY  true
+namespace reflex::qt::detail
+{
+template <typename T> QMetaObject metaObjectOf()
+{
+  static auto mo = detail::gadget_impl<T>::metaObject();
+  return mo;
+}
+} // namespace reflex::qt::detail
+
 @INCLUDES@
 
-@TYPE_IMPLEMENTATIONS@
+using namespace reflex;
+
+static const bool ensure_instantiated = [] {
+  bool ok = true;
+  template for(constexpr auto t : std::define_static_array(qt::detail::object_reg::all()))
+  {
+    using T = [:t:];
+    if (!qt::detail::metaObjectOf<T>().metaType().isValid()) {
+      ok = false;
+    }
+  }
+  return ok;
+}();

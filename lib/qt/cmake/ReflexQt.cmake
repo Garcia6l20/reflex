@@ -30,31 +30,7 @@ endfunction()
 
 
 function(reflex_qt_moc target)
-
-    set(options)
-    set(singleValueArgs
-        TYPE_IMPLEMENTATIONS_OUTPUT_VAR
-    )
-    set(multiValueArgs
-        OBJECTS
-        GADGETS
-    )
-    cmake_parse_arguments(ARGS "${options}" "${singleValueArgs}" "${multiValueArgs}" ${ARGN})
-
     _get_includes(${target} headers include_dirs INCLUDES)
-
-    set(TYPE_IMPLEMENTATIONS)
-    foreach(type IN LISTS ARGS_OBJECTS)
-        list(APPEND TYPE_IMPLEMENTATIONS "REFLEX_QT_OBJECT_IMPL(${type})")
-    endforeach()
-
-    foreach(type IN LISTS ARGS_GADGETS)
-        list(APPEND TYPE_IMPLEMENTATIONS "REFLEX_QT_GADGET_IMPL(${type})")
-    endforeach()
-
-    list(JOIN ARGS_OBJECTS ", " OBJECTS)
-    list(JOIN ARGS_GADGETS ", " GADGETS)
-    list(JOIN TYPE_IMPLEMENTATIONS "\n" TYPE_IMPLEMENTATIONS)
 
     #
     # MOC objects
@@ -84,8 +60,8 @@ function(reflex_qt_moc target)
         target_compile_definitions(${target}-moc PRIVATE ${target_compile_defs})
     endif()
 
-    # FIXME is there another way to get rid of this warning ???
-    target_compile_options(${target}-moc PUBLIC -Wno-undefined-var-template)
+    # # FIXME is there another way to get rid of this warning ???
+    # target_compile_options(${target}-moc PUBLIC -Wno-undefined-var-template)
 
     #
     # Patch target
@@ -104,18 +80,10 @@ function(reflex_qt_add_qml_module target)
 
     set(options)
     set(singleValueArgs
-        PLUGIN_TARGET
         URI
         VERSION
-        OUTPUT_DIRECTORY
-        RESOURCE_PREFIX
-        DEPENDENCIES
     )
-    set(multiValueArgs
-        OBJECTS
-        GADGETS
-        QML_FILES
-    )
+    set(multiValueArgs)
     cmake_parse_arguments(ARGS "${options}" "${singleValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(NOT ARGS_URI)
@@ -136,14 +104,6 @@ function(reflex_qt_add_qml_module target)
 
     _get_includes(${target} headers include_dirs INCLUDES)
 
-    set(TYPES)
-    list(APPEND TYPES ${ARGS_GADGETS})
-    list(APPEND TYPES ${ARGS_OBJECTS})
-
-    list(JOIN ARGS_OBJECTS ", " OBJECTS)
-    list(JOIN ARGS_GADGETS ", " GADGETS)
-    list(JOIN TYPES ", " TYPES)
-
     set(JSON_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.json)
     set(QML_TYPES_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.qmltypes)
     set(QML_TYPE_REGISTRATION_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${target}-qmltypes-registration.cpp)
@@ -153,7 +113,7 @@ function(reflex_qt_add_qml_module target)
     #
     # MOC objects
     #
-    reflex_qt_moc(${target} OBJECTS ${ARGS_OBJECTS} GADGETS ${ARGS_GADGETS} TYPE_IMPLEMENTATIONS_OUTPUT_VAR TYPE_IMPLEMENTATIONS)
+    reflex_qt_moc(${target})
 
     #
     # JSON export
@@ -202,11 +162,12 @@ function(reflex_qt_add_qml_module target)
         list(APPEND EXTRA_ARGS DEPENDENCIES ${ARGS_DEPENDENCIES})
     endif()
 
+    # Forward all unparsed args to qt_add_qml_module
+    list(APPEND EXTRA_ARGS ${ARGS_UNPARSED_ARGUMENTS})
+
     qt_add_qml_module(${target}
         URI ${ARGS_URI}
         VERSION ${ARGS_VERSION}
-        QML_FILES ${ARGS_QML_FILES}
-        RESOURCE_PREFIX ${ARGS_RESOURCE_PREFIX}
         OUTPUT_DIRECTORY ${ARGS_OUTPUT_DIRECTORY}
 
         # Use our generated types
@@ -220,22 +181,7 @@ endfunction()
 
 
 function(reflex_qt_add_dump target)
-    set(options)
-    set(singleValueArgs
-    )
-    set(multiValueArgs
-        OBJECTS
-        GADGETS
-    )
-    cmake_parse_arguments(ARGS "${options}" "${singleValueArgs}" "${multiValueArgs}" ${ARGN})
-
     _get_includes(${target} headers include_dirs INCLUDES)
-
-    list(JOIN ARGS_OBJECTS ", ^^" OBJECTS)
-    set(OBJECTS "^^${OBJECTS}")
-
-    list(JOIN ARGS_GADGETS ", ^^" GADGETS)
-    set(GADGETS "^^${GADGETS}")
 
     #
     # DUMP objects

@@ -21,13 +21,16 @@ add_executable(reflex-qt-qobject
 
   test_object.hpp
 )
-reflex_qt_moc(reflex-qt-qobject OBJECTS test_object)
+reflex_qt_moc(reflex-qt-qobject)
+reflex_qt_add_dump(reflex-qt-qobject)
+
 target_link_libraries(reflex-qt-qobject PRIVATE reflex-qt-test-reference-objects)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Test)
 add_executable(reflex-qt-widgets test-widgets.cpp SimpleWidget.hpp)
 target_link_libraries(reflex-qt-widgets PRIVATE Qt6::Widgets Qt6::Test)
-reflex_qt_moc(reflex-qt-widgets OBJECTS SimpleWidget)
+reflex_qt_moc(reflex-qt-widgets)
+
 add_test(NAME reflex-qt-widgets COMMAND reflex-qt-widgets)
 
 add_subdirectory(qml)

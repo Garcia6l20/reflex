@@ -1,6 +1,7 @@
 #pragma once
 
 #include <reflex/meta.hpp>
+#include <reflex/constant.hpp>
 
 #include <QObject>
 #include <QtCore/qmetatype.h>
@@ -152,14 +153,6 @@ template <size_t N> struct string_storage_wrapper
     data[N] = '\0'; // FIXME why is it necessary ??
   }
 };
-
-#ifdef __REFLEX_QT_ENABLE_TYPE_REGISTRY
-struct objects_scope
-{
-};
-using object_reg = meta::registry<objects_scope>;
-#endif
-
 } // namespace detail
 
 struct classinfo

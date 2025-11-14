@@ -1,17 +1,14 @@
+#define __REFLEX_QT_ENABLE_TYPE_REGISTRY  true
+
 #include <reflex/qt/dump.hpp>
 
-// #define __REFLEX_QT_ENABLE_TYPE_REGISTRY  true
 @INCLUDES@
 
 using namespace reflex;
 
 int main() {
-  template for (constexpr auto t : std::array{@OBJECTS@})
-  {
-    using Type = [:t:];
-    qt::dump<Type>();
-  }
-  template for (constexpr auto t : std::array{@GADGETS@})
+  static constexpr auto registered = std::define_static_array(qt::detail::object_reg::all());
+  template for(constexpr auto t : registered)
   {
     using Type = [:t:];
     qt::dump<Type>();

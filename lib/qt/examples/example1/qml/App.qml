@@ -16,12 +16,19 @@ ApplicationWindow {
 
     Example {
         id: example
+        running: running.checked
     }
 
     ColumnLayout {
         anchors.centerIn: parent
         spacing: 8
 
+        Button {
+            id: running
+            text: checked ? "Pause" : "Run"
+            checkable: true
+            checked: true
+        }
         Label {
             text: example.clockText
             font.pixelSize: 24
@@ -29,7 +36,7 @@ ApplicationWindow {
         }
         Button {
             text: "Trigger Sig1"
-            onClicked: example.intSig(55)
+            onClicked: example.intSig(55, 55)
         }
         SpinBox {
             from: 0
@@ -72,8 +79,8 @@ ApplicationWindow {
 
     Connections {
         target: example
-        function onIntSig(value) {
-            console.debug("sig1 value: ", value);
+        function onIntSig(value1, value2) {
+            console.debug("sig1: ", value1, value2);
         }
     }
 }
