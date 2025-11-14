@@ -11,8 +11,9 @@ struct                                                                          
     [[= qt::classinfo{"UncreatableReason", "A message may only be emitted by Example objects"}]] //
     Message : qt::gadget<Message>
 {
-  [[= prop<"rwn">]] QString subject;
-  [[= prop<"rwn">]] QString body;
+  [[= prop{}]] // "rwn" (read-write-notify) is the default
+      QString          subject;
+  [[= prop{}]] QString body;
 };
 
 class                                          //
@@ -29,7 +30,7 @@ public:
   }
   virtual ~Example() = default;
 
-  [[= prop<"rwn">]] QString clockText = "00:00:00";
+  [[= prop{}]] QString clockText = "00:00:00";
 
   signal<int, defaulted<int>> intSig{this, 42};
   signal<Message>             send{this};

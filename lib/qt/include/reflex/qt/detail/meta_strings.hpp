@@ -445,10 +445,9 @@ template <typename Tag, typename Super> struct meta_strings
         using T                  = [:prop_type:];
         using DataT              = QtMocHelpers::PropertyData<T>;
 
-        constexpr auto spec_annotation = annotations_of(p)[0];
-        using SpecT                    = [:type_of(spec_annotation):];
-        uint flags                     = QMC::DefaultPropertyFlags;
-        if constexpr(SpecT::writable)
+        constexpr auto a     = constant_of(annotations_of(p)[0]);
+        uint           flags = QMC::DefaultPropertyFlags;
+        if constexpr([:a:].writable())
         {
           flags |= QMC::Writable;
         }

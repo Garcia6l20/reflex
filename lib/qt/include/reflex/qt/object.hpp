@@ -50,10 +50,11 @@ public:
   static constexpr detail::invocable   invocable;
   static constexpr detail::timer_event timer_event;
 
-  template <constant_string... spec> static constexpr detail::property<spec...> prop;
-  template <meta::info of> static constexpr detail::listener_of<of>             listener_of;
-  template <meta::info of> static constexpr detail::getter_of<of>               getter_of;
-  template <meta::info of> static constexpr detail::setter_of<of>               setter_of;
+  using prop = detail::property;
+
+  template <meta::info of> static constexpr detail::listener_of<of> listener_of;
+  template <meta::info of> static constexpr detail::getter_of<of>   getter_of;
+  template <meta::info of> static constexpr detail::setter_of<of>   setter_of;
 
 private:
   template <typename Tag>

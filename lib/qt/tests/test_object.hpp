@@ -51,14 +51,14 @@ struct test_object : qt::object<test_object>
   }
 
 private:
-  [[= prop<"rwn">]] int intProp = 42;
+  [[= prop{"rwn"}]] int intProp = 42;
 
   [[= listener_of<^^intProp>]] void intPropListener()
   {
     std::println("test_object: intProp is now {}", intProp);
   }
 
-  [[= prop<"rwn">]] double      power = 42;
+  [[= prop{"rwn"}]] double      power = 42;
   [[= setter_of<^^power>]] void setPower(double dB)
   {
     power = std::pow(10.0, dB / 10.0);

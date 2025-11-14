@@ -106,16 +106,24 @@ struct invocable
 {
 };
 
-template <constant_string... spec> struct property
+struct property
 {
-  static constexpr auto _specs      = std::tuple{spec...};
-  static constexpr auto _read_pos   = std::get<0>(_specs).get().find('r');
-  static constexpr auto _write_pos  = std::get<0>(_specs).get().find('w');
-  static constexpr auto _notify_pos = std::get<0>(_specs).get().find('n');
+  constant_string specs = "rwn";
 
-  static constexpr auto readable = _read_pos != std::string_view::npos;
-  static constexpr auto writable = _write_pos != std::string_view::npos;
-  static constexpr auto notify   = _notify_pos != std::string_view::npos;
+  constexpr bool readable() const noexcept
+  {
+    return specs.get().find('r') != std::string_view::npos;
+  }
+
+  constexpr bool writable() const noexcept
+  {
+    return specs.get().find('w') != std::string_view::npos;
+  }
+
+  constexpr bool notify() const noexcept
+  {
+    return specs.get().find('n') != std::string_view::npos;
+  }
 };
 
 template <meta::info of> struct listener_of
@@ -154,7 +162,8 @@ using object_reg = meta::registry<objects_scope>;
 
 } // namespace detail
 
-struct classinfo {
+struct classinfo
+{
   constant_string key;
   constant_string value;
 };

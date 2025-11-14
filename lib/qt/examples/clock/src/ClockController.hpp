@@ -17,7 +17,7 @@ public:
   }
   virtual ~ClockController() = default;
 
-  [[= prop<"rwn">]] QString clockText = "00:00:00";
+  [[= prop{"rwn"}]] QString clockText = "00:00:00";
 
 protected:
   [[= timer_event]] void updateClock()

@@ -19,7 +19,7 @@ public:
   }
 
 private:
-  [[= prop<"rwn">]] int ivalue = 42;
+  [[= prop{"rwn"}]] int ivalue = 42;
 };
 
 class GetSetPropertyController : public qt::object<GetSetPropertyController>
@@ -28,7 +28,7 @@ public:
   using qt::object<GetSetPropertyController>::object;
 
 private:
-  [[= prop<"rwn">]] int          ivalue = 42;
+  [[= prop{"rwn"}]] int          ivalue = 42;
   [[= setter_of<^^ivalue>]] void set(int value)
   {
     ivalue = value * 2;
@@ -81,10 +81,10 @@ public:
 private:
   bool value_ = false;
 
-  [[= prop<"rwn">]] int slt1Value1 = -1;
-  [[= prop<"rwn">]] int slt1Value2 = -1;
-  [[= prop<"rwn">]] int slt2Value1 = -1;
-  [[= prop<"rwn">]] int slt2Value2 = -1;
+  [[= prop{"rwn"}]] int slt1Value1 = -1;
+  [[= prop{"rwn"}]] int slt1Value2 = -1;
+  [[= prop{"rwn"}]] int slt2Value1 = -1;
+  [[= prop{"rwn"}]] int slt2Value2 = -1;
 };
 
 class Setup : public qt::object<Setup>
