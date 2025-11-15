@@ -6,14 +6,13 @@
 
 using namespace reflex;
 
-int main() {
+extern "C" int __wrap_main() {
   static constexpr auto types = std::define_static_array(qt::detail::object_reg::all());
   [&]<size_t... I>(std::index_sequence<I...>)
   {
     qt::moc::export_json<typename[:types[I]:]...>("@ARGS_OUTPUT_DIRECTORY@",
                                                   "@ARGS_URI@");
   }(std::make_index_sequence<types.size()>());
-
   return 0;
 }
 

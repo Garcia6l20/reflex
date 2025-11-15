@@ -28,55 +28,133 @@ function(_get_includes target headers_var include_dirs_var includes_var)
 
 endfunction()
 
+function(_bind_target src dst)
+    get_target_property(src_type ${src} TYPE)
+
+    if (${src_type} STREQUAL EXECUTABLE)
+        target_link_libraries(${src} INTERFACE)
+        target_link_libraries(${dst}
+            PUBLIC
+                $<LIST:FILTER,
+                    $<TARGET_PROPERTY:${src},INTERFACE_LINK_LIBRARIES>
+                    ,EXCLUDE,${dst}>
+        )
+
+        target_include_directories(${dst}
+            PUBLIC $<TARGET_PROPERTY:${src},INTERFACE_INCLUDE_DIRECTORIES>
+        )
+
+        target_compile_definitions(${dst}
+            PUBLIC $<TARGET_PROPERTY:${src},INTERFACE_COMPILE_DEFINITIONS>
+        )
+
+        target_compile_features(${dst}
+            PUBLIC $<TARGET_PROPERTY:${src},INTERFACE_COMPILE_FEATURES>
+        )
+
+        target_compile_options(${dst}
+            PUBLIC $<TARGET_PROPERTY:${src},INTERFACE_COMPILE_OPTIONS>
+        )
+    else()
+        target_link_libraries(${dst}
+            PUBLIC
+                $<LIST:FILTER,
+                    $<TARGET_PROPERTY:${src},LINK_ONLY>
+                    ,EXCLUDE,${dst}>
+            # PUBLIC
+            #     $<LIST:FILTER,
+            #         $<TARGET_PROPERTY:${src},INTERFACE_LINK_LIBRARIES>
+            #         ,EXCLUDE,${dst}>
+        )
+
+        target_include_directories(${dst}
+            PUBLIC $<TARGET_PROPERTY:${src},INTERFACE_INCLUDE_DIRECTORIES>
+        )
+
+        target_compile_definitions(${dst}
+            PUBLIC $<TARGET_PROPERTY:${src},INTERFACE_COMPILE_DEFINITIONS>
+        )
+
+        target_compile_features(${dst}
+            PUBLIC $<TARGET_PROPERTY:${src},INTERFACE_COMPILE_FEATURES>
+        )
+
+        target_compile_options(${dst}
+            PUBLIC $<TARGET_PROPERTY:${src},INTERFACE_COMPILE_OPTIONS>
+        )
+    endif()
+endfunction()
+
+function(_ensure_objects_target)
+    if (NOT TARGET ${target}-objects)
+        message(FATAL_ERROR "Objects target not found, you must use reflex_qt_add_executable/reflex_qt_add_library")
+    endif()
+endfunction()
+
 
 function(reflex_qt_moc target)
-    _get_includes(${target} headers include_dirs INCLUDES)
+    if(TARGET ${target}-moc)
+        return()
+    endif()
 
-    #
-    # MOC objects
-    #
+    _ensure_objects_target()
 
+    _get_includes(${target}-objects headers include_dirs INCLUDES)
     set(MOC_OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/${target}-qt-moc.cpp)
-
     configure_file(${REFLEX_MOC_CPP_TEMPLATE} ${MOC_OUTPUT_FILE} @ONLY)
-
-    add_library(${target}-moc OBJECT ${MOC_OUTPUT_FILE})
-
-    target_link_libraries(${target}-moc PRIVATE reflex.qt.moc)
-    target_include_directories(${target}-moc PRIVATE ${include_dirs})
-
-    get_target_property(target_include_dirs ${target} INCLUDE_DIRECTORIES)
-    if(target_include_dirs)
-        target_include_directories(${target}-moc PRIVATE ${target_include_dirs})
-    endif()
-
-    get_target_property(target_link_libs ${target} LINK_LIBRARIES)
-    if(target_link_libs)
-        target_link_libraries(${target}-moc PRIVATE ${target_link_libs})
-    endif()
-
-    get_target_property(target_compile_defs ${target} COMPILE_DEFINITIONS)
-    if(target_compile_defs)
-        target_compile_definitions(${target}-moc PRIVATE ${target_compile_defs})
-    endif()
-
-    # # FIXME is there another way to get rid of this warning ???
-    # target_compile_options(${target}-moc PUBLIC -Wno-undefined-var-template)
-
-    #
-    # Patch target
-    #
-
-    target_link_libraries(${target} PUBLIC ${target}-moc)
-    target_include_directories(${target} PRIVATE ${include_dirs})
-
-    if(ARGS_TYPE_IMPLEMENTATIONS_OUTPUT_VAR)
-        set(${ARGS_TYPE_IMPLEMENTATIONS_OUTPUT_VAR} ${TYPE_IMPLEMENTATIONS} PARENT_SCOPE)
-    endif()
+    target_sources(${target}-objects PUBLIC ${MOC_OUTPUT_FILE})
+    target_include_directories(${target}-objects PUBLIC ${include_dirs})
+    add_library(${target}-moc ALIAS ${target}-objects)
 
 endfunction()
 
+
+function(reflex_qt_add_executable target)
+    add_library(${target}-objects OBJECT ${ARGN})
+    target_link_libraries(${target}-objects PRIVATE reflex.qt)
+
+    reflex_qt_moc(${target})
+
+    file(TOUCH ${CMAKE_CURRENT_BINARY_DIR}/${target}-dummy.cpp)
+    add_executable(${target} ${CMAKE_CURRENT_BINARY_DIR}/${target}-dummy.cpp)
+    target_link_libraries(${target} INTERFACE)
+    target_link_libraries(${target} PRIVATE ${target}-objects reflex.qt)
+    _bind_target(${target} ${target}-objects)
+
+endfunction()
+
+function(reflex_qt_add_library target)
+
+    set(ARGS "${ARGN}")
+    list(GET ARGS 0 lib_type)
+    set(valid_lib_types STATIC SHARED)
+    set(invalid_lib_types MODULE OBJECT INTERFACE)
+    if (lib_type IN_LIST valid_lib_types)
+        # OK
+        list(REMOVE_AT ARGS 0)
+    elseif(lib_type IN_LIST invalid_lib_types)
+        message(FATAL_ERROR "Unsupported library type: ${lib_type}")
+    else()
+        # assume not a lib type
+        set(lib_type)
+    endif()
+
+    add_library(${target}-objects OBJECT ${ARGS})
+    target_link_libraries(${target}-objects PRIVATE reflex.qt)
+
+    reflex_qt_moc(${target})
+
+    add_library(${target} ${lib_type})
+    target_link_libraries(${target} INTERFACE)
+    target_link_libraries(${target} PRIVATE ${target}-objects reflex.qt)
+    _bind_target(${target} ${target}-objects)
+
+endfunction()
+
+
 function(reflex_qt_add_qml_module target)
+
+    _ensure_objects_target(${target})
 
     set(options)
     set(singleValueArgs
@@ -102,7 +180,7 @@ function(reflex_qt_add_qml_module target)
     list(GET VERSION_LIST 0 MAJOR_VERSION)
     list(GET VERSION_LIST 1 MINOR_VERSION)
 
-    _get_includes(${target} headers include_dirs INCLUDES)
+    _get_includes(${target}-objects headers include_dirs INCLUDES)
 
     set(JSON_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.json)
     set(QML_TYPES_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.qmltypes)
@@ -124,7 +202,9 @@ function(reflex_qt_add_qml_module target)
 
     add_executable(${target}-export-json ${EXPORT_JSON_OUTPUT_FILE})
     target_link_libraries(${target}-export-json PRIVATE reflex.qt.moc ${target}-moc)
+    _bind_target(${target} ${target}-export-json)
     target_include_directories(${target}-export-json PRIVATE ${include_dirs})
+    target_link_options(${target}-export-json PRIVATE -Wl,--wrap=main)
 
     add_custom_command(OUTPUT ${JSON_OUTPUT_FILE}
         COMMAND ${target}-export-json
@@ -181,7 +261,10 @@ endfunction()
 
 
 function(reflex_qt_add_dump target)
-    _get_includes(${target} headers include_dirs INCLUDES)
+
+    _ensure_objects_target(${target})
+
+    _get_includes(${target}-objects headers include_dirs INCLUDES)
 
     #
     # DUMP objects
@@ -192,8 +275,8 @@ function(reflex_qt_add_dump target)
     configure_file(${REFLEX_DUMP_CPP_TEMPLATE} ${DUMP_OUTPUT_FILE} @ONLY)
 
     add_executable(${target}-dump ${DUMP_OUTPUT_FILE})
+    target_link_options(${target}-dump PRIVATE -Wl,--wrap=main)
     target_link_libraries(${target}-dump PRIVATE reflex.qt ${target}-moc)
-    target_include_directories(${target}-dump PRIVATE ${include_dirs})
 
 endfunction()
 

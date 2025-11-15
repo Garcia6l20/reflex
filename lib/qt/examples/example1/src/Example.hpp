@@ -30,18 +30,18 @@ public:
 
   [[= prop{}]] QString              clockText = "00:00:00";
   [[= prop{}]] bool                 running   = false;
-  [[= listener_of<^^running>]] void runningChanged()
-  {
-    if(running)
-    {
-      updateClock(); // update now
-      startTimer<^^updateClock>(1000);
-    }
-    else
-    {
-      killTimer<^^updateClock>();
-    }
-  }
+  [[= listener_of<^^running>]] void runningChanged();
+  // {
+  //   if(running)
+  //   {
+  //     updateClock(); // update now
+  //     startTimer<^^updateClock>(1000);
+  //   }
+  //   else
+  //   {
+  //     killTimer<^^updateClock>();
+  //   }
+  // }
 
   signal<int, defaulted<int>> intSig{this, /* here is the defaulted value */ 42};
   signal<Message>             send{this};

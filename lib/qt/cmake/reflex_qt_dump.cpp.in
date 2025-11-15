@@ -6,7 +6,7 @@
 
 using namespace reflex;
 
-int main() {
+extern "C" int __wrap_main() {
   static constexpr auto registered = std::define_static_array(qt::detail::object_reg::all());
   template for(constexpr auto t : registered)
   {

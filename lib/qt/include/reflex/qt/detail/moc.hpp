@@ -23,16 +23,16 @@ struct named_value
 };
 struct property_meta
 {
-  bool        constant;
-  bool        designable;
-  bool        final;
-  int         index;
-  std::string name;
-  bool        required;
-  bool        scriptable;
-  bool        stored;
-  std::string type;
-  bool        user;
+  bool                       constant;
+  bool                       designable;
+  bool                       final;
+  int                        index;
+  std::string                name;
+  bool                       required;
+  bool                       scriptable;
+  bool                       stored;
+  std::string                type;
+  bool                       user;
   std::optional<std::string> read;
   std::optional<std::string> write;
   std::optional<std::string> notify;
@@ -81,7 +81,7 @@ std::string dump(std::vector<filemeta_data> const&);
 
 template <typename... Types> void export_json(fs::path const& output, std::string_view moduleName)
 {
-  if(fs::exists(output))
+  if(not fs::exists(output))
   {
     fs::create_directory(output);
   }

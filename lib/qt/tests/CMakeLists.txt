@@ -16,20 +16,17 @@ add_library(reflex-qt-test-reference-objects
 )
 set(CMAKE_AUTOMOC OFF)
 
-add_executable(reflex-qt-qobject
+reflex_qt_add_executable(reflex-qt-qobject
   test-qobject.cpp
-
   test_object.hpp
 )
-reflex_qt_moc(reflex-qt-qobject)
 reflex_qt_add_dump(reflex-qt-qobject)
 
-target_link_libraries(reflex-qt-qobject PRIVATE reflex-qt-test-reference-objects)
+target_link_libraries(reflex-qt-qobject PUBLIC reflex-qt-test-reference-objects)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Test)
-add_executable(reflex-qt-widgets test-widgets.cpp SimpleWidget.hpp)
-target_link_libraries(reflex-qt-widgets PRIVATE Qt6::Widgets Qt6::Test)
-reflex_qt_moc(reflex-qt-widgets)
+reflex_qt_add_executable(reflex-qt-widgets test-widgets.cpp SimpleWidget.hpp)
+target_link_libraries(reflex-qt-widgets PUBLIC Qt6::Widgets Qt6::Test)
 
 add_test(NAME reflex-qt-widgets COMMAND reflex-qt-widgets)
 

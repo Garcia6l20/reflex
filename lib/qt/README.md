@@ -92,16 +92,18 @@ class obj : qt::object<obj> {
   - ✔️ Works with QML Language Server
 
 ```cmake
-add_executable(reflex-qt-example1
+# 1. include ReflexQt module
+include(ReflexQt)
+
+reflex_qt_add_executable(reflex-qt-example1
   src/main.cpp
 
-  # 1. add headers to your target
+  # 2. add headers to your target
   src/Example.hpp
 )
-target_link_libraries(reflex-qt-example1 PRIVATE reflex.qt Qt6::Gui Qt6::Qml)
-
-# 2. include ReflexQt module
-include(ReflexQt)
+target_link_libraries(reflex-qt-example1
+  PUBLIC # for now linked libraries must be public
+    Qt6::Gui Qt6::Qml)
 
 # 3. create your module
 reflex_qt_add_qml_module(reflex-qt-example1
@@ -115,8 +117,8 @@ reflex_qt_add_qml_module(reflex-qt-example1
 
 
 - ✔️ Custom types: regular Qt custom type registration.
+- ✔️ Gadgets: using `struct MyGadget : qt::gadget<MyGadget> {...}` (see [Example.hpp](examples/example1/src/Example.hpp?plain=11)).
 - ❌ Enums: not handled yet.
-- ❌ Gadgets: not handled yet.
 
 - ❓ Missing something ???
 

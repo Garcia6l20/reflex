@@ -13,13 +13,14 @@ qt_policy(SET QTP0004 NEW) # Extra directories with QML files in a QML module ne
 set(CMAKE_AUTOMOC OFF) # turn auto-moc off
 set(CMAKE_AUTORCC ON)
 
-add_executable(reflex-qclock
+include(ReflexQt)
+
+reflex_qt_add_executable(reflex-qclock
   src/main.cpp
   src/ClockController.hpp
 )
-target_link_libraries(reflex-qclock PRIVATE reflex.qt Qt6::Gui Qt6::Qml)
+target_link_libraries(reflex-qclock PUBLIC reflex.qt Qt6::Gui Qt6::Qml)
 
-include(ReflexQt)
 reflex_qt_add_qml_module(reflex-qclock
   URI Clock
   VERSION 1.0
