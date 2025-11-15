@@ -10,6 +10,22 @@ template <typename T> QMetaObject metaObjectOf()
   static auto mo = detail::gadget_impl<T>::metaObject();
   return mo;
 }
+
+template <class T> struct force_qt_meta_instantiations
+{
+  static int   qt_metacall_dispatch(T* o, QMetaObject::Call, int id, void** args);
+  static void* qt_metacast_dispatch(T* o, const char* s);
+};
+
+template <class T> int force_qt_meta_instantiations<T>::qt_metacall_dispatch(T* o, QMetaObject::Call c, int id, void** args)
+{
+  return o->T::qt_metacall(c, id, args);
+}
+
+template <class T> void* force_qt_meta_instantiations<T>::qt_metacast_dispatch(T* o, const char* s)
+{
+  return o->T::qt_metacast(s);
+}
 } // namespace reflex::qt::detail
 
 @INCLUDES@
@@ -21,6 +37,12 @@ static const bool ensure_instantiated = [] {
   template for(constexpr auto t : std::define_static_array(qt::detail::object_reg::all()))
   {
     using T = [:t:];
+    if constexpr(qt::detail::gadget_impl<T>::is_object)
+    {
+      // I have to force explcit template instanciations
+      (void)&qt::detail::force_qt_meta_instantiations<T>::qt_metacall_dispatch;
+      (void)&qt::detail::force_qt_meta_instantiations<T>::qt_metacast_dispatch;
+    }
     if (!qt::detail::metaObjectOf<T>().metaType().isValid()) {
       ok = false;
     }

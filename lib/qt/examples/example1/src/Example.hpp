@@ -22,44 +22,20 @@ class                                          //
     Example : public qt::object<Example>
 {
 public:
-  Example(QObject* parent = nullptr) : qt::object<Example>{parent}
-  {
-    qt::dump<Message>();
-  }
+  Example(QObject* parent = nullptr);
   virtual ~Example() = default;
 
   [[= prop{}]] QString              clockText = "00:00:00";
   [[= prop{}]] bool                 running   = false;
   [[= listener_of<^^running>]] void runningChanged();
-  // {
-  //   if(running)
-  //   {
-  //     updateClock(); // update now
-  //     startTimer<^^updateClock>(1000);
-  //   }
-  //   else
-  //   {
-  //     killTimer<^^updateClock>();
-  //   }
-  // }
 
   signal<int, defaulted<int>> intSig{this, /* here is the defaulted value */ 42};
   signal<Message>             send{this};
 
-  [[= slot]] void slot1(int value)
-  {
-    intSig(value);
-  }
+  [[= slot]] void slot1(int value);
 
-  [[= invocable]] bool sayTheTruth(bool lie = false)
-  {
-    send(Message{.subject = "Example", .body = QString("I'm%1lying !").arg(lie ? " " : " not ")});
-    return lie;
-  }
+  [[= invocable]] bool sayTheTruth(bool lie = false);
 
 protected:
-  [[= timer_event]] void updateClock()
-  {
-    setProperty<^^clockText>(QString::fromStdString(std::format("{:%X}", std::chrono::system_clock::now())));
-  }
+  [[= timer_event]] void updateClock();
 };
