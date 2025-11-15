@@ -8,6 +8,7 @@
 #include <reflex/qt/detail/annotations.hpp>
 #include <reflex/qt/detail/meta_strings.hpp>
 #include <reflex/qt/detail/metatype.hpp>
+#include <reflex/qt/gadget.hpp>
 
 #include <QObject>
 #include <QTimerEvent>
@@ -16,8 +17,6 @@
 #include <QtCore/qxptype_traits.h>
 
 #include <any>
-#include <bit>
-#include <memory>
 #include <print>
 
 namespace reflex::qt

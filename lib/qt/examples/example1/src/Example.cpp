@@ -1,5 +1,8 @@
 #include <Example.hpp>
 
+namespace reflex
+{
+
 Example::Example(QObject* parent) : qt::object<Example>{parent}
 {
   qt::dump<Message>();
@@ -33,3 +36,5 @@ void Example::updateClock()
 {
   setProperty<^^clockText>(QString::fromStdString(std::format("{:%X}", std::chrono::system_clock::now())));
 }
+
+} // namespace reflex

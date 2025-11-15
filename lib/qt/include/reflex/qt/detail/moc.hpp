@@ -1,13 +1,14 @@
 #pragma once
 
+#include <reflex/qt/object.hpp>
 #include <reflex/qt/dump.hpp>
 #include <reflex/qt/format.hpp>
 
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <ranges>
 #include <iostream>
-#include <print>
 
 #undef signals
 #undef slots

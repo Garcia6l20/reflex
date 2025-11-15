@@ -3,7 +3,8 @@
 #include <reflex/qt.hpp>
 #include <reflex/qt/dump.hpp>
 
-using namespace reflex;
+namespace reflex
+{
 
 struct                                                                                           //
     [[= qt::classinfo{"QML.Element", "message"}]]                                                //
@@ -39,3 +40,5 @@ public:
 protected:
   [[= timer_event]] void updateClock();
 };
+
+} // namespace reflex

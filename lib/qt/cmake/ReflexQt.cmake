@@ -1,4 +1,5 @@
 set(REFLEX_EXPORT_JSON_CPP_TEMPLATE ${CMAKE_CURRENT_LIST_DIR}/reflex_qt_export_json.cpp.in)
+set(REFLEX_QMLTYPES_REGISTRATION_CPP_TEMPLATE ${CMAKE_CURRENT_LIST_DIR}/reflex_qt_qmltypes_registration.cpp.in)
 set(REFLEX_MOC_CPP_TEMPLATE ${CMAKE_CURRENT_LIST_DIR}/reflex_qt_moc.cpp.in)
 set(REFLEX_DUMP_CPP_TEMPLATE ${CMAKE_CURRENT_LIST_DIR}/reflex_qt_dump.cpp.in)
 
@@ -21,6 +22,7 @@ function(_get_includes target headers_var include_dirs_var includes_var)
     endforeach()
 
     list(REMOVE_DUPLICATES include_dirs)
+    list(JOIN includes "\n" includes)
 
     set(${headers_var} ${headers} PARENT_SCOPE)
     set(${include_dirs_var} ${include_dirs} PARENT_SCOPE)
@@ -126,17 +128,19 @@ endfunction()
 function(reflex_qt_add_library target)
 
     set(ARGS "${ARGN}")
-    list(GET ARGS 0 lib_type)
-    set(valid_lib_types STATIC SHARED)
-    set(invalid_lib_types MODULE OBJECT INTERFACE)
-    if (lib_type IN_LIST valid_lib_types)
-        # OK
-        list(REMOVE_AT ARGS 0)
-    elseif(lib_type IN_LIST invalid_lib_types)
-        message(FATAL_ERROR "Unsupported library type: ${lib_type}")
-    else()
-        # assume not a lib type
-        set(lib_type)
+    if (ARGS)
+        list(GET ARGS 0 lib_type)
+        set(valid_lib_types STATIC SHARED)
+        set(invalid_lib_types MODULE OBJECT INTERFACE)
+        if (lib_type IN_LIST valid_lib_types)
+            # OK
+            list(REMOVE_AT ARGS 0)
+        elseif(lib_type IN_LIST invalid_lib_types)
+            message(FATAL_ERROR "Unsupported library type: ${lib_type}")
+        else()
+            # assume not a lib type
+            set(lib_type)
+        endif()
     endif()
 
     add_library(${target}-objects OBJECT ${ARGS})
@@ -184,7 +188,7 @@ function(reflex_qt_add_qml_module target)
 
     set(JSON_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.json)
     set(QML_TYPES_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.qmltypes)
-    set(QML_TYPE_REGISTRATION_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${target}-qmltypes-registration.cpp)
+    set(QML_TYPE_REGISTRATION_OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/${target}-qmltypes-registration.cpp)
 
     message(STATUS "Reflex MOC ${target} header files: ${headers}")
 
@@ -200,6 +204,10 @@ function(reflex_qt_add_qml_module target)
     set(EXPORT_JSON_OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/${target}-qt-export-json.cpp)
     configure_file(${REFLEX_EXPORT_JSON_CPP_TEMPLATE} ${EXPORT_JSON_OUTPUT_FILE} @ONLY)
 
+    set(MODULE_NAME ${ARGS_URI})
+    string(REPLACE "." "_" MODULE_FN_NAME "${MODULE_NAME}")
+    configure_file(${REFLEX_QMLTYPES_REGISTRATION_CPP_TEMPLATE} ${QML_TYPE_REGISTRATION_OUTPUT_FILE} @ONLY)
+
     add_executable(${target}-export-json ${EXPORT_JSON_OUTPUT_FILE})
     target_link_libraries(${target}-export-json PRIVATE reflex.qt.moc ${target}-moc)
     _bind_target(${target} ${target}-export-json)
@@ -213,12 +221,13 @@ function(reflex_qt_add_qml_module target)
     )
 
     add_custom_command(OUTPUT ${QML_TYPE_REGISTRATION_OUTPUT_FILE}
-        COMMAND /usr/lib/qt6/qmltyperegistrar ${JSON_OUTPUT_FILE}
+        COMMAND Qt6::qmltyperegistrar ${JSON_OUTPUT_FILE}
         --import-name ${ARGS_URI}
         --generate-qmltypes ${QML_TYPES_OUTPUT_FILE}
         --major-version ${MAJOR_VERSION}
         --minor-version ${MINOR_VERSION}
-        -o ${QML_TYPE_REGISTRATION_OUTPUT_FILE}
+        # -o ${QML_TYPE_REGISTRATION_OUTPUT_FILE}
+        -o /dev/null
         DEPENDS ${JSON_OUTPUT_FILE}
         COMMENT "Generating ${target} qml registration..."
     )
