@@ -6,11 +6,14 @@
 
 using namespace reflex;
 
-extern "C" int __wrap_main() {
+extern "C" int __wrap_main(int argc, char **argv) {
+  if (argc < 2) {
+    qFatal() << "missing json output file path";
+  }
   static constexpr auto types = std::define_static_array(qt::detail::object_reg::all());
   [&]<size_t... I>(std::index_sequence<I...>)
   {
-    qt::moc::export_json<typename[:types[I]:]...>("@ARGS_OUTPUT_DIRECTORY@",
+    qt::moc::export_json<typename[:types[I]:]...>(argv[1],
                                                   "@ARGS_URI@");
   }(std::make_index_sequence<types.size()>());
   return 0;

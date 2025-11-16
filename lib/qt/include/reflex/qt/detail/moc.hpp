@@ -91,13 +91,7 @@ std::string dump(std::vector<filemeta_data> const&);
 
 template <typename... Types> void export_json(fs::path const& output, std::string_view moduleName)
 {
-  if(not fs::exists(output))
-  {
-    fs::create_directory(output);
-  }
-
-  std::string   filename = std::format("{}/{}.json", output.c_str(), moduleName);
-  std::ofstream stream(filename);
+  std::ofstream stream(output.c_str());
 
   std::map<std::string, filemeta_data> metadata;
 
@@ -113,7 +107,7 @@ template <typename... Types> void export_json(fs::path const& output, std::strin
 
     class_meta infos;
     infos.className          = metaObject->className();
-    infos.qualifiedClassName = metaObject->className(); // TODO resolve qualified name
+    infos.qualifiedClassName = meta::qualified_display_string_of(type);
     infos.lineNumber         = loc.line();
     if(is_object)
     {

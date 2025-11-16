@@ -164,6 +164,7 @@ function(reflex_qt_add_qml_module target)
     set(singleValueArgs
         URI
         VERSION
+        OUTPUT_DIRECTORY
     )
     set(multiValueArgs)
     cmake_parse_arguments(ARGS "${options}" "${singleValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -186,8 +187,8 @@ function(reflex_qt_add_qml_module target)
 
     _get_includes(${target}-objects headers include_dirs INCLUDES)
 
-    set(JSON_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.json)
     set(QML_TYPES_OUTPUT_FILE ${ARGS_OUTPUT_DIRECTORY}/${ARGS_URI}.qmltypes)
+    set(JSON_OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/${ARGS_URI}.json)
     set(QML_TYPE_REGISTRATION_OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/${target}-qmltypes-registration.cpp)
 
     message(STATUS "Reflex MOC ${target} header files: ${headers}")
@@ -215,28 +216,32 @@ function(reflex_qt_add_qml_module target)
     target_link_options(${target}-export-json PRIVATE -Wl,--wrap=main)
 
     add_custom_command(OUTPUT ${JSON_OUTPUT_FILE}
-        COMMAND ${target}-export-json
+        COMMAND ${target}-export-json ${JSON_OUTPUT_FILE}
         DEPENDS ${target}-export-json
         COMMENT "Exporting ${target} json data..."
     )
 
-    add_custom_command(OUTPUT ${QML_TYPE_REGISTRATION_OUTPUT_FILE}
+    add_custom_command(
+        OUTPUT ${QML_TYPES_OUTPUT_FILE}
         COMMAND Qt6::qmltyperegistrar ${JSON_OUTPUT_FILE}
         --import-name ${ARGS_URI}
         --generate-qmltypes ${QML_TYPES_OUTPUT_FILE}
         --major-version ${MAJOR_VERSION}
         --minor-version ${MINOR_VERSION}
         # -o ${QML_TYPE_REGISTRATION_OUTPUT_FILE}
-        -o /dev/null
+        -o /dev/null # we use our reflection based registration
         DEPENDS ${JSON_OUTPUT_FILE}
-        COMMENT "Generating ${target} qml registration..."
+        COMMENT "Generating ${target} qml types (${QML_TYPES_OUTPUT_FILE})..."
     )
 
     #
     # Patch target
     #
 
-    target_sources(${target} PRIVATE ${QML_TYPE_REGISTRATION_OUTPUT_FILE})
+    target_sources(${target} PRIVATE
+        ${QML_TYPE_REGISTRATION_OUTPUT_FILE}
+        ${QML_TYPES_OUTPUT_FILE}
+    )
 
     #
     # Create QML module
