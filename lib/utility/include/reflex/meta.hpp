@@ -167,22 +167,23 @@ consteval bool is_subclass_of(info R, info C, access_context const& ctx = access
 
 consteval auto annotations_of_with(info R, info A)
 {
-  return annotations_of(R) | std::views::filter(
-                                 [A](auto R)
-                                 {
-                                   if(is_template(A))
-                                   {
-                                     return is_template_instance_of(type_of(R), A);
-                                   }
-                                   else if(is_type(A))
-                                   {
-                                     return type_of(R) == A;
-                                   }
-                                   else
-                                   {
-                                     return constant_of(R) == constant_of(A);
-                                   }
-                                 });
+  return annotations_of(R)
+       | std::views::filter(
+             [A](auto R)
+             {
+               if(is_template(A))
+               {
+                 return is_template_instance_of(type_of(R), A);
+               }
+               else if(is_type(A))
+               {
+                 return type_of(R) == A;
+               }
+               else
+               {
+                 return constant_of(R) == constant_of(A);
+               }
+             });
 }
 
 consteval bool has_annotation(info R, info A)
@@ -193,7 +194,7 @@ consteval bool has_annotation(info R, info A)
 consteval auto nonstatic_data_members_annotated_with(info R, info A, access_context ctx = access_context::current())
 {
   return nonstatic_data_members_of(R, ctx) //
-         | std::views::filter([A](auto member) { return has_annotation(member, A); });
+       | std::views::filter([A](auto member) { return has_annotation(member, A); });
 }
 
 consteval auto
@@ -212,18 +213,18 @@ consteval auto
 
 consteval auto member_functions_of(info R, access_context ctx = access_context::current())
 {
-  return members_of(R, ctx) | std::views::filter(
-                                  [](auto R)
-                                  {
-                                    return not is_constructor(R) and
-                                           ((is_user_declared(R) and is_function(R)) or is_function_template(R));
-                                  });
+  return members_of(R, ctx)
+       | std::views::filter(
+             [](auto R)
+             {
+               return not is_constructor(R) and ((is_user_declared(R) and is_function(R)) or is_function_template(R));
+             });
 }
 
 consteval auto member_functions_annotated_with(info R, info A, access_context ctx = access_context::current())
 {
   return member_functions_of(R, ctx) //
-         | std::views::filter([A](auto fn) { return has_annotation(fn, A); });
+       | std::views::filter([A](auto fn) { return has_annotation(fn, A); });
 }
 
 consteval auto first_member_function_annotated_with(info R, info A, access_context ctx = access_context::current())
@@ -268,9 +269,9 @@ consteval auto members_of_r(info I, access_context ctx) -> std::vector<info>
 
 consteval auto nonstatic_data_members_of_r(info I, access_context ctx) -> std::vector<info>
 {
-  return members_of_r(I, ctx)                                                       //
-         | std::views::filter([](info II) { return is_nonstatic_data_member(II); }) //
-         | std::ranges::to<std::vector<info>>();
+  return members_of_r(I, ctx)                                                     //
+       | std::views::filter([](info II) { return is_nonstatic_data_member(II); }) //
+       | std::ranges::to<std::vector<info>>();
 }
 
 namespace detail
@@ -320,15 +321,47 @@ consteval bool is_structural_type(meta::info R)
 {
   using std::ranges::all_of;
   const auto ctx = meta::access_context::unchecked();
-  return is_scalar_type(R) or is_lvalue_reference_type(R) or
-         is_class_type(R) and
-             all_of(bases_of(R, ctx), [](info o) { return is_public(o) and is_structural_type(type_of(o)); }) and
-             all_of(nonstatic_data_members_of(R, ctx),
-                    [](info o)
-                    {
-                      return is_public(o) and not is_mutable_member(o) and
-                             is_structural_type(remove_all_extents(type_of(o)));
-                    });
+  return is_scalar_type(R)
+      or is_lvalue_reference_type(R)
+      or is_class_type(R)
+     and all_of(bases_of(R, ctx), [](info o) { return is_public(o) and is_structural_type(type_of(o)); })
+     and all_of(nonstatic_data_members_of(R, ctx),
+                [](info o)
+                {
+                  return is_public(o)
+                     and not is_mutable_member(o)
+                     and is_structural_type(remove_all_extents(type_of(o)));
+                });
+}
+
+template <typename E>
+  requires std::is_enum_v<E>
+constexpr std::string enum_to_string(E value)
+{
+  std::string result = "<unnamed>";
+  template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
+  {
+    if(value == [:e:])
+    {
+      result = std::string(identifier_of(e));
+    }
+  }
+  return result;
+}
+
+template <typename E>
+  requires std::is_enum_v<E>
+constexpr std::optional<E> string_to_enum(std::string_view name)
+{
+  std::optional<E> result = std::nullopt;
+  template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
+  {
+    if(name == identifier_of(e))
+    {
+      result = [:e:];
+    }
+  }
+  return result;
 }
 
 } // namespace reflex::meta

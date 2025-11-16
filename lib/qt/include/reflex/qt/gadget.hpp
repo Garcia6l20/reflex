@@ -95,9 +95,10 @@ protected:
     static constexpr auto props = ms.properties;
     if constexpr(contains(props, Property))
     {
-      static constexpr auto getter = meta::first_member_function_annotated_with(^^Super, //
-                                                                                ^^detail::getter_of<Property>,
-                                                                                meta::access_context::unchecked());
+      static constexpr auto getter =
+          meta::first_member_function_annotated_with(^^Super, //
+                                                     ^^detail::getter_of<Property>,
+                                                     meta::access_context::unchecked());
       if constexpr(getter != meta::null)
       {
         return self.[:getter:]();
@@ -113,11 +114,39 @@ protected:
     }
   }
 
+  template <meta::info Property> void notifyPropertyChanged(this auto& self)
+  {
+    static constexpr auto ms = detail::meta_strings<tag, Super>{};
+    if constexpr(ms.is_object)
+    {
+      static constexpr auto props = ms.properties;
+      static constexpr auto it    = std::ranges::find(props, Property);
+      if constexpr(it != end(props))
+      {
+        static constexpr auto relative_offset         = std::distance(begin(props), it);
+        static constexpr auto notifier_signals_offset = ms.signal_count;
+        QMetaObject::activate<void>(&self,
+                                    &staticMetaObject,
+                                    notifier_signals_offset + relative_offset,
+                                    nullptr);
+      }
+      else
+      {
+        static_assert(always_false<Super>, "no such property");
+      }
+    }
+    else
+    {
+      static_assert(always_false<Super>, "gadget cannot notify for property changes");
+    }
+  }
+
 public:
   template <constant_string name> auto property(this auto& self)
   {
     using std::ranges::contains;
-    static constexpr auto prop = meta::member_named(^^Super, *name, meta::access_context::unchecked());
+    static constexpr auto prop =
+        meta::member_named(^^Super, *name, meta::access_context::unchecked());
     static_assert(prop != meta::null, "no such property");
     return self.template property<prop>();
   }
@@ -131,9 +160,10 @@ public:
     static constexpr auto it    = find(props, Property);
     if constexpr(it != end(props))
     {
-      static constexpr auto setter = meta::first_member_function_annotated_with(^^Super, //
-                                                                                ^^detail::setter_of<Property>,
-                                                                                meta::access_context::unchecked());
+      static constexpr auto setter =
+          meta::first_member_function_annotated_with(^^Super, //
+                                                     ^^detail::setter_of<Property>,
+                                                     meta::access_context::unchecked());
       if constexpr(setter != meta::null)
       {
         self.[:setter:](value);
@@ -148,9 +178,10 @@ public:
         val = std::forward<T>(value);
       }
 
-      static constexpr auto listener = meta::first_member_function_annotated_with(^^Super, //
-                                                                                  ^^detail::listener_of<Property>,
-                                                                                  meta::access_context::unchecked());
+      static constexpr auto listener =
+          meta::first_member_function_annotated_with(^^Super, //
+                                                     ^^detail::listener_of<Property>,
+                                                     meta::access_context::unchecked());
       if constexpr(listener != meta::null)
       {
         self.[:listener:]();
@@ -160,7 +191,10 @@ public:
       {
         static constexpr auto relative_offset         = std::distance(begin(props), it);
         static constexpr auto notifier_signals_offset = ms.signal_count;
-        QMetaObject::activate<void>(&self, &staticMetaObject, notifier_signals_offset + relative_offset, nullptr);
+        QMetaObject::activate<void>(&self,
+                                    &staticMetaObject,
+                                    notifier_signals_offset + relative_offset,
+                                    nullptr);
       }
     }
     else
@@ -172,14 +206,16 @@ public:
   template <constant_string name, typename T> void setProperty(this auto& self, T&& value)
   {
     using std::ranges::contains;
-    static constexpr auto prop = meta::member_named(^^Super, *name, meta::access_context::unchecked());
+    static constexpr auto prop =
+        meta::member_named(^^Super, *name, meta::access_context::unchecked());
     static_assert(prop != meta::null, "no such property");
     self.template setProperty<prop>(std::forward<T>(value));
   }
 
   template <constant prop> void propertyChanged()
   {
-    std::unreachable(); // NOTE: actually unused, just to allow QObject::connect to match the auto-generated signal
+    std::unreachable(); // NOTE: actually unused, just to allow QObject::connect to match the
+                        // auto-generated signal
   }
 };
 

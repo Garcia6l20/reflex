@@ -5,7 +5,7 @@ BasedOnStyle: llvm
 
 IndentWidth: 2
 UseTab: Never
-ColumnLimit: 120
+ColumnLimit: 100
 MaxEmptyLinesToKeep: 1
 ExperimentalAutoDetectBinPacking: false
 
@@ -39,18 +39,20 @@ AlignOperands: AlignAfterOperator
 BreakBeforeBinaryOperators: NonAssignment
 BreakBinaryOperations: OnePerLine
 
-AlignConsecutiveShortCaseStatements:
-  Enabled: true
-  AcrossEmptyLines: false
-  AcrossComments: true
-  AlignCaseColons: false
-
 # specific for switch
 IndentCaseLabels: true
 
 # defines & macros
 AlignConsecutiveMacros: true
 AlignEscapedNewlines: Left
+
+AlignArrayOfStructures: Left
+
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: true
+  AlignCaseColons: false
 
 # space config
 SpaceAfterCStyleCast: false
