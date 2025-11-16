@@ -35,7 +35,13 @@ public:
 
   [[= slot]] void slot1(int value);
 
-  [[= invocable]] bool sayTheTruth(bool lie = false);
+  enum TruthStyle
+  {
+    RealWorld,
+    Trump,
+  };
+
+  [[= invocable]] TruthStyle sayTheTruth(TruthStyle style = TruthStyle::Trump);
 
 protected:
   [[= timer_event]] void updateClock();

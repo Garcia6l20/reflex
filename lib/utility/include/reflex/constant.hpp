@@ -37,7 +37,8 @@ struct constant_wrapper<T>
 
 namespace representation_object
 {
-template <class T, std::meta::info... Is> inline constexpr constant_value_t<T> array[] = {[:Is:]...};
+template <class T, std::meta::info... Is>
+inline constexpr constant_value_t<T> array[] = {[:Is:]...};
 template <class T, std::meta::info... Is>
 inline constexpr constant_value_t<T> object = []
 {
@@ -73,7 +74,8 @@ template <> struct constant_wrapper<std::string_view>
   using value_type = std::string_view;
   static consteval decltype(auto) wrap(std::string_view const& s)
   {
-    return make_object<value_type>(std::meta::reflect_constant(std::meta::reflect_constant_string(s)));
+    return make_object<value_type>(
+        std::meta::reflect_constant(std::meta::reflect_constant_string(s)));
   }
   static consteval value_type unwrap(std::meta::info r)
   {
@@ -117,7 +119,8 @@ template <std::ranges::input_range R> inline constexpr auto reflect_constant_arr
 };
 
 template <std::ranges::input_range R>
-  requires(not is_structural_type(^^R)) // use direct representation for structural ranges (ie.: std::array)
+  requires(not is_structural_type(
+      ^^R)) // use direct representation for structural ranges (ie.: std::array)
 struct constant_wrapper<R>
 {
   using element_type = std::add_const_t<constant_value_or_ref_t<std::ranges::range_value_t<R>>>;
@@ -182,8 +185,9 @@ template <typename... Ts> struct constant_wrapper<std::variant<Ts...>>
       if(v.index() == ii)
       {
         using T = Ts...[ii];
-        return make_object<value_type>(object_reflection(v.index()),
-                                       object_reflection(constant_wrapper<std::decay_t<T>>::wrap(std::get<ii>(v))));
+        return make_object<value_type>(
+            object_reflection(v.index()),
+            object_reflection(constant_wrapper<std::decay_t<T>>::wrap(std::get<ii>(v))));
       }
     }
     std::unreachable();
@@ -235,6 +239,10 @@ template <typename T> struct constant
   constexpr value_type const* operator->() const
   {
     return std::addressof(value);
+  }
+  constexpr bool operator==(value_type const& o) const
+  {
+    return get() == o;
   }
 };
 
@@ -289,6 +297,10 @@ struct constant<T>
   consteval value_type const* operator->() const
   {
     return std::addressof(value);
+  }
+  constexpr bool operator==(value_type const& o) const
+  {
+    return get() == o;
   }
 };
 

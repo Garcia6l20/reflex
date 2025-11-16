@@ -30,6 +30,10 @@ template <typename T> QMetaObject metaObjectOf();
 template <typename Super> class gadget
 {
 public:
+  struct tag
+  {
+  };
+
   static inline const QMetaObject staticMetaObject = detail::metaObjectOf<Super>();
 
   static void qt_static_metacall(QObject* _o, QMetaObject::Call _c, int _id, void** _a)
@@ -45,10 +49,6 @@ public:
 private:
   friend class detail::gadget_impl<Super>;
   template <typename, typename> friend class object_impl;
-
-  struct tag
-  {
-  };
 
 #ifdef __REFLEX_QT_ENABLE_TYPE_REGISTRY
   consteval

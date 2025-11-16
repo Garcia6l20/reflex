@@ -91,3 +91,5 @@ else() # assume shared
 
 endif()
 
+reflex_qt_add_dump(reflex-qt-example1)
+

@@ -42,7 +42,7 @@ ApplicationWindow {
             text: "Say the truth"
             checkable: true
             onClicked: {
-                console.log("was lying:", example.sayTheTruth(checked));
+                console.log("was lying:", example.sayTheTruth(checked ? TruthStyle.RealWorld : TruthStyle.Trump));
             }
         }
     }

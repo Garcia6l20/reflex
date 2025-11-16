@@ -2,21 +2,39 @@
   "version": 3,
   "configurePresets": [
     {
-      "name": "clang-base",
+      "name": "base",
       "hidden": true,
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "clang-base",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "CMAKE_EXE_LINKER_FLAGS": "-stdlib=libc++ -lc++abi",
         "CMAKE_SHARED_LINKER_FLAGS": "-stdlib=libc++ -lc++abi",
         "CMAKE_CXX_FLAGS": "-stdlib=libc++ -freflection-latest"
       }
     },
     {
-      "name": "ClangDebug",
-      "inherits": "clang-base",
+      "name": "gcc-base",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_CXX_STANDARD": "26",
+        "CMAKE_CXX_FLAGS": "-freflection"
+      }
+    },
+    {
+      "name": "debug",
+      "hidden": true,
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "REFLEX_BUILD_TESTS": "ON",
@@ -25,8 +43,8 @@
       }
     },
     {
-      "name": "ClangRelease",
-      "inherits": "clang-base",
+      "name": "release",
+      "hidden": true,
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "REFLEX_BUILD_TESTS": "ON",
@@ -35,46 +53,62 @@
       }
     },
     {
-      "name": "ClangRelWithDebInfo",
-      "inherits": "clang-base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "REFLEX_BUILD_TESTS": "ON",
-        "REFLEX_BUILD_EXAMPLES": "ON",
-        "BUILD_TESTING": "ON"
-      }
+      "name": "clang-debug",
+      "inherits": ["clang-base", "debug"]
+    },
+    {
+      "name": "clang-release",
+      "inherits": ["clang-base", "release"]
+    },
+    {
+      "name": "gcc-debug",
+      "inherits": ["gcc-base", "debug"]
+    },
+    {
+      "name": "gcc-release",
+      "inherits": ["gcc-base", "release"]
     }
   ],
   "buildPresets": [
     {
-      "name": "ClangDebug",
-      "configurePreset": "ClangDebug"
+      "name": "clang-debug",
+      "configurePreset": "clang-debug"
     },
     {
-      "name": "ClangRelease",
-      "configurePreset": "ClangRelease"
+      "name": "clang-release",
+      "configurePreset": "clang-release"
     },
     {
-      "name": "ClangRelWithDebInfo",
-      "configurePreset": "ClangRelWithDebInfo"
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug"
+    },
+    {
+      "name": "gcc-release",
+      "configurePreset": "gcc-release"
     }
   ],
   "testPresets": [
     {
-      "name": "ClangDebug",
-      "configurePreset": "ClangDebug",
+      "name": "clang-debug",
+      "configurePreset": "clang-debug",
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error", "stopOnFailure": true }
     },
     {
-      "name": "ClangRelease",
-      "configurePreset": "ClangRelease",
+      "name": "clang-release",
+      "configurePreset": "clang-release",
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error", "stopOnFailure": true }
     },
     {
-      "name": "ClangRelWithDebInfo",
-      "configurePreset": "ClangRelWithDebInfo",
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": true }
+    },
+    {
+      "name": "gcc-release",
+      "configurePreset": "gcc-release",
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error", "stopOnFailure": true }
     }

@@ -26,15 +26,18 @@ void Example::slot1(int value)
   intSig(value);
 }
 
-bool Example::sayTheTruth(bool lie)
+Example::TruthStyle Example::sayTheTruth(TruthStyle style)
 {
-  send(Message{.subject = "Example", .body = QString("I'm%1lying !").arg(lie ? " " : " not ")});
-  return lie;
+  send(
+      Message{.subject = "Example",
+              .body = QString("I'm %1 lying !").arg(style == TruthStyle::Trump ? "never" : "not")});
+  return style;
 }
 
 void Example::updateClock()
 {
-  setProperty<^^clockText>(QString::fromStdString(std::format("{:%X}", std::chrono::system_clock::now())));
+  setProperty<^^clockText>(
+      QString::fromStdString(std::format("{:%X}", std::chrono::system_clock::now())));
 }
 
 } // namespace reflex

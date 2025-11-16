@@ -49,6 +49,22 @@ inline void dump(QMetaObject const* const metaObject)
     QMetaProperty property = metaObject->property(i);
     qDebug() << " 🏷️    Property:" << property.name() << "-" << property.typeName();
   }
+  // --- Enums ---
+  for(int i = metaObject->enumeratorOffset(); i < metaObject->enumeratorCount(); ++i)
+  {
+    QMetaEnum e = metaObject->enumerator(i);
+    qDebug() << " 📚       Enum:" << e.name();
+    for(int j = 0; j < e.keyCount(); ++j)
+    {
+      qDebug().nospace()
+          << "             🔖 "
+          << e.name()
+          << "::"
+          << e.key(j)
+          << ": "
+          << e.value(j);
+    }
+  }
 }
 
 inline void dump(QObject const& object)

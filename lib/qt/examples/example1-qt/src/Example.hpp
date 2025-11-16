@@ -28,6 +28,14 @@ public:
   }
   virtual ~Example() = default;
 
+
+  enum TruthStyle
+  {
+    RealWorld,
+    Trump,
+  };
+  Q_ENUM(TruthStyle)
+
 Q_SIGNALS:
   void intSig(int);
   void send(Message const&);
@@ -38,13 +46,13 @@ public Q_SLOTS:
     intSig(value);
   }
 
-  Q_INVOKABLE bool sayTheTruth(bool lie = false)
+  Q_INVOKABLE TruthStyle sayTheTruth(TruthStyle style = TruthStyle::Trump)
   {
     Message msg;
     msg.subject = "Example";
-    msg.body = QString("I'm%1lying !").arg(lie ? " " : " not ");
+    msg.body = QString("I'm %1 lying !").arg(style == TruthStyle::Trump ? "never" : "not");
     send(msg);
-    return lie;
+    return style;
   }
 
 protected:

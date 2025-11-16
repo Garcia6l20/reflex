@@ -18,7 +18,14 @@ Q_QMLTYPE_EXPORT void qml_register_types_@MODULE_FN_NAME@()
 {
     QT_WARNING_PUSH QT_WARNING_DISABLE_DEPRECATED
     template for(constexpr auto t : std::define_static_array(qt::detail::object_reg::all())) {
-      qmlRegisterTypesAndRevisions<typename[:t:]>("@MODULE_NAME@", 1);
+      using Type = typename[:t:];
+      using Tag = typename Type::tag;
+      qmlRegisterTypesAndRevisions<Type>("@MODULE_NAME@", 1);
+      constexpr auto ms = qt::detail::meta_strings<Tag, Type>{};
+      template for(constexpr auto e : ms.enums) {
+        const auto name = std::format("{}::{}", display_string_of(t), display_string_of(e));
+        qmlRegisterEnum<typename[:e:]>(name.data());
+      }
     }
     QT_WARNING_POP
     qmlRegisterModule("@MODULE_NAME@", 1, 0);

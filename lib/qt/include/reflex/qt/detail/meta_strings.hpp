@@ -4,6 +4,9 @@
 
 #include <reflex/qt/detail/metatype.hpp>
 
+#include <algorithm>
+#include <ranges>
+
 #undef signals
 #undef slots
 
@@ -24,8 +27,9 @@ template <typename Tag, typename Super> struct meta_strings
     {
       return define_static_array(                                               //
           nonstatic_data_members_of(^^Super, meta::access_context::unchecked()) //
-          | std::views::filter([&](auto M)
-                               { return meta::is_template_instance_of(type_of(M), ^^detail::signal_decl); }));
+          | std::views::filter(
+              [&](auto M)
+              { return meta::is_template_instance_of(type_of(M), ^^detail::signal_decl); }));
     }
   }();
 
@@ -60,7 +64,8 @@ template <typename Tag, typename Super> struct meta_strings
     size_t count = 0;
     template for(constexpr auto s : slots)
     {
-      constexpr size_t n_overloads = 1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
+      constexpr size_t n_overloads =
+          1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
       count += n_overloads;
     }
     return count;
@@ -79,7 +84,8 @@ template <typename Tag, typename Super> struct meta_strings
     size_t count = 0;
     template for(constexpr auto s : invocables)
     {
-      constexpr size_t n_overloads = 1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
+      constexpr size_t n_overloads =
+          1 + std::ranges::count_if(parameters_of(s), meta::has_default_argument);
       count += n_overloads;
     }
     return count;
@@ -154,12 +160,24 @@ template <typename Tag, typename Super> struct meta_strings
     return define_static_array(types);
   }();
 
+  static constexpr auto enums = [] consteval
+  {
+    std::vector<meta::info> enums;
+    for(auto e : meta::members_of(^^Super, meta::access_context::unchecked())
+                     | std::views::filter(meta::is_enumerable_type))
+    {
+      enums.push_back(e);
+    }
+    return define_static_array(enums);
+  }();
+
   static constexpr auto classinfo_strings = [] consteval
   {
     std::vector<constant_string> strings;
 
-    constexpr auto annotations = define_static_array(meta::annotations_of_with(^^Super, ^^qt::classinfo)
-                                                     | std::views::transform(meta::constant_of));
+    constexpr auto annotations =
+        define_static_array(meta::annotations_of_with(^^Super, ^^qt::classinfo)
+                            | std::views::transform(meta::constant_of));
     template for(constexpr auto a : annotations)
     {
       strings.push_back([:a:].key);
@@ -212,12 +230,42 @@ template <typename Tag, typename Super> struct meta_strings
 
     template for(constexpr auto t : custom_types)
     {
-      auto id =
-          display_string_of(t) | std::views::filter([](auto c) { return c != ' '; }) | std::ranges::to<std::string>();
+      auto id = display_string_of(t)
+              | std::views::filter([](auto c) { return c != ' '; })
+              | std::ranges::to<std::string>();
       strings.push_back(id);
+    }
+
+    template for(constexpr auto t : enums)
+    {
+      const auto s  = display_string_of(t);
+      const auto it = std::ranges::find_if(strings, [&](auto const& i) { return i == s; });
+      if(it == end(strings))
+      {
+        strings.push_back(s);
+      }
+      template for(constexpr auto e : define_static_array(meta::enumerators_of(t)))
+      {
+        strings.push_back(display_string_of(e));
+      }
     }
     return define_static_array(strings);
   }();
+
+  static constexpr size_t npos = std::numeric_limits<size_t>::max();
+
+  template <meta::info R> static consteval size_t index_of()
+  {
+    static constexpr auto s = display_string_of(R);
+    template for(constexpr auto ii : std::views::iota(0uz, strings.size()))
+    {
+      if(strings[ii] == s)
+      {
+        return ii;
+      }
+    }
+    return npos;
+  }
 
   static constexpr auto create_meta_objectdata()
   {
@@ -228,7 +276,8 @@ template <typename Tag, typename Super> struct meta_strings
     {
       return [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return std::make_tuple(detail::string_storage_wrapper<strings[I]->size()>{strings[I]->data()}...);
+        return std::make_tuple(
+            detail::string_storage_wrapper<strings[I]->size()>{strings[I]->data()}...);
       }(std::make_index_sequence<strings.size()>());
     }();
 
@@ -323,7 +372,8 @@ template <typename Tag, typename Super> struct meta_strings
           };
           return [&]<std::size_t... I>(std::index_sequence<I...>)
           {
-            return typename DataT::ParametersArray{make_parameter.template operator()<parameters[I]>()...};
+            return typename DataT::ParametersArray{
+                make_parameter.template operator()<parameters[I]>()...};
           }(std::make_index_sequence<N>());
         };
 
@@ -331,10 +381,12 @@ template <typename Tag, typename Super> struct meta_strings
         {
           constexpr auto can_invoke = [&]
           {
-            // NOTE: is_invocable_type dont work for defaulted function arguments (but works for callable types [ie.:
-            // signal_decl])
+            // NOTE: is_invocable_type dont work for defaulted function arguments (but works for
+            // callable types [ie.: signal_decl])
             if constexpr(is_invocable_type(type_of(Fn),
-                                           parameters | std::views::take(N) | std::views::transform(meta::type_of)))
+                                           parameters
+                                               | std::views::take(N)
+                                               | std::views::transform(meta::type_of)))
             {
               return true;
             }
@@ -383,7 +435,8 @@ template <typename Tag, typename Super> struct meta_strings
       {
         if constexpr(is_object)
         {
-          return std::tuple_cat(make_data_impl.template operator()<signals[I], QtMocConstants::MethodSignal>()...);
+          return std::tuple_cat(
+              make_data_impl.template operator()<signals[I], QtMocConstants::MethodSignal>()...);
         }
         else
         {
@@ -395,8 +448,9 @@ template <typename Tag, typename Super> struct meta_strings
       {
         if constexpr(is_object)
         {
-          return std::tuple_cat(make_data_impl.template operator()<^^Super::template propertyChanged<properties[I]>,
-                                                                   QtMocConstants::MethodSignal>()...);
+          return std::tuple_cat(
+              make_data_impl.template operator()<^^Super::template propertyChanged<properties[I]>,
+                                                 QtMocConstants::MethodSignal>()...);
         }
         else
         {
@@ -408,7 +462,8 @@ template <typename Tag, typename Super> struct meta_strings
       {
         if constexpr(is_object)
         {
-          return std::tuple_cat(make_data_impl.template operator()<slots[I], QtMocConstants::MethodSlot>()...);
+          return std::tuple_cat(
+              make_data_impl.template operator()<slots[I], QtMocConstants::MethodSlot>()...);
         }
         else
         {
@@ -418,12 +473,14 @@ template <typename Tag, typename Super> struct meta_strings
 
       const auto invocables_data = [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        return std::tuple_cat(make_data_impl.template operator()<invocables[I], QtMocConstants::MethodMethod>()...);
+        return std::tuple_cat(
+            make_data_impl.template operator()<invocables[I], QtMocConstants::MethodMethod>()...);
       }(std::make_index_sequence<invocables.size()>());
 
-      return std::apply([]<typename... Args>(Args... args)
-                        { return QtMocHelpers::UintData<Args...>{std::move(args)...}; },
-                        std::tuple_cat(signals_data, properties_notification_data, slots_data, invocables_data));
+      return std::apply(
+          []<typename... Args>(Args... args)
+          { return QtMocHelpers::UintData<Args...>{std::move(args)...}; },
+          std::tuple_cat(signals_data, properties_notification_data, slots_data, invocables_data));
     }();
 
     size_t property_index = 0;
@@ -465,14 +522,39 @@ template <typename Tag, typename Super> struct meta_strings
         return QtMocHelpers::UintData{make_data_impl.template operator()<properties[I]>()...};
       }(std::make_index_sequence<properties.size()>());
     }();
-    QtMocHelpers::UintData   qt_enums{};
     QtMocHelpers::UintData   qt_constructors{};
     QtMocHelpers::ClassInfos qt_classinfo = []
     {
       return []<size_t... I>(std::index_sequence<I...>)
       {
-        return QtMocHelpers::ClassInfos<classinfos_size / 2>({std::array<uint, 2>{I * 2 + 1, I * 2 + 2}...});
+        return QtMocHelpers::ClassInfos<classinfos_size / 2>({
+            std::array<uint, 2>{I * 2 + 1, I * 2 + 2}
+             ...
+        });
       }(std::make_index_sequence<classinfos_size / 2>());
+    }();
+
+    QtMocHelpers::UintData qt_enums = [&]
+    {
+      static constexpr auto make_enumerators = [&]<meta::info E>() {};
+      static constexpr auto get_enumerators  = [&]<size_t I>()
+      {
+        static constexpr auto e           = enums[I];
+        static constexpr auto enumerators = define_static_array(enumerators_of(e));
+        using DataType = QtMocHelpers::EnumData<typename[:e:]>;
+        typename DataType::EnumEntry entries[enumerators.size()];
+        template for(constexpr auto ii : std::views::iota(0uz, enumerators.size()))
+        {
+          constexpr auto enumerator = enumerators[ii];
+          entries[ii].nameIndex     = index_of<enumerator>();
+          entries[ii].value         = [:enumerator:];
+        }
+        return DataType{index_of<e>(), index_of<e>(), QMC::EnumFlags{}}.add(entries);
+      };
+      return []<size_t... I>(std::index_sequence<I...>)
+      {
+        return QtMocHelpers::UintData{get_enumerators.template operator()<I>()...};
+      }(std::make_index_sequence<enums.size()>());
     }();
     uint mo_flags = QMC::MetaObjectFlag{};
     if constexpr(is_gadget)

@@ -1,14 +1,14 @@
 #pragma once
 
-#include <reflex/qt/object.hpp>
 #include <reflex/qt/dump.hpp>
 #include <reflex/qt/format.hpp>
+#include <reflex/qt/object.hpp>
 
 #include <filesystem>
 #include <format>
 #include <fstream>
-#include <ranges>
 #include <iostream>
+#include <ranges>
 
 #undef signals
 #undef slots
@@ -57,6 +57,14 @@ struct superclass_meta
   std::string access;
   std::string name;
 };
+struct enums_meta
+{
+  bool                     isClass    = false;
+  bool                     isFlag     = false;
+  int                      lineNumber = 0;
+  std::string              name;
+  std::vector<std::string> values;
+};
 struct class_meta
 {
   std::vector<named_value>     classInfos;
@@ -69,6 +77,7 @@ struct class_meta
   std::vector<method_meta>     signals;
   std::vector<method_meta>     slots;
   std::vector<method_meta>     methods;
+  std::vector<enums_meta>      enums;
   std::vector<superclass_meta> superClasses;
 };
 struct filemeta_data
@@ -148,6 +157,19 @@ template <typename... Types> void export_json(fs::path const& output, std::strin
         desc.member = property.name();
       }
       infos.properties.push_back(std::move(desc));
+    }
+
+    // --- Enums ---
+    for(int i = metaObject->enumeratorOffset(); i < metaObject->enumeratorCount(); ++i)
+    {
+      QMetaEnum  e = metaObject->enumerator(i);
+      enums_meta em;
+      em.name = e.name();
+      for(int j = 0; j < e.keyCount(); ++j)
+      {
+        em.values.push_back(e.key(j));
+      }
+      infos.enums.push_back(std::move(em));
     }
 
     // --- Signals/Slots/Invocables ---
