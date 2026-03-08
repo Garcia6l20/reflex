@@ -1,0 +1,17 @@
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+
+link_libraries(reflex.core)
+
+doctest_add_test(reflex-core-views-test
+  views/cartesian-product.cpp
+)
+doctest_add_test(reflex-core-meta-test
+  meta/is_functional.cpp
+  meta/annotation-queries.cpp
+)
+doctest_add_test(reflex-core-to-tuple-test
+  test-to-tuple.cpp
+)
+doctest_add_test(reflex-core-constant_string
+  test-constant-string.cpp
+)
