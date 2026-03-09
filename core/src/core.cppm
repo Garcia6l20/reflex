@@ -6,3 +6,5 @@ export import :meta;
 export import :to_tuple;
 export import :constant_string;
 export import :parse;
+export import :visit;
+export import :match;

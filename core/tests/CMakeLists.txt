@@ -12,9 +12,15 @@ doctest_add_test(reflex-core-meta-test
 doctest_add_test(reflex-core-to-tuple-test
   test-to-tuple.cpp
 )
-doctest_add_test(reflex-core-constant_string
+doctest_add_test(reflex-core-constant_string-test
   test-constant-string.cpp
 )
 doctest_add_test(reflex-core-parse-test
   test-parse.cpp
+)
+doctest_add_test(reflex-core-visit-test
+  test-visit.cpp
+)
+doctest_add_test(reflex-core-match-test
+  test-match.cpp
 )

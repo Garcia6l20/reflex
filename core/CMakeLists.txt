@@ -8,6 +8,8 @@ reflex_add_cxx_module_library(reflex.core
     src/to_tuple.cppm
     src/constant_string.cppm
     src/parse.cppm
+    src/visit.cppm
+    src/match.cppm
 )
 target_compile_options(reflex.core PUBLIC -fabi-version=19)
 
