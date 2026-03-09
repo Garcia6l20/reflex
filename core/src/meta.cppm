@@ -187,6 +187,19 @@ consteval auto annotations_of_with(info R, info A)
              });
 }
 
+template <typename AnnotationType> consteval auto annotation_value_of_with(info R)
+{
+  auto annotations = annotations_of_with(R, ^^AnnotationType);
+  if(annotations.empty())
+  {
+    throw std::meta::exception("No such annotation", R);
+  }
+  else
+  {
+    return extract<AnnotationType const&>(constant_of(annotations.front()));
+  }
+}
+
 consteval bool has_annotation(info R, info A)
 {
   return not std::ranges::empty(annotations_of_with(R, A));

@@ -37,10 +37,14 @@ constexpr bool is_upper(int c) noexcept
 {
   return is_in_range(c, '\x41', '\x5a');
 }
+constexpr bool is_lower(int c) noexcept
+{
+  return is_in_range(c, '\x61', '\x7a');
+}
 constexpr bool is_alpha(int c) noexcept
 {
   return is_upper(c) //
-      or is_in_range(c, '\x61', '\x7a');
+      or is_lower(c);
 }
 constexpr bool is_digit(int c) noexcept
 {
@@ -62,6 +66,23 @@ constexpr bool is_punct(int c) noexcept
       or is_in_range(c, '\x3a', '\x40') //
       or is_in_range(c, '\x5b', '\x60') //
       or is_in_range(c, '\x7b', '\x7e');
+}
+
+constexpr int to_lower(int c) noexcept
+{
+  if(is_upper(c))
+  {
+    return c + ('a' - 'A');
+  }
+  return c;
+}
+constexpr int to_upper(int c) noexcept
+{
+  if(is_lower(c))
+  {
+    return c - ('a' - 'A');
+  }
+  return c;
 }
 
 template <typename... Ts>
@@ -88,5 +109,11 @@ struct const_like_s<Like, T>
 
 template <typename Like, typename T>
 using const_like_t = typename detail::const_like_s<Like, T>::type;
+
+template <typename E>
+concept Enum = std::is_enum_v<E>;
+
+template <typename T>
+concept Aggregate = std::is_aggregate_v<T>;
 
 } // namespace reflex

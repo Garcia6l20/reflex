@@ -12,7 +12,7 @@ namespace representation_object
 {
 
 template <class Char, meta::info I>
-inline constexpr std::basic_string_view<Char> string = []
+constexpr std::basic_string_view<Char> string = []
 { return std::basic_string_view<Char>(extract<Char const*>(I), extent(meta::type_of(I)) - 1); }();
 
 } // namespace representation_object
@@ -81,4 +81,4 @@ template <typename Char> struct basic_constant_string
 };
 
 using constant_string = basic_constant_string<char>;
-} // namespace tpl
+} // namespace reflex

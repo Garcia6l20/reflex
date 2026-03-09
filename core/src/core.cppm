@@ -7,3 +7,4 @@ export import :views.cartesian_product;
 export import :meta;
 export import :to_tuple;
 export import :constant_string;
+export import :parse;

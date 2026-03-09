@@ -7,9 +7,9 @@ reflex_add_cxx_module_library(reflex.core
     src/meta.cppm
     src/to_tuple.cppm
     src/constant_string.cppm
+    src/parse.cppm
 )
-target_include_directories(reflex.core INTERFACE include)
-target_compile_options(reflex.core PRIVATE -fabi-version=19)
+target_compile_options(reflex.core PUBLIC -fabi-version=19)
 
 if(REFLEX_BUILD_TESTS)
   add_subdirectory(tests)

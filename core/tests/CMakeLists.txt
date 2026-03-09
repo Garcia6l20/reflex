@@ -15,3 +15,6 @@ doctest_add_test(reflex-core-to-tuple-test
 doctest_add_test(reflex-core-constant_string
   test-constant-string.cpp
 )
+doctest_add_test(reflex-core-parse-test
+  test-parse.cpp
+)

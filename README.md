@@ -14,3 +14,4 @@
 ## Modules
 
 - **reflex.core**: [General purpose utilities](core/README.md).
+- **reflex.cli**: [Declarative command line interfaces](cli/README.md).
