@@ -2,9 +2,9 @@
 
 import reflex.testutils;
 import reflex.cli;
+import std;
 
 using namespace reflex;
-using namespace reflex::cli;
 
 struct[[= cli::command{"Simple echo command."}]] echo
 {
@@ -24,33 +24,23 @@ struct[[= cli::command{"Simple echo command."}]] echo
   }
 };
 
-auto run_cli(auto cli, std::initializer_list<std::string_view> args) -> int
-{
-  auto argv = args
-            | std::views::transform([](std::string_view arg) { return arg.data(); })
-            | std::ranges::to<std::vector>();
-  return cli::run(cli, argv.size(), argv.data());
-}
-
 using namespace std::string_view_literals;
 
-TEST_CASE("reflex::cli: opt")
+TEST_CASE("reflex::cli: echo")
 {
-  run_cli(echo{}, {"test"sv, "-h"sv});
-  run_cli(echo{}, {"test"sv, "hello world"sv});
+  cli::run(echo{}, {"echo"sv, "-h"sv});
+  cli::run(echo{}, {"echo"sv, "hello world"sv});
 
   {
     const auto [out, err] = testutils::capture_out_err(
-        [] { CHECK_EQ(run_cli(echo{}, {"test"sv, "hello world"sv, "-p"sv, "greeting"sv}), 0); });
+        [] { CHECK_EQ(cli::run(echo{}, {"echo"sv, "hello world"sv, "-p"sv, "greeting"sv}), 0); });
     CHECK(err.empty());
     CHECK_EQ(out, "greeting: hello world\n");
   }
 
   {
     const auto [out, err] = testutils::capture_out_err(
-        [] { //
-          CHECK_EQ(run_cli(echo{}, {"test"sv, "hello"sv, "-rr"sv}), 0);
-        });
+        [] { CHECK_EQ(cli::run(echo{}, {"echo"sv, "hello"sv, "-rr"sv}), 0); });
     CHECK(err.empty());
     CHECK_EQ(out, "hello\nhello\nhello\n");
   }

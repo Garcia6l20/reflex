@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_MODULE_BMI_DIRECTORY "${CMAKE_BINARY_DIR}/bmi")
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -freflection")
+set(CMAKE_CXX_MODULE_STD ON)
 
 function(reflex_enable_cxx_module_std target)
   set_property(TARGET ${target} PROPERTY CXX_MODULE_STD ON)

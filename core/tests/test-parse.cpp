@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 import reflex.core;
+import std;
 
 TEST_CASE("reflex::parse: base types")
 {

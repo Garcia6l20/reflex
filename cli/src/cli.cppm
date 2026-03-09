@@ -1,14 +1,10 @@
 export module reflex.cli;
 
 export import reflex.core;
-
 import std;
 
 export namespace reflex::cli
 {
-
-class command;
-
 struct argument
 {
   constant_string help;
@@ -70,41 +66,10 @@ struct command
 {
   constant_string help;
 };
+} // namespace reflex::cli
 
-namespace detail
+namespace reflex::cli::detail
 {
-namespace _flags
-{
-struct count
-{
-};
-struct default_
-{
-};
-} // namespace _flags
-
-constexpr _flags::count    _count;
-constexpr _flags::default_ _default;
-
-template <meta::info I, meta::info M> consteval auto flags_of()
-{
-  return annotations_of(M) //
-       | std::views::filter(
-             [&](auto A)
-             {
-               auto AT     = type_of(A);
-               auto parent = parent_of(AT);
-               return parent == ^^_flags;
-             })                                    //
-       | std::views::transform(std::meta::type_of) //
-       | std::views::transform(std::meta::remove_const);
-}
-
-template <meta::info I, meta::info M, meta::info FLG> consteval bool has_flag()
-{
-  constexpr auto F = remove_const(type_of(FLG));
-  return std::ranges::contains(flags_of<I, M>(), F);
-}
 
 template <std::meta::info I> constexpr auto parse()
 {
@@ -123,8 +88,18 @@ template <std::meta::info I> constexpr auto parse()
     auto annotations = annotations_of(mem);
     if(annotations.empty())
     {
-      throw std::logic_error(std::string(display_string_of(mem))
-                             + ": must be annotated with cli::argument, cli::option, or cli::flag");
+      // check if member is a sub-command
+      auto type = type_of(mem);
+      if(is_class_type(type) and meta::has_annotation(type, ^^command))
+      {
+        sub_commands.push_back(mem);
+      }
+      else
+      {
+        throw std::logic_error(
+            std::string(display_string_of(mem))
+            + ": must be annotated with cli::argument, cli::option, or cli::flag");
+      }
     }
     else
     {
@@ -179,7 +154,8 @@ template <std::meta::info I> void usage_of(std::string_view program)
   if(not help.empty())
   {
     std::println();
-    std::println("{}\n", help);
+    std::println("{}", help);
+    std::println();
   }
 
   {
@@ -200,23 +176,9 @@ template <std::meta::info I> void usage_of(std::string_view program)
       auto                  switches_str = std::format("{}/{}", short_switch, long_switch);
       static constexpr auto help         = opt.help.view();
       std::println("  {:{}} {}", switches_str, max_id_size, help);
-      constexpr auto flags = define_static_array(flags_of<I, mem>());
-      if constexpr(flags.size())
-      {
-        using namespace std::string_view_literals;
-        using std::views::join_with;
-        using std::views::transform;
-        constexpr auto ids = define_static_array( //
-            flags                                 //
-            | transform(std::meta::identifier_of) //
-            | transform([](auto id) { return constant_string{id}; }));
-        std::println("      flags: {}",
-                     ids
-                         | transform([](auto const& s) { return *s; }) //
-                         | join_with(", "sv)                           //
-                         | std::ranges::to<std::string>());
-      }
     }
+
+    std::println();
   }
 
   if constexpr(not arguments.empty())
@@ -233,11 +195,13 @@ template <std::meta::info I> void usage_of(std::string_view program)
       static constexpr auto help = arg.help.view();
       std::println("  {:{}} {}", identifier_of(mem), max_id_size, help);
     }
+
+    std::println();
   }
 
   if constexpr(not sub_commands.empty())
   {
-    std::println("SUBCOMMANDS:");
+    std::println("COMMANDS:");
     std::size_t max_id_size = min_id_size;
     template for(constexpr auto mem : sub_commands)
     {
@@ -245,39 +209,23 @@ template <std::meta::info I> void usage_of(std::string_view program)
     }
     template for(constexpr auto mem : sub_commands)
     {
-      constexpr auto        cmd  = meta::annotation_value_of_with<command>(mem);
+      constexpr auto cmd = [&mem] consteval
+      {
+        try
+        {
+          return meta::annotation_value_of_with<command>(mem);
+        }
+        catch(const std::meta::exception&)
+        {
+          return meta::annotation_value_of_with<command>(type_of(mem));
+        }
+      }();
       static constexpr auto help = cmd.help.view();
       std::println("  {:{}} {}", identifier_of(mem), max_id_size, help);
     }
   }
-}
 
-template <int N = -1>
-consteval auto call_args_to_tuple_type(std::meta::info type) -> std::meta::info
-{
-  constexpr auto remove_cvref = [](std::meta::info r) consteval
-  {
-    return substitute(^^std::remove_cvref_t,
-                      {
-                          r});
-  };
-  if constexpr(N < 0)
-  {
-    return substitute(^^std::tuple,
-                      parameters_of(type)
-                          | std::views::transform(std::meta::type_of)
-                          | std::views::transform(remove_cvref)
-                          | std::ranges::to<std::vector>());
-  }
-  else
-  {
-    return substitute(^^std::tuple,
-                      parameters_of(type)
-                          | std::views::take(N)
-                          | std::views::transform(std::meta::type_of)
-                          | std::views::transform(remove_cvref)
-                          | std::ranges::to<std::vector>());
-  }
+  std::println();
 }
 
 template <meta::info I>
@@ -351,8 +299,8 @@ std::optional<int>
       }
       if(!found)
       {
-        std::println("unknown option: {}", view);
-        std::println();
+        std::println(std::cerr, "unknown option: {}", view);
+        std::println(std::cerr);
         usage_of<I>(program);
         return 1;
       }
@@ -394,8 +342,8 @@ std::optional<int>
       }
       if(!found)
       {
-        std::println("unexpected argument: {}", view);
-        std::println();
+        std::println(std::cerr, "unexpected argument: {}", view);
+        std::println(std::cerr);
         usage_of<I>(program);
         return 1;
       }
@@ -417,7 +365,7 @@ std::optional<int>
         }
         else
         {
-          std::print("missing required argument: ");
+          std::print(std::cerr, "missing required argument: ");
           bool first = true;
           template for(constexpr auto jj : std::views::iota(std::size_t(ii), arguments.size()))
           {
@@ -425,15 +373,15 @@ std::optional<int>
             {
               if(!first)
               {
-                std::print(", ");
+                std::print(std::cerr, ", ");
               }
               constexpr auto mem = arguments[jj];
-              std::print("{}", identifier_of(mem));
+              std::print(std::cerr, "{}", identifier_of(mem));
               first = false;
             }
           }
-          std::println();
-          std::println();
+          std::println(std::cerr);
+          std::println(std::cerr);
           usage_of<I>(program);
           return 1;
         }
@@ -441,21 +389,23 @@ std::optional<int>
     }
   }
 
-  if constexpr(not sub_commands.empty())
-  {
-    template for(constexpr auto [sub_command, mem] : sub_commands)
-    {
-      if constexpr(has_flag<I, mem, ^^_default>())
-      {
-        return on_command.template operator()<mem>(it, end);
-      }
-    }
-  }
+  // if constexpr(not sub_commands.empty())
+  // {
+  //   template for(constexpr auto [sub_command, mem] : sub_commands)
+  //   {
+  //     if constexpr(has_flag<I, mem, ^^_default>())
+  //     {
+  //       return on_command.template operator()<mem>(it, end);
+  //     }
+  //   }
+  // }
 
   return std::nullopt;
 }
-} // namespace detail
+} // namespace reflex::cli::detail
 
+export namespace reflex::cli
+{
 int run(auto cli, std::string_view program, auto it, auto end)
 {
   const auto rc = detail::process_cmdline<type_of(^^cli)>( //
@@ -476,7 +426,7 @@ int run(auto cli, std::string_view program, auto it, auto end)
         using T             = [:type:];
         auto view           = std::string_view(it != end ? *it : "");
 
-        return cli.[:mem:].run(std::format("{} {}", program, view), std::next(it), end);
+        return cli::run(cli.[:mem:], std::format("{} {}", program, view), std::next(it), end);
       });
   if(rc.has_value())
   {
@@ -502,6 +452,14 @@ int run(auto cli, int argc, const char** argv)
     program.remove_prefix(pos + 1);
   }
   return run(cli, program, argv + 1, argv + argc);
+}
+
+int run(auto cli, std::initializer_list<std::string_view> args)
+{
+  auto argv = args
+            | std::views::transform([](std::string_view arg) { return arg.data(); })
+            | std::ranges::to<std::vector>();
+  return cli::run(cli, argv.size(), argv.data());
 }
 
 } // namespace reflex::cli

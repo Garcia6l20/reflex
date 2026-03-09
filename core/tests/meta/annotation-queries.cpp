@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 import reflex.core;
+import std;
 
 using namespace reflex;
 

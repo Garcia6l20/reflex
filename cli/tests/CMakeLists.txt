@@ -9,3 +9,7 @@ link_libraries(reflex.cli reflex.testutils)
 doctest_add_test(reflex-cli-test-echo
   test-echo.cpp
 )
+
+doctest_add_test(reflex-cli-test-git
+  test-git.cpp
+)
