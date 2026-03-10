@@ -6,9 +6,8 @@ import std;
 
 export namespace reflex::serde
 {
-struct rename
+struct rename : constant_string
 {
-  constant_string to;
 };
 
 using naming = caseconv::naming;
@@ -18,7 +17,7 @@ consteval std::string_view serialized_name(meta::info member_info)
   auto rename_annotations = annotations_of_with_type(member_info, ^^rename);
   if(!rename_annotations.empty())
   {
-    return extract<rename>(rename_annotations.front()).to;
+    return extract<rename>(rename_annotations.front());
   }
 
   auto name = identifier_of(member_info);
