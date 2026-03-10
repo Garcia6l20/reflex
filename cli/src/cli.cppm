@@ -34,29 +34,30 @@ struct option
   constexpr std::tuple<std::string_view, std::string_view> split_switches() const
   {
     static constexpr auto npos  = std::string_view::npos;
-    auto                  slash = switches.view().find('/');
+    std::string_view      view  = switches;
+    auto                  slash = view.find('/');
 
     if(slash != npos)
     {
-      if(switches.view()[1] == '-')
+      if(view[1] == '-')
       {
-        return {switches.view().substr(0, slash), switches.view().substr(slash + 1)};
+        return {view.substr(0, slash), view.substr(slash + 1)};
       }
       else
       {
-        return {switches.view().substr(0, slash), switches.view().substr(slash + 1)};
+        return {view.substr(0, slash), view.substr(slash + 1)};
       }
     }
     else
     {
       // No slash
-      if(switches.view()[1] == '-')
+      if(view[1] == '-')
       {
-        return {"", switches.view()};
+        return {"", view};
       }
       else
       {
-        return {switches.view(), ""};
+        return {view, ""};
       }
     }
   }
