@@ -1,5 +1,7 @@
 export module reflex.core:utils;
 
+import :concepts;
+
 import std;
 
 export namespace reflex
@@ -110,10 +112,29 @@ struct const_like_s<Like, T>
 template <typename Like, typename T>
 using const_like_t = typename detail::const_like_s<Like, T>::type;
 
-template <typename E>
-concept Enum = std::is_enum_v<E>;
-
-template <typename T>
-concept Aggregate = std::is_aggregate_v<T>;
+template <enum_c E> constexpr std::string_view enum_value_name(E value)
+{
+  template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
+  {
+    if(value == [:e:])
+    {
+      return identifier_of(e);
+    }
+  }
+  throw std::runtime_error("Invalid enum value");
+}
 
 } // namespace reflex
+
+export template <reflex::enum_c E, typename CharT> struct std::formatter<E, CharT>
+{
+  constexpr auto parse(auto& ctx)
+  {
+    return ctx.begin();
+  }
+
+  constexpr auto format(const E& e, auto& ctx) const
+  {
+    return std::format_to(ctx.out(), "{}", reflex::enum_value_name(e));
+  }
+};

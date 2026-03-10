@@ -2,6 +2,7 @@ reflex_add_cxx_module_library(reflex.core
   MODULE_STD
   SOURCES
     src/core.cppm
+    src/concepts.cppm
     src/utils.cppm
     src/views/cartesian_product.cppm
     src/meta.cppm
@@ -10,6 +11,7 @@ reflex_add_cxx_module_library(reflex.core
     src/parse.cppm
     src/visit.cppm
     src/match.cppm
+    src/caseconv.cppm
 )
 target_compile_options(reflex.core PUBLIC -fabi-version=19)
 

@@ -62,3 +62,6 @@ SpacesInCStyleCastParentheses: false
 SpacesInContainerLiterals: false
 SpacesInParentheses: false
 SpacesInSquareBrackets: false
+
+WhitespaceSensitiveMacros:
+  - JSON

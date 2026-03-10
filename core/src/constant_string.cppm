@@ -70,6 +70,11 @@ template <typename Char> struct basic_constant_string
     return value;
   }
 
+  constexpr value_type operator*() const noexcept
+  {
+    return value;
+  }
+
   constexpr bool operator==(basic_constant_string const& other) const noexcept
   {
     return value == other.value;

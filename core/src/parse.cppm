@@ -20,11 +20,15 @@ template <std::integral T> struct parser<T>
     T value;
 
     int base = 10;
-    if (s.size() > 2 && s[0] == '0') {
-      if (s[1] == 'x' || s[1] == 'X') {
+    if(s.size() > 2 && s[0] == '0')
+    {
+      if(s[1] == 'x' || s[1] == 'X')
+      {
         base = 16;
         s.remove_prefix(2);
-      } else if (s[1] == 'b' || s[1] == 'B') {
+      }
+      else if(s[1] == 'b' || s[1] == 'B')
+      {
         base = 2;
         s.remove_prefix(2);
       }
@@ -90,8 +94,7 @@ template <> struct parser<bool>
   }
 };
 
-template <Enum E>
-struct parser<E>
+template <enum_c E> struct parser<E>
 {
   constexpr E operator()(std::string_view s) const
   {
@@ -111,4 +114,4 @@ template <Parsable T> constexpr T parse(std::string_view s)
   return parser<T>{}(s);
 }
 
-} // namespace tpl
+} // namespace reflex

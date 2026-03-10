@@ -24,3 +24,6 @@ doctest_add_test(reflex-core-visit-test
 doctest_add_test(reflex-core-match-test
   test-match.cpp
 )
+doctest_add_test(reflex-core-caseconv-test
+  test-caseconv.cpp
+)
