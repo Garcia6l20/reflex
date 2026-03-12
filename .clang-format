@@ -90,3 +90,4 @@ SpacesInSquareBrackets: false
 
 WhitespaceSensitiveMacros:
   - JSON
+  - JINJA

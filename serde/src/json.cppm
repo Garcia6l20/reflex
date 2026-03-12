@@ -2,174 +2,16 @@ export module reflex.serde.json;
 
 export import reflex.serde;
 
+export import :value;
+
 import std;
 
 namespace reflex::serde::json
 {
-namespace detail
-{
-
-template <typename T>
-concept str_c = decays_to_c<T, char*>
-             or decays_to_c<T, std::string>
-             or decays_to_c<T, std::string_view>
-             or requires(T s) { std::string_view(s); };
-
-template <typename T>
-concept map_c = requires(T t) {
-  { t.begin() } -> std::input_iterator;
-  { t.end() } -> std::sentinel_for<decltype(t.begin())>;
-  typename T::value_type;
-  typename T::key_type;
-  typename T::mapped_type;
-};
-
-template <typename T>
-concept seq_c = requires(T t) {
-  { std::begin(t) } -> std::input_iterator;
-  { std::end(t) } -> std::sentinel_for<decltype(std::begin(t))>;
-  typename T::value_type;
-} and not map_c<T> and not str_c<T>;
-
-template <typename T>
-concept pair_c = requires(T t) {
-  typename T::first_type;
-  typename T::second_type;
-};
-
-template <typename T>
-concept number_c = (std::integral<T> or std::floating_point<T>) and not decays_to_c<T, bool>;
-
-static_assert(seq_c<std::vector<int>>);
-static_assert(map_c<std::unordered_map<int, int>>);
-static_assert(not seq_c<std::unordered_map<int, int>>);
-
-} // namespace detail
-} // namespace reflex::serde::json
-
-export namespace reflex::serde::json
-{
-using null    = std::monostate;
-using string  = std::string;
-using number  = double;
-using boolean = bool;
-
-struct value;
-
-struct object : std::unordered_map<string, value>
-{
-  using std::unordered_map<string, value>::unordered_map;
-};
-
-struct array : std::vector<value>
-{
-  using std::vector<value>::vector;
-};
-
-namespace detail
-{
-using base_value = std::variant<null, string, number, boolean, array, object>;
-
-constexpr auto base_value_types =
-    define_static_array(std::array{^^null, ^^string, ^^number, ^^boolean, ^^array, ^^object}
-                        | std::views::transform(std::meta::dealias));
-
-consteval bool is_base_value_type(meta::info T)
-{
-  return std::ranges::contains(base_value_types, dealias(T));
-}
-
-static_assert(is_base_value_type(^^null));
-static_assert(is_base_value_type(^^std::string));
-static_assert(is_base_value_type(^^number));
-static_assert(is_base_value_type(^^boolean));
-static_assert(is_base_value_type(^^array));
-static_assert(is_base_value_type(^^object));
-
-} // namespace detail
-
-struct value : detail::base_value
-{
-  using detail::base_value::base_value;
-
-  value() = default;
-
-  value(detail::number_c auto n)
-    requires(not std::constructible_from<detail::base_value, decltype(n)>)
-      : detail::base_value(number(n))
-  {
-  }
-
-  constexpr bool is_null() const
-  {
-    return std::holds_alternative<null>(*this);
-  }
-
-  constexpr bool is_string() const
-  {
-    return std::holds_alternative<string>(*this);
-  }
-
-  template <typename T> constexpr auto const& as() const
-  {
-    return std::get<T>(*this);
-  }
-
-  constexpr bool is_number() const
-  {
-    return std::holds_alternative<number>(*this);
-  }
-
-  constexpr bool is_boolean() const
-  {
-    return std::holds_alternative<boolean>(*this);
-  }
-
-  constexpr bool is_array() const
-  {
-    return std::holds_alternative<array>(*this);
-  }
-
-  constexpr bool is_object() const
-  {
-    return std::holds_alternative<object>(*this);
-  }
-
-  constexpr bool operator==(null const&) const
-  {
-    return is_null();
-  }
-
-  constexpr bool operator==(detail::str_c auto const& s) const
-  {
-    return is_string() && as<string>() == s;
-  }
-
-  constexpr bool operator==(detail::number_c auto num) const
-  {
-    return is_number() && as<number>() == num;
-  }
-
-  constexpr bool operator==(boolean b) const
-  {
-    return is_boolean() && as<boolean>() == b;
-  }
-
-  constexpr bool operator==(detail::seq_c auto const& arr) const
-  {
-    return is_array() && as<array>() == arr;
-  }
-
-  constexpr bool operator==(detail::map_c auto const& obj) const
-  {
-    return is_object() && as<object>() == obj;
-  }
-};
-
 class serializer
 {
 public:
-  template <typename Out> constexpr Out& operator()(Out& out, null) const
+  template <typename Out> constexpr Out& operator()(Out& out, null_t const&) const
   {
     out << "null";
     return out;
@@ -557,7 +399,7 @@ private:
         return false;
       case 'n': // assuming null
         begin += 4;
-        return null{};
+        return null;
       case '{':
         return load<json::object>(begin, end);
       case '[':
