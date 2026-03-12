@@ -41,6 +41,11 @@ TEST_CASE("reflex::constant_string: string array")
 {
   static constexpr auto tmp = "hello"_sc;
   static_assert(tmp == "hello");
+  static_assert(constant_string{"hello"} == tmp);
+  static_assert(constant_string{"hello"s} == tmp);
+  static_assert(constant_string{"hello"sv} == tmp);
+  static constexpr std::string_view hello_world = constant_string{std::format("hello {}", "world")};
+  static_assert(hello_world == "hello world");
   // static constexpr auto tmp2 = std::array{"hello"_sc, "world"_sc};
   // static constexpr auto tmp3 = define_static_array(tmp2);
   // static constexpr auto from_arr = use_string_array{tmp3};

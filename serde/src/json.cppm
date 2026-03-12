@@ -342,7 +342,7 @@ private:
             case 'u':
               throw std::runtime_error("\\uXXXX escapes not implemented");
             default:
-              throw std::runtime_error(std::string("Unknown escape: \\") + esc);
+              throw std::runtime_error(std::format("Unknown escape: \\{}", esc));
           }
         }
         else

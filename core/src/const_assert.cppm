@@ -16,17 +16,14 @@ consteval void const_assert(bool                 b,
   if(!b)
   {
     using namespace std::string_literals;
-    std::string message = "Assertion failed at: "s + loc.file_name() + ":";
-
-    char line_str[16] = "";
-    std::to_chars(line_str, line_str + sizeof(line_str), loc.line());
-    message += std::string_view{line_str};
-    message += " in function: "s + loc.function_name();
+    auto message = std::format("Assertion failed at: {}:{} ({})",
+                               loc.file_name(),
+                               loc.line(),
+                               loc.function_name());
     if(!description.empty())
     {
-      message += ": \""s + description + "\"";
+      std::format_to(std::back_inserter(message), ": {}", description);
     }
-
     throw assertion_error(message);
   }
 }

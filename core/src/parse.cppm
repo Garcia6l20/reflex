@@ -37,7 +37,7 @@ template <std::integral T> struct parser<T>
     auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value, base);
     if(ec != std::errc())
     {
-      throw std::runtime_error("Failed to parse int from string: " + std::string(s));
+      throw std::runtime_error(std::format("Failed to parse int from string: {}", s));
     }
     return value;
   }
@@ -51,7 +51,7 @@ template <std::floating_point T> struct parser<T>
     auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
     if(ec != std::errc())
     {
-      throw std::runtime_error("Failed to parse float from string: " + std::string(s));
+      throw std::runtime_error(std::format("Failed to parse float from string: {}", s));
     }
     return value;
   }
@@ -89,7 +89,7 @@ template <> struct parser<bool>
     }
     else
     {
-      throw std::runtime_error("Failed to parse bool from string: " + std::string(s));
+      throw std::runtime_error(std::format("Failed to parse bool from string: {}", s));
     }
   }
 };
@@ -105,7 +105,7 @@ template <enum_c E> struct parser<E>
         return extract<E>(e);
       }
     }
-    throw std::runtime_error("Failed to parse enum from string: " + std::string(s));
+    throw std::runtime_error(std::format("Failed to parse enum from string: {}", s));
   }
 };
 

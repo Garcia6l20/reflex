@@ -98,8 +98,8 @@ template <std::meta::info I> constexpr auto parse()
       else
       {
         throw std::logic_error(
-            std::string(display_string_of(mem))
-            + ": must be annotated with cli::argument, cli::option, or cli::flag");
+            std::format("{}: must be annotated with cli::argument, cli::option, or cli::flag",
+                        display_string_of(mem)));
       }
     }
     else
