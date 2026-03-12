@@ -137,6 +137,19 @@ template <enum_c E> constexpr std::optional<E> to_enum_value(std::string_view na
   return std::nullopt;
 }
 
+constexpr std::string_view trim(std::string_view s) noexcept
+{
+  while(!s.empty() and is_space(s.front()))
+  {
+    s.remove_prefix(1);
+  }
+  while(!s.empty() and is_space(s.back()))
+  {
+    s.remove_suffix(1);
+  }
+  return s;
+}
+
 } // namespace reflex
 
 export template <reflex::enum_c E, typename CharT> struct std::formatter<E, CharT>

@@ -29,20 +29,17 @@ template <typename T>
 inline constexpr auto throw_on = [](auto value) { return [value](T&&) { throw value; }; };
 
 template <auto return_value>
-inline constexpr auto unreachable_r = [](auto&&...)
-{
+inline constexpr auto unreachable_r = [](auto&&...) {
   std::unreachable();
   return return_value;
 };
 template <auto return_value>
-inline constexpr auto abort_r = [](auto&&...)
-{
+inline constexpr auto abort_r = [](auto&&...) {
   std::abort();
   return return_value;
 };
 template <auto return_value>
-inline constexpr auto terminate_r = [](auto&&...)
-{
+inline constexpr auto terminate_r = [](auto&&...) {
   std::terminate();
   return return_value;
 };

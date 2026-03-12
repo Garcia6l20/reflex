@@ -23,12 +23,13 @@ consteval
 }
 static_assert(counter::value() == 2);
 
-
 template <std::size_t> struct types_registry_scope;
 using types = reflex::meta::tu::type_registry<types_registry_scope>;
 
-struct test_s1 {};
-consteval {
+struct test_s1
+{};
+consteval
+{
   types::push(^^test_s1);
 }
 

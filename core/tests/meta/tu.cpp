@@ -21,7 +21,6 @@ consteval
 }
 static_assert(counter::value() == 4);
 
-
 consteval
 {
   const_assert(types::size() == 1); // first type is pushed from tu-mod.cppm

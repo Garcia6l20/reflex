@@ -98,8 +98,9 @@ template <std::meta::info I> constexpr auto parse()
       else
       {
         throw std::logic_error(
-            std::format("{}: must be annotated with cli::argument, cli::option, or cli::flag",
-                        display_string_of(mem)));
+            std::format(
+                "{}: must be annotated with cli::argument, cli::option, or cli::flag",
+                display_string_of(mem)));
       }
     }
     else
@@ -122,9 +123,9 @@ template <std::meta::info I> constexpr auto parse()
       }
     }
   }
-  return std::tuple{define_static_array(arguments),
-                    define_static_array(options),
-                    define_static_array(sub_commands)};
+  return std::tuple{
+      define_static_array(arguments), define_static_array(options),
+      define_static_array(sub_commands)};
 }
 
 template <std::meta::info I> void usage_of(std::string_view program)
@@ -140,8 +141,7 @@ template <std::meta::info I> void usage_of(std::string_view program)
 
   std::println("USAGE: {} [OPTIONS...] ARGUMENTS...", program);
 
-  constexpr auto help = [&] consteval
-  {
+  constexpr auto help = [&] consteval {
     try
     {
       return meta::annotation_value_of_with<command>(I).help.view();
@@ -210,8 +210,7 @@ template <std::meta::info I> void usage_of(std::string_view program)
     }
     template for(constexpr auto mem : sub_commands)
     {
-      constexpr auto cmd = [&mem] consteval
-      {
+      constexpr auto cmd = [&mem] consteval {
         try
         {
           return meta::annotation_value_of_with<command>(mem);
@@ -259,8 +258,8 @@ std::optional<int>
            // counters accepts repeated short switch (ie.: -vvv => counter = 3)
            (opt.is_counter
             and view.starts_with(short_switch)
-            and (std::ranges::all_of(view | std::views::drop(2),
-                                     [&](auto c) { return c == short_switch[1]; }))))
+            and (std::ranges::all_of(
+                view | std::views::drop(2), [&](auto c) { return c == short_switch[1]; }))))
         {
           constexpr auto type = type_of(mem);
           using T             = [:type:];

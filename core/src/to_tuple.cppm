@@ -11,8 +11,7 @@ template <aggregate_c T> constexpr auto to_tuple(T const& t)
 
   static constexpr auto members = define_static_array(meta::nonstatic_data_members_of_r(^^T, ctx));
 
-  static constexpr auto indices = []
-  {
+  static constexpr auto indices = [] {
     std::array<int, members.size()> indices;
     std::ranges::iota(indices, 0);
     return indices;

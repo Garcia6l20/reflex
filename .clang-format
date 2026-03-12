@@ -1,5 +1,3 @@
----
-# We'll use defaults from the LLVM style, but with 4 columns indentation.
 Language: Cpp
 BasedOnStyle: llvm
 
@@ -17,19 +15,46 @@ IncludeBlocks: Preserve
 IndentPPDirectives: None
 
 # allman style configuration
+# AllowShortFunctionsOnASingleLine: None
+# KeepEmptyLinesAtTheStartOfBlocks: false
+# BreakBeforeBraces: Allman
+# AllowShortIfStatementsOnASingleLine: Never
+# AllowShortBlocksOnASingleLine: false
+
 AllowShortFunctionsOnASingleLine: None
 KeepEmptyLinesAtTheStartOfBlocks: false
-BreakBeforeBraces: Allman
+BreakBeforeBraces: Custom
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortBlocksOnASingleLine: false
 
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterClass: true
+  AfterControlStatement: Always
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterExternBlock: true
+  BeforeCatch: true
+  BeforeElse: true
+  BeforeLambdaBody: false
+  BeforeWhile: false
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
 # functions
 IndentWrappedFunctionNames: true
-AlignAfterOpenBracket: Align
-AllowAllArgumentsOnNextLine: false
+# AlignAfterOpenBracket: DontAlign
+AlignAfterOpenBracket: AlwaysBreak
+AllowAllArgumentsOnNextLine: true
 AllowAllParametersOfDeclarationOnNextLine: false
-BinPackArguments: false
+BinPackArguments: true
 BinPackParameters: false
+# Cpp11BracedListStyle: true
 
 # variables
 PointerAlignment: Left

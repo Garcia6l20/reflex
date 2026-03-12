@@ -6,8 +6,7 @@ import std;
 using namespace reflex;
 
 template <auto... Values> struct templated_annotation_t
-{
-};
+{};
 
 template <auto... Values> constexpr templated_annotation_t<Values...> templated_annotation;
 

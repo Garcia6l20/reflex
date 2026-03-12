@@ -1,5 +1,3 @@
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
-
 link_libraries(reflex.core)
 
 doctest_add_test(reflex-core-views-test

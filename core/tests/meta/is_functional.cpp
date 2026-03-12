@@ -17,49 +17,42 @@ auto an_auto_nttp_template_lambda   = []<auto I> { return std::get<I>(std::tuple
 auto a_ttp_variadic_template_lambda = []<typename... Ts>(auto...) {};
 auto a_nttp_variadic_template_lambda = []<std::size_t... Is>(auto...) {};
 struct a_non_callable_type
-{
-};
+{};
 struct a_callable_type
 {
   void operator()()
-  {
-  }
+  {}
 };
 
 template <typename T> struct a_template_callable_type
 {
   void operator()(T&&)
-  {
-  }
+  {}
 };
 
 template <std::size_t I> struct an_nttp_template_callable_type
 {
   void operator()(std::array<int, I> const&)
-  {
-  }
+  {}
 };
 
 template <std::size_t I, typename T> struct mixed1_template_callable_type
 {
   void operator()(std::array<T, I> const&)
-  {
-  }
+  {}
 };
 
 template <std::size_t I, typename T, typename TT> struct mixed2_template_callable_type
 {
   void operator()()
-  {
-  }
+  {}
 };
 
 template <std::size_t I, typename T, std::size_t II, typename TT, typename TTT, std::size_t III>
 struct mixed3_template_callable_type
 {
   void operator()(std::array<T, I> const&, std::array<TT, II> const&, std::array<TTT, III> const&)
-  {
-  }
+  {}
 };
 
 static_assert(not meta::has_call_operator(^^a_function));
@@ -115,16 +108,12 @@ template <meta::info R> void dump_lambda()
   std::println("+++++ {} +++++", display_string_of(R));
   constexpr auto        type    = is_type(R) ? R : type_of(R);
   static constexpr auto members = define_static_array(
-      members_of(type, meta::access_context::unchecked())
-      | std::views::filter(
-          [](auto M)
-          {
-            return not is_constructor(M)
-               and not is_special_member_function(M)
-               and not has_identifier(M)
-               and ((is_function(M) /* and not is_operator_function(M) */)
-                    or (is_function_template(M) and not is_conversion_function_template(M)));
-          }));
+      members_of(type, meta::access_context::unchecked()) | std::views::filter([](auto M) {
+        return not is_constructor(M)
+           and not is_special_member_function(M)
+           and not has_identifier(M)
+           and ((is_function(M) /* and not is_operator_function(M) */) or (is_function_template(M) and not is_conversion_function_template(M)));
+      }));
   template for(constexpr auto M : members)
   {
     std::println(" - {}", display_string_of(M));

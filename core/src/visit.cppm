@@ -12,8 +12,7 @@ constexpr auto __visitor_auto_deduction_helper = []<typename T>(T&&) {};
 struct any_visitor
 {
   inline void operator()(auto&&)
-  {
-  }
+  {}
 };
 } // namespace reflex::detail
 
@@ -75,14 +74,16 @@ concept visitable_c = requires(T&& v) {
 consteval bool is_visitable_type(meta::info t)
 {
   auto type = decay(t);
-  if(can_substitute(^^visitor,
-                    {
+  if(can_substitute(
+         ^^visitor, {
                         type}))
   {
-    return is_invocable_type(substitute(^^visitor,
-                                        {
-                                            type}),
-                             {^^detail::any_visitor, type});
+    return is_invocable_type(
+        substitute(
+            ^^visitor,
+            {
+                type}),
+        {^^detail::any_visitor, type});
   }
   return false;
 }
@@ -97,10 +98,12 @@ inline constexpr decltype(auto) visit(Fn&& fn, Head&& head, Tail&&... tail)
           if constexpr(sizeof...(Tail) == 0)
           {
             return fwd(fn)(fwd(val));
-          } else {
-            return visit([&](auto &&...rest) -> decltype(auto) {
-              return fwd(fn)(fwd(val), fwd(rest)...);
-            }, fwd(tail)...);
+          }
+          else
+          {
+            return visit(
+                [&](auto&&... rest) -> decltype(auto) { return fwd(fn)(fwd(val), fwd(rest)...); },
+                fwd(tail)...);
           }
         },
         fwd(head));

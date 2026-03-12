@@ -12,18 +12,17 @@ namespace representation_object
 {
 
 template <class Char, meta::info I>
-constexpr std::basic_string_view<Char> string = []
-{ return std::basic_string_view<Char>(extract<Char const*>(I), extent(meta::type_of(I)) - 1); }();
+constexpr std::basic_string_view<Char> string = [] {
+  return std::basic_string_view<Char>(extract<Char const*>(I), extent(meta::type_of(I)) - 1);
+}();
 
 } // namespace representation_object
 
 template <typename Char, typename... Infos> consteval decltype(auto) make_string(Infos... R)
 {
-  return extract<std::basic_string_view<Char> const&>(
-      object_of(substitute(^^representation_object::string,
-                           {
-                               ^^Char,
-                               R...})));
+  return extract<std::basic_string_view<Char> const&>(object_of(substitute(
+      ^^representation_object::string, {
+                                           ^^Char, R...})));
 }
 
 template <typename Char> consteval decltype(auto) wrap_string(std::basic_string_view<Char> const& s)
@@ -42,18 +41,15 @@ template <typename Char> struct basic_constant_string
   template <auto N>
   constexpr basic_constant_string(const Char (&str)[N])
       : value(meta::detail::wrap_string<Char>(str))
-  {
-  }
+  {}
 
   constexpr basic_constant_string(std::basic_string_view<Char> str)
       : value(meta::detail::wrap_string<Char>(str))
-  {
-  }
+  {}
 
   constexpr basic_constant_string(std::basic_string<Char> str)
       : value(meta::detail::wrap_string<Char>(str))
-  {
-  }
+  {}
 
   constexpr value_type view() const noexcept
   {
