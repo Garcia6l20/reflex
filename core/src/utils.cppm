@@ -124,6 +124,19 @@ template <enum_c E> constexpr std::string_view enum_value_name(E value)
   throw std::runtime_error("Invalid enum value");
 }
 
+template <enum_c E> constexpr std::optional<E> to_enum_value(std::string_view name)
+{
+  template for(constexpr auto e : std::define_static_array(std::meta::enumerators_of(^^E)))
+  {
+    if(name == std::meta::identifier_of(e))
+    {
+      return [:e:];
+    }
+  }
+
+  return std::nullopt;
+}
+
 } // namespace reflex
 
 export template <reflex::enum_c E, typename CharT> struct std::formatter<E, CharT>
