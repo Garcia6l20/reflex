@@ -5,10 +5,9 @@ link_libraries(reflex.core)
 doctest_add_test(reflex-core-views-test
   views/cartesian-product.cpp
 )
-doctest_add_test(reflex-core-meta-test
-  meta/is_functional.cpp
-  meta/annotation-queries.cpp
-)
+
+add_subdirectory(meta)
+
 doctest_add_test(reflex-core-to-tuple-test
   test-to-tuple.cpp
 )

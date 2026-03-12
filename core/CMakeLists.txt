@@ -12,6 +12,8 @@ reflex_add_cxx_module_library(reflex.core
     src/visit.cppm
     src/match.cppm
     src/caseconv.cppm
+    src/const_assert.cppm
+    src/meta/tu.cppm
 )
 target_compile_options(reflex.core PUBLIC -fabi-version=19)
 
