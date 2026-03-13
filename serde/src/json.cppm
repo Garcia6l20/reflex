@@ -101,9 +101,8 @@ public:
 
     bool first = true;
 
-    template for(constexpr auto member : define_static_array(
-                     nonstatic_data_members_of(decay(^^decltype(val)),
-                                               std::meta::access_context::current())))
+    template for(constexpr auto member : define_static_array(nonstatic_data_members_of(
+                     decay(^^decltype(val)), std::meta::access_context::current())))
     {
       constexpr std::string_view name = serialized_name(member);
       if(not first)
@@ -127,309 +126,279 @@ public:
 class deserializer
 {
 private:
-  template <typename T, typename Iter>
-  constexpr auto load(Iter& begin, Iter const& end) const
-    requires(detail::is_base_value_type(^^T) or std::constructible_from<value, T>)
+  deserializer(std::string_view in) : lexme(in)
+  {}
+
+  std::string_view lexme;
+
+  auto advance(std::size_t n = 1)
   {
-    const auto skip_ws = [&](Iter& it)
-    {
-      while(it != end && is_space(static_cast<unsigned char>(*it)))
-        ++it;
-    };
+    char c = lexme.front();
+    lexme.remove_prefix(n);
+    return c;
+  }
 
-    if constexpr(std::same_as<T, json::string>)
-    {
-      if(begin == end || *begin != '"')
-        throw std::runtime_error("Expected '\"' at start of JSON string");
+  void ltrim()
+  {
+    lexme = reflex::ltrim(lexme);
+  }
 
-      ++begin; // consume opening quote
-      json::string out;
-      while(begin != end)
+  constexpr void load_into(detail::str_c auto& value)
+  {
+    if(lexme.empty() || lexme.front() != '"')
+      throw std::runtime_error("Expected '\"' at start of JSON string");
+
+    lexme.remove_prefix(1); // consume opening quote
+    while(!lexme.empty())
+    {
+      char c = advance();
+      if(c == '"') // closing quote
+        return;
+
+      if(c == '\\') // escape
       {
-        char c = *begin++;
-        if(c == '"') // closing quote
-          return out;
-
-        if(c == '\\') // escape
+        if(lexme.empty())
         {
-          if(begin == end)
-            throw std::runtime_error("Invalid escape at end of input");
-          char esc = *begin++;
-          switch(esc)
-          {
-            case '"':
-              out.push_back('"');
-              break;
-            case '\\':
-              out.push_back('\\');
-              break;
-            case '/':
-              out.push_back('/');
-              break;
-            case 'b':
-              out.push_back('\b');
-              break;
-            case 'f':
-              out.push_back('\f');
-              break;
-            case 'n':
-              out.push_back('\n');
-              break;
-            case 'r':
-              out.push_back('\r');
-              break;
-            case 't':
-              out.push_back('\t');
-              break;
-            case 'u':
-              throw std::runtime_error("\\uXXXX escapes not implemented");
-            default:
-              throw std::runtime_error(std::format("Unknown escape: \\{}", esc));
-          }
+          throw std::runtime_error("Invalid escape at end of input");
         }
-        else
+        char esc = advance();
+        switch(esc)
         {
-          out.push_back(c);
+          case '"':
+            value.push_back('"');
+            break;
+          case '\\':
+            value.push_back('\\');
+            break;
+          case '/':
+            value.push_back('/');
+            break;
+          case 'b':
+            value.push_back('\b');
+            break;
+          case 'f':
+            value.push_back('\f');
+            break;
+          case 'n':
+            value.push_back('\n');
+            break;
+          case 'r':
+            value.push_back('\r');
+            break;
+          case 't':
+            value.push_back('\t');
+            break;
+          case 'u':
+            throw std::runtime_error("\\uXXXX escapes not implemented");
+          default:
+            throw std::runtime_error(std::format("Unknown escape: \\{}", esc));
         }
       }
-      throw std::runtime_error("Unterminated JSON string");
+      else
+      {
+        value.push_back(c);
+      }
     }
-    else if constexpr(detail::number_c<T>)
+    throw std::runtime_error("Unterminated JSON string");
+  }
+
+  constexpr void load_into(bool& value)
+  {
+    if(lexme.size() >= 4 && lexme.substr(0, 4) == "true")
     {
-      // Collect number characters into a temporary string, then convert.
-      if(begin == end)
-        throw std::runtime_error("Unexpected end when parsing number");
-
-      Iter it = begin;
-      // A permissive set of number characters: sign, digits, decimal point, exponent.
-      static const auto is_num_char = [](char ch)
-      {
-        return (ch >= '0' && ch <= '9')
-            || ch
-            == '+'
-            || ch
-            == '-'
-            || ch
-            == '.'
-            || ch
-            == 'e'
-            || ch
-            == 'E';
-      };
-
-      // Accept optional leading sign
-      if(it != end && (*it == '+' || *it == '-'))
-      {
-        ++it;
-      }
-
-      bool any = false;
-      while(it != end && is_num_char(*it))
-      {
-        any = true;
-        ++it;
-      }
-      if(!any)
-        throw std::runtime_error("Invalid number");
-
-      T val{};
-      auto [ptr, ec] = std::from_chars(&*begin, &*end, val);
-      if(ec != std::errc{})
-      {
-        throw std::runtime_error("Failed to parse number");
-      }
-      begin = ptr;
-
-      return val;
+      value = true;
+      advance(4);
     }
-    else if constexpr(std::same_as<T, json::array>)
+    else if(lexme.size() >= 5 && lexme.substr(0, 5) == "false")
     {
-      if(begin == end || *begin != '[')
-        throw std::runtime_error("Expected '[' at start of JSON array");
-      ++begin; // consume '['
-      json::array out;
-      skip_ws(begin);
-      if(begin != end && *begin == ']')
-      {
-        ++begin;
-        return out;
-      } // empty array
-      while(true)
-      {
-        skip_ws(begin);
-        // parse any value using the dispatcher
-        out.push_back(load(begin, end));
-        skip_ws(begin);
-        if(begin == end)
-          throw std::runtime_error("Unterminated array");
-        if(*begin == ',')
-        {
-          ++begin;
-          continue;
-        }
-        if(*begin == ']')
-        {
-          ++begin;
-          break;
-        }
-        throw std::runtime_error("Expected ',' or ']' in array");
-      }
-      return out;
-    }
-    else if constexpr(std::same_as<T, json::object>)
-    {
-      if(begin == end || *begin != '{')
-        throw std::runtime_error("Expected '{' at start of JSON object");
-      ++begin; // consume '{'
-      json::object out;
-      skip_ws(begin);
-      if(begin != end && *begin == '}')
-      {
-        ++begin;
-        return out;
-      } // empty object
-      while(true)
-      {
-        skip_ws(begin);
-        // key must be a string
-        json::string key = load<json::string, Iter>(begin, end);
-        skip_ws(begin);
-        if(begin == end || *begin != ':')
-          throw std::runtime_error("Expected ':' after object key");
-        ++begin; // consume ':'
-        skip_ws(begin);
-        json::value val = load(begin, end);
-        out.emplace(std::move(key), std::move(val));
-        skip_ws(begin);
-        if(begin == end)
-          throw std::runtime_error("Unterminated object");
-        if(*begin == ',')
-        {
-          ++begin;
-          continue;
-        }
-        if(*begin == '}')
-        {
-          ++begin;
-          break;
-        }
-        throw std::runtime_error("Expected ',' or '}' in object");
-      }
-      return out;
+      value = false;
+      advance(5);
     }
     else
     {
-      // fallback: unsupported T
-      throw std::runtime_error("Type not supported for deserialization (requested load<T>)");
+      throw std::runtime_error("Expected 'true' or 'false'");
     }
   }
 
-  template <typename T, typename Iter>
-  auto load(Iter& begin, Iter const& end) const
-    requires(is_aggregate_type(^^T))
+  constexpr void load_into(json::null_t& value)
   {
-    const auto skip_ws = [&](Iter& it)
+    if(lexme.size() >= 4 && lexme.substr(0, 4) == "null")
     {
-      while(it != end && is_space(static_cast<unsigned char>(*it)))
-        ++it;
-    };
-    if(begin == end || *begin != '{')
-      throw std::runtime_error("Expected '{' at start of JSON object for aggregate");
-    ++begin; // consume '{'
-    T out{};
-    skip_ws(begin);
-    if(begin != end && *begin == '}')
+      advance(4);
+    }
+    else
     {
-      ++begin;
-      return out;
-    } // empty object
+      throw std::runtime_error("Expected 'null'");
+    }
+  }
 
-    template for(constexpr auto member : define_static_array(
-                     nonstatic_data_members_of(^^T, std::meta::access_context::current())))
+  constexpr void load_into(detail::number_c auto& value)
+  {
+    // Collect number characters into a temporary string, then convert.
+    if(lexme.empty())
+      throw std::runtime_error("Unexpected end when parsing number");
+
+    // A permissive set of number characters: sign, digits, decimal point, exponent.
+    static const auto is_num_char = [](char ch) {
+      return (ch >= '0' && ch <= '9')
+          or (ch == '+')
+          or (ch == '-')
+          or (ch == '.')
+          or (ch == 'e')
+          or (ch == 'E');
+    };
+
+    // Accept optional leading sign
+    if(not lexme.empty() and (lexme.front() == '+' or lexme.front() == '-'))
     {
-      constexpr std::string_view name = serialized_name(member);
-      // parse key
-      json::string key = load<json::string, Iter>(begin, end);
-      if(key != name)
-        throw std::runtime_error(std::format("Expected key '{}' in JSON object", name));
-      skip_ws(begin);
-      if(begin == end || *begin != ':')
-        throw std::runtime_error("Expected ':' after object key in aggregate");
-      ++begin; // consume ':'
-      skip_ws(begin);
-      // parse value
-      constexpr auto member_type = type_of(member);
-      using MemberType           = [:member_type:];
-      out.[:member:]             = load<MemberType>(begin, end);
-      skip_ws(begin);
-      if(begin == end)
-        throw std::runtime_error("Unterminated object in aggregate");
-      if(*begin == ',')
+      advance();
+    }
+
+    auto begin     = lexme.data();
+    auto end       = lexme.data() + lexme.size();
+    auto [ptr, ec] = std::from_chars(begin, end, value);
+    if(ec != std::errc{})
+    {
+      throw std::runtime_error("Failed to parse number");
+    }
+    advance(ptr - begin);
+  }
+
+  constexpr void load_into(detail::seq_c auto& value)
+  {
+    if(lexme.empty() || lexme.front() != '[')
+      throw std::runtime_error("Expected '[' at start of JSON array");
+    advance(); // consume '['
+    ltrim();
+    if(!lexme.empty() && lexme.front() == ']')
+    {
+      advance(); // consume ']'
+      return;
+    } // empty array
+
+    while(true)
+    {
+      json::value elem;
+      load_into(elem);
+      value.push_back(std::move(elem));
+      ltrim();
+      if(lexme.empty())
+        throw std::runtime_error("Unterminated array");
+      if(lexme.front() == ',')
       {
-        ++begin;
+        advance(); // consume ','
         continue;
       }
-      if(*begin == '}')
+      if(lexme.front() == ']')
       {
-        ++begin;
+        advance(); // consume ']'
         break;
       }
-      throw std::runtime_error("Expected ',' or '}' in object for aggregate");
+      throw std::runtime_error("Expected ',' or ']' in array");
     }
-    return out;
   }
 
-  value load(auto& begin, auto const& end) const
+  constexpr void load_into(json::value& value)
   {
-    while(begin != end && std::isspace(*begin))
-    {
-      ++begin;
-    }
-    if(begin == end)
-    {
-      throw std::runtime_error("Unexpected end of input");
-    }
-    switch(*begin)
+    ltrim();
+    switch(lexme.front())
     {
       case 't': // assuming true
-        begin += 4;
-        return true;
+        advance(4);
+        value = true;
+        return;
       case 'f': // assuming false
-        begin += 5;
-        return false;
+        advance(5);
+        value = false;
+        return;
       case 'n': // assuming null
-        begin += 4;
-        return null;
+        advance(4);
+        value = null;
+        return;
       case '{':
-        return load<json::object>(begin, end);
+      {
+        load_into(value.template emplace<json::object>());
+        return;
+      }
       case '[':
-        return load<json::array>(begin, end);
+      {
+        load_into(value.template emplace<json::array>());
+        return;
+      }
       case '"':
-        return load<json::string>(begin, end);
+      {
+        load_into(value.template emplace<json::string>());
+        return;
+      }
       default:
-        return load<json::number>(begin, end);
+      {
+        load_into(value.template emplace<json::number>());
+        return;
+      }
     }
-    throw std::runtime_error("Error occurred while parsing value");
+  }
+
+  template <object_visitable_c Map> constexpr void load_into(Map& value)
+  {
+    if(lexme.empty() || lexme.front() != '{')
+      throw std::runtime_error("Expected '{' at start of JSON object");
+    advance(); // consume '{'
+    ltrim();
+    if(!lexme.empty() && lexme.front() == '}')
+    {
+      advance(); // consume '}'
+      return;
+    } // empty object
+    while(true)
+    {
+      ltrim();
+      // key must be a string
+      std::string key;
+      load_into(key);
+      ltrim();
+      if(lexme.empty() || lexme.front() != ':')
+        throw std::runtime_error("Expected ':' after object key");
+      advance(); // consume ':'
+      ltrim();
+      serde::visit_object(
+          [this](auto&& v) { //
+            load_into(v);
+          },
+          key, value);
+      ltrim();
+      if(lexme.empty())
+        throw std::runtime_error("Unterminated object");
+      if(lexme.front() == ',')
+      {
+        advance(); // consume ','
+        continue;
+      }
+      if(lexme.front() == '}')
+      {
+        advance(); // consume '}'
+        break;
+      }
+      throw std::runtime_error("Expected ',' or '}' in object");
+    }
   }
 
 public:
-  template <typename T> T load(auto&& in) const
+  template <typename T = json::value> static T load(detail::str_c auto&& in)
   {
-    const auto view  = in.view();
-    auto       begin = view.begin();
-    const auto end   = view.end();
-    return load<T>(begin, end);
+    auto self = deserializer{in};
+    T    value{};
+    self.load_into(value);
+    return value;
   }
 
-  value load(auto&& in) const
+  template <typename T = json::value>
+  static T load(auto&& in)
+    requires requires() { in.view(); }
   {
-    const auto view  = in.view();
-    auto       begin = view.begin();
-    const auto end   = view.end();
-    return load(begin, end);
+    return load<T>(in.view());
   }
 
-  value operator()(auto&& in) const
+  static auto operator()(auto&& in)
   {
     return load(in);
   }

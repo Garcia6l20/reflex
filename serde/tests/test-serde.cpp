@@ -5,45 +5,46 @@ import reflex.serde;
 import std;
 
 using namespace reflex;
+using namespace reflex::serde;
 using namespace std::string_view_literals;
 
 TEST_CASE("serde::serialized_name")
 {
-  struct[[= serde::naming::snake_case]] S1
+  struct[[= naming::snake_case]] S1
   {
     int memberOne;
     int memberTwo;
   };
 
-  CHECK_EQ(serde::serialized_name(^^S1::memberOne), "member_one"sv);
-  CHECK_EQ(serde::serialized_name(^^S1::memberTwo), "member_two"sv);
+  CHECK_EQ(serialized_name(^^S1::memberOne), "member_one"sv);
+  CHECK_EQ(serialized_name(^^S1::memberTwo), "member_two"sv);
 
-  struct[[= serde::naming::camel_case]] S2
+  struct[[= naming::camel_case]] S2
   {
     int member_one;
     int member_two;
   };
 
-  CHECK_EQ(serde::serialized_name(^^S2::member_one), "memberOne"sv);
-  CHECK_EQ(serde::serialized_name(^^S2::member_two), "memberTwo"sv);
+  CHECK_EQ(serialized_name(^^S2::member_one), "memberOne"sv);
+  CHECK_EQ(serialized_name(^^S2::member_two), "memberTwo"sv);
 
-  struct[[= serde::naming::camel_case]] S3
+  struct[[= naming::camel_case]] S3
   {
-    [[= serde::naming::kebab_case]] int         memberOne;
-    [[= serde::rename{"memberTwoRenamed"}]] int memberTwo;
+    [[= naming::kebab_case]] int         memberOne;
+    [[= rename{"memberTwoRenamed"}]] int memberTwo;
   };
 
-  CHECK_EQ(serde::serialized_name(^^S3::memberOne), "member-one"sv);
-  CHECK_EQ(serde::serialized_name(^^S3::memberTwo), "memberTwoRenamed"sv);
+  CHECK_EQ(serialized_name(^^S3::memberOne), "member-one"sv);
+  CHECK_EQ(serialized_name(^^S3::memberTwo), "memberTwoRenamed"sv);
 }
 
 // TEST_CASE("serde::members_of")
 // {
-//   struct[[= serde::naming::camel_case]] S
+//   struct[[= naming::camel_case]] S
 //   {
 //     int                                    int_member;
 //     std::string                            string_member;
-//     [[= serde::naming::kebab_case]] double double_member;
+//     [[= naming::kebab_case]] double double_member;
 //   };
 
 //   template for(constexpr auto m : define_static_array(

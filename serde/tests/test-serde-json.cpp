@@ -17,10 +17,6 @@ struct[[= serde::naming::camel_case]] S
   [[= serde::naming::kebab_case]] double double_member;
 };
 
-// static_assert(not json::detail::is_base_value_type(type_of(^^S::int_member)));
-// static_assert(json::detail::is_base_value_type(type_of(^^S::string_member)));
-// static_assert(json::detail::is_base_value_type(type_of(^^S::double_member)));
-
 TEST_CASE("serde::json::serializer: base types")
 {
   std::ostringstream out;
@@ -112,37 +108,36 @@ TEST_CASE("serde::json::serializer: nested aggregate")
 TEST_CASE("serde::json::deserializer: base types")
 {
   std::istringstream in;
-  json::deserializer deserializer;
 
   using json::null;
   SUBCASE("null")
   {
     in.str("null");
-    auto value = deserializer(in);
+    auto value = json::deserializer::load<json::null_t>(in);
     CHECK(value == null);
   }
 
   SUBCASE("string")
   {
     in.str(JSON("Hello, world!"));
-    auto value = deserializer(in);
+    auto value = json::deserializer::load<std::string>(in);
     CHECK(value == "Hello, world!");
   }
 
   SUBCASE("number")
   {
     in.str("42");
-    auto value = deserializer(in);
+    auto value = json::deserializer::load<int>(in);
     CHECK(value == 42);
   }
 
   SUBCASE("boolean")
   {
     in.str("true");
-    auto value = deserializer(in);
+    auto value = json::deserializer::load<bool>(in);
     CHECK(value == true);
     in.str("false");
-    value = deserializer(in);
+    value = json::deserializer::load<bool>(in);
     CHECK(value == false);
   }
 }
@@ -150,12 +145,11 @@ TEST_CASE("serde::json::deserializer: base types")
 TEST_CASE("serde::json::deserializer: sequence and map")
 {
   std::istringstream in;
-  json::deserializer deserializer;
 
   SUBCASE("sequence")
   {
     in.str(JSON([1,2,3]));
-    auto value = deserializer(in);
+    auto value = json::deserializer::load(in);
     CHECK(value.is_array());
     CHECK_EQ(value.as<json::array>().size(), 3);
     CHECK_EQ(value.as<json::array>()[0], 1);
@@ -168,8 +162,9 @@ TEST_CASE("serde::json::deserializer: sequence and map")
   SUBCASE("map")
   {
     in.str(JSON({"a":1,"b":2}));
-    auto value = deserializer(in);
+    auto value = json::deserializer::load(in);
     CHECK(value.is_object());
+    std::println("Parsed object: {}", value.as<json::object>());
     CHECK_EQ(value.as<json::object>().size(), 2);
     CHECK_EQ(value.as<json::object>().at("a"), 1);
     CHECK_EQ(value.as<json::object>().at("b"), 2);
@@ -184,11 +179,17 @@ TEST_CASE("serde::json::deserializer: sequence and map")
 TEST_CASE("serde::json::deserializer: aggregate")
 {
   std::istringstream in;
-  json::deserializer deserializer;
 
   in.str(JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14}));
-  auto value = deserializer.load<S>(in);
-  CHECK_EQ(value.int_member, 42);
-  CHECK_EQ(value.string_member, "Hello, world!");
-  CHECK_EQ(value.double_member, 3.14);
+
+  static_assert(serde::object_visitable_c<S>);
+  static_assert(serde::object_visitable_c<S&>);
+
+  SUBCASE("direct load")
+  {
+    auto value = json::deserializer::load<S>(in);
+    CHECK_EQ(value.int_member, 42);
+    CHECK_EQ(value.string_member, "Hello, world!");
+    CHECK_EQ(value.double_member, 3.14);
+  }
 }

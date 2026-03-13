@@ -7,8 +7,7 @@ import std;
 export namespace reflex::serde
 {
 struct rename : constant_string
-{
-};
+{};
 
 using naming = caseconv::naming;
 
@@ -40,29 +39,36 @@ consteval std::string_view serialized_name(meta::info member_info)
   return name;
 }
 
-struct aggregate_member
+template <typename T> struct object_visitor;
+
+template <aggregate_c T> struct object_visitor<T>
 {
-  meta::info      info;
-  constant_string name;
+  static constexpr auto __access_context = std::meta::access_context::current();
+
+  template <typename Fn, typename StrT, decays_to_c<T> Agg>
+  static inline constexpr decltype(auto) operator()(Fn&& fn, StrT&& key, Agg&& agg)
+  {
+    template for(constexpr auto& member : define_static_array(
+                     nonstatic_data_members_of(remove_reference(^^T), __access_context)))
+    {
+      if(serialized_name(member) == key)
+      {
+        return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+      }
+    }
+    throw std::runtime_error(
+        std::format("Key '{}' does not match any member of {}", key, identifier_of(decay(^^T))));
+  }
 };
 
-// inline consteval auto
-//     members_of(meta::info                aggregate_info,
-//                std::meta::access_context context = std::meta::access_context::current())
-// {
-//   if(not is_aggregate_type(aggregate_info))
-//   {
-//     throw std::runtime_error("serde::members_of can only be used with aggregate types");
-//   }
-//   // GCC bug ??
-//   // return std::meta::nonstatic_data_members_of(aggregate_info, context)
-//   //      | std::views::transform([](auto i) { return aggregate_member{i, serialized_name(i)}; });
+template <typename T>
+concept object_visitable_c = is_complete_type(^^object_visitor<std::decay_t<T>>);
 
-//   std::vector<aggregate_member> result;
-//   for(auto m : nonstatic_data_members_of(aggregate_info, context))
-//   {
-//     result.push_back(aggregate_member{m, constant_string(serialized_name(m))});
-//   }
-//   return result;
-// }
+template <object_visitable_c T, typename Fn>
+constexpr decltype(auto) visit_object(Fn&& fn, auto&& key, T&& value)
+{
+  return object_visitor<std::decay_t<T>>{}(
+      std::forward<Fn>(fn), std::forward<decltype(key)>(key), std::forward<T>(value));
+}
+
 } // namespace reflex::serde
