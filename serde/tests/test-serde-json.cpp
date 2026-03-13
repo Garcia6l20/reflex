@@ -30,7 +30,7 @@ TEST_CASE("serde::json::serializer: base types")
 
   SUBCASE("null")
   {
-    serializer(out, null{});
+    serializer(out, null);
     CHECK_EQ(out.str(), "null");
   }
 
@@ -119,7 +119,7 @@ TEST_CASE("serde::json::deserializer: base types")
   {
     in.str("null");
     auto value = deserializer(in);
-    CHECK(value == null{});
+    CHECK(value == null);
   }
 
   SUBCASE("string")

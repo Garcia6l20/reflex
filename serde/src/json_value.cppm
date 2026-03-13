@@ -64,9 +64,9 @@ using boolean = bool;
 
 struct value;
 
-struct object : std::unordered_map<string, value>
+struct object : std::map<string, value>
 {
-  using std::unordered_map<string, value>::unordered_map;
+  using std::map<string, value>::map;
 };
 
 struct array : std::vector<value>

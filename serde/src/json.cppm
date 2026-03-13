@@ -6,7 +6,7 @@ export import :value;
 
 import std;
 
-namespace reflex::serde::json
+export namespace reflex::serde::json
 {
 class serializer
 {
