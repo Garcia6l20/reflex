@@ -18,11 +18,40 @@ struct any_visitor
 
 export namespace reflex
 {
+consteval std::meta::info variant_type_of(meta::info R)
+{
+  auto const RR = dealias(decay(R));
+  if(not is_class_type(RR))
+  {
+    throw std::meta::exception("not a class type", R);
+  }
+  if(has_template_arguments(RR) and (template_of(RR) == ^^std::variant))
+  {
+    return RR;
+  }
+  auto bases = bases_of(RR, std::meta::access_context::current());
+  auto base  = std::ranges::find_if(bases, [](meta::info base) {
+    auto T = dealias(type_of(base));
+    return has_template_arguments(T) and (template_of(T) == ^^std::variant);
+  });
+  if(base == std::ranges::end(bases))
+  {
+    throw std::meta::exception("not a variant type", R);
+  }
+  return dealias(type_of(*base));
+}
 
 consteval bool is_variant_type(meta::info R)
 {
-  const auto RR = decay(R);
-  return has_template_arguments(RR) and (template_of(RR) == ^^std::variant);
+  try
+  {
+    variant_type_of(R);
+    return true;
+  }
+  catch(std::meta::exception const&)
+  {
+    return false;
+  }
 }
 
 template <typename T>
@@ -31,16 +60,18 @@ concept variant_c = is_variant_type(^^T);
 template <typename T>
 concept non_variant_c = not variant_c<T>;
 
-template <typename... Ts> struct visitor;
+template <typename...> struct visitor;
 
 /** @brief variant visitor */
-template <typename... Ts> struct visitor<std::variant<Ts...>>
+template <variant_c T> struct visitor<T>
 {
   template <typename Fn, typename VarT>
   static inline constexpr decltype(auto)
       operator()(Fn&& fn, VarT&& v) noexcept(noexcept(fwd(fn)(std::get<0>(fwd(v)))))
   {
-    template for(constexpr auto ii : std::views::iota(0uz, sizeof...(Ts)))
+    static constexpr auto value_types =
+        define_static_array(template_arguments_of(variant_type_of(^^T)));
+    template for(constexpr auto ii : std::views::iota(0uz, value_types.size()))
     {
       if(v.index() == ii)
       {
@@ -52,9 +83,9 @@ template <typename... Ts> struct visitor<std::variant<Ts...>>
 };
 
 /** @brief member-visitable visitor */
-template <template <typename...> typename Tmpl, typename... Ts>
-  requires requires(Tmpl<Ts...> o) { o.visit(detail::__visitor_auto_deduction_helper); }
-struct visitor<Tmpl<Ts...>>
+template <non_variant_c T>
+  requires requires(T o) { o.visit(detail::any_visitor{}); }
+struct visitor<T>
 {
   template <typename Fn, typename VarT>
   static inline constexpr decltype(auto)
