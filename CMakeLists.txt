@@ -26,4 +26,5 @@ endif()
 
 add_subdirectory(core)
 add_subdirectory(cli)
+add_subdirectory(poly)
 add_subdirectory(serde)

@@ -17,13 +17,13 @@ public:
     return out;
   }
 
-  template <typename Out> constexpr Out& operator()(Out& out, detail::str_c auto const& str) const
+  template <typename Out> constexpr Out& operator()(Out& out, poly::str_c auto const& str) const
   {
     out << '"' << std::string_view(str) << '"';
     return out;
   }
 
-  template <typename Out> constexpr Out& operator()(Out& out, detail::number_c auto num) const
+  template <typename Out> constexpr Out& operator()(Out& out, poly::number_c auto num) const
   {
     out << num;
     return out;
@@ -35,7 +35,7 @@ public:
     return out;
   }
 
-  template <typename Out> constexpr Out& operator()(Out& out, detail::seq_c auto const& arr) const
+  template <typename Out> constexpr Out& operator()(Out& out, poly::seq_c auto const& arr) const
   {
     out << '[';
     if(arr.empty())
@@ -57,7 +57,7 @@ public:
     return out;
   }
 
-  template <typename Out> constexpr Out& operator()(Out& out, detail::pair_c auto const& p) const
+  template <typename Out> constexpr Out& operator()(Out& out, poly::pair_c auto const& p) const
   {
     out << '{';
     (*this)(out, p.first);
@@ -67,7 +67,7 @@ public:
     return out;
   }
 
-  template <typename Out> constexpr Out& operator()(Out& out, detail::map_c auto const& obj) const
+  template <typename Out> constexpr Out& operator()(Out& out, poly::map_c auto const& obj) const
   {
     out << '{';
     if(obj.empty())
@@ -143,7 +143,7 @@ private:
     lexme = reflex::ltrim(lexme);
   }
 
-  constexpr void load_into(detail::str_c auto& value)
+  constexpr void load_into(poly::str_c auto& value)
   {
     if(lexme.empty() || lexme.front() != '"')
       throw std::runtime_error("Expected '\"' at start of JSON string");
@@ -232,7 +232,7 @@ private:
     }
   }
 
-  constexpr void load_into(detail::number_c auto& value)
+  constexpr void load_into(poly::number_c auto& value)
   {
     // Collect number characters into a temporary string, then convert.
     if(lexme.empty())
@@ -264,7 +264,7 @@ private:
     advance(ptr - begin);
   }
 
-  constexpr void load_into(detail::seq_c auto& value)
+  constexpr void load_into(poly::seq_c auto& value)
   {
     if(lexme.empty() || lexme.front() != '[')
       throw std::runtime_error("Expected '[' at start of JSON array");
@@ -383,7 +383,7 @@ private:
   }
 
 public:
-  template <typename T = json::value> static T load(detail::str_c auto&& in)
+  template <typename T = json::value> static T load(poly::str_c auto&& in)
   {
     auto self = deserializer{in};
     T    value{};

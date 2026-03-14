@@ -11,7 +11,7 @@ reflex_add_cxx_module_library(reflex.serde_json
     src/json.cppm
     src/json_value.cppm
 )
-target_link_libraries(reflex.serde_json PUBLIC reflex.serde)
+target_link_libraries(reflex.serde_json PUBLIC reflex.serde reflex.poly)
 
 if(REFLEX_BUILD_TESTS)
   add_subdirectory(tests)

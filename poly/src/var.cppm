@@ -1,0 +1,374 @@
+export module reflex.poly:var;
+
+import reflex.core;
+
+import std;
+
+export namespace reflex::poly
+{
+template <typename T>
+concept str_c = decays_to_c<T, char*>
+             or decays_to_c<T, std::string>
+             or decays_to_c<T, std::string_view>
+             or requires(T s) { std::string_view(s); };
+
+template <typename T>
+concept map_c = requires(T t) {
+  { t.begin() } -> std::input_iterator;
+  { t.end() } -> std::sentinel_for<decltype(t.begin())>;
+  typename T::value_type;
+  typename T::key_type;
+  typename T::mapped_type;
+};
+
+template <typename T>
+concept seq_c = requires(T t) {
+  { std::begin(t) } -> std::input_iterator;
+  { std::end(t) } -> std::sentinel_for<decltype(std::begin(t))>;
+  typename T::value_type;
+} and not map_c<T> and not str_c<T>;
+
+template <typename T>
+concept pair_c = requires(T t) {
+  typename T::first_type;
+  typename T::second_type;
+};
+
+template <typename T>
+concept number_c = (std::integral<T> or std::floating_point<T>) and not decays_to_c<T, bool>;
+
+// static_assert(seq_c<std::vector<int>>);
+// static_assert(map_c<std::unordered_map<int, int>>);
+// static_assert(not seq_c<std::unordered_map<int, int>>);
+
+struct null_t
+{
+  constexpr bool operator==(null_t const&) const noexcept
+  {
+    return true;
+  }
+  constexpr bool operator==(auto const&) const noexcept
+  {
+    return false;
+  }
+};
+
+constexpr null_t null{};
+
+using string = std::string;
+
+template <typename... Ts> struct var;
+template <typename... Ts> struct obj;
+template <typename... Ts> struct arr;
+
+// namespace detail
+// {
+// template <typename... Ts>
+// using base_var_type = std::variant<null_t, Ts..., >;
+// }
+
+template <typename... Ts> struct obj : std::map<string, var<Ts...>>
+{
+  using std::map<string, var<Ts...>>::map;
+};
+
+template <typename... Ts> struct arr : std::vector<var<Ts...>>
+{
+  using std::vector<var<Ts...>>::vector;
+};
+
+template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, obj<Ts...>>
+{
+  using arr_type = arr<Ts...>;
+  using obj_type = obj<Ts...>;
+
+  using variant_type = std::variant<null_t, Ts..., arr_type, obj_type>;
+
+  using variant_type::variant_type; // inherit constructors
+
+  struct infos
+  {
+    static constexpr auto base_types = std::array{^^null_t, ^^Ts...};
+
+    static consteval std::meta::info __integral_type()
+    {
+      for(auto t : base_types)
+      {
+        if(is_int_number_type(t))
+        {
+          return t;
+        }
+      }
+      return ^^void;
+    }
+
+    static consteval std::meta::info __floating_point_type()
+    {
+      for(auto t : base_types)
+      {
+        if(is_floating_point_type(t))
+        {
+          return t;
+        }
+      }
+      return ^^void;
+    }
+  };
+
+  using integral_type                     = typename[:infos::__integral_type():];
+  static constexpr bool has_integral_type = dealias(^^integral_type) != ^^void;
+
+  using floating_point_type                     = typename[:infos::__floating_point_type():];
+  static constexpr bool has_floating_point_type = dealias(^^floating_point_type) != ^^void;
+
+  constexpr var() = default;
+
+  // === numeric catch-all (int, float, size_t, …)
+  //   constexpr var(detail::number_c auto n)
+  //     requires(not std::constructible_from<detail::base_value, decltype(n)>)
+  //       : variant_type(number(n))
+  //   {}
+
+  // === conversion constructors
+  template <typename Int>
+    requires(
+        (not std::constructible_from<variant_type, Int &&>)
+        and has_integral_type
+        and std::convertible_to<Int, integral_type>)
+  constexpr var(Int&& value) : variant_type(integral_type(value))
+  {}
+
+  template <typename Int>
+    requires(
+        (not std::constructible_from<variant_type, Int &&>)
+        and (not has_integral_type)
+        and has_floating_point_type
+        and std::convertible_to<Int, floating_point_type>)
+  constexpr var(Int&& value) : variant_type(floating_point_type(value))
+  {}
+
+  // === initializer-list construction  {"key": val, ...}
+  constexpr var(std::initializer_list<std::pair<string const, var<Ts...>>> pairs)
+      : variant_type(obj_type(pairs))
+  {}
+
+  // === type predicates
+  template <typename T> constexpr bool is() const
+  {
+    return std::holds_alternative<T>(*this);
+  }
+
+  constexpr bool is_array() const
+  {
+    return std::holds_alternative<arr_type>(*this);
+  }
+
+  constexpr bool is_object() const
+  {
+    return std::holds_alternative<obj_type>(*this);
+  }
+
+  constexpr bool is_null() const
+  {
+    return std::holds_alternative<null_t>(*this);
+  }
+
+  // === typed accessors
+  template <typename T> constexpr decltype(auto) as(this auto&& self)
+  {
+    return std::get<T>(self);
+  }
+
+  // === get<T>() with optional fallback
+  template <typename T, typename Self>
+  constexpr std::optional<const_like_t<Self, T>&> get(this Self& self) noexcept
+  {
+    if(auto* p = std::get_if<T>(&self))
+      return *p;
+    return std::nullopt;
+  }
+
+  // === array index access
+  constexpr decltype(auto) operator[](this auto&& self, std::size_t idx)
+  {
+    return self.template as<arr_type>()[idx];
+  }
+
+  // == object key access
+  constexpr var& operator[](std::string_view key)
+  {
+    auto val = at_path(key);
+    if(val == nullptr)
+    {
+      throw std::runtime_error("insert failed");
+    }
+    return *val;
+  }
+
+  constexpr std::optional<var const&> at(std::string_view key) const noexcept
+  {
+    auto val = at_path(key);
+    if(val == nullptr)
+    {
+      return std::nullopt;
+    }
+    return *val;
+  }
+
+private:
+  //    Returns a pointer to the nested value, or nullptr if any step is missing.
+  constexpr auto at_path(this auto& self, std::string_view path) noexcept
+      -> const_like_t<decltype(self), var>*
+  {
+    auto cur = &self;
+    while(!path.empty())
+    {
+      if(!cur->is_object())
+      {
+        if constexpr(requires { *cur = obj_type{}; })
+        {
+          *cur = obj_type{};
+        }
+        else
+        {
+          return nullptr;
+        }
+      }
+      const auto     dot = path.find('.');
+      const auto     key = path.substr(0, dot);
+      decltype(auto) obj = cur->template as<obj_type>();
+      auto it = std::ranges::find_if(obj, [key](auto const& elem) { return elem.first == key; });
+      if(it == obj.end())
+      {
+        if constexpr(requires { obj.emplace(key, null); })
+        {
+          it = obj.emplace(key, null).first;
+        }
+        else
+        {
+          return nullptr;
+        }
+      }
+      cur  = &it->second;
+      path = (dot == std::string_view::npos) ? std::string_view{} : path.substr(dot + 1);
+    }
+    return cur;
+  }
+
+public:
+  // === contains  (single key or dotted path)
+  constexpr bool contains(std::string_view path) const noexcept
+  {
+    return at_path(path) != nullptr;
+  }
+
+  // === size / empty ===
+  constexpr std::size_t size() const
+  {
+    return reflex::visit(
+        match{
+            [](null_t const&) -> std::size_t { return 0; },
+            [](auto const& s) -> std::size_t
+              requires requires { s.size(); }
+            { return s.size(); },
+            [](auto const&) -> std::size_t { return 1; },
+            },
+            *this);
+  }
+
+  constexpr bool empty() const
+  {
+    return size() == 0;
+  }
+
+  // === push_back for arrays
+  constexpr void push_back(auto&& v)
+  {
+    as<arr_type>().push_back(std::forward<decltype(v)>(v));
+  }
+
+  // === merge another object into this one
+  constexpr void merge(obj_type const& other)
+  {
+    auto& obj = as<obj_type>();
+    for(auto const& [k, v] : other)
+    {
+      obj.insert_or_assign(k, v);
+    }
+  }
+
+  // === visit helper
+  constexpr decltype(auto) visit(this auto&& self, auto&& fn)
+  {
+    return reflex::visit(std::forward<decltype(fn)>(fn), std::forward<decltype(self)>(self));
+  }
+
+  // === equality operators
+
+  template <typename T> constexpr bool operator==(T const& other) const
+  {
+    return reflex::visit(
+        match{
+            [&other](auto const& s) -> bool
+              requires requires { s == other; }
+            { return s == other; },
+            [&other](auto const&) //
+            { return false; },
+            },
+            *this);
+  }
+};
+
+} // namespace reflex::poly
+
+export namespace std
+{
+using namespace reflex::poly;
+
+template <> struct formatter<null_t> : formatter<std::string_view>
+{
+  auto format(null_t const&, auto& ctx) const
+  {
+    return std::formatter<std::string_view>::format("null", ctx);
+  }
+};
+
+template <typename... Ts> struct formatter<var<Ts...>> : formatter<std::string_view>
+{
+  auto format(var<Ts...> const& v, auto& ctx) const
+  {
+    using var_t = var<Ts...>;
+
+    v.visit(
+        reflex::match{
+            [&ctx](auto const& s)
+              requires requires { std::format_to(ctx.out(), "{}", s); }
+            { std::format_to(ctx.out(), "{}", s); },
+            [&ctx](var_t::arr_type const& arr) {
+              ctx.out() = '[';
+              for(std::size_t i = 0; i < arr.size(); ++i)
+              {
+                if(i > 0)
+                  ctx.out() = ',';
+                std::format_to(ctx.out(), "{}", arr[i]);
+              }
+              ctx.out() = ']';
+            },
+            [&ctx](var_t::obj_type const& obj) {
+              ctx.out()  = '{';
+              bool first = true;
+              for(auto const& [k, v] : obj)
+              {
+                if(!first)
+                  ctx.out() = ',';
+                first = false;
+                std::format_to(ctx.out(), "\"{}\":{}", k, v);
+              }
+              ctx.out() = '}';
+            },
+        });
+    return ctx.out();
+  }
+};
+
+} // namespace std

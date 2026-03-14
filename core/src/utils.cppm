@@ -150,6 +150,24 @@ constexpr std::string_view trim(std::string_view s) noexcept
   return s;
 }
 
+constexpr std::string_view ltrim(std::string_view s) noexcept
+{
+  while(!s.empty() and is_space(s.front()))
+  {
+    s.remove_prefix(1);
+  }
+  return s;
+}
+
+constexpr std::string_view rtrim(std::string_view s) noexcept
+{
+  while(!s.empty() and is_space(s.back()))
+  {
+    s.remove_suffix(1);
+  }
+  return s;
+}
+
 } // namespace reflex
 
 export template <reflex::enum_c E, typename CharT> struct std::formatter<E, CharT>
