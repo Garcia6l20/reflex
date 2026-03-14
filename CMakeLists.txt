@@ -9,9 +9,6 @@ project(reflex LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
-# include(Sanitizers)
-# link_libraries(sanitizers::all)
-
 option(REFLEX_BUILD_EXAMPLES "Build reflex examples" OFF)
 option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 
@@ -22,6 +19,10 @@ if(REFLEX_BUILD_TESTS)
   enable_testing()
 endif()
 
+if (NOT CMAKE_CXX_MODULE_STD)
+  add_subdirectory(std)
+  link_libraries(std)
+endif()
 
 add_subdirectory(core)
 add_subdirectory(cli)
