@@ -82,4 +82,17 @@ template <typename Char> struct basic_constant_string
 };
 
 using constant_string = basic_constant_string<char>;
+
+namespace literals
+{
+
+consteval constant_string operator""_sc(const char* data, std::size_t N)
+{
+  return {
+      std::string_view{data, N}
+  };
+}
+
+} // namespace literals
+
 } // namespace reflex

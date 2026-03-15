@@ -84,8 +84,6 @@ template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, o
 
   using variant_type = std::variant<null_t, Ts..., arr_type, obj_type>;
 
-  using variant_type::variant_type; // inherit constructors
-
   struct infos
   {
     static constexpr auto base_types = std::array{^^null_t, ^^Ts...};
@@ -121,7 +119,7 @@ template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, o
   using floating_point_type                     = typename[:infos::__floating_point_type():];
   static constexpr bool has_floating_point_type = dealias(^^floating_point_type) != ^^void;
 
-  constexpr var() = default;
+  using variant_type::variant_type; // inherit constructors
 
   // === numeric catch-all (int, float, size_t, …)
   //   constexpr var(detail::number_c auto n)
@@ -132,7 +130,8 @@ template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, o
   // === conversion constructors
   template <typename Int>
     requires(
-        (not std::constructible_from<variant_type, Int &&>)
+        is_int_number_type(^^Int)
+        and (not std::constructible_from<variant_type, Int &&>)
         and has_integral_type
         and std::convertible_to<Int, integral_type>)
   constexpr var(Int&& value) : variant_type(integral_type(value))
@@ -140,12 +139,21 @@ template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, o
 
   template <typename Int>
     requires(
-        (not std::constructible_from<variant_type, Int &&>)
+        is_int_number_type(^^Int)
+        and (not std::constructible_from<variant_type, Int &&>)
         and (not has_integral_type)
         and has_floating_point_type
         and std::convertible_to<Int, floating_point_type>)
   constexpr var(Int&& value) : variant_type(floating_point_type(value))
   {}
+
+// #define REFLEX_VAR_DEBUG_COPIES
+#ifdef REFLEX_VAR_DEBUG_COPIES
+  var(var const& other) : variant_type(other)
+  {
+    std::println("var copy constructor");
+  }
+#endif
 
   // === initializer-list construction  {"key": val, ...}
   constexpr var(std::initializer_list<std::pair<string const, var<Ts...>>> pairs)
@@ -177,6 +185,16 @@ template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, o
   template <typename T> constexpr decltype(auto) as(this auto&& self)
   {
     return std::get<T>(self);
+  }
+
+  constexpr decltype(auto) as_object(this auto&& self)
+  {
+    return std::get<obj_type>(self);
+  }
+
+  constexpr decltype(auto) as_array(this auto&& self)
+  {
+    return std::get<arr_type>(self);
   }
 
   // === get<T>() with optional fallback
@@ -362,7 +380,7 @@ template <typename... Ts> struct formatter<var<Ts...>> : formatter<std::string_v
                 if(!first)
                   ctx.out() = ',';
                 first = false;
-                std::format_to(ctx.out(), "\"{}\":{}", k, v);
+                std::format_to(ctx.out(), "{}:{}", k, v);
               }
               ctx.out() = '}';
             },

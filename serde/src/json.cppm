@@ -360,11 +360,11 @@ private:
         throw std::runtime_error("Expected ':' after object key");
       advance(); // consume ':'
       ltrim();
-      serde::visit_object(
+      serde::object_visit(
+          key, value,
           [this](auto&& v) { //
             load_into(v);
-          },
-          key, value);
+          });
       ltrim();
       if(lexme.empty())
         throw std::runtime_error("Unterminated object");

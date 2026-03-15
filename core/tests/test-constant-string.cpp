@@ -30,12 +30,7 @@ struct use_string_array
   std::span<const constant_string> arr;
 };
 
-consteval constant_string operator""_sc(const char* data, std::size_t N)
-{
-  return {
-      std::string_view{data, N}
-  };
-}
+using reflex::literals;
 
 TEST_CASE("reflex::constant_string: string array")
 {
