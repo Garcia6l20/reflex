@@ -15,6 +15,7 @@ reflex_add_cxx_module_library(reflex.core
     src/const_assert.cppm
     src/formatters.cppm
     src/meta/tu.cppm
+    src/exception.cppm
 )
 target_compile_options(reflex.core PUBLIC -fabi-version=19)
 target_compile_options(reflex.core PUBLIC -freflection -fimplicit-constexpr)

@@ -13,3 +13,4 @@ export import :caseconv;
 export import :tu;
 export import :const_assert;
 export import :formatters;
+export import :exception;
