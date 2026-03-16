@@ -30,7 +30,7 @@ struct use_string_array
   std::span<const constant_string> arr;
 };
 
-using reflex::literals;
+using namespace reflex::literals;
 
 TEST_CASE("reflex::constant_string: string array")
 {

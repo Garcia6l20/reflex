@@ -20,10 +20,13 @@ struct arg_name
   }
 };
 
+namespace literals
+{
 consteval arg_name operator""_na(const char* data, std::size_t N)
 {
   return arg_name{
       std::string_view{data, N}
   };
 }
+} // namespace literals
 } // namespace reflex
