@@ -61,12 +61,6 @@ template <typename... Ts> struct var;
 template <typename... Ts> struct obj;
 template <typename... Ts> struct arr;
 
-// namespace detail
-// {
-// template <typename... Ts>
-// using base_var_type = std::variant<null_t, Ts..., >;
-// }
-
 template <typename... Ts> struct obj : std::map<string, var<Ts...>>
 {
   using std::map<string, var<Ts...>>::map;
@@ -77,12 +71,35 @@ template <typename... Ts> struct arr : std::vector<var<Ts...>>
   using std::vector<var<Ts...>>::vector;
 };
 
-template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, obj<Ts...>>
+namespace detail
+{
+
+template <typename T> struct wrap_reference
+{
+  using type = T;
+};
+
+template <typename T> struct wrap_reference<T&>
+{
+  using type = std::reference_wrapper<std::remove_reference_t<T>>;
+};
+
+template <typename T> struct wrap_reference<T const&>
+{
+  using type = std::reference_wrapper<std::remove_reference_t<T const>>;
+};
+
+template <typename... Ts>
+using base_variant_type =
+    std::variant<null_t, typename wrap_reference<Ts>::type..., arr<Ts...>, obj<Ts...>>;
+} // namespace detail
+
+template <typename... Ts> struct var : detail::base_variant_type<Ts...>
 {
   using arr_type = arr<Ts...>;
   using obj_type = obj<Ts...>;
 
-  using variant_type = std::variant<null_t, Ts..., arr_type, obj_type>;
+  using variant_type = detail::base_variant_type<Ts...>;
 
   struct infos
   {
@@ -163,7 +180,14 @@ template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, o
   // === type predicates
   template <typename T> constexpr bool is() const
   {
-    return std::holds_alternative<T>(*this);
+    if constexpr(is_reference_type(^^T))
+    {
+      return std::holds_alternative<std::reference_wrapper<std::remove_reference_t<T>>>(*this);
+    }
+    else
+    {
+      return std::holds_alternative<T>(*this);
+    }
   }
 
   constexpr bool is_array() const
@@ -184,7 +208,14 @@ template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, o
   // === typed accessors
   template <typename T> constexpr decltype(auto) as(this auto&& self)
   {
-    return std::get<T>(self);
+    if constexpr(is_reference_type(^^T))
+    {
+      return std::get<std::reference_wrapper<std::remove_reference_t<T>>>(self).get();
+    }
+    else
+    {
+      return std::get<T>(self);
+    }
   }
 
   constexpr decltype(auto) as_object(this auto&& self)
@@ -201,8 +232,16 @@ template <typename... Ts> struct var : std::variant<null_t, Ts..., arr<Ts...>, o
   template <typename T, typename Self>
   constexpr std::optional<const_like_t<Self, T>&> get(this Self& self) noexcept
   {
-    if(auto* p = std::get_if<T>(&self))
-      return *p;
+    if constexpr(is_reference_type(^^T))
+    {
+      if(auto* p = std::get_if<std::reference_wrapper<std::remove_reference_t<T>>>(&self))
+        return *p;
+    }
+    else
+    {
+      if(auto* p = std::get_if<T>(&self))
+        return *p;
+    }
     return std::nullopt;
   }
 
@@ -339,6 +378,39 @@ public:
 
 } // namespace reflex::poly
 
+export namespace reflex
+{
+
+#define fwd(...) std::forward<decltype(__VA_ARGS__)>(__VA_ARGS__)
+
+/** @brief variant visitor */
+template <typename... Ts> struct visitor<poly::var<Ts...>>
+{
+  template <typename Fn, typename VarT>
+  static inline constexpr decltype(auto)
+      operator()(Fn&& fn, VarT&& v) noexcept(noexcept(fwd(fn)(std::get<0>(fwd(v)))))
+  {
+    static constexpr auto value_types =
+        define_static_array(template_arguments_of(variant_type_of(^^poly::var<Ts...>)));
+    template for(constexpr auto ii : std::views::iota(0uz, value_types.size()))
+    {
+      if(v.index() == ii)
+      {
+        if constexpr(meta::is_template_instance_of(value_types[ii], ^^std::reference_wrapper))
+        {
+          return fwd(fn)(std::get<ii>(fwd(v)).get());
+        }
+        else
+        {
+          return fwd(fn)(std::get<ii>(fwd(v)));
+        }
+      }
+    }
+    std::unreachable();
+  }
+};
+} // namespace reflex
+
 export namespace std
 {
 using namespace reflex::poly;
@@ -359,8 +431,10 @@ template <typename... Ts> struct formatter<var<Ts...>> : formatter<std::string_v
 
     v.visit(
         reflex::match{
-            [&ctx](auto const& s)
-              requires requires { std::format_to(ctx.out(), "{}", s); }
+            [&ctx]<typename T>(T const& s)
+              requires((not reflex::decays_to_c<T, typename var_t::arr_type>)
+                       and (not reflex::decays_to_c<T, typename var_t::obj_type>)
+                       and std::formattable<std::decay_t<T>, char>)
             { std::format_to(ctx.out(), "{}", s); },
             [&ctx](var_t::arr_type const& arr) {
               ctx.out() = '[';
@@ -384,7 +458,11 @@ template <typename... Ts> struct formatter<var<Ts...>> : formatter<std::string_v
               }
               ctx.out() = '}';
             },
+            [&ctx]<typename T>(T const&) {
+              std::format_to(ctx.out(), "<unformattable:{}>", display_string_of(dealias(^^T)));
+            },
         });
+
     return ctx.out();
   }
 };

@@ -14,3 +14,4 @@ export import :tu;
 export import :const_assert;
 export import :formatters;
 export import :exception;
+export import :named_arg;

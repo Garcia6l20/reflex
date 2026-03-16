@@ -281,3 +281,61 @@ TEST_CASE("poly::var: formattable")
   };
   std::println("value: {}", v);
 }
+
+TEST_CASE("poly::var: references")
+{
+  using value_with_refs  = var<bool, int, bool&, int&>;
+  bool            a_bool = false;
+  value_with_refs v      = std::ref(a_bool);
+  visit(
+      match{
+          [&](bool& b) {
+            CHECK(&b == &a_bool);
+            b = true;
+          },
+          [](auto const&) { FAIL("wrong type"); },
+      },
+      v);
+  visit(
+      match{
+          [&](bool const& b) {
+            CHECK(&b == &a_bool);
+            CHECK(b == true);
+          },
+          [](auto const&) { FAIL("wrong type"); },
+      },
+      v);
+  CHECK(v == true);
+  CHECK(v.template is<bool&>());
+  CHECK(v == std::ref(a_bool));
+  CHECK(a_bool == true);
+  CHECK(v.template as<bool&>() == true);
+  CHECK(v.template get<bool&>().value() == true);
+  a_bool = false;
+  CHECK(v == false);
+  std::println("value with refs: {}", v);
+}
+
+struct aggregate1
+{
+  int         a;
+  std::string b;
+};
+
+TEST_CASE("poly::var: ref to aggregates")
+{
+  using value_with_refs = var<bool, int, aggregate1&>;
+  auto            a     = aggregate1{42, "the response to everything"};
+  value_with_refs v     = std::ref(a);
+  visit(
+      match{
+          [&](aggregate1& agg) {
+            CHECK(&agg == &a);
+            CHECK(agg.a == 42);
+            CHECK(agg.b == "the response to everything");
+          },
+          [](auto const&) { FAIL("wrong type"); },
+      },
+      v);
+  std::println("value with ref to aggregate: {}", v);
+}
