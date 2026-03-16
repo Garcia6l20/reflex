@@ -25,6 +25,7 @@ template <typename T>
 concept seq_c = requires(T t) {
   { std::begin(t) } -> std::input_iterator;
   { std::end(t) } -> std::sentinel_for<decltype(std::begin(t))>;
+  { t.size() } -> std::convertible_to<std::size_t>;
   typename T::value_type;
 } and not map_c<T> and not str_c<T>;
 
@@ -81,17 +82,23 @@ template <typename T> struct wrap_reference
 
 template <typename T> struct wrap_reference<T&>
 {
-  using type = std::reference_wrapper<std::remove_reference_t<T>>;
+  using type = std::remove_reference_t<T>*;
 };
 
 template <typename T> struct wrap_reference<T const&>
 {
-  using type = std::reference_wrapper<std::remove_reference_t<T const>>;
+  using type = std::remove_reference_t<T const>*;
 };
 
 template <typename... Ts>
-using base_variant_type =
-    std::variant<null_t, typename wrap_reference<Ts>::type..., arr<Ts...>, obj<Ts...>>;
+using base_variant_type = std::variant<
+    null_t,
+    typename wrap_reference<Ts>::type...,
+    arr<Ts...>,
+    obj<Ts...>,
+    var<Ts...>*,
+    arr<Ts...>*,
+    obj<Ts...>*>;
 } // namespace detail
 
 template <typename... Ts> struct var : detail::base_variant_type<Ts...>
@@ -138,6 +145,10 @@ template <typename... Ts> struct var : detail::base_variant_type<Ts...>
 
   using variant_type::variant_type; // inherit constructors
 
+  template <typename T>
+  constexpr var(std::reference_wrapper<T> ref) : variant_type(std::addressof(ref.get()))
+  {}
+
   // === numeric catch-all (int, float, size_t, …)
   //   constexpr var(detail::number_c auto n)
   //     requires(not std::constructible_from<detail::base_value, decltype(n)>)
@@ -182,7 +193,7 @@ template <typename... Ts> struct var : detail::base_variant_type<Ts...>
   {
     if constexpr(is_reference_type(^^T))
     {
-      return std::holds_alternative<std::reference_wrapper<std::remove_reference_t<T>>>(*this);
+      return std::holds_alternative<std::remove_reference_t<T>*>(*this);
     }
     else
     {
@@ -210,7 +221,7 @@ template <typename... Ts> struct var : detail::base_variant_type<Ts...>
   {
     if constexpr(is_reference_type(^^T))
     {
-      return std::get<std::reference_wrapper<std::remove_reference_t<T>>>(self).get();
+      return *std::get<std::remove_reference_t<T>*>(self);
     }
     else
     {
@@ -234,8 +245,8 @@ template <typename... Ts> struct var : detail::base_variant_type<Ts...>
   {
     if constexpr(is_reference_type(^^T))
     {
-      if(auto* p = std::get_if<std::reference_wrapper<std::remove_reference_t<T>>>(&self))
-        return *p;
+      if(auto* p = std::get_if<std::remove_reference_t<T>*>(&self))
+        return **p;
     }
     else
     {
@@ -394,11 +405,19 @@ template <typename... Ts> struct visitor<poly::var<Ts...>>
         define_static_array(template_arguments_of(variant_type_of(^^poly::var<Ts...>)));
     template for(constexpr auto ii : std::views::iota(0uz, value_types.size()))
     {
+      constexpr auto type = value_types[ii];
       if(v.index() == ii)
       {
-        if constexpr(meta::is_template_instance_of(value_types[ii], ^^std::reference_wrapper))
+        if constexpr(is_pointer_type(type))
         {
-          return fwd(fn)(std::get<ii>(fwd(v)).get());
+          if constexpr(decay(remove_pointer(type)) == ^^poly::var<Ts...>)
+          {
+            return visitor<poly::var<Ts...>>{}(std::forward<Fn>(fn), *std::get<ii>(fwd(v)));
+          }
+          else
+          {
+            return fwd(fn)(*std::get<ii>(fwd(v)));
+          }
         }
         else
         {

@@ -25,8 +25,15 @@ TEST_CASE("serde::object_visit: var")
     };
     bool visited = false;
     object_visit("age", obj, [&visited](auto const& value) {
-      CHECK(value == 30);
-      visited = true;
+      if constexpr(decays_to_c<decltype(value), double>)
+      {
+        CHECK(value == 30);
+        visited = true;
+      }
+      else
+      {
+        FAIL("wrong type");
+      }
     });
     CHECK(visited);
   }
@@ -47,18 +54,32 @@ TEST_CASE("serde::object_visit: var")
     {
       bool visited = false;
       object_visit("alice.age", obj, [&visited](auto const& value) {
-        std::println("Alice's age: {}", value);
-        CHECK(value == 30);
-        visited = true;
+        if constexpr(decays_to_c<decltype(value), double>)
+        {
+          std::println("Alice's age: {}", value);
+          CHECK(value == 30);
+          visited = true;
+        }
+        else
+        {
+          FAIL("wrong type");
+        }
       });
       CHECK(visited);
     }
     {
       bool visited = false;
       object_visit("bob.address.city", obj, [&visited](auto const& value) {
-        std::println("Bob's city: {}", value);
-        CHECK(value == "Badlands");
-        visited = true;
+        if constexpr(decays_to_c<decltype(value), std::string>)
+        {
+          std::println("Bob's city: {}", value);
+          CHECK(value == "Badlands");
+          visited = true;
+        }
+        else
+        {
+          FAIL("wrong type");
+        }
       });
       CHECK(visited);
     }
@@ -119,6 +140,86 @@ TEST_CASE("serde::object_visit: aggregates")
         else
         {
           FAIL("Expected string");
+        }
+      });
+      CHECK(visited);
+    }
+  }
+}
+
+TEST_CASE("serde::object_visit: var with aggregates")
+{
+  person alice{
+      .name = "alice"s,
+      .age  = 30,
+      .addr =
+          {
+                 .city = "Wonderland"s,
+                 .zip  = 12345,
+                 },
+  };
+  person bob{
+      .name = "bob"s,
+      .age  = 66,
+      .addr =
+          {
+                 .city = "Badlands"s,
+                 .zip  = 000,
+                 },
+  };
+
+  obj<int, bool, double, person&> obj = {
+      {"alice", std::ref(alice)},
+      {"bob",   std::ref(bob)  },
+  };
+
+  SUBCASE("simple")
+  {
+    SUBCASE("alice")
+    {
+      bool visited = false;
+      object_visit("alice.age", obj, [&visited](auto const& value) {
+        if constexpr(decay(type_of(^^value)) == ^^int)
+        {
+          CHECK(value == 30);
+          visited = true;
+        }
+        else
+        {
+          FAIL("Expected int");
+        }
+      });
+      CHECK(visited);
+    }
+    SUBCASE("bob - initial")
+    {
+      bool visited = false;
+      object_visit("bob.addr.zip", obj, [&visited](auto const& value) {
+        if constexpr(decay(type_of(^^value)) == ^^int)
+        {
+          CHECK(value == 000);
+          visited = true;
+        }
+        else
+        {
+          FAIL("Expected int");
+        }
+      });
+      CHECK(visited);
+    }
+    SUBCASE("bob - modified")
+    {
+      bob.addr.zip = 666;
+      bool visited = false;
+      object_visit("bob.addr.zip", obj, [&visited](auto const& value) {
+        if constexpr(decay(type_of(^^value)) == ^^int)
+        {
+          CHECK(value == 666);
+          visited = true;
+        }
+        else
+        {
+          FAIL("Expected int");
         }
       });
       CHECK(visited);
