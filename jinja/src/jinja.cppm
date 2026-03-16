@@ -304,10 +304,18 @@ OutputIt render_element_to(OutputIt out, const element& elem, const ContextT& ct
       reflex::match{
           [&](const text& t) -> OutputIt { return std::format_to(out, "{}", t.content); },
           [&](const expression& e) -> OutputIt {
-            if(auto value = ctx.get(e.expr); value)
-            {
-              return std::format_to(out, "{}", value.value());
-            }
+            ctx.visit(e.expr, [&out](const auto& value) {
+              using T = std::decay_t<decltype(value)>;
+              if constexpr(std::formattable<T, char>)
+              {
+                std::format_to(out, "{}", value);
+              }
+              else
+              {
+                throw runtime_error(
+                    "Value of type {} is not formattable", display_string_of(dealias(^^T)));
+              }
+            });
             return out;
           },
           [&](const if_block& ib) -> OutputIt {
@@ -315,51 +323,44 @@ OutputIt render_element_to(OutputIt out, const element& elem, const ContextT& ct
             return render_children_to(out, cond ? ib.then_children : ib.else_children, ctx);
           },
           [&](const for_block& fb) -> OutputIt {
-            decltype(auto) value = ctx.get(fb.iterable);
-
-            if(!value)
-              return out;
-
-            return reflex::visit(
-                match{
-                    // === sequence: {% for item in list %}
-                    [&](serde::json::detail::seq_c auto const& arr) -> OutputIt {
-                      for(const auto& item : arr)
-                      {
-                        ContextT local = ctx;
-                        local.set(std::string(fb.loop_vars[0]), item);
-                        out = render_children_to(out, fb.children, local);
-                      }
-                      return out;
-                    },
-                    // === mapping: {% for k, v in obj %}
-                    [&](serde::json::detail::map_c auto const& map) -> OutputIt {
-                      for(const auto& [key, val] : map)
-                      {
-                        ContextT local = ctx;
-                        if(fb.loop_vars.size() == 1)
-                        {
-                          // {% for k in map %} — bind key and value
-                          local.set(std::string(fb.loop_vars[0]), key);
-                        }
-                        else
-                        {
-                          // {% for k, v in map %} — bind key and value
-                          local.set(std::string(fb.loop_vars[0]), key);
-                          local.set(std::string(fb.loop_vars[1]), val);
-                        }
-                        out = render_children_to(out, fb.children, local);
-                      }
-                      return out;
-                    },
-                    [&](const auto& item) -> OutputIt {
-                      throw std::runtime_error(
-                          std::format(
-                              "Value of '{}' is not iterable ({}): {}", fb.iterable,
-                              display_string_of(type_of(^^item)), item));
-                    },
-                },
-                *value);
+            ctx.visit(
+                fb.iterable, match{
+                                 // === sequence: {% for item in list %}
+                                 [&](poly::seq_c auto const& arr) {
+                                   for(const auto& item : arr)
+                                   {
+                                     ContextT local = ctx;
+                                     local.set(std::string(fb.loop_vars[0]), item);
+                                     out = render_children_to(out, fb.children, local);
+                                   }
+                                 },
+                                 // === mapping: {% for k, v in obj %}
+                                 [&](poly::map_c auto const& map) {
+                                   for(const auto& [key, val] : map)
+                                   {
+                                     ContextT local = ctx;
+                                     if(fb.loop_vars.size() == 1)
+                                     {
+                                       // {% for k in map %} — bind key and value
+                                       local.set(std::string(fb.loop_vars[0]), key);
+                                     }
+                                     else
+                                     {
+                                       // {% for k, v in map %} — bind key and value
+                                       local.set(std::string(fb.loop_vars[0]), key);
+                                       local.set(std::string(fb.loop_vars[1]), val);
+                                     }
+                                     out = render_children_to(out, fb.children, local);
+                                   }
+                                 },
+                                 [&](const auto& item) {
+                                   throw std::runtime_error(
+                                       std::format(
+                                           "Value of '{}' is not iterable ({})", fb.iterable,
+                                           display_string_of(type_of(^^item))));
+                                 },
+                             });
+            return out;
           },
       },
       elem);
@@ -377,8 +378,7 @@ OutputIt render_children_to(OutputIt out, const std::vector<element>& children, 
 
 } // namespace detail
 
-using basic_context = expr::context<expr::basic_value>;
-using json_context  = expr::context<serde::json::value>;
+using basic_context = expr::context<>;
 
 template <typename OutputIt, typename ContextT = basic_context>
 OutputIt render_to(OutputIt out, const template_& tmpl, const ContextT& ctx)

@@ -1,6 +1,8 @@
 export module reflex.jinja:expr;
 
 import reflex.core;
+import reflex.poly;
+import reflex.serde;
 import reflex.serde.json;
 
 import std;
@@ -257,19 +259,45 @@ struct lexer
 // === Context / callable registry
 
 // A callable registered with the evaluator.
-template <typename ValueT = basic_value> struct context
+template <typename... Globals> struct context
 {
-  using value_type    = ValueT;
+  static constexpr auto _mandatory_types = std::array{^^bool, ^^int, ^^double, ^^std::string};
+
+  // std::tuple<named_arg<Globals>...> globals;
+
+  context() = default;
+
+  context(named_arg<Globals>... args)
+    requires(sizeof...(Globals) > 0)
+  // : globals{args...}
+  {
+    (set(args.name, std::ref(args.value)), ...);
+  }
+
+  using value_type    = typename[:[] {
+    auto types = std::vector{std::from_range, _mandatory_types};
+    template for(constexpr auto g : {^^Globals...})
+    {
+      constexpr auto t = g;
+      if(!std::ranges::contains(types, t))
+      {
+        types.push_back(t);
+      }
+    }
+    return substitute(^^poly::var, types);
+  }():];
+  using object_type   = typename value_type::obj_type;
+  using array_type    = typename value_type::arr_type;
   using function_type = std::function<value_type(std::span<const value_type>)>;
 
-  std::unordered_map<std::string, value_type>    vars;
+  object_type vars;
+  static_assert(serde::object_visitable_c<object_type>);
+
   std::unordered_map<std::string, function_type> funcs;
 
-  bool raise_on_missing_variable = true;
-
-  context& set(std::string name, value_type v)
+  context& set(std::string_view name, value_type v)
   {
-    vars.insert_or_assign(std::move(name), std::move(v));
+    vars.insert_or_assign(std::string{name}, std::move(v));
     return *this;
   }
 
@@ -290,39 +318,26 @@ template <typename ValueT = basic_value> struct context
     throw std::runtime_error("Context is not callable");
   }
 
-  std::optional<value_type const&> get(std::string_view name) const
+  decltype(auto) operator[](std::string_view name) const noexcept
   {
-    auto it = std::ranges::find_if(vars, [name](auto const& pair) { return pair.first == name; });
-    if(it != vars.end())
-    {
-      return it->second;
-    }
-    return std::nullopt;
+    value_type result = poly::null;
+    serde::object_visit(name, vars, [&result](auto&& v) { result = v; });
+    return result;
   }
 
-  value_type const& operator[](std::string_view name) const
+  void get(std::string_view name, value_type const& result) const
   {
-    auto it = std::ranges::find_if(vars, [name](auto const& pair) { return pair.first == name; });
-    if(it != vars.end())
-    {
-      return it->second;
-    }
-    if(!raise_on_missing_variable)
-    {
-      static value_type null_value{};
-      return null_value;
-    }
-    throw std::runtime_error("Variable not found in context");
+    serde::object_visit(name, vars, [&result](auto&& v) { result = v; });
   }
 
-  value_type& operator[](std::string_view name)
+  value_type& operator[](std::string_view name) noexcept
   {
-    auto it = std::ranges::find_if(vars, [name](auto const& pair) { return pair.first == name; });
-    if(it != vars.end())
-    {
-      return it->second;
-    }
-    return vars[std::string{name}];
+    return serde::object_visit(name, vars, [](auto&& v) { return v; });
+  }
+
+  auto visit(this auto& self, std::string_view dotted_keys, auto&& fn) noexcept
+  {
+    return serde::object_visit(dotted_keys, self.vars, std::forward<decltype(fn)>(fn));
   }
 };
 
@@ -350,26 +365,11 @@ template <typename ContextT> struct parser
 
   static consteval std::meta::info __integral_type()
   {
-    constexpr auto is_acceptable_integral_type = [](std::meta::info t) consteval -> bool {
-      if(not is_integral_type(t)
-         or (t == ^^bool)
-         or (t == ^^char)
-         or (t == ^^signed char)
-         or (t == ^^unsigned char)
-         or (t == ^^char8_t)
-         or (t == ^^char16_t)
-         or (t == ^^char32_t)
-         or (t == ^^wchar_t))
-      {
-        return false;
-      }
-      return true;
-    };
     if(has_template_arguments(dealias(^^value_type)))
     {
       for(auto t_arg : template_arguments_of(dealias(^^value_type)))
       {
-        if(is_acceptable_integral_type(t_arg))
+        if(is_int_number_type(t_arg))
         {
           return t_arg;
         }
@@ -382,7 +382,7 @@ template <typename ContextT> struct parser
       {
         for(auto t_arg : template_arguments_of(type_of(base)))
         {
-          if(is_acceptable_integral_type(t_arg))
+          if(is_int_number_type(t_arg))
           {
             return t_arg;
           }
@@ -871,13 +871,13 @@ template <typename ContextT> struct parser
   }
 };
 
-template <typename ContextT = context<basic_value>>
+template <typename ContextT = context<>>
 inline typename ContextT::value_type evaluate(std::string_view src, const ContextT& ctx = {})
 {
   return parser<ContextT>{trim(src), &ctx}.parse_expr();
 }
 
-template <typename ContextT = context<basic_value>>
+template <typename ContextT = context<>>
 inline bool evaluate_bool(std::string_view src, const ContextT& ctx = {})
 {
   auto v = evaluate<ContextT>(src, ctx);

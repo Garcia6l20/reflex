@@ -11,15 +11,20 @@ using namespace std::string_literals;
 
 #define JINJA(...) #__VA_ARGS__
 
+using value  = jinja::basic_context::value_type;
+using object = jinja::basic_context::object_type;
+using array  = jinja::basic_context::array_type;
+
 TEST_CASE("reflex::jinja: parse")
 {
+  jinja::basic_context ctx;
+
   SUBCASE("basic expression")
   {
     auto tmpl = jinja::parse("hello {{world}}");
 
-    jinja::basic_context ctx;
-    ctx["world"] = "reflex"s;
-    auto result  = jinja::render(tmpl, ctx);
+    ctx.set("world", "reflex"s);
+    auto result = jinja::render(tmpl, ctx);
     std::println("{}", result);
     CHECK(result == "hello reflex");
   }
@@ -27,8 +32,7 @@ TEST_CASE("reflex::jinja: parse")
   {
     auto tmpl = jinja::parse(JINJA({% for item in items %}- {{item}}\n{% endfor %}));
 
-    jinja::json_context ctx;
-    ctx["items"] = serde::json::array{"banana", "apple", "cherry"};
+    ctx.set("items", array{"banana"s, "apple"s, "cherry"s});
 
     auto result = jinja::render(tmpl, ctx);
     std::println("{}", result);
@@ -39,15 +43,14 @@ TEST_CASE("reflex::jinja: parse")
   }
   SUBCASE("if/else")
   {
-    jinja::json_context ctx;
-    ctx["condition"] = true;
-    auto tmpl        = jinja::parse(
+    ctx.set("condition", true);
+    auto tmpl = jinja::parse(
         R"({% if condition %}Condition is true{% else %}Condition is false{% endif %})");
     auto result = jinja::render(tmpl, ctx);
     std::println("{}", result);
     CHECK(result == "Condition is true");
-    ctx["condition"] = false;
-    result           = jinja::render(tmpl, ctx);
+    ctx.set("condition", false);
+    result = jinja::render(tmpl, ctx);
     std::println("{}", result);
     CHECK(result == "Condition is false");
   }
@@ -57,7 +60,6 @@ TEST_CASE("reflex::jinja: parse")
     auto tmpl = jinja::parse(
         R"({% if condition == "a" %}A{% elif condition == "b" %}B{% else %}Unknown{% endif %})");
 
-    jinja::basic_context ctx;
     ctx.set("condition", "a"s);
 
     auto result = jinja::render(tmpl, ctx);
@@ -76,13 +78,14 @@ TEST_CASE("reflex::jinja: parse")
 
 TEST_CASE("reflex::jinja: for decomposition")
 {
+  basic_context ctx;
+
   SUBCASE("single var over array (existing behaviour)")
   {
-    auto         tmpl = parse("{% for item in items %}{{ item }} {% endfor %}");
-    json_context ctx;
+    auto tmpl = parse("{% for item in items %}{{ item }} {% endfor %}");
     ctx.set(
-        "items", json::value{
-                     json::array{std::string{"a"}, std::string{"b"}, std::string{"c"}}
+        "items", value{
+                     array{"a"s, "b"s, "c"s}
     });
 
     CHECK(render(tmpl, ctx) == "a b c ");
@@ -90,10 +93,9 @@ TEST_CASE("reflex::jinja: for decomposition")
 
   SUBCASE("k, v decomposition over object")
   {
-    auto         tmpl = parse("{% for k, v in obj %}{{ k }}={{ v }}\n{% endfor %}");
-    json_context ctx;
+    auto tmpl = parse("{% for k, v in obj %}{{ k }}={{ v }}\n{% endfor %}");
     ctx.set(
-        "obj", json::value{
+        "obj", value{
                    {"a", 1},
                    {"b", 2},
                    {"c", 3}
@@ -112,9 +114,9 @@ TEST_CASE("reflex::jinja: for decomposition")
         "{% endif %}"
         "{% endfor %}");
 
-    json_context ctx;
+    basic_context ctx;
     ctx.set(
-        "data", json::value{
+        "data", value{
                     {"enabled",  true },
                     {"disabled", false}
     });
@@ -125,12 +127,29 @@ TEST_CASE("reflex::jinja: for decomposition")
 
   SUBCASE("single-var over object gives keys")
   {
-    auto         tmpl = parse("{% for v in obj %}{{ v }} {% endfor %}");
-    json_context ctx;
+    auto          tmpl = parse("{% for v in obj %}{{ v }} {% endfor %}");
+    basic_context ctx;
     ctx.set(
-        "obj", json::value{
-                   {"k", std::string{"val"}}
+        "obj", value{
+                   {"k", "val"s}
     });
     CHECK(render(tmpl, ctx) == "k ");
   }
+}
+
+using namespace reflex::literals;
+
+TEST_CASE("reflex::jinja: aggregate support")
+{
+  struct aggregate
+  {
+    int         a;
+    std::string b;
+  };
+  aggregate agg{42, "hello"s};
+  auto      ctx = expr::context{"agg"_na = agg};
+
+  auto tmpl   = parse("a={{ agg.a }}, b={{ agg.b }}");
+  auto result = render(tmpl, ctx);
+  CHECK(result == "a=42, b=hello");
 }

@@ -5,15 +5,21 @@ import std;
 
 using namespace reflex;
 using namespace reflex::jinja;
+using namespace std::string_literals;
 
 #define JINJA(...) #__VA_ARGS__
+
+using basic_context = expr::context<>;
+using value         = basic_context::value_type;
+using object        = basic_context::object_type;
+using array         = basic_context::array_type;
 
 TEST_CASE("reflex::jinja: expr")
 {
   SUBCASE("literals")
   {
     auto result = expr::evaluate(JINJA(42));
-    CHECK(std::get<std::int64_t>(result) == 42);
+    CHECK(std::get<int>(result) == 42);
 
     result = expr::evaluate(JINJA(3.14));
     CHECK(std::get<double>(result) == doctest::Approx(3.14));
@@ -28,16 +34,16 @@ TEST_CASE("reflex::jinja: expr")
     CHECK(std::get<bool>(result) == false);
 
     result = expr::evaluate(JINJA(null));
-    CHECK(std::holds_alternative<expr::null_t>(result));
+    CHECK(result.is_null());
   }
 
   SUBCASE("arithmetic")
   {
-    CHECK(std::get<std::int64_t>(expr::evaluate(JINJA(1 + 2))) == 3);
-    CHECK(std::get<std::int64_t>(expr::evaluate(JINJA(10 - 4))) == 6);
-    CHECK(std::get<std::int64_t>(expr::evaluate(JINJA(3 * 4))) == 12);
-    CHECK(std::get<std::int64_t>(expr::evaluate(JINJA(10 / 2))) == 5);
-    CHECK(std::get<std::int64_t>(expr::evaluate(JINJA(10 % 3))) == 1);
+    CHECK(std::get<int>(expr::evaluate(JINJA(1 + 2))) == 3);
+    CHECK(std::get<int>(expr::evaluate(JINJA(10 - 4))) == 6);
+    CHECK(std::get<int>(expr::evaluate(JINJA(3 * 4))) == 12);
+    CHECK(std::get<int>(expr::evaluate(JINJA(10 / 2))) == 5);
+    CHECK(std::get<int>(expr::evaluate(JINJA(10 % 3))) == 1);
 
     CHECK(std::get<double>(expr::evaluate(JINJA(1.5 + 2.5))) == doctest::Approx(4.0));
     CHECK(std::get<double>(expr::evaluate(JINJA(1.5 * 2.0))) == doctest::Approx(3.0));
@@ -49,12 +55,12 @@ TEST_CASE("reflex::jinja: expr")
     CHECK(std::get<std::string>(expr::evaluate(JINJA("foo" + "bar"))) == "foobar");
 
     // unary minus
-    CHECK(std::get<std::int64_t>(expr::evaluate(JINJA(-7))) == -7);
+    CHECK(std::get<int>(expr::evaluate(JINJA(-7))) == -7);
     CHECK(std::get<double>(expr::evaluate(JINJA(-1.5))) == doctest::Approx(-1.5));
 
     // parentheses / precedence
-    CHECK(std::get<std::int64_t>(expr::evaluate(JINJA(2 + 3 * 4))) == 14);
-    CHECK(std::get<std::int64_t>(expr::evaluate(JINJA((2 + 3) * 4))) == 20);
+    CHECK(std::get<int>(expr::evaluate(JINJA(2 + 3 * 4))) == 14);
+    CHECK(std::get<int>(expr::evaluate(JINJA((2 + 3) * 4))) == 20);
   }
 
   SUBCASE("comparison")
@@ -107,19 +113,15 @@ TEST_CASE("reflex::jinja: expr")
   SUBCASE("variables")
   {
     expr::context ctx;
-    ctx.set("x", std::int64_t{42})
-        .set("pi", 3.14)
-        .set("name", std::string{"world"})
-        .set("flag", true);
-    ctx.raise_on_missing_variable = false;
+    ctx.set("x", 42).set("pi", 3.14).set("name", std::string{"world"}).set("flag", true);
 
-    CHECK(std::get<std::int64_t>(expr::evaluate("x", ctx)) == 42);
+    CHECK(std::get<int>(expr::evaluate("x", ctx)) == 42);
     CHECK(std::get<double>(expr::evaluate("pi", ctx)) == doctest::Approx(3.14));
     CHECK(std::get<std::string>(expr::evaluate("name", ctx)) == "world");
     CHECK(std::get<bool>(expr::evaluate("flag", ctx)) == true);
 
     // unknown variable -> null
-    CHECK(std::holds_alternative<expr::null_t>(expr::evaluate("unknown", ctx)));
+    CHECK(expr::evaluate("unknown", ctx).is_null());
 
     // variable in expression
     CHECK(std::get<bool>(expr::evaluate("x == 42", ctx)) == true);
@@ -130,37 +132,42 @@ TEST_CASE("reflex::jinja: expr")
 
   SUBCASE("dotted member access")
   {
-    expr::context ctx;
-    ctx.set("user.name", std::string{"alice"}).set("user.age", std::int64_t{30});
+    basic_context ctx;
+    ctx.set(
+        "user", {
+                    {"name", "alice"s},
+                    {"age",  30      }
+    });
 
     CHECK(std::get<std::string>(expr::evaluate("user.name", ctx)) == "alice");
-    CHECK(std::get<std::int64_t>(expr::evaluate("user.age", ctx)) == 30);
+    CHECK(std::get<int>(expr::evaluate("user.age", ctx)) == 30);
     CHECK(std::get<bool>(expr::evaluate("user.age >= 18", ctx)) == true);
   }
 
   SUBCASE("function calls")
   {
-    expr::context ctx;
-    ctx.def("abs", [](std::span<const expr::basic_value> args) -> expr::basic_value {
+    using context = expr::context<>;
+    context ctx;
+    ctx.def("abs", [](auto&& args) -> context::value_type {
       if(args.size() != 1)
         throw std::runtime_error("abs() takes 1 argument");
-      if(auto* i = std::get_if<std::int64_t>(&args[0]))
-        return std::int64_t{*i < 0 ? -*i : *i};
+      if(auto* i = std::get_if<int>(&args[0]))
+        return int{*i < 0 ? -*i : *i};
       if(auto* d = std::get_if<double>(&args[0]))
         return std::abs(*d);
       throw std::runtime_error("abs() requires a numeric argument");
     });
 
-    ctx.def("max", [](std::span<const expr::basic_value> args) -> expr::basic_value {
+    ctx.def("max", [](auto&& args) -> context::value_type {
       if(args.size() != 2)
         throw std::runtime_error("max() takes 2 arguments");
-      if(auto* la = std::get_if<std::int64_t>(&args[0]))
-        if(auto* rb = std::get_if<std::int64_t>(&args[1]))
-          return std::int64_t{*la > *rb ? *la : *rb};
+      if(auto* la = std::get_if<int>(&args[0]))
+        if(auto* rb = std::get_if<int>(&args[1]))
+          return int{*la > *rb ? *la : *rb};
       throw std::runtime_error("max() requires integer arguments");
     });
 
-    ctx.def("concat", [](std::span<const expr::basic_value> args) -> expr::basic_value {
+    ctx.def("concat", [](auto&& args) -> context::value_type {
       std::string result;
       for(const auto& a : args)
         if(auto* s = std::get_if<std::string>(&a))
@@ -168,10 +175,10 @@ TEST_CASE("reflex::jinja: expr")
       return result;
     });
 
-    CHECK(std::get<std::int64_t>(expr::evaluate("abs(-7)", ctx)) == 7);
-    CHECK(std::get<std::int64_t>(expr::evaluate("abs(7)", ctx)) == 7);
-    CHECK(std::get<std::int64_t>(expr::evaluate("max(3, 5)", ctx)) == 5);
-    CHECK(std::get<std::int64_t>(expr::evaluate("max(9, 2)", ctx)) == 9);
+    CHECK(std::get<int>(expr::evaluate("abs(-7)", ctx)) == 7);
+    CHECK(std::get<int>(expr::evaluate("abs(7)", ctx)) == 7);
+    CHECK(std::get<int>(expr::evaluate("max(3, 5)", ctx)) == 5);
+    CHECK(std::get<int>(expr::evaluate("max(9, 2)", ctx)) == 9);
     CHECK(std::get<std::string>(expr::evaluate(R"(concat("a","b","c"))", ctx)) == "abc");
 
     // call result used in expression
@@ -182,10 +189,7 @@ TEST_CASE("reflex::jinja: expr")
   SUBCASE("evaluate_bool")
   {
     expr::context ctx;
-    ctx.set("x", std::int64_t{1})
-        .set("y", std::int64_t{0})
-        .set("s", std::string{"hello"})
-        .set("empty", std::string{""});
+    ctx.set("x", 1).set("y", 0).set("s", "hello"s).set("empty", ""s);
 
     CHECK(expr::evaluate_bool("x", ctx) == true);
     CHECK(expr::evaluate_bool("y", ctx) == false);
@@ -196,4 +200,24 @@ TEST_CASE("reflex::jinja: expr")
     CHECK(expr::evaluate_bool("y or x", ctx) == true);
     CHECK(expr::evaluate_bool("not x", ctx) == false);
   }
+}
+
+struct aggregate1
+{
+  int         a;
+  std::string b;
+};
+
+using namespace reflex::literals;
+
+TEST_CASE("reflex::jinja::expr: aggregates")
+{
+  using namespace expr;
+  aggregate1    agg{1, "hello"};
+  expr::context ctx{"a"_na = agg};
+  ctx.set("x", 1).set("y", 0);
+  CHECK(expr::evaluate_bool("a.a == 1", ctx) == true);
+  CHECK(expr::evaluate_bool("a.b == \"hello\"", ctx) == true);
+  CHECK(expr::evaluate_bool("a.a == x", ctx) == true);
+  CHECK(expr::evaluate_bool("a.a != y", ctx) == true);
 }
