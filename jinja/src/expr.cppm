@@ -258,25 +258,33 @@ struct lexer
 
 // === Context / callable registry
 
-// A callable registered with the evaluator.
-template <typename... Globals> struct context
+struct loop_info
 {
-  static constexpr auto _mandatory_types = std::array{^^bool, ^^int, ^^double, ^^std::string};
+  int                       index0;
+  int                       index;
+  bool                      first;
+  int                       length;
+  bool                      last;
+  std::optional<loop_info&> parent;
+};
 
-  // std::tuple<named_arg<Globals>...> globals;
+// A callable registered with the evaluator.
+template <typename... Ts> struct context
+{
+  static constexpr auto _mandatory_types =
+      std::array{^^bool, ^^int, ^^double, ^^std::string, add_lvalue_reference(^^loop_info)};
 
   context() = default;
 
-  context(named_arg<Globals>... args)
-    requires(sizeof...(Globals) > 0)
-  // : globals{args...}
+  context(named_arg<Ts>... args)
+    requires(sizeof...(Ts) > 0)
   {
     (set(args.name, std::ref(args.value)), ...);
   }
 
   using value_type    = typename[:[] {
     auto types = std::vector{std::from_range, _mandatory_types};
-    template for(constexpr auto g : {^^Globals...})
+    template for(constexpr auto g : {^^Ts...})
     {
       constexpr auto t = g;
       if(!std::ranges::contains(types, t))
@@ -290,14 +298,14 @@ template <typename... Globals> struct context
   using array_type    = typename value_type::arr_type;
   using function_type = std::function<value_type(std::span<const value_type>)>;
 
-  object_type vars;
-  static_assert(serde::object_visitable_c<object_type>);
+  object_type              global_vars;
+  std::vector<object_type> local_vars;
 
   std::unordered_map<std::string, function_type> funcs;
 
   context& set(std::string_view name, value_type v)
   {
-    vars.insert_or_assign(std::string{name}, std::move(v));
+    global_vars.insert_or_assign(std::string{name}, std::move(v));
     return *this;
   }
 
@@ -321,23 +329,119 @@ template <typename... Globals> struct context
   decltype(auto) operator[](std::string_view name) const noexcept
   {
     value_type result = poly::null;
-    serde::object_visit(name, vars, [&result](auto&& v) { result = v; });
+    visit(name, [&](auto&& v) {
+      if constexpr(requires { result = v; })
+      {
+        result = v;
+      }
+      else
+      {
+        throw runtime_error(std::format("Variable '{}' is not readable", name));
+      }
+    });
     return result;
   }
 
   void get(std::string_view name, value_type const& result) const
   {
-    serde::object_visit(name, vars, [&result](auto&& v) { result = v; });
+    visit(name, [&result](auto&& v) { result = v; });
   }
 
-  value_type& operator[](std::string_view name) noexcept
+  template <typename T> std::optional<T&> get(std::string_view name) const
   {
-    return serde::object_visit(name, vars, [](auto&& v) { return v; });
+    std::optional<T&> result;
+    visit(name, [&result]<typename U>(U&& v) {
+      if constexpr(requires { result = v; })
+      {
+        result = v;
+      }
+      else
+      {
+        result = std::nullopt;
+      }
+    });
+    return result;
   }
 
-  auto visit(this auto& self, std::string_view dotted_keys, auto&& fn) noexcept
+  // value_type& operator[](std::string_view name) noexcept
+  // {
+  //   return visit(name, [](auto&& v) -> auto& { return v; });
+  // }
+
+  void visit(this auto& self, std::string_view dotted_keys, auto&& fn) noexcept
   {
-    return serde::object_visit(dotted_keys, self.vars, std::forward<decltype(fn)>(fn));
+    bool found = false;
+    for(auto&& locals : self.local_vars | std::views::reverse)
+    {
+      serde::object_visit(dotted_keys, locals, [&found, &fn]<typename T>(T&& v) {
+        found = true;
+        if constexpr(meta::is_template_instance_of(decay(^^T), ^^std::optional))
+        {
+          if(v.has_value())
+          {
+            std::forward<decltype(fn)>(fn)(std::forward<T>(v).value());
+          }
+          else
+          {
+            std::forward<decltype(fn)>(fn)(poly::null);
+          }
+        }
+        else
+        {
+          std::forward<decltype(fn)>(fn)(std::forward<T>(v));
+        }
+      });
+      if(found)
+      {
+        return;
+      }
+    }
+    serde::object_visit(dotted_keys, self.global_vars, std::forward<decltype(fn)>(fn));
+  }
+
+  struct [[nodiscard("local_scope_guard must be used to avoid dangling local variables")]]
+  local_scope_guard
+  {
+    context&    ctx;
+    std::size_t index;
+    local_scope_guard(context& c) : ctx{c}, index{ctx.local_vars.size()}
+    {
+      ctx.local_vars.emplace_back();
+    }
+
+    decltype(auto) set(std::string_view name, value_type v)
+    {
+      ctx.local_vars.at(index).insert_or_assign(std::string{name}, std::move(v));
+      return *this;
+    }
+
+    ~local_scope_guard()
+    {
+      ctx.local_vars.pop_back();
+    }
+  };
+
+  local_scope_guard push_locals()
+  {
+    return local_scope_guard{*this};
+  }
+
+  void dump() const
+  {
+    std::println("Globals:");
+    for(const auto& [k, v] : global_vars)
+    {
+      std::println("  {}: {}", k, v);
+    }
+    std::println("Locals:");
+    for(const auto& [index, locals] : local_vars | std::views::enumerate)
+    {
+      std::println("  Scope {}@{}:", index, static_cast<const void*>(&locals));
+      for(const auto& [k, v] : locals)
+      {
+        std::println("    {}: {}", k, v);
+      }
+    }
   }
 };
 
@@ -885,3 +989,24 @@ inline bool evaluate_bool(std::string_view src, const ContextT& ctx = {})
 }
 
 } // namespace reflex::jinja::expr
+
+export namespace reflex::serde
+{
+// specialization to allow visiting std::optional<reflex::jinja::expr::loop_info>
+template <> struct object_visitor<std::optional<reflex::jinja::expr::loop_info&>>
+{
+  template <typename Fn, typename Agg>
+  static inline constexpr decltype(auto) operator()(Fn&& fn, std::string_view key, Agg&& agg)
+  {
+    if(agg.has_value())
+    {
+      object_visitor<reflex::jinja::expr::loop_info>{}(
+          std::forward<Fn>(fn), key, std::forward<Agg>(agg).value());
+    }
+    else
+    {
+      std::forward<Fn>(fn)(poly::null);
+    }
+  }
+};
+} // namespace reflex::serde

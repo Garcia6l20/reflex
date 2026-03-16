@@ -294,80 +294,120 @@ namespace detail
 {
 
 template <typename OutputIt, typename ContextT>
-OutputIt
-    render_children_to(OutputIt out, const std::vector<element>& children, const ContextT& ctx);
-
+OutputIt render_children_to(OutputIt out, const std::vector<element>& children, ContextT& ctx);
 template <typename OutputIt, typename ContextT>
-OutputIt render_element_to(OutputIt out, const element& elem, const ContextT& ctx)
+OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
 {
+  using object_type = typename ContextT::object_type;
   return std::visit(
-      reflex::match{
-          [&](const text& t) -> OutputIt { return std::format_to(out, "{}", t.content); },
-          [&](const expression& e) -> OutputIt {
-            ctx.visit(e.expr, [&out](const auto& value) {
-              using T = std::decay_t<decltype(value)>;
-              if constexpr(std::formattable<T, char>)
+      [&]<typename T>(const T& v) -> OutputIt {
+        if constexpr(decays_to_c<T, text>)
+        {
+          return std::format_to(out, "{}", v.content);
+        }
+        else if constexpr(decays_to_c<T, expression>)
+        {
+          ctx.visit(v.expr, [&out](const auto& value) {
+            using U = std::decay_t<decltype(value)>;
+            if constexpr(std::formattable<U, char>)
+            {
+              std::format_to(out, "{}", value);
+            }
+            else
+            {
+              throw runtime_error(
+                  "Value of type {} is not formattable", display_string_of(dealias(^^U)));
+            }
+          });
+          return out;
+        }
+        else if constexpr(decays_to_c<T, if_block>)
+        {
+          const bool cond = expr::evaluate_bool(v.condition, ctx);
+          return render_children_to(out, cond ? v.then_children : v.else_children, ctx);
+        }
+        else if constexpr(decays_to_c<T, for_block>)
+        {
+          ctx.visit(v.iterable, [&]<typename U>(const U& it) {
+            using V = std::decay_t<U>;
+            if constexpr(poly::seq_c<V>)
+            {
+              // === sequence: {% for item in list %}
+              auto parent = ctx.template get<expr::loop_info>("loop");
+              auto scope  = ctx.push_locals();
+              auto loop   = expr::loop_info{
+                    .index0 = 0,
+                    .index  = 1,
+                    .first  = true,
+                    .length = int(it.size()),
+                    .last   = it.size() == 1,
+                    .parent = parent,
+              };
+              scope.set("loop", std::ref(loop));
+              for(const auto& item : it)
               {
-                std::format_to(out, "{}", value);
+                scope.set(v.loop_vars[0], item);
+                // ctx.dump();
+                out = render_children_to(out, v.children, ctx);
+                ++loop.index0;
+                ++loop.index;
+                loop.first = false;
+                loop.last  = (loop.index0 == it.size() - 1);
               }
-              else
+            }
+            else if constexpr(poly::map_c<V>)
+            {
+              // === mapping: {% for k, v in obj %}
+              auto parent = ctx.template get<expr::loop_info>("loop");
+              auto scope  = ctx.push_locals();
+              auto loop   = expr::loop_info{
+                    .index0 = 0,
+                    .index  = 1,
+                    .first  = true,
+                    .length = int(it.size()),
+                    .last   = it.size() == 1,
+                    .parent = parent,
+              };
+              scope.set("loop", std::ref(loop));
+              for(const auto& [key, val] : it)
               {
-                throw runtime_error(
-                    "Value of type {} is not formattable", display_string_of(dealias(^^T)));
+                if(v.loop_vars.size() == 1)
+                {
+                  // {% for k in map %} — bind key and value
+                  scope.set(v.loop_vars[0], key);
+                }
+                else
+                {
+                  // {% for k, v in map %} — bind key and value
+                  scope.set(v.loop_vars[0], key);
+                  scope.set(v.loop_vars[1], val);
+                }
+                out = render_children_to(out, v.children, ctx);
+                ++loop.index0;
+                ++loop.index;
+                loop.first = false;
+                loop.last  = (loop.index0 == it.size() - 1);
               }
-            });
-            return out;
-          },
-          [&](const if_block& ib) -> OutputIt {
-            const bool cond = expr::evaluate_bool(ib.condition, ctx);
-            return render_children_to(out, cond ? ib.then_children : ib.else_children, ctx);
-          },
-          [&](const for_block& fb) -> OutputIt {
-            ctx.visit(
-                fb.iterable, match{
-                                 // === sequence: {% for item in list %}
-                                 [&](poly::seq_c auto const& arr) {
-                                   for(const auto& item : arr)
-                                   {
-                                     ContextT local = ctx;
-                                     local.set(std::string(fb.loop_vars[0]), item);
-                                     out = render_children_to(out, fb.children, local);
-                                   }
-                                 },
-                                 // === mapping: {% for k, v in obj %}
-                                 [&](poly::map_c auto const& map) {
-                                   for(const auto& [key, val] : map)
-                                   {
-                                     ContextT local = ctx;
-                                     if(fb.loop_vars.size() == 1)
-                                     {
-                                       // {% for k in map %} — bind key and value
-                                       local.set(std::string(fb.loop_vars[0]), key);
-                                     }
-                                     else
-                                     {
-                                       // {% for k, v in map %} — bind key and value
-                                       local.set(std::string(fb.loop_vars[0]), key);
-                                       local.set(std::string(fb.loop_vars[1]), val);
-                                     }
-                                     out = render_children_to(out, fb.children, local);
-                                   }
-                                 },
-                                 [&](const auto& item) {
-                                   throw std::runtime_error(
-                                       std::format(
-                                           "Value of '{}' is not iterable ({})", fb.iterable,
-                                           display_string_of(type_of(^^item))));
-                                 },
-                             });
-            return out;
-          },
+            }
+            else
+            {
+              throw std::runtime_error(
+                  std::format(
+                      "Value of '{}' is not iterable ({})", v.iterable, display_string_of(^^V)));
+            }
+          });
+          return out;
+        }
+        else
+        {
+          static_assert(false, "Non-exhaustive visitor!");
+        }
       },
       elem);
 }
 
 template <typename OutputIt, typename ContextT>
-OutputIt render_children_to(OutputIt out, const std::vector<element>& children, const ContextT& ctx)
+OutputIt render_children_to(OutputIt out, const std::vector<element>& children, ContextT& ctx)
 {
   for(const auto& child : children)
   {
@@ -381,13 +421,13 @@ OutputIt render_children_to(OutputIt out, const std::vector<element>& children, 
 using basic_context = expr::context<>;
 
 template <typename OutputIt, typename ContextT = basic_context>
-OutputIt render_to(OutputIt out, const template_& tmpl, const ContextT& ctx)
+OutputIt render_to(OutputIt out, const template_& tmpl, ContextT& ctx)
 {
   return detail::render_children_to(out, tmpl.children, ctx);
 }
 
 template <typename ContextT = basic_context>
-inline std::string render(const template_& tmpl, const ContextT& ctx)
+inline std::string render(const template_& tmpl, ContextT& ctx)
 {
   std::string result;
   render_to(std::back_inserter(result), tmpl, ctx);

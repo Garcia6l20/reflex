@@ -30,15 +30,42 @@ TEST_CASE("reflex::jinja: parse")
   }
   SUBCASE("for loop")
   {
-    auto tmpl = jinja::parse(JINJA({% for item in items %}- {{item}}\n{% endfor %}));
+    auto tmpl = jinja::parse(
+        "{% for item in items %}"
+        "{% if not loop.first %}, {% endif %}{{ loop.index }}: {{item}}"
+        "{% endfor %}");
 
     ctx.set("items", array{"banana"s, "apple"s, "cherry"s});
 
     auto result = jinja::render(tmpl, ctx);
     std::println("{}", result);
-    CHECK(result == R"(- banana
-- apple
-- cherry
+    CHECK(result == R"(1: banana, 2: apple, 3: cherry)");
+  }
+  SUBCASE("nested for loop")
+  {
+    auto tmpl = jinja::parse(
+        "{% for row in table %}{% for cell in row %}"
+        "[{{loop.parent.index}},{{loop.index}}] = {{ cell }}\n"
+        "{% endfor %}{% endfor %}");
+
+    ctx.set(
+        "table", array{
+                     array{1, 2, 3},
+                     array{4, 5, 6},
+                     array{7, 8, 9},
+    });
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == R"([1,1] = 1
+[1,2] = 2
+[1,3] = 3
+[2,1] = 4
+[2,2] = 5
+[2,3] = 6
+[3,1] = 7
+[3,2] = 8
+[3,3] = 9
 )");
   }
   SUBCASE("if/else")
