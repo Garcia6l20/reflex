@@ -7,7 +7,7 @@ module;
 #include <string>
 #include <unistd.h>
 
-export module reflex.testutils;
+export module reflex.testutils:pipe_capture;
 
 export namespace reflex::testutils
 {

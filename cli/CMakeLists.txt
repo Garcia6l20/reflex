@@ -1,7 +1,10 @@
-reflex_add_cxx_module_library(reflex.cli
-  MODULE_STD
-  SOURCES
-    src/cli.cppm
+add_library(reflex.cli
+  src/cli.cpp
+)
+target_sources(reflex.cli
+    PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+          src/cli.cppm
 )
 target_link_libraries(reflex.cli PUBLIC reflex.core)
 

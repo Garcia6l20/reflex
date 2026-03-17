@@ -63,6 +63,11 @@ struct option
   }
 };
 
+struct complete
+{
+  std::meta::info completer;
+};
+
 struct command
 {
   constant_string help;
@@ -71,13 +76,15 @@ struct command
 
 namespace reflex::cli::detail
 {
+[[= option{"-h/--help", "Print this message and exit."}.flag()]] constexpr bool help_option{false};
 
 template <std::meta::info I> constexpr auto parse()
 {
   std::vector<std::meta::info> arguments;
   std::vector<std::meta::info> options;
-  std::vector<std::meta::info> flags;
   std::vector<std::meta::info> sub_commands;
+
+  options.push_back(^^help_option);
 
   template for(constexpr auto mem :
                define_static_array(nonstatic_data_members_of(I, meta::access_context::current())))
@@ -97,10 +104,7 @@ template <std::meta::info I> constexpr auto parse()
       }
       else
       {
-        throw std::logic_error(
-            std::format(
-                "{}: must be annotated with cli::argument, cli::option, or cli::flag",
-                display_string_of(mem)));
+        continue;
       }
     }
     else
@@ -169,7 +173,6 @@ template <std::meta::info I> void usage_of(std::string_view program)
       auto [short_switch, long_switch] = opt.split_switches();
       max_id_size = std::max(max_id_size, short_switch.size() + long_switch.size() + 1);
     }
-    std::println("  {:{}} {}", "-h/--help", max_id_size, "Print this message and exit.");
     template for(constexpr auto mem : options)
     {
       constexpr auto opt                 = meta::annotation_value_of_with<option>(mem);
@@ -242,11 +245,6 @@ std::optional<int>
     {
       // option lookup
       bool found = false;
-      if(view == "-h" or view == "--help")
-      {
-        usage_of<I>(program);
-        return 0;
-      }
       template for(constexpr auto mem : options)
       {
         constexpr auto opt               = meta::annotation_value_of_with<option>(mem);
@@ -261,35 +259,43 @@ std::optional<int>
             and (std::ranges::all_of(
                 view | std::views::drop(2), [&](auto c) { return c == short_switch[1]; }))))
         {
-          constexpr auto type = type_of(mem);
-          using T             = [:type:];
-          T& target           = get_item.template operator()<mem, T>(identifier_of(mem));
-          if constexpr(type == ^^bool)
+          if constexpr(mem == ^^help_option)
           {
-            target = true;
+            usage_of<I>(program);
+            return 0;
           }
           else
           {
-            if constexpr(opt.is_counter)
+            constexpr auto type = type_of(mem);
+            using T             = [:type:];
+            T& target           = get_item.template operator()<mem, T>(identifier_of(mem));
+            if constexpr(type == ^^bool)
             {
-              if constexpr(meta::is_template_instance_of(type, ^^std::optional))
-              {
-                if(not target.has_value())
-                {
-                  target.emplace();
-                }
-                target.value() += std::ranges::count(view, short_switch[1]);
-              }
-              else
-              {
-                target += std::ranges::count(view, short_switch[1]);
-              }
+              target = true;
             }
             else
             {
-              it              = std::next(it);
-              auto value_view = std::string_view{*it};
-              target          = reflex::parse<T>(value_view);
+              if constexpr(opt.is_counter)
+              {
+                if constexpr(meta::is_template_instance_of(type, ^^std::optional))
+                {
+                  if(not target.has_value())
+                  {
+                    target.emplace();
+                  }
+                  target.value() += std::ranges::count(view, short_switch[1]);
+                }
+                else
+                {
+                  target += std::ranges::count(view, short_switch[1]);
+                }
+              }
+              else
+              {
+                it              = std::next(it);
+                auto value_view = std::string_view{*it};
+                target          = reflex::parse<T>(value_view);
+              }
             }
           }
 
@@ -402,13 +408,250 @@ std::optional<int>
 
   return std::nullopt;
 }
+
+// === Dynamic completion ===
+//
+// Protocol (environment variables read by the binary):
+//   _REFLEX_COMPLETE=xxx_complete  - activates completion mode
+//   _REFLEX_COMP_LINE="git pu"     - full command line typed so far
+//   _REFLEX_COMP_POINT=6           - cursor position (unhandled for now)
+//
+
+enum class completion_type
+{
+  plain, // simple completion with no description
+  dir,   // complete with directories
+  file   // complete with files
+};
+
+struct completion
+{
+  completion_type  type;
+  std::string_view value;
+  std::string_view description;
+
+  void print() const
+  {
+    std::println("{}\n{}\n{}", type, value, description);
+  }
+};
+
+using word_vector       = std::inplace_vector<std::string_view, 32>;
+using completion_vector = std::inplace_vector<completion, 16>;
+
+template <meta::info I> auto complete_for(word_vector words, std::string_view current)
+{
+  completion_vector completions{};
+
+  static constexpr auto [arguments, options, sub_commands] = parse<I>();
+
+  // If there are still words before the cursor that are not the current one,
+  // check whether the first of them names a sub-command we should recurse into.
+  if(not words.empty())
+  {
+    template for(constexpr auto mem : sub_commands)
+    {
+      auto it = std::ranges::find(words, identifier_of(mem));
+      if(it != words.end())
+      {
+        constexpr auto sub_type = type_of(mem);
+        return complete_for<sub_type>(word_vector{it + 1, words.end()}, current);
+      }
+    }
+  }
+  template for(constexpr auto mem : sub_commands)
+  {
+    if(current == identifier_of(mem))
+    {
+      constexpr auto sub_type = type_of(mem);
+      return complete_for<sub_type>(words, {});
+    }
+  }
+
+  // Emit matching sub-command names.
+  template for(constexpr auto mem : sub_commands)
+  {
+    constexpr auto name = identifier_of(mem);
+    if(current.empty() or name.starts_with(current))
+    {
+      constexpr auto cmd = meta::annotation_value_of_with<command>(type_of(mem));
+      completions.push_back(
+          {.type = completion_type::plain, .value = name, .description = cmd.help.view()});
+    }
+  }
+  if(not current.empty() and not completions.empty())
+  {
+    return completions;
+  }
+
+  if(current.starts_with('-'))
+  {
+    // Emit matching option switches.
+    template for(constexpr auto mem : options)
+    {
+      constexpr auto opt       = meta::annotation_value_of_with<option>(mem);
+      auto [short_sw, long_sw] = opt.split_switches();
+      if(std::ranges::find_if(words, [&](auto w) { return w == long_sw or w == short_sw; })
+         != words.end())
+      {
+        continue; // already present in command line, don't offer again
+      }
+
+      if(current == long_sw)
+      {
+        return completion_vector{
+            {.type = completion_type::plain, .value = long_sw, .description = opt.help.view()}
+        };
+      }
+      else if(current == short_sw)
+      {
+        return completion_vector{
+            {.type = completion_type::plain, .value = short_sw, .description = opt.help.view()}
+        };
+      }
+
+      constexpr auto descr = opt.help.view();
+      if(long_sw.starts_with(current))
+      {
+        completions.push_back(
+            {.type = completion_type::plain, .value = long_sw, .description = descr});
+      }
+      if(short_sw.starts_with(current))
+      {
+        completions.push_back(
+            {.type = completion_type::plain, .value = short_sw, .description = descr});
+      }
+    }
+  }
+  return completions;
+}
+
+std::optional<std::string_view> next_word(std::string_view& line)
+{
+  line = ltrim(line);
+  if(line.empty())
+  {
+    return std::nullopt;
+  }
+  auto pos = line.find(' ');
+  if(pos == std::string_view::npos)
+  {
+    auto word = line;
+    line      = {};
+    return word;
+  }
+  else
+  {
+    auto word = line.substr(0, pos);
+    line      = line.substr(pos);
+    return word;
+  }
+}
+
+// Entry-point called from run() when _REFLEX_COMPLETE is set to xxx_complete.
+template <meta::info I> int do_complete()
+{
+  std::string_view comp_line = [] {
+    if(const auto env = std::getenv("_REFLEX_COMP_LINE"); env != nullptr)
+      return std::string_view{env};
+    return std::string_view{};
+  }();
+
+  if(comp_line.empty())
+  {
+    return 1;
+  }
+
+  const std::string_view comp_point_env = [] {
+    if(const auto env = std::getenv("_REFLEX_COMP_POINT"); env != nullptr)
+      return std::string_view{env};
+    return std::string_view{};
+  }();
+
+  // TODO comp point not handled !
+  std::size_t comp_point = 1;
+  if(not comp_point_env.empty())
+  {
+    auto res = std::from_chars(
+        comp_point_env.data(), comp_point_env.data() + comp_point_env.size(), comp_point);
+    if(res.ec != std::errc{})
+    {
+      return 1; // skip
+    }
+    if(comp_point < 1)
+    {
+      return 1; // invalid
+    }
+  }
+
+  next_word(comp_line); // drop command name
+
+  word_vector      words;
+  std::string_view current;
+  while(true)
+  {
+    if(auto word = next_word(comp_line); word.has_value())
+    {
+      if(--comp_point == 0)
+      {
+        current = word.value();
+        break;
+      }
+      words.push_back(word.value());
+    }
+    else
+    {
+      break;
+    }
+  }
+
+  const auto completions = complete_for<I>(words, current);
+  for(auto const& comp : completions)
+  {
+    comp.print();
+  }
+  return 0;
+}
+void emit_zsh_source(std::string_view program);
+void emit_bash_source(std::string_view program);
 } // namespace reflex::cli::detail
 
 export namespace reflex::cli
 {
 int run(auto cli, std::string_view program, auto it, auto end)
 {
-  const auto rc = detail::process_cmdline<type_of(^^cli)>( //
+  constexpr auto cli_type = type_of(^^cli);
+  {
+    // Completion management
+    if(const auto complete_env = std::getenv("_REFLEX_COMPLETE"); complete_env != nullptr)
+    {
+      std::string_view const complete{complete_env};
+      if(not complete.empty())
+      {
+        if(complete.ends_with("complete"))
+        {
+          return detail::do_complete<cli_type>();
+        }
+        else if(complete == "bash_source")
+        {
+          detail::emit_bash_source(program);
+          return 0;
+        }
+        else if(complete == "zsh_source")
+        {
+          detail::emit_zsh_source(program);
+          return 0;
+        }
+        else
+        {
+          std::println(std::cerr, "invalid value for _REFLEX_COMPLETE: {}", complete_env);
+          return 1;
+        }
+      }
+    }
+  }
+
+  const auto rc = detail::process_cmdline<cli_type>( //
       program,
       it,
       end,
