@@ -72,6 +72,26 @@ struct command
 {
   constant_string help;
 };
+
+enum class completion_type
+{
+  plain, // simple completion with no description
+  dir,   // complete with directories
+  file   // complete with files
+};
+
+struct completion
+{
+  completion_type  type;
+  std::string_view value;
+  std::string_view description;
+
+  void print() const
+  {
+    std::println("{}\n{}\n{}", type, value, description);
+  }
+};
+
 } // namespace reflex::cli
 
 namespace reflex::cli::detail
@@ -417,25 +437,6 @@ std::optional<int>
 //   _REFLEX_COMP_POINT=6           - cursor position (unhandled for now)
 //
 
-enum class completion_type
-{
-  plain, // simple completion with no description
-  dir,   // complete with directories
-  file   // complete with files
-};
-
-struct completion
-{
-  completion_type  type;
-  std::string_view value;
-  std::string_view description;
-
-  void print() const
-  {
-    std::println("{}\n{}\n{}", type, value, description);
-  }
-};
-
 using word_vector       = std::inplace_vector<std::string_view, 32>;
 using completion_vector = std::inplace_vector<completion, 16>;
 
@@ -523,6 +524,49 @@ template <meta::info I> auto complete_for(word_vector words, std::string_view cu
       }
     }
   }
+
+  std::string_view last_word = words.empty() ? "" : words.back();
+  if(completions.empty())
+  {
+    if(not last_word.empty())
+    {
+      template for(constexpr auto mem : options)
+      {
+        if constexpr(meta::has_annotation(mem, ^^complete))
+        {
+          constexpr auto comp      = meta::annotation_value_of_with<complete>(mem);
+          constexpr auto opt       = meta::annotation_value_of_with<option>(mem);
+          auto [short_sw, long_sw] = opt.split_switches();
+          if(last_word == short_sw or last_word == long_sw)
+          {
+            constexpr auto fn = comp.completer;
+            completions.append_range([:fn:](current));
+            return completions;
+          }
+        }
+      }
+    }
+
+    // at this point we should try for argument completion
+    template for(constexpr auto mem : arguments)
+    {
+      if constexpr(meta::has_annotation(mem, ^^complete))
+      {
+        constexpr auto comp       = meta::annotation_value_of_with<complete>(mem);
+        constexpr auto arg        = meta::annotation_value_of_with<argument>(mem);
+        constexpr auto fn         = comp.completer;
+        auto           candidates = [:comp.completer:](current);
+        for(auto candidate : candidates)
+        {
+          if(candidate.value.starts_with(current))
+          {
+            completions.push_back(candidate);
+          }
+        }
+      }
+    }
+  }
+
   return completions;
 }
 

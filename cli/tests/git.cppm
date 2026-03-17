@@ -7,13 +7,44 @@ import std.compat;
 using namespace reflex;
 
 export {
+  auto branch_name_completer(std::string_view current)
+  {
+    using namespace std::string_view_literals;
+    static constexpr std::array branches{"main"sv,        "master"sv,      "develop"sv,
+                                         "feature/foo"sv, "feature/bar"sv, "hotfix/123"sv};
+    return branches
+         | std::views::filter(
+               [current](std::string_view b) { return current.empty() or b.starts_with(current); })
+         | std::views::transform([](std::string_view b) {
+             return cli::completion{
+                 .type        = cli::completion_type::plain,
+                 .value       = b,
+                 .description = "Available branches"};
+           });
+  }
+
+  auto remote_name_completer(std::string_view current)
+  {
+    using namespace std::string_view_literals;
+    static constexpr std::array remotes{"origin"sv, "upstream"sv, "fork"sv};
+    return remotes
+         | std::views::filter(
+               [current](std::string_view r) { return current.empty() or r.starts_with(current); })
+         | std::views::transform([](std::string_view r) {
+             return cli::completion{
+                 .type        = cli::completion_type::plain,
+                 .value       = r,
+                 .description = "Available remotes"};
+           });
+  }
+
   struct[[= cli::command{"Git-like command with subcommands."}]] git
   {
     [[= cli::option{"-v/--verbose", "Increase verbosity level"}.counter()]] int verbose = 1;
 
     struct[[= cli::command{"Commit changes."}]]
     {
-      git &up;
+      git& up;
 
       [[= cli::argument{"Commit message."}]] std::string message;
 
@@ -26,9 +57,11 @@ export {
 
     struct[[= cli::command{"Push changes."}]]
     {
-      git &up;
-      
-      [[= cli::option{"-r/--remote", "Remote name."}]] std::string remote = "origin";
+      git& up;
+
+      [[
+        = cli::option{"-r/--remote", "Remote name."}, = cli::complete{^^remote_name_completer}
+      ]] std::string remote = "origin";
 
       int operator()() const
       {
@@ -36,5 +69,28 @@ export {
         return 0;
       }
     } push{*this};
+
+    struct[[= cli::command{"Manage branches."}]]
+    {
+      git& up;
+
+      [[= cli::argument{"Branch name."},
+        = cli::complete{^^branch_name_completer}]] std::string name;
+
+      [[= cli::option{"-d/--delete", "Delete the branch."}.flag()]] bool del = false;
+
+      [[= cli::option{"-m/--move", "Rename the branch."}.flag()]] bool move = false;
+
+      int operator()() const
+      {
+        if(del)
+          std::println("Deleting branch: {}", name);
+        else if(move)
+          std::println("Renaming branch: {}", name);
+        else
+          std::println("Creating branch: {}", name);
+        return 0;
+      }
+    } branch{*this};
   };
 }
