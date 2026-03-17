@@ -6,78 +6,68 @@ import std;
 
 export namespace reflex
 {
-namespace meta::detail
-{
-namespace representation_object
-{
-
-template <class Char, meta::info I>
-constexpr std::basic_string_view<Char> string = [] {
-  return std::basic_string_view<Char>(extract<Char const*>(I), extent(meta::type_of(I)) - 1);
-}();
-
-} // namespace representation_object
-
-template <typename Char, typename... Infos> consteval decltype(auto) make_string(Infos... R)
-{
-  return extract<std::basic_string_view<Char> const&>(object_of(substitute(
-      ^^representation_object::string, {
-                                           ^^Char, R...})));
-}
-
-template <typename Char> consteval decltype(auto) wrap_string(std::basic_string_view<Char> const& s)
-{
-  return meta::detail::make_string<Char>(meta::reflect_constant(meta::reflect_constant_string(s)));
-}
-
-} // namespace meta::detail
-
 template <typename Char> struct basic_constant_string
 {
   using value_type = std::basic_string_view<Char>;
 
-  value_type const& value;
+  const Char* data_;
+  std::size_t size_;
 
-  template <auto N>
-  constexpr basic_constant_string(const Char (&str)[N])
-      : value(meta::detail::wrap_string<Char>(str))
-  {}
+  template <auto N> constexpr basic_constant_string(const Char (&str)[N])
+  {
+    const auto ss = std::basic_string_view<Char>(
+        define_static_string(std::basic_string_view<Char>(str, N - 1)));
+    data_ = ss.data();
+    size_ = ss.size();
+  }
 
   constexpr basic_constant_string(std::basic_string_view<Char> str)
-      : value(meta::detail::wrap_string<Char>(str))
-  {}
+  {
+    const auto ss = std::basic_string_view<Char>(define_static_string(str));
+    data_         = ss.data();
+    size_         = ss.size();
+  }
 
   constexpr basic_constant_string(std::basic_string<Char> str)
-      : value(meta::detail::wrap_string<Char>(str))
-  {}
+  {
+    const auto ss =
+        std::basic_string_view<Char>(define_static_string(std::basic_string_view<Char>(str)));
+    data_ = ss.data();
+    size_ = ss.size();
+  }
 
   constexpr value_type view() const noexcept
   {
-    return value;
+    return value_type(data_, size_);
   }
 
   constexpr auto data() const noexcept
   {
-    return value.data();
+    return data_;
+  }
+
+  constexpr auto size() const noexcept
+  {
+    return size_;
   }
 
   constexpr operator value_type() const noexcept
   {
-    return value;
+    return view();
   }
 
   constexpr value_type operator*() const noexcept
   {
-    return value;
+    return view();
   }
 
   constexpr bool operator==(basic_constant_string const& other) const noexcept
   {
-    return value == other.value;
+    return view() == other.view();
   }
   constexpr auto operator<=>(basic_constant_string const& other) const noexcept
   {
-    return value <=> other.value;
+    return view() <=> other.view();
   }
 };
 
