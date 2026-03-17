@@ -16,10 +16,7 @@ export {
          | std::views::filter(
                [current](std::string_view b) { return current.empty() or b.starts_with(current); })
          | std::views::transform([](std::string_view b) {
-             return cli::completion{
-                 .type        = cli::completion_type::plain,
-                 .value       = b,
-                 .description = "Available branches"};
+             return cli::completion{.value = b, .description = "Available branches"};
            });
   }
 
@@ -31,10 +28,7 @@ export {
          | std::views::filter(
                [current](std::string_view r) { return current.empty() or r.starts_with(current); })
          | std::views::transform([](std::string_view r) {
-             return cli::completion{
-                 .type        = cli::completion_type::plain,
-                 .value       = r,
-                 .description = "Available remotes"};
+             return cli::completion{.value = r, .description = "Available remotes"};
            });
   }
 
@@ -92,5 +86,18 @@ export {
         return 0;
       }
     } branch{*this};
+
+    struct[[= cli::command{"Add files to staging."}]] add
+    {
+      git& up;
+
+      [[= cli::argument{"File pattern."}, = cli::completers::path("*.txt")]] std::string pattern;
+
+      int operator()() const
+      {
+        std::println("Adding files matching: {}", pattern);
+        return 0;
+      }
+    } add{*this};
   };
 }

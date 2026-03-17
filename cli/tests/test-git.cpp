@@ -37,11 +37,13 @@ static std::vector<std::string> complete(std::string_view comp_line, int comp_po
 }
 
 // Extract just the "value" from completion output lines.
-static std::vector<std::string> completion_values(const std::vector<std::string>& lines)
+static auto completion_values(const std::vector<std::string>& lines)
 {
-  std::vector<std::string> result;
-  for(std::size_t i = 1; i < lines.size(); i += 3)
-    result.push_back(lines[i]);
+  std::vector<cli::completion> result;
+  for(std::size_t i = 0; i < lines.size(); i += 3)
+  {
+    result.push_back({parse<cli::completion_type>(lines[i]), lines[i + 1], lines[i + 2]});
+  }
   return result;
 }
 
@@ -139,7 +141,9 @@ TEST_CASE("reflex::cli: git completion - branch subcommand")
 {
   SUBCASE("empty argument: all branch fixtures offered")
   {
-    auto v = completion_values(complete("git branch ", 2));
+    auto v = completion_values(complete("git branch ", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "main"sv));
     CHECK(std::ranges::contains(v, "master"sv));
     CHECK(std::ranges::contains(v, "develop"sv));
@@ -150,7 +154,9 @@ TEST_CASE("reflex::cli: git completion - branch subcommand")
 
   SUBCASE("partial 'feat' filters correctly")
   {
-    auto v = completion_values(complete("git branch feat", 2));
+    auto v = completion_values(complete("git branch feat", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "feature/foo"sv));
     CHECK(std::ranges::contains(v, "feature/bar"sv));
     CHECK_FALSE(std::ranges::contains(v, "main"sv));
@@ -159,14 +165,18 @@ TEST_CASE("reflex::cli: git completion - branch subcommand")
 
   SUBCASE("partial 'main' returns only 'main'")
   {
-    auto v = completion_values(complete("git branch main", 2));
+    auto v = completion_values(complete("git branch main", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "main"sv));
     CHECK_FALSE(std::ranges::contains(v, "master"sv));
   }
 
   SUBCASE("partial 'ma' returns 'main' and 'master'")
   {
-    auto v = completion_values(complete("git branch ma", 2));
+    auto v = completion_values(complete("git branch ma", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "main"sv));
     CHECK(std::ranges::contains(v, "master"sv));
     CHECK_FALSE(std::ranges::contains(v, "develop"sv));
@@ -174,7 +184,9 @@ TEST_CASE("reflex::cli: git completion - branch subcommand")
 
   SUBCASE("option '--' still offered alongside branch names")
   {
-    auto v = completion_values(complete("git branch -", 2));
+    auto v = completion_values(complete("git branch -", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "--delete"sv));
     CHECK(std::ranges::contains(v, "-d"sv));
     CHECK(std::ranges::contains(v, "--move"sv));
@@ -186,7 +198,9 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
 {
   SUBCASE("empty value after -r: all remotes offered")
   {
-    auto v = completion_values(complete("git push -r ", 3));
+    auto v = completion_values(complete("git push -r ", 3))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "origin"sv));
     CHECK(std::ranges::contains(v, "upstream"sv));
     CHECK(std::ranges::contains(v, "fork"sv));
@@ -194,7 +208,9 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
 
   SUBCASE("partial 'up' after -r filters to 'upstream'")
   {
-    auto v = completion_values(complete("git push -r up", 3));
+    auto v = completion_values(complete("git push -r up", 3))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "upstream"sv));
     CHECK_FALSE(std::ranges::contains(v, "origin"sv));
     CHECK_FALSE(std::ranges::contains(v, "fork"sv));
@@ -202,8 +218,21 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
 
   SUBCASE("partial 'or' after --remote filters to 'origin'")
   {
-    auto v = completion_values(complete("git push --remote or", 3));
+    auto v = completion_values(complete("git push --remote or", 3))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "origin"sv));
     CHECK_FALSE(std::ranges::contains(v, "upstream"sv));
+  }
+}
+
+TEST_CASE("reflex::cli: git completion - add")
+{
+  SUBCASE("option with path completer offers file system paths")
+  {
+    auto v = completion_values(complete("git add ", 2));
+    CHECK(v.size() == 1);
+    CHECK(v.at(0).type == cli::completion_type::file);
+    CHECK(v.at(0).value == "*.txt"sv);
   }
 }
