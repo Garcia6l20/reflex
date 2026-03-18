@@ -170,6 +170,19 @@ constexpr std::string_view rtrim(std::string_view s) noexcept
 
 } // namespace reflex
 
+export template <typename CharT> struct std::formatter<std::byte, CharT>
+{
+  constexpr auto parse(auto& ctx)
+  {
+    return ctx.begin();
+  }
+
+  constexpr auto format(const std::byte& b, auto& ctx) const
+  {
+    return std::format_to(ctx.out(), "{:02x}h", std::to_integer<std::uint8_t>(b));
+  }
+};
+
 export template <reflex::enum_c E, typename CharT> struct std::formatter<E, CharT>
 {
   constexpr auto parse(auto& ctx)
