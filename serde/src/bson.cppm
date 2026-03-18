@@ -6,9 +6,7 @@ export import :value;
 
 import std;
 
-export namespace reflex::serde::bson
-{
-namespace detail
+namespace reflex::serde::bson::detail
 {
 using bytes = std::vector<std::byte>;
 
@@ -267,6 +265,8 @@ template <typename T> constexpr bytes encode_root(T const& value)
 
 } // namespace detail
 
+export namespace reflex::serde::bson
+{
 class serializer
 {
 public:
@@ -303,141 +303,134 @@ public:
 class deserializer
 {
 private:
-  deserializer(std::span<const std::byte> in) : in_(in)
-  {}
+  template <std::input_iterator It, std::sentinel_for<It> End>
+  using range_cursor = std::ranges::subrange<It, End>;
 
-  std::span<const std::byte> in_{};
-  std::size_t                offset_ = 0;
-
-  constexpr void ensure(std::size_t count) const
+  template <typename R> struct cursor
   {
-    if(offset_ + count > in_.size())
+    R           range;
+    std::size_t position = 0;
+
+    constexpr bool at_end() const
     {
-      throw std::runtime_error("Unexpected end of BSON input");
+      return range.empty();
     }
-  }
 
-  constexpr std::byte read()
-  {
-    ensure(1);
-    return in_[offset_++];
-  }
-
-  template <std::integral T> constexpr T read()
-  {
-    ensure(sizeof(T));
-    using unsigned_t = std::make_unsigned_t<T>;
-    unsigned_t raw   = 0;
-    for(std::size_t i = 0; i < sizeof(T); ++i)
+    constexpr std::byte read()
     {
-      raw |= static_cast<unsigned_t>(std::to_integer<unsigned int>(in_[offset_ + i])) << (8 * i);
+      if(at_end())
+      {
+        throw std::runtime_error("Unexpected end of BSON input");
+      }
+      using item_t = std::remove_cvref_t<std::ranges::range_reference_t<R>>;
+      const auto byte = std::bit_cast<std::byte>(*range.begin());
+      range.advance(1);
+      ++position;
+      return byte;
     }
-    offset_ += sizeof(T);
-    return static_cast<T>(raw);
-  }
 
-  template <std::same_as<double> T> constexpr T read()
-  {
-    return std::bit_cast<T>(read<std::uint64_t>());
-  }
+    template <std::integral T> constexpr T read()
+    {
+      using unsigned_t = std::make_unsigned_t<T>;
+      unsigned_t raw   = 0;
+      for(std::size_t i = 0; i < sizeof(T); ++i)
+      {
+        raw |= static_cast<unsigned_t>(std::to_integer<unsigned int>(read())) << (8 * i);
+      }
+      return static_cast<T>(raw);
+    }
 
-  template <std::same_as<std::string> T, bool has_size = false> constexpr T read()
-  {
-    std::string out;
+    template <std::same_as<double> T> constexpr T read()
+    {
+      return std::bit_cast<T>(read<std::uint64_t>());
+    }
 
-    const auto size = [&]() -> std::size_t {
+    template <std::same_as<std::string> T, bool has_size = false> constexpr T read()
+    {
+      std::string out;
+
       if constexpr(has_size)
       {
-        auto isize = read<std::int32_t>();
-        if(isize <= 0)
+        auto size = read<std::int32_t>();
+        if(size <= 0)
         {
           throw std::runtime_error("Invalid BSON string length");
         }
-        const auto size = static_cast<std::size_t>(isize) - 1; // exclude null terminator
-        ensure(size + 1);
-        if(in_[offset_ + size] != std::byte{0x00})
+        out.reserve(static_cast<std::size_t>(size - 1));
+        for(std::int32_t i = 0; i < size - 1; ++i)
+        {
+          out.push_back(static_cast<char>(std::to_integer<unsigned char>(read())));
+        }
+        if(read() != std::byte{0x00})
         {
           throw std::runtime_error("BSON string payload must be null-terminated");
         }
-        return size;
       }
       else
       {
-        auto it = std::ranges::find(
-            in_.begin() + static_cast<std::ptrdiff_t>(offset_), in_.end(), std::byte{0x00});
-        if(it == in_.end())
+        while(true)
         {
-          throw std::runtime_error("Unterminated BSON cstring");
+          const std::byte b = read();
+          if(b == std::byte{0x00})
+          {
+            break;
+          }
+          out.push_back(static_cast<char>(std::to_integer<unsigned char>(b)));
         }
-
-        const auto size = static_cast<std::size_t>(std::distance(in_.begin(), it)) - offset_;
-        ensure(size);
-        return size;
       }
-    }();
-
-    out.reserve(size);
-    for(std::size_t i = 0; i < size; ++i)
-    {
-      out.push_back(static_cast<char>(std::to_integer<unsigned char>(in_[offset_ + i])));
+      return out;
     }
-    offset_ += size + 1;
-    return out;
-  }
 
-  template <std::same_as<bson::decimal128> T> constexpr T read()
-  {
-    ensure(16);
-    T out;
-    for(std::size_t i = 0; i < out.bytes.size(); ++i)
+    template <std::same_as<bson::decimal128> T> constexpr T read()
     {
-      out.bytes[i] = in_[offset_ + i];
+      T out;
+      for(std::size_t i = 0; i < out.bytes.size(); ++i)
+      {
+        out.bytes[i] = read();
+      }
+      return out;
     }
-    offset_ += out.bytes.size();
-    return out;
-  }
+  };
 
-  constexpr std::size_t begin_document()
+  template <typename Cur> static constexpr std::size_t begin_document(Cur& cur)
   {
-    auto start = offset_;
-    auto size  = read<std::int32_t>();
+    const auto start = cur.position;
+    const auto size  = cur.template read<std::int32_t>();
     if(size < 5)
     {
       throw std::runtime_error("Invalid BSON document length");
     }
-
-    auto end = start + static_cast<std::size_t>(size);
-    if(end > in_.size())
-    {
-      throw std::runtime_error("BSON document length exceeds input size");
-    }
-
-    return end;
+    return start + static_cast<std::size_t>(size);
   }
 
-  template <typename Fn> constexpr void read_document(Fn&& fn)
+  template <typename Cur, typename Fn> static constexpr void read_document(Cur& cur, Fn&& fn)
   {
-    auto end = begin_document();
-    while(offset_ < end)
+    const std::size_t end_pos = begin_document(cur);
+    while(cur.position < end_pos)
     {
-      auto type = static_cast<detail::bson_type>(read());
+      const auto type = static_cast<detail::bson_type>(cur.read());
       if(type == detail::bson_type::eof)
       {
-        if(offset_ != end)
+        if(cur.position != end_pos)
         {
           throw std::runtime_error("Unexpected BSON bytes after terminator");
         }
         return;
       }
 
-      auto key = read<std::string>();
+      auto key = cur.template read<std::string>();
       std::forward<Fn>(fn)(type, key);
+      if(cur.position > end_pos)
+      {
+        throw std::runtime_error("BSON document element exceeds declared size");
+      }
     }
 
     throw std::runtime_error("BSON document missing terminator");
   }
 
-  template <typename T> constexpr void read_payload(detail::bson_type type, T& value)
+  template <typename Cur, typename T>
+  static constexpr void read_payload(detail::bson_type type, Cur& cur, T& value)
   {
     using value_t = std::decay_t<T>;
 
@@ -455,7 +448,7 @@ private:
       {
         throw std::runtime_error("Expected BSON boolean type");
       }
-      auto raw = read();
+      auto raw = cur.read();
       value    = (raw != std::byte{0x00});
     }
     else if constexpr(str_c<value_t>)
@@ -464,7 +457,7 @@ private:
       {
         throw std::runtime_error("Expected BSON string type");
       }
-      value = read<std::string, true>();
+      value = cur.template read<std::string, true>();
     }
     else if constexpr(std::same_as<value_t, bson::int32>)
     {
@@ -472,7 +465,7 @@ private:
       {
         throw std::runtime_error("Expected BSON int32 type");
       }
-      value = read<bson::int32>();
+      value = cur.template read<bson::int32>();
     }
     else if constexpr(std::same_as<value_t, bson::int64>)
     {
@@ -480,7 +473,7 @@ private:
       {
         throw std::runtime_error("Expected BSON int64 type");
       }
-      value = read<bson::int64>();
+      value = cur.template read<bson::int64>();
     }
     else if constexpr(std::same_as<value_t, bson::decimal128>)
     {
@@ -488,7 +481,7 @@ private:
       {
         throw std::runtime_error("Expected BSON decimal128 type");
       }
-      value = read<bson::decimal128>();
+      value = cur.template read<bson::decimal128>();
     }
     else if constexpr(std::same_as<value_t, bson::datetime>)
     {
@@ -496,20 +489,20 @@ private:
       {
         throw std::runtime_error("Expected BSON datetime type");
       }
-      value.millis_since_epoch = read<std::int64_t>();
+      value.millis_since_epoch = cur.template read<std::int64_t>();
     }
     else if constexpr(number_c<value_t>)
     {
       switch(type)
       {
         case detail::bson_type::int32:
-          value = static_cast<value_t>(read<std::int32_t>());
+          value = static_cast<value_t>(cur.template read<std::int32_t>());
           return;
         case detail::bson_type::int64:
-          value = static_cast<value_t>(read<std::int64_t>());
+          value = static_cast<value_t>(cur.template read<std::int64_t>());
           return;
         case detail::bson_type::double_:
-          value = static_cast<value_t>(read<double>());
+          value = static_cast<value_t>(cur.template read<double>());
           return;
         default:
           throw std::runtime_error("Expected BSON numeric type");
@@ -522,9 +515,9 @@ private:
         throw std::runtime_error("Expected BSON array type");
       }
       value.clear();
-      read_document([this, &value](detail::bson_type elem_type, std::string const&) {
+      read_document(cur, [&cur, &value](detail::bson_type elem_type, std::string const&) {
         typename value_t::value_type elem{};
-        read_payload(elem_type, elem);
+        read_payload(elem_type, cur, elem);
         value.push_back(std::move(elem));
       });
     }
@@ -535,9 +528,9 @@ private:
         throw std::runtime_error("Expected BSON document type");
       }
       value.clear();
-      read_document([this, &value](detail::bson_type elem_type, std::string const& key) {
+      read_document(cur, [&cur, &value](detail::bson_type elem_type, std::string const& key) {
         typename value_t::mapped_type mapped{};
-        read_payload(elem_type, mapped);
+        read_payload(elem_type, cur, mapped);
         value[typename value_t::key_type{key}] = std::move(mapped);
       });
     }
@@ -550,9 +543,9 @@ private:
       {
         throw std::runtime_error("Expected BSON document type");
       }
-      read_document([this, &value](detail::bson_type elem_type, std::string const& key) {
+      read_document(cur, [&cur, &value](detail::bson_type elem_type, std::string const& key) {
         object_visit(
-            key, value, [this, elem_type](auto& member) { read_payload(elem_type, member); });
+            key, value, [&cur, elem_type](auto& member) { read_payload(elem_type, cur, member); });
       });
     }
     else if constexpr(std::same_as<value_t, bson::value>)
@@ -563,33 +556,33 @@ private:
           value = null;
           return;
         case detail::bson_type::boolean:
-          value = (read() != std::byte{0x00});
+          value = (cur.read() != std::byte{0x00});
           return;
         case detail::bson_type::int32:
-          value = read<bson::int32>();
+          value = cur.template read<bson::int32>();
           return;
         case detail::bson_type::int64:
-          value = read<bson::int64>();
+          value = cur.template read<bson::int64>();
           return;
         case detail::bson_type::double_:
-          value = read<double>();
+          value = cur.template read<double>();
           return;
         case detail::bson_type::string:
-          value = read<std::string, true>();
+          value = cur.template read<std::string, true>();
           return;
         case detail::bson_type::decimal128:
-          value = read<bson::decimal128>();
+          value = cur.template read<bson::decimal128>();
           return;
         case detail::bson_type::datetime:
-          value = bson::datetime{read<std::int64_t>()};
+          value = bson::datetime{cur.template read<std::int64_t>()};
           return;
         case detail::bson_type::document:
         {
           auto& object = value.template emplace<bson::object>();
           object.clear();
-          read_document([this, &object](detail::bson_type elem_type, std::string const& key) {
+          read_document(cur, [&cur, &object](detail::bson_type elem_type, std::string const& key) {
             bson::value nested;
-            read_payload(elem_type, nested);
+            read_payload(elem_type, cur, nested);
             object[key] = std::move(nested);
           });
           return;
@@ -598,9 +591,9 @@ private:
         {
           auto& array = value.template emplace<bson::array>();
           array.clear();
-          read_document([this, &array](detail::bson_type elem_type, std::string const&) {
+          read_document(cur, [&cur, &array](detail::bson_type elem_type, std::string const&) {
             bson::value nested;
-            read_payload(elem_type, nested);
+            read_payload(elem_type, cur, nested);
             array.push_back(std::move(nested));
           });
           return;
@@ -611,7 +604,7 @@ private:
     }
     else if constexpr(requires(value_t& v) { reflex::visit([](auto const&) {}, v); })
     {
-      read_payload(type, value.template emplace<bson::value>());
+      read_payload(type, cur, value.template emplace<bson::value>());
     }
     else
     {
@@ -619,14 +612,14 @@ private:
     }
   }
 
-  template <typename T> constexpr void read_root(T& value)
+  template <typename Cur, typename T> static constexpr void read_root(Cur& cur, T& value)
   {
     if constexpr(std::same_as<std::decay_t<T>, bson::value>)
     {
       bson::object root;
-      read_document([this, &root](detail::bson_type type, std::string const& key) {
+      read_document(cur, [&cur, &root](detail::bson_type type, std::string const& key) {
         bson::value member_value;
-        read_payload(type, member_value);
+        read_payload(type, cur, member_value);
         root[key] = std::move(member_value);
       });
 
@@ -651,23 +644,23 @@ private:
             and !std::same_as<std::decay_t<T>, bson::value>
             and !detail::bson_scalar_c<T>))
     {
-      read_document([this, &value](detail::bson_type type, std::string const& key) {
+      read_document(cur, [&cur, &value](detail::bson_type type, std::string const& key) {
         if constexpr(map_c<T>)
         {
           typename std::decay_t<T>::mapped_type mapped{};
-          read_payload(type, mapped);
+          read_payload(type, cur, mapped);
           value[typename std::decay_t<T>::key_type{key}] = std::move(mapped);
         }
         else
         {
-          object_visit(key, value, [this, type](auto& member) { read_payload(type, member); });
+          object_visit(key, value, [&cur, type](auto& member) { read_payload(type, cur, member); });
         }
       });
       return;
     }
 
     bool has_value = false;
-    read_document([this, &value, &has_value](detail::bson_type type, std::string const& key) {
+    read_document(cur, [&cur, &value, &has_value](detail::bson_type type, std::string const& key) {
       if(key != "value")
       {
         throw std::runtime_error("Expected wrapped BSON scalar key 'value'");
@@ -677,7 +670,7 @@ private:
         throw std::runtime_error("Duplicate wrapped BSON scalar key");
       }
       has_value = true;
-      read_payload(type, value);
+      read_payload(type, cur, value);
     });
 
     if(!has_value)
@@ -689,12 +682,28 @@ private:
 public:
   deserializer() = default;
 
+  template <typename T = bson::value, std::ranges::input_range R> static T load(R&& input)
+  {
+    auto sub = std::ranges::subrange(std::ranges::begin(input), std::ranges::end(input));
+    cursor<decltype(sub)> cur{std::move(sub)};
+    T                     value{};
+    read_root(cur, value);
+    if(!cur.at_end())
+    {
+      throw std::runtime_error("Unexpected trailing BSON input");
+    }
+    return value;
+  }
+
+  template <typename T = bson::value, std::input_iterator It, std::sentinel_for<It> End>
+  static T load(It first, End last)
+  {
+    return load<T>(range_cursor<It, End>{first, last});
+  }
+
   template <typename T = bson::value> static T load(std::span<const std::byte> in)
   {
-    auto self = deserializer{in};
-    T    value{};
-    self.read_root(value);
-    return value;
+    return load<T>(in.begin(), in.end());
   }
 
   template <typename T = bson::value, std::ranges::contiguous_range Buffer>
@@ -704,7 +713,13 @@ public:
     using element_t = std::remove_cv_t<std::ranges::range_value_t<Buffer>>;
     auto bytes =
         std::as_bytes(std::span<element_t const>(std::ranges::data(in), std::ranges::size(in)));
-    return load<T>(bytes);
+    return load<T>(bytes.begin(), bytes.end());
+  }
+
+  template <typename T = bson::value, std::input_iterator It, std::sentinel_for<It> End>
+  static T operator()(It first, End last)
+  {
+    return load<T>(first, last);
   }
 
   template <typename T = bson::value> static T operator()(auto&& in)

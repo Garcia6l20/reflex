@@ -81,8 +81,8 @@ struct[[= cli::command("Convert file formats")]] convert_command
           std::println("Using serializer '{}'", display_string_of(decay(^^decltype(ser))));
 
         std::ifstream input_stream{input_file, std::ios::binary};
-        std::string   input_data{std::istreambuf_iterator<char>(input_stream), {}};
-        auto          value = de(input_data);
+        auto          value =
+            de(std::istreambuf_iterator<char>(input_stream), std::istreambuf_iterator<char>());
 
         if(verbose > 0)
           std::println("Deserialized value: {}", value);
