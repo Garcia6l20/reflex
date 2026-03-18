@@ -93,7 +93,7 @@ std::optional<int>
     {
       template for(constexpr auto mem : sub_commands)
       {
-        if(view == identifier_of(mem))
+        if(view == display_name_of(mem))
         {
           return on_command.template operator()<mem>(it, end);
         }
@@ -160,7 +160,7 @@ std::optional<int>
                 std::print(std::cerr, ", ");
               }
               constexpr auto mem = arguments[jj];
-              std::print(std::cerr, "{}", identifier_of(mem));
+              std::print(std::cerr, "{}", display_name_of(mem));
               first = false;
             }
           }

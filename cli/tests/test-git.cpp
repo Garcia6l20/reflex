@@ -226,11 +226,11 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
   }
 }
 
-TEST_CASE("reflex::cli: git completion - add")
+TEST_CASE("reflex::cli: git completion - add-text-file")
 {
   SUBCASE("option with path completer offers file system paths")
   {
-    auto v = completion_values(complete("git add ", 2));
+    auto v = completion_values(complete("git add-text-file ", 2));
     CHECK(v.size() == 1);
     CHECK(v.at(0).type == cli::completion_type::file);
     CHECK(v.at(0).value == "*.txt"sv);

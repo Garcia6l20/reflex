@@ -87,17 +87,17 @@ export {
       }
     } branch{*this};
 
-    struct[[= cli::command{"Add files to staging."}]] add
+    struct[[= cli::command{"Add one text file to staging."}]]
     {
       git& up;
 
-      [[= cli::argument{"File pattern."}, = cli::completers::path("*.txt")]] std::string pattern;
+      [[= cli::argument{"A text file."}, = cli::completers::path{"*.txt"}]] std::string file;
 
       int operator()() const
       {
-        std::println("Adding files matching: {}", pattern);
+        std::println("Adding file: {}", file);
         return 0;
       }
-    } add{*this};
+    } add_text_file{*this};
   };
 }

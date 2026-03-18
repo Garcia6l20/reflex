@@ -88,7 +88,8 @@ template <meta::info I> auto complete_for(word_vector words, std::string_view cu
   {
     template for(constexpr auto mem : sub_commands)
     {
-      auto it = std::ranges::find(words, identifier_of(mem));
+      const auto name = display_name_of(mem);
+      auto       it   = std::ranges::find(words, name);
       if(it != words.end())
       {
         constexpr auto sub_type = type_of(mem);
@@ -98,7 +99,8 @@ template <meta::info I> auto complete_for(word_vector words, std::string_view cu
   }
   template for(constexpr auto mem : sub_commands)
   {
-    if(current == identifier_of(mem))
+    const auto name = display_name_of(mem);
+    if(current == name)
     {
       constexpr auto sub_type = type_of(mem);
       return complete_for<sub_type>(words, {});
@@ -108,7 +110,7 @@ template <meta::info I> auto complete_for(word_vector words, std::string_view cu
   // Emit matching sub-command names.
   template for(constexpr auto mem : sub_commands)
   {
-    constexpr auto name = identifier_of(mem);
+    constexpr auto name = display_name_of(mem);
     if(current.empty() or name.starts_with(current))
     {
       constexpr auto cmd = meta::annotation_value_of_with<command>(type_of(mem));

@@ -129,6 +129,11 @@ template <std::meta::info I> constexpr auto parse()
       define_static_array(sub_commands)};
 }
 
+consteval std::string_view display_name_of(std::meta::info mem)
+{
+  return constant_string{caseconv::to_kebab_case(identifier_of(mem))};
+}
+
 template <std::meta::info I> void usage_of(std::string_view program)
 {
   static constexpr auto [arguments, options, sub_commands] = parse<I>();
@@ -188,13 +193,13 @@ template <std::meta::info I> void usage_of(std::string_view program)
     std::size_t max_id_size = min_id_size;
     template for(constexpr auto mem : arguments)
     {
-      max_id_size = std::max(max_id_size, identifier_of(mem).size());
+      max_id_size = std::max(max_id_size, display_name_of(mem).size());
     }
     template for(constexpr auto mem : arguments)
     {
       constexpr auto        arg  = meta::annotation_value_of_with<argument>(mem);
       static constexpr auto help = arg.help.view();
-      std::println("  {:{}} {}", identifier_of(mem), max_id_size, help);
+      std::println("  {:{}} {}", display_name_of(mem), max_id_size, help);
     }
 
     std::println();
@@ -206,7 +211,7 @@ template <std::meta::info I> void usage_of(std::string_view program)
     std::size_t max_id_size = min_id_size;
     template for(constexpr auto mem : sub_commands)
     {
-      max_id_size = std::max(max_id_size, identifier_of(mem).size());
+      max_id_size = std::max(max_id_size, display_name_of(mem).size());
     }
     template for(constexpr auto mem : sub_commands)
     {
@@ -221,7 +226,7 @@ template <std::meta::info I> void usage_of(std::string_view program)
         }
       }();
       static constexpr auto help = cmd.help.view();
-      std::println("  {:{}} {}", identifier_of(mem), max_id_size, help);
+      std::println("  {:{}} {}", display_name_of(mem), max_id_size, help);
     }
   }
 
