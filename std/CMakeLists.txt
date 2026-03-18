@@ -12,26 +12,34 @@ endif()
 
 message(STATUS "Using GCC ${CMAKE_CXX_COMPILER_VERSION}")
 
-# Locate libstdc++.so to determine GCC prefix
-execute_process(
-    COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libstdc++.so
-    OUTPUT_VARIABLE LIBSTDCPP_SO
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
+if(UNIX)
+    # Locate libstdc++.so to determine GCC prefix
+    execute_process(
+        COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libstdc++.so
+        OUTPUT_VARIABLE LIBSTDCPP_SO
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
 
-if(NOT EXISTS "${LIBSTDCPP_SO}")
-    message(FATAL_ERROR "Failed to locate libstdc++.so")
+    if(NOT EXISTS "${LIBSTDCPP_SO}")
+        message(FATAL_ERROR "Failed to locate libstdc++.so")
+    endif()
+
+    get_filename_component(GCC_LIB_DIR "${LIBSTDCPP_SO}" DIRECTORY)
+    get_filename_component(GCC_PREFIX "${GCC_LIB_DIR}" DIRECTORY)
+
+    message(STATUS "GCC prefix: ${GCC_PREFIX}")
+
+    # libstdc++ headers root
+    set(LIBSTDCPP_INCLUDE
+        "${GCC_PREFIX}/include/c++/${CMAKE_CXX_COMPILER_VERSION}"
+    )
+elseif(WIN32)
+    execute_process(
+        COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=include/c++
+        OUTPUT_VARIABLE LIBSTDCPP_INCLUDE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
 endif()
-
-get_filename_component(GCC_LIB_DIR "${LIBSTDCPP_SO}" DIRECTORY)
-get_filename_component(GCC_PREFIX "${GCC_LIB_DIR}" DIRECTORY)
-
-message(STATUS "GCC prefix: ${GCC_PREFIX}")
-
-# libstdc++ headers root
-set(LIBSTDCPP_INCLUDE
-    "${GCC_PREFIX}/include/c++/${CMAKE_CXX_COMPILER_VERSION}"
-)
 
 if(NOT EXISTS "${LIBSTDCPP_INCLUDE}")
     message(FATAL_ERROR
