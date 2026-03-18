@@ -111,14 +111,26 @@ std::optional<int>
           constexpr auto type = type_of(mem);
           using T             = [:type:];
           T& target           = get_item.template operator()<mem, T>(identifier_of(mem));
-          auto                          view = std::string_view(*it);
-          if constexpr(type == ^^bool)
+
+          if constexpr(seq_c<T>)
           {
-            target = view == "true";
+            const_assert(
+                ii == arguments.size() - 1, "repeated arguments must be last",
+                source_location_of(mem));
+            auto prev = it;
+            do
+            {
+              // consume all remaining arguments
+              auto view = std::string_view(*it);
+              target.push_back(reflex::parse<typename T::value_type>(view));
+              prev = it;
+            } while(++it != end);
+            it = prev;
           }
           else
           {
-            target = reflex::parse<T>(view);
+            auto view = std::string_view(*it);
+            target    = reflex::parse<T>(view);
           }
           found = true;
           break;
@@ -269,7 +281,8 @@ int run(auto cli, int argc, const char** argv)
   return run(cli, program, argv + 1, argv + argc);
 }
 
-int run(auto cli, std::initializer_list<std::string_view> args)
+template <std::ranges::range R = std::initializer_list<std::string_view>>
+int run(auto cli, R&& args)
 {
   auto argv = args
             | std::views::transform([](std::string_view arg) { return arg.data(); })

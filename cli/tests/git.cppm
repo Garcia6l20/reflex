@@ -99,5 +99,25 @@ export {
         return 0;
       }
     } add_text_file{*this};
+
+    struct[[= cli::command{"Add items to staging."}]]
+    {
+      git& up;
+
+      [[= cli::argument{"Path specs."}, = cli::completers::path{}]] std::vector<std::string>
+          path_specs;
+
+      // assertion failure: repeated arguments must be last
+      // [[= cli::argument{"Invalid"}]] int value = 0;
+
+      int operator()() const
+      {
+        for(const auto& spec : path_specs)
+        {
+          std::println("Adding: {}", spec);
+        }
+        return 0;
+      }
+    } add{*this};
   };
 }

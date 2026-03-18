@@ -6,42 +6,6 @@ import std;
 
 export namespace reflex::poly
 {
-template <typename T>
-concept str_c = decays_to_c<T, char*>
-             or decays_to_c<T, std::string>
-             or decays_to_c<T, std::string_view>
-             or requires(T s) { std::string_view(s); };
-
-template <typename T>
-concept map_c = requires(T t) {
-  { t.begin() } -> std::input_iterator;
-  { t.end() } -> std::sentinel_for<decltype(t.begin())>;
-  typename T::value_type;
-  typename T::key_type;
-  typename T::mapped_type;
-};
-
-template <typename T>
-concept seq_c = requires(T t) {
-  { std::begin(t) } -> std::input_iterator;
-  { std::end(t) } -> std::sentinel_for<decltype(std::begin(t))>;
-  { t.size() } -> std::convertible_to<std::size_t>;
-  typename T::value_type;
-} and not map_c<T> and not str_c<T>;
-
-template <typename T>
-concept pair_c = requires(T t) {
-  typename T::first_type;
-  typename T::second_type;
-};
-
-template <typename T>
-concept number_c = (std::integral<T> or std::floating_point<T>) and not decays_to_c<T, bool>;
-
-// static_assert(seq_c<std::vector<int>>);
-// static_assert(map_c<std::unordered_map<int, int>>);
-// static_assert(not seq_c<std::unordered_map<int, int>>);
-
 struct null_t
 {
   constexpr bool operator==(null_t const&) const noexcept

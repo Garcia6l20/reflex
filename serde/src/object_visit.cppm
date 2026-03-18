@@ -59,9 +59,7 @@ constexpr decltype(auto) object_visit(std::span<std::string_view> keys, T&& valu
 template <object_visitable_c T, typename Fn>
 constexpr decltype(auto) object_visit(std::string_view key, T&& value, Fn&& fn)
 {
-  static const auto to_sv = [](auto&& r) {
-    return std::string_view(&*r.begin(), std::ranges::distance(r));
-  };
+  const auto to_sv = [](auto&& r) { return std::string_view(r.begin(), r.end()); };
   auto rng = key | std::views::split('.') | std::views::transform(to_sv);
   std::array<std::string_view, 16> keys{};
   auto const key_count = std::ranges::copy(rng, keys.begin()).out - keys.begin();

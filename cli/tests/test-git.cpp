@@ -18,8 +18,9 @@ static std::vector<std::string> complete(std::string_view comp_line, int comp_po
 
   std::string out;
   {
-    const auto [o, _] = testutils::capture_out_err([] { cli::run(git{}, {"git"sv}); });
-    out               = o;
+    const auto [o, _] =
+        testutils::capture_out_err([] { cli::run(git{}, std::initializer_list{"git"sv}); });
+    out = o;
   }
 
   testutils::unset_env("_REFLEX_COMPLETE");
@@ -47,19 +48,36 @@ static auto completion_values(const std::vector<std::string>& lines)
   return result;
 }
 
+static auto run(auto&&... args)
+{
+  std::inplace_vector<std::string_view, 32> argv = {"git"};
+  (argv.push_back(args), ...);
+  int rc          = -1;
+  auto [out, err] = testutils::capture_out_err(
+      [&] { rc = cli::run(git{}, std::span{argv.data(), argv.size()}); });
+  return std::tuple{rc, out, err};
+}
+
 TEST_CASE("reflex::cli: git")
 {
-  cli::run(git{}, {"git"sv, "-h"sv});
-  cli::run(git{}, {"git"sv, "commit"sv, "-h"sv});
-  cli::run(git{}, {"git"sv, "commit"sv, "Initial commit"sv});
-  cli::run(git{}, {"git"sv, "push"sv, "-h"sv});
-  cli::run(git{}, {"git"sv, "push"sv, "-r"sv, "upstream"sv});
+  run("git", "-h"sv);
+  run("git", "commit", "-h"sv);
+  run("git", "commit", "Initial commit");
+  run("git", "push", "-h"sv);
+  run("git", "push", "-r", "upstream");
 
+  SUBCASE("commit")
   {
-    const auto [out, err] = testutils::capture_out_err(
-        [] { CHECK_EQ(cli::run(git{}, {"git"sv, "commit"sv, "Initial commit"sv}), 0); });
+    const auto [rc, out, err] = run("commit", "Initial commit");
+    CHECK_EQ(rc, 0);
     CHECK(err.empty());
     CHECK_EQ(out, "Committing with message: Initial commit\n");
+  }
+  SUBCASE("add")
+  {
+    const auto [rc, out, err] = run("add", "test", "data");
+    CHECK(err.empty());
+    CHECK_EQ(out, "Adding: test\nAdding: data\n");
   }
 }
 
