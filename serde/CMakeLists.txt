@@ -27,3 +27,7 @@ target_link_libraries(reflex.serde_bson PUBLIC reflex.serde)
 if(REFLEX_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
+
+if(REFLEX_BUILD_PROGRAMS)
+  add_subdirectory(programs)
+endif()

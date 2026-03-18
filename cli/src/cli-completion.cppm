@@ -302,12 +302,26 @@ struct[[= complete{}]] path
 
   auto operator()(std::string_view current) const
   {
-    return std::array{
-        cli::completion{
-                        .type        = cli::completion_type::file,
-                        .value       = pattern,
-            .description = "File system path"}
-    };
+    if(not current.empty())
+    {
+      // static data is OK, because there is only a single call to any completer at a time
+      static std::string current_pattern = std::format("{}{}", current, pattern.view());
+      return std::array{
+          cli::completion{
+                          .type        = cli::completion_type::file,
+                          .value       = current_pattern,
+                          .description = "File system path"}
+      };
+    }
+    else
+    {
+      return std::array{
+          cli::completion{
+                          .type        = cli::completion_type::file,
+                          .value       = pattern,
+                          .description = "File system path"}
+      };
+    }
   }
 };
 

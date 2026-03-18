@@ -281,6 +281,11 @@ int run(auto cli, int argc, const char** argv)
   return run(cli, program, argv + 1, argv + argc);
 }
 
+template <typename Cli> int run(int argc, const char** argv)
+{
+  return run(Cli{}, argc, argv);
+}
+
 template <std::ranges::range R = std::initializer_list<std::string_view>>
 int run(auto cli, R&& args)
 {

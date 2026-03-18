@@ -29,6 +29,12 @@ public:
     return out;
   }
 
+  template <typename Out> constexpr Out& operator()(Out& out, std::byte num) const
+  {
+    out << std::to_integer<unsigned int>(num);
+    return out;
+  }
+
   template <typename Out> constexpr Out& operator()(Out& out, boolean b) const
   {
     out << (b ? "true" : "false");
@@ -95,7 +101,9 @@ public:
     return out;
   }
 
-  template <typename Out> constexpr Out& operator()(Out& out, aggregate_c auto const& val) const
+  template <typename Out, aggregate_c T>
+    requires(not seq_c<T> and not pair_c<T> and not map_c<T>)
+  constexpr Out& operator()(Out& out, T const& val) const
   {
     out << '{';
 
@@ -119,6 +127,14 @@ public:
       reflex::visit([this, &out](const auto& value) { (*this)(out, value); }, member_value);
     }
     out << '}';
+    return out;
+  }
+
+  template <typename Out, visitable_c T>
+    requires(not seq_c<T> and not pair_c<T> and not map_c<T> and not aggregate_c<T>)
+  constexpr Out& operator()(Out& out, T const& val) const
+  {
+    reflex::visit([&](const auto& v) mutable { (*this)(out, v); }, val);
     return out;
   }
 };
@@ -383,6 +399,8 @@ private:
   }
 
 public:
+  deserializer() = default;
+
   template <typename T = json::value> static T load(str_c auto&& in)
   {
     auto self = deserializer{in};
@@ -405,3 +423,13 @@ public:
 };
 
 } // namespace reflex::serde::json
+
+export namespace reflex::serde::ser
+{
+using json = reflex::serde::json::serializer;
+}
+
+export namespace reflex::serde::de
+{
+using json = reflex::serde::json::deserializer;
+}

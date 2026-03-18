@@ -232,10 +232,11 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
 
 template <typename T> constexpr bytes encode_root(T const& value)
 {
-  if constexpr(map_c<T> or (aggregate_c<T> and !bson_scalar_c<T>))
+  using U = std::decay_t<T>;
+  if constexpr(map_c<U> or (aggregate_c<U> and !bson_scalar_c<U>))
   {
     return make_document([&](bytes& out) {
-      if constexpr(map_c<T>)
+      if constexpr(map_c<U>)
       {
         for(auto const& [member_key, member_value] : value)
         {
@@ -244,8 +245,8 @@ template <typename T> constexpr bytes encode_root(T const& value)
       }
       else
       {
-        template for(constexpr auto member : define_static_array(nonstatic_data_members_of(
-                         decay(^^decltype(value)), std::meta::access_context::current())))
+        template for(constexpr auto member : define_static_array(
+                         nonstatic_data_members_of(^^U, std::meta::access_context::current())))
         {
           constexpr std::string_view member_name = serialized_name(member);
           auto const&                member_val  = value.[:member:];
@@ -254,8 +255,14 @@ template <typename T> constexpr bytes encode_root(T const& value)
       }
     });
   }
-
-  return make_document([&](bytes& out) { write_element(out, "value", value); });
+  else if constexpr(reflex::visitable_c<U>)
+  {
+    return reflex::visit([&](auto const& v) { return encode_root(v); }, value);
+  }
+  else
+  {
+    return make_document([&](bytes& out) { write_element(out, "value", value); });
+  }
 }
 
 } // namespace detail
@@ -271,6 +278,23 @@ public:
     for(std::byte byte : encoded)
     {
       out.push_back(byte);
+    }
+    return out;
+  }
+
+  template <typename Out, typename T>
+  constexpr Out& operator()(Out& out, T const& value) const
+    requires requires(Out& o, std::byte b) {
+      typename Out::char_type;
+      sizeof(typename Out::char_type) == sizeof(std::byte);
+      o << typename Out::char_type(b);
+    }
+  {
+    using char_type = typename Out::char_type;
+    auto encoded    = detail::encode_root(value);
+    for(std::byte byte : encoded)
+    {
+      out << char_type(byte);
     }
     return out;
   }
@@ -663,6 +687,8 @@ private:
   }
 
 public:
+  deserializer() = default;
+
   template <typename T = bson::value> static T load(std::span<const std::byte> in)
   {
     auto self = deserializer{in};
@@ -688,3 +714,13 @@ public:
 };
 
 } // namespace reflex::serde::bson
+
+export namespace reflex::serde::ser
+{
+using bson = reflex::serde::bson::serializer;
+}
+
+export namespace reflex::serde::de
+{
+using bson = reflex::serde::bson::deserializer;
+}
