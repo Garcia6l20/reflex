@@ -330,7 +330,7 @@ OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
         {
           ctx.visit(v.iterable, [&]<typename U>(const U& it) {
             using V = std::decay_t<U>;
-            if constexpr(poly::seq_c<V>)
+            if constexpr(seq_c<V>)
             {
               // === sequence: {% for item in list %}
               auto parent = ctx.template get<expr::loop_info>("loop");
@@ -355,7 +355,7 @@ OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
                 loop.last  = (loop.index0 == it.size() - 1);
               }
             }
-            else if constexpr(poly::map_c<V>)
+            else if constexpr(map_c<V>)
             {
               // === mapping: {% for k, v in obj %}
               auto parent = ctx.template get<expr::loop_info>("loop");
