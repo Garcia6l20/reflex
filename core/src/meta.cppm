@@ -402,4 +402,8 @@ consteval std::string_view qualified_display_string_of(meta::info R)
   }
 }
 
+consteval bool is_alias_type(std::meta::info R)
+{
+  return is_type(R) and (dealias(R) != R);
+}
 } // namespace reflex::meta

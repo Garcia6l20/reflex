@@ -14,7 +14,7 @@ reflex_add_cxx_module_library(reflex.core
     src/caseconv.cppm
     src/const_assert.cppm
     src/formatters.cppm
-    src/meta/tu.cppm
+    src/meta/reg.cppm
     src/exception.cppm
     src/named_arg.cppm
 )
