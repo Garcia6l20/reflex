@@ -796,7 +796,10 @@ public:
             }
 
             auto uch = static_cast<unsigned char>(byte);
-            if(uch >= 0x40 and uch <= 0x7E)
+            static const auto is_final_byte = [](unsigned char c) {
+              return is_in_range(c, 0x40, 0x7E);
+            };
+            if(is_final_byte(uch))
             {
               final_char = byte;
               break;
