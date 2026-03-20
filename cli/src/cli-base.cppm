@@ -306,11 +306,10 @@ template <std::meta::info I> void usage_of(std::string_view program)
   std::println();
 }
 
-template <meta::info I>
-std::optional<int>
-    process_cmdline(std::string_view program, auto it, auto end, auto get_item, auto on_command)
+template <typename Cli> int process_cmdline(Cli&& cli, std::string_view program, auto it, auto end)
 {
-  static constexpr auto [args, opts, s_cmds] = parse<I>();
+  static constexpr auto cli_type             = remove_cvref(^^Cli);
+  static constexpr auto [args, opts, s_cmds] = parse<cli_type>();
 
   std::size_t current_pos_arg = 0;
   while(it != end)
@@ -335,14 +334,14 @@ std::optional<int>
         {
           if constexpr(o == ^^help_option)
           {
-            usage_of<I>(program);
+            usage_of<cli_type>(program);
             return 0;
           }
           else
           {
             constexpr auto type = o.type();
             using T             = [:type:];
-            T& target           = get_item.template operator()<o.member, T>(o.name());
+            T& target           = cli.[:o.member:];
             if constexpr(type == ^^bool)
             {
               target = true;
@@ -381,7 +380,7 @@ std::optional<int>
       {
         std::println(std::cerr, "unknown option: {}", view);
         std::println(std::cerr);
-        usage_of<I>(program);
+        usage_of<cli_type>(program);
         return 1;
       }
     }
@@ -391,7 +390,8 @@ std::optional<int>
       {
         if(view == cmd.display_name())
         {
-          return on_command.template operator()<cmd.member>(it, end);
+          return process_cmdline(cli.[:cmd.member:], std::format("{} {}", program, view),
+                                                   std::next(it), end);
         }
       }
 
@@ -406,7 +406,7 @@ std::optional<int>
           constexpr auto arg  = argument_info{args[ii]};
           constexpr auto type = arg.type();
           using T             = [:type:];
-          T& target           = get_item.template operator()<arg.member, T>(arg.name());
+          T& target           = cli.[:arg.member:];
 
           if constexpr(seq_c<T>)
           {
@@ -435,7 +435,7 @@ std::optional<int>
       {
         std::println(std::cerr, "unexpected argument: {}", view);
         std::println(std::cerr);
-        usage_of<I>(program);
+        usage_of<cli_type>(program);
         return 1;
       }
     }
@@ -474,25 +474,25 @@ std::optional<int>
           }
           std::println(std::cerr);
           std::println(std::cerr);
-          usage_of<I>(program);
+          usage_of<cli_type>(program);
           return 1;
         }
       }
     }
   }
 
-  // if constexpr(not sub_commands.empty())
-  // {
-  //   template for(constexpr auto [sub_command, mem] : sub_commands)
-  //   {
-  //     if constexpr(has_flag<I, mem, ^^_default>())
-  //     {
-  //       return on_command.template operator()<mem>(it, end);
-  //     }
-  //   }
-  // }
-
-  return std::nullopt;
+  if constexpr(requires { cli(); })
+  {
+    // actual command execution
+    return cli();
+  }
+  else
+  {
+    std::println(std::cerr, "no command to execute");
+    std::println(std::cerr);
+    usage_of<cli_type>(program);
+    return 1;
+  }
 }
 
 bool tokenize(str_c auto const& line, std::output_iterator<std::string_view> auto&& out_tokens)

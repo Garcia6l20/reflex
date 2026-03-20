@@ -46,7 +46,8 @@ public:
       }
       if(!args.empty())
       {
-        int rc = reflex::cli::run(cli_, identifier_of(^^Cli), args.begin(), args.end());
+        const auto rc = reflex::cli::detail::process_cmdline(
+            cli_, identifier_of(^^Cli), args.begin(), args.end());
         if(rc != 0)
         {
           std::cerr << "Error: command exited with code " << rc << "\n";

@@ -42,40 +42,7 @@ template <typename Cli> int run(Cli&& cli, std::string_view program, auto it, au
     }
   }
 
-  const auto rc = detail::process_cmdline<cli_type>( //
-      program,
-      it,
-      end,
-      //
-      // Get item
-      //
-      [&]<meta::info mem, typename T>(std::string_view name) -> std::reference_wrapper<T>
-      { return std::ref(cli.[:mem:]); },
-      //
-      // On command
-      //
-      [&]<meta::info mem>(auto it, auto end)
-      {
-        constexpr auto type = type_of(mem);
-        using T             = [:type:];
-        auto view           = std::string_view(it != end ? *it : "");
-
-        return cli::run(cli.[:mem:], std::format("{} {}", program, view), std::next(it), end);
-      });
-  if(rc.has_value())
-  {
-    return rc.value();
-  }
-
-  if constexpr(requires { cli.operator()(); })
-  {
-    return cli.operator()();
-  }
-  else
-  {
-    std::println(std::cerr, "Error: missing subcommand");
-    return -1;
-  }
+  return detail::process_cmdline(std::forward<Cli>(cli), program, it, end);
 }
 
 template <typename Cli> int run(Cli&& cli, int argc, const char** argv)
