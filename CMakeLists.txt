@@ -25,10 +25,7 @@ if(REFLEX_BUILD_TESTS)
   enable_testing()
 endif()
 
-if (NOT CMAKE_CXX_MODULE_STD)
-  add_subdirectory(std)
-  link_libraries(std)
-endif()
+add_subdirectory(std)
 
 add_subdirectory(core)
 add_subdirectory(cli)

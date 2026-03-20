@@ -1,9 +1,6 @@
 #include <doctest/doctest.h>
 
-import reflex.core;
-import reflex.poly;
-
-import std;
+#include <reflex/poly.hpp>
 
 using namespace reflex;
 using namespace reflex::poly;

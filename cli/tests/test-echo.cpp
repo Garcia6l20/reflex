@@ -1,8 +1,7 @@
 #include <doctest/doctest.h>
 
-import reflex.testutils;
-import reflex.cli;
-import std;
+#include <reflex/cli.hpp>
+#include <testutils.hpp>
 
 using namespace reflex;
 

@@ -1,9 +1,11 @@
 #include <doctest/doctest.h>
 
-import reflex.cli;
-import reflex.testutils;
-import git;
-import std;
+#include <reflex/cli.hpp>
+
+#include <git.hpp>
+#include <testutils.hpp>
+
+#include <sstream>
 
 using namespace reflex;
 

@@ -1,7 +1,5 @@
 reflex_add_cxx_module_library(reflex.testutils
-  testutils.cpp
-  testutils.cppm
-  pipe_capture.cppm
+  src/testutils.cpp
 )
 
 link_libraries(reflex.cli reflex.testutils)
@@ -10,17 +8,12 @@ doctest_add_test(reflex-cli-test-echo
   test-echo.cpp
 )
 
-reflex_add_cxx_module_library(reflex-cli-test.git
-  git.cppm
-)
-
 add_executable(fake-git fake-git.cpp)
-target_link_libraries(fake-git PRIVATE reflex-cli-test.git)
+target_link_libraries(fake-git PRIVATE reflex.cli)
 
 add_executable(fake-git-shell fake-git-shell.cpp)
-target_link_libraries(fake-git-shell PRIVATE reflex-cli-test.git reflex.shell)
+target_link_libraries(fake-git-shell PRIVATE reflex.shell)
 
 doctest_add_test(reflex-cli-test-git
   test-git.cpp
 )
-target_link_libraries(reflex-cli-test-git PRIVATE reflex-cli-test.git)

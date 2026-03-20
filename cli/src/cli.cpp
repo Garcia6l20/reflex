@@ -1,6 +1,4 @@
-module reflex.cli;
-
-import std;
+#include <reflex/cli.hpp>
 
 namespace reflex::cli::detail
 {

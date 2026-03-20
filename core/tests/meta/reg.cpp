@@ -1,12 +1,10 @@
 #include <doctest/doctest.h>
 
-import reflex.core;
+#include <reflex/core.hpp>
 
-import test.tu.mod1;
-import test.tu.mod2;
-import test.tu;
-
-import std;
+#include "reg-mod.hpp"
+#include "reg-mod1.hpp"
+#include "reg-mod2.hpp"
 
 using namespace reflex;
 using namespace test;

@@ -1,7 +1,6 @@
 #include <doctest/doctest.h>
 
-import reflex.core;
-import std;
+#include <reflex/core.hpp>
 
 using namespace reflex;
 using namespace std::string_literals;
