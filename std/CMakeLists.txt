@@ -31,4 +31,5 @@ target_precompile_headers(reflex.std PUBLIC
   <atomic>
   <coroutine>
   <generator>
+  <functional>
 )
