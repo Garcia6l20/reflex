@@ -68,9 +68,7 @@ struct command
 {
   constant_string help;
 };
-} // namespace reflex::cli
-
-namespace reflex::cli::detail
+namespace detail
 {
 
 [[= option{"-h/--help", "Print this message and exit."}.flag()]] constexpr bool help_option{false};
@@ -307,4 +305,228 @@ template <std::meta::info I> void usage_of(std::string_view program)
 
   std::println();
 }
-} // namespace reflex::cli::detail
+
+template <meta::info I>
+std::optional<int>
+    process_cmdline(std::string_view program, auto it, auto end, auto get_item, auto on_command)
+{
+  static constexpr auto [args, opts, s_cmds] = parse<I>();
+
+  std::size_t current_pos_arg = 0;
+  while(it != end)
+  {
+    auto view = std::string_view{*it};
+    if(view[0] == '-')
+    {
+      // option lookup
+      bool found = false;
+      template for(constexpr auto o : opts)
+      {
+        auto [short_switch, long_switch] = o.switches;
+
+        if((view == short_switch)
+           or (view == long_switch)
+           or
+           // counters accepts repeated short switch (ie.: -vvv => counter = 3)
+           (o.is_counter()
+            and view.starts_with(short_switch)
+            and (std::ranges::all_of(
+                view | std::views::drop(2), [&](auto c) { return c == short_switch[1]; }))))
+        {
+          if constexpr(o == ^^help_option)
+          {
+            usage_of<I>(program);
+            return 0;
+          }
+          else
+          {
+            constexpr auto type = o.type();
+            using T             = [:type:];
+            T& target           = get_item.template operator()<o.member, T>(o.name());
+            if constexpr(type == ^^bool)
+            {
+              target = true;
+            }
+            else
+            {
+              if constexpr(o.is_counter())
+              {
+                if constexpr(meta::is_template_instance_of(type, ^^std::optional))
+                {
+                  if(not target.has_value())
+                  {
+                    target.emplace();
+                  }
+                  target.value() += std::ranges::count(view, short_switch[1]);
+                }
+                else
+                {
+                  target += std::ranges::count(view, short_switch[1]);
+                }
+              }
+              else
+              {
+                it              = std::next(it);
+                auto value_view = std::string_view{*it};
+                target          = reflex::parse<T>(value_view);
+              }
+            }
+          }
+
+          found = true;
+          break;
+        }
+      }
+      if(!found)
+      {
+        std::println(std::cerr, "unknown option: {}", view);
+        std::println(std::cerr);
+        usage_of<I>(program);
+        return 1;
+      }
+    }
+    else
+    {
+      template for(constexpr auto cmd : s_cmds)
+      {
+        if(view == cmd.display_name())
+        {
+          return on_command.template operator()<cmd.member>(it, end);
+        }
+      }
+
+      // assume argument
+      auto value_view = view;
+      bool found      = false;
+      template for(constexpr auto ii : std::views::iota(std::size_t(0), args.size()))
+      {
+        if(ii >= current_pos_arg)
+        {
+          ++current_pos_arg;
+          constexpr auto arg  = argument_info{args[ii]};
+          constexpr auto type = arg.type();
+          using T             = [:type:];
+          T& target           = get_item.template operator()<arg.member, T>(arg.name());
+
+          if constexpr(seq_c<T>)
+          {
+            const_assert(
+                ii == args.size() - 1, "repeated arguments must be last", arg.source_location());
+            auto prev = it;
+            do
+            {
+              // consume all remaining arguments
+              auto view = std::string_view(*it);
+              target.push_back(reflex::parse<typename T::value_type>(view));
+              prev = it;
+            } while(++it != end);
+            it = prev;
+          }
+          else
+          {
+            auto view = std::string_view(*it);
+            target    = reflex::parse<T>(view);
+          }
+          found = true;
+          break;
+        }
+      }
+      if(!found)
+      {
+        std::println(std::cerr, "unexpected argument: {}", view);
+        std::println(std::cerr);
+        usage_of<I>(program);
+        return 1;
+      }
+    }
+    it = std::next(it);
+  }
+
+  constexpr auto arg_count = args.size();
+  if(current_pos_arg < arg_count)
+  {
+    template for(constexpr auto ii : std::views::iota(std::size_t(0), args.size()))
+    {
+      if(ii >= current_pos_arg)
+      {
+        constexpr auto arg  = argument_info{args[ii]};
+        constexpr auto type = arg.type();
+        if constexpr(meta::is_template_instance_of(type, ^^std::optional))
+        {
+          ++current_pos_arg;
+        }
+        else
+        {
+          std::print(std::cerr, "missing required argument: ");
+          bool first = true;
+          template for(constexpr auto jj : std::views::iota(std::size_t(ii), args.size()))
+          {
+            if(jj >= current_pos_arg)
+            {
+              if(!first)
+              {
+                std::print(std::cerr, ", ");
+              }
+              constexpr auto name = arg.display_name();
+              std::print(std::cerr, "{}", name);
+              first = false;
+            }
+          }
+          std::println(std::cerr);
+          std::println(std::cerr);
+          usage_of<I>(program);
+          return 1;
+        }
+      }
+    }
+  }
+
+  // if constexpr(not sub_commands.empty())
+  // {
+  //   template for(constexpr auto [sub_command, mem] : sub_commands)
+  //   {
+  //     if constexpr(has_flag<I, mem, ^^_default>())
+  //     {
+  //       return on_command.template operator()<mem>(it, end);
+  //     }
+  //   }
+  // }
+
+  return std::nullopt;
+}
+
+bool tokenize(str_c auto const& line, std::output_iterator<std::string_view> auto&& out_tokens)
+{
+  auto view = std::string_view{line};
+  view      = ltrim(view);
+  while(not view.empty())
+  {
+    if(view[0] == '"')
+    {
+      // Quoted token
+      auto end_quote = view.find('"', 1);
+      if(end_quote == std::string_view::npos)
+      {
+        return false;
+      }
+      out_tokens = view.substr(1, end_quote - 1);
+      view.remove_prefix(end_quote + 1);
+      view = ltrim(view);
+    }
+    else
+    {
+      // Unquoted token
+      auto next_space = view.find(' ');
+      if(next_space == std::string_view::npos)
+      {
+        next_space = view.size();
+      }
+      out_tokens = view.substr(0, next_space);
+      view.remove_prefix(next_space);
+      view = ltrim(view);
+    }
+  }
+  return true;
+}
+} // namespace detail
+} // namespace reflex::cli

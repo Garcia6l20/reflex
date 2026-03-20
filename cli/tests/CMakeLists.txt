@@ -17,6 +17,9 @@ reflex_add_cxx_module_library(reflex-cli-test.git
 add_executable(fake-git fake-git.cpp)
 target_link_libraries(fake-git PRIVATE reflex-cli-test.git)
 
+add_executable(fake-git-shell fake-git-shell.cpp)
+target_link_libraries(fake-git-shell PRIVATE reflex-cli-test.git reflex.shell)
+
 doctest_add_test(reflex-cli-test-git
   test-git.cpp
 )

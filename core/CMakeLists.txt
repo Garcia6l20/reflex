@@ -19,6 +19,8 @@ reflex_add_cxx_module_library(reflex.core
 target_compile_options(reflex.core PUBLIC -fabi-version=19)
 target_compile_options(reflex.core PUBLIC -freflection -fimplicit-constexpr)
 
+target_compile_definitions(reflex.core PUBLIC $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Release>:NDEBUG>)
+
 if(REFLEX_BUILD_TESTS)
   add_subdirectory(tests)
 endif()

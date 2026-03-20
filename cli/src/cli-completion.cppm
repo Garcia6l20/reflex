@@ -12,6 +12,7 @@ export module reflex.cli:completion;
 
 import std;
 
+import reflex.core;
 import :base;
 
 export namespace reflex::cli
@@ -42,7 +43,7 @@ struct completion
 
 } // namespace reflex::cli
 
-namespace reflex::cli::detail
+export namespace reflex::cli::detail
 {
 using word_vector       = std::inplace_vector<std::string_view, 32>;
 using completion_vector = std::inplace_vector<completion, 16>;
@@ -220,42 +221,8 @@ std::optional<std::string_view> next_word(std::string_view& line)
   }
 }
 
-// Entry-point called from run() when _REFLEX_COMPLETE is set to xxx_complete.
-template <meta::info I> int do_complete()
+template <meta::info I> int do_complete(std::string_view comp_line, std::size_t comp_point)
 {
-  std::string_view comp_line = [] {
-    if(const auto env = std::getenv("_REFLEX_COMP_LINE"); env != nullptr)
-      return std::string_view{env};
-    return std::string_view{};
-  }();
-
-  if(comp_line.empty())
-  {
-    return 1;
-  }
-
-  const std::string_view comp_point_env = [] {
-    if(const auto env = std::getenv("_REFLEX_COMP_POINT"); env != nullptr)
-      return std::string_view{env};
-    return std::string_view{};
-  }();
-
-  // TODO comp point not handled !
-  std::size_t comp_point = 1;
-  if(not comp_point_env.empty())
-  {
-    auto res = std::from_chars(
-        comp_point_env.data(), comp_point_env.data() + comp_point_env.size(), comp_point);
-    if(res.ec != std::errc{})
-    {
-      return 1; // skip
-    }
-    if(comp_point < 1)
-    {
-      return 1; // invalid
-    }
-  }
-
   next_word(comp_line); // drop command name
 
   word_vector      words;
@@ -284,6 +251,45 @@ template <meta::info I> int do_complete()
   }
   return 0;
 }
+
+// Entry-point called from run() when _REFLEX_COMPLETE is set to xxx_complete.
+template <meta::info I> int do_complete()
+{
+  std::string_view comp_line = [] {
+    if(const auto env = std::getenv("_REFLEX_COMP_LINE"); env != nullptr)
+      return std::string_view{env};
+    return std::string_view{};
+  }();
+
+  if(comp_line.empty())
+  {
+    return 1;
+  }
+
+  const std::string_view comp_point_env = [] {
+    if(const auto env = std::getenv("_REFLEX_COMP_POINT"); env != nullptr)
+      return std::string_view{env};
+    return std::string_view{};
+  }();
+
+  std::size_t comp_point = 1;
+  if(not comp_point_env.empty())
+  {
+    auto res = std::from_chars(
+        comp_point_env.data(), comp_point_env.data() + comp_point_env.size(), comp_point);
+    if(res.ec != std::errc{})
+    {
+      return 1; // skip
+    }
+    if(comp_point < 1)
+    {
+      return 1; // invalid
+    }
+  }
+
+  return do_complete<I>(comp_line, comp_point);
+}
+
 void emit_zsh_source(std::string_view program);
 void emit_bash_source(std::string_view program);
 } // namespace reflex::cli::detail
@@ -300,7 +306,7 @@ struct[[= complete{}]] path
         cli::completion{
                         .type        = cli::completion_type::file,
                         .value       = pattern,
-            .description = "File system path"}
+                        .description = "File system path"}
     };
   }
 };
