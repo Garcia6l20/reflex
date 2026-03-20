@@ -185,7 +185,7 @@ consteval auto annotations_of_with(info R, info A)
          });
 }
 
-template <typename AnnotationType> consteval auto annotation_value_of_with(info R)
+template <typename AnnotationType> consteval decltype(auto) annotation_value_of_with(info R)
 {
   auto annotations = annotations_of_with(R, ^^AnnotationType);
   if(annotations.empty())
