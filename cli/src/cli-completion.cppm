@@ -80,41 +80,38 @@ template <meta::info I> auto complete_for(word_vector words, std::string_view cu
 {
   completion_vector completions{};
 
-  static constexpr auto [arguments, options, sub_commands] = parse<I>();
+  static constexpr auto [args, opts, s_cmds] = parse<I>();
 
   // If there are still words before the cursor that are not the current one,
   // check whether the first of them names a sub-command we should recurse into.
   if(not words.empty())
   {
-    template for(constexpr auto mem : sub_commands)
+    template for(constexpr auto c : s_cmds)
     {
-      const auto name = display_name_of(mem);
-      auto       it   = std::ranges::find(words, name);
+      auto it = std::ranges::find(words, c.display_name());
       if(it != words.end())
       {
-        constexpr auto sub_type = type_of(mem);
+        constexpr auto sub_type = c.type();
         return complete_for<sub_type>(word_vector{it + 1, words.end()}, current);
       }
     }
   }
-  template for(constexpr auto mem : sub_commands)
+  template for(constexpr auto c : s_cmds)
   {
-    const auto name = display_name_of(mem);
-    if(current == name)
+    if(current == c.display_name())
     {
-      constexpr auto sub_type = type_of(mem);
+      constexpr auto sub_type = c.type();
       return complete_for<sub_type>(words, {});
     }
   }
 
   // Emit matching sub-command names.
-  template for(constexpr auto mem : sub_commands)
+  template for(constexpr auto c : s_cmds)
   {
-    constexpr auto name = display_name_of(mem);
+    constexpr auto name = c.display_name();
     if(current.empty() or name.starts_with(current))
     {
-      constexpr auto cmd = meta::annotation_value_of_with<command>(type_of(mem));
-      completions.push_back({.value = name, .description = cmd.help.view()});
+      completions.push_back({.value = name, .description = c.help()});
     }
   }
   if(not current.empty() and not completions.empty())
@@ -125,30 +122,28 @@ template <meta::info I> auto complete_for(word_vector words, std::string_view cu
   if(current.starts_with('-'))
   {
     // Emit matching option switches.
-    template for(constexpr auto mem : options)
+    template for(constexpr auto opt : opts)
     {
-      constexpr auto opt       = meta::annotation_value_of_with<option>(mem);
-      auto [short_sw, long_sw] = opt.split_switches();
+      constexpr auto [short_sw, long_sw] = opt.switches;
       if(std::ranges::find_if(words, [&](auto w) { return w == long_sw or w == short_sw; })
          != words.end())
       {
         continue; // already present in command line, don't offer again
       }
 
+      constexpr auto descr = opt.help();
       if(current == long_sw)
       {
         return completion_vector{
-            {.value = long_sw, .description = opt.help.view()}
+            {.value = long_sw, .description = descr}
         };
       }
       else if(current == short_sw)
       {
         return completion_vector{
-            {.value = short_sw, .description = opt.help.view()}
+            {.value = short_sw, .description = descr}
         };
       }
-
-      constexpr auto descr = opt.help.view();
       if(long_sw.starts_with(current))
       {
         completions.push_back({.value = long_sw, .description = descr});
@@ -165,13 +160,12 @@ template <meta::info I> auto complete_for(word_vector words, std::string_view cu
   {
     if(not last_word.empty())
     {
-      template for(constexpr auto mem : options)
+      template for(constexpr auto opt : opts)
       {
-        constexpr auto comp = completer_of(mem);
+        constexpr auto comp = completer_of(opt.member);
         if constexpr(comp != meta::null)
         {
-          constexpr auto opt       = meta::annotation_value_of_with<option>(mem);
-          auto [short_sw, long_sw] = opt.split_switches();
+          constexpr auto [short_sw, long_sw] = opt.switches;
           if(last_word == short_sw or last_word == long_sw)
           {
             constexpr auto fn = comp;
@@ -183,9 +177,9 @@ template <meta::info I> auto complete_for(word_vector words, std::string_view cu
     }
 
     // at this point we should try for argument completion
-    template for(constexpr auto mem : arguments)
+    template for(constexpr auto a : args)
     {
-      constexpr auto comp = completer_of(mem);
+      constexpr auto comp = completer_of(a.member);
       if constexpr(comp != meta::null)
       {
         constexpr auto fn         = comp;

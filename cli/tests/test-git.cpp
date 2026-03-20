@@ -60,11 +60,18 @@ static auto run(auto&&... args)
 
 TEST_CASE("reflex::cli: git")
 {
-  run("git", "-h"sv);
-  run("git", "commit", "-h"sv);
-  run("git", "commit", "Initial commit");
-  run("git", "push", "-h"sv);
-  run("git", "push", "-r", "upstream");
+  auto print_run = [](auto&&... args) {
+    auto [rc, out, err] = run(std::forward<decltype(args)>(args)...);
+    std::println("=== git {} ===", std::inplace_vector<std::string_view, sizeof...(args)>{args...});
+    std::println("rc: {}", rc);
+    std::println("out: {}", out);
+    std::println("err: {}", err);
+  };
+  print_run("-h");
+  print_run("commit", "-h");
+  print_run("commit", "Initial commit");
+  print_run("push", "-h");
+  print_run("push", "-r", "upstream");
 
   SUBCASE("commit")
   {

@@ -53,6 +53,11 @@ template <typename Char> struct basic_constant_string
     return size_;
   }
 
+  constexpr auto empty() const noexcept
+  {
+    return size_ == 0;
+  }
+
   constexpr operator value_type() const noexcept
   {
     return view();
