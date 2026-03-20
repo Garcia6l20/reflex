@@ -44,5 +44,6 @@ function(reflex_add_cxx_module_library target)
   add_library(${target} ${_type} ${_all_sources})
   target_compile_features(${target} ${_dep_mode} cxx_std_26)
   target_include_directories(${target} ${_dep_mode} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_precompile_headers(${target} REUSE_FROM reflex.std)
 
 endfunction()

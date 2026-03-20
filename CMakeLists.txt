@@ -12,6 +12,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 option(REFLEX_BUILD_EXAMPLES "Build reflex examples" OFF)
 option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 
+add_subdirectory(std)
+link_libraries(reflex.std)
+
 include(ReflexRequirements)
 
 if (PROJECT_IS_TOP_LEVEL)
@@ -24,8 +27,6 @@ if(REFLEX_BUILD_TESTS)
   include(ReflexTesting)
   enable_testing()
 endif()
-
-add_subdirectory(std)
 
 add_subdirectory(core)
 add_subdirectory(cli)

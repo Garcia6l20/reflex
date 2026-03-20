@@ -1,3 +1,5 @@
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+
 doctest_add_test(reflex-core-meta-is_functional-test
   is_functional.cpp
 )
