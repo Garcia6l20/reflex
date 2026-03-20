@@ -1,11 +1,7 @@
-add_library(reflex.testutils
-    testutils.cpp
-)
-target_sources(reflex.testutils
-    PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-          testutils.cppm
-          pipe_capture.cppm
+reflex_add_cxx_module_library(reflex.testutils
+  testutils.cpp
+  testutils.cppm
+  pipe_capture.cppm
 )
 
 link_libraries(reflex.cli reflex.testutils)
@@ -14,11 +10,8 @@ doctest_add_test(reflex-cli-test-echo
   test-echo.cpp
 )
 
-add_library(reflex-cli-test.git)
-target_sources(reflex-cli-test.git
-    PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-          git.cppm
+reflex_add_cxx_module_library(reflex-cli-test.git
+  git.cppm
 )
 
 add_executable(fake-git fake-git.cpp)

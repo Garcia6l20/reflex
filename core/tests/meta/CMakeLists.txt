@@ -6,19 +6,16 @@ doctest_add_test(reflex-core-meta-annotation-queries-test
 )
 
 reflex_add_cxx_module_library(reflex.core.test.reg
-  MODULE_STD
-  SOURCES reg-mod.cppm
+  reg-mod.cppm
 )
 
 reflex_add_cxx_module_library(reflex.core.test.reg1
-  MODULE_STD
-  SOURCES reg-mod1.cppm
+  reg-mod1.cppm
 )
 target_link_libraries(reflex.core.test.reg1 PRIVATE reflex.core.test.reg)
 
 reflex_add_cxx_module_library(reflex.core.test.reg2
-  MODULE_STD
-  SOURCES reg-mod2.cppm
+  reg-mod2.cppm
 )
 target_link_libraries(reflex.core.test.reg2 PRIVATE reflex.core.test.reg)
 

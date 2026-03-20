@@ -26,27 +26,46 @@ endfunction()
 
 function(reflex_add_cxx_module_library target)
 
-  set(options MODULE_STD)
-  set(oneValueArgs TYPE BMI_DIR)
-  set(multiValueArgs SOURCES)
+  set(options SHARED STATIC MODULE_STD)
+  set(oneValueArgs)
+  set(multiValueArgs)
   cmake_parse_arguments(ARGS
     "${options}" "${oneValueArgs}" "${multiValueArgs}"
     ${ARGN}
   )
 
-  if (NOT ARGS_TYPE)
-    set(ARGS_TYPE STATIC)
+  set(_type STATIC)
+
+  if (ARGS_SHARED)
+    if (ARGS_STATIC)
+      message(FATAL_ERROR "Cannot use SHARED and STATIC together")
+    endif()
+    set(_type SHARED)
   endif()
 
-  if (NOT ARGS_SOURCES)
+  if (ARGS_STATIC)
+    if (ARGS_SHARED)
+      message(FATAL_ERROR "Cannot use SHARED and STATIC together")
+    endif()
+    set(_type STATIC)
+  endif()
+
+  set(_all_sources ${ARGS_UNPARSED_ARGUMENTS})
+  if (NOT _all_sources)
     message(FATAL_ERROR "No sources provided for target ${target}")
   endif()
 
-  add_library(${target} ${ARGS_TYPE})
+  set(_cppm_sources ${_all_sources})
+  list(FILTER _cppm_sources INCLUDE REGEX ".*\\.cppm$")
+
+  set(_cpp_sources ${_all_sources})
+  list(FILTER _cpp_sources INCLUDE REGEX ".*\\.cpp$")
+
+  add_library(${target} ${_type} ${_cpp_sources})
   target_sources(${target}
     PUBLIC
       FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        ${ARGS_SOURCES}
+        ${_cppm_sources}
   )
   target_compile_features(${target} PUBLIC cxx_std_26)
 
