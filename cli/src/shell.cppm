@@ -10,14 +10,17 @@ export namespace reflex::shell
 {
 template <typename Cli> class shell
 {
-  static constexpr auto cli_type = type_of(^^Cli);
+  static constexpr auto cli_type                  = type_of(^^Cli);
+  static constexpr auto default_history_page_size = 10UZ;
 
   std::string prompt_;
+  std::size_t history_page_size_ = default_history_page_size;
   Cli         cli_;
 
 public:
-  shell(Cli&& cli)
-      : prompt_(std::format("{}> ", identifier_of(^^Cli))), cli_(std::forward<Cli>(cli))
+  shell(Cli&& cli, std::size_t history_page_size = default_history_page_size)
+      : prompt_(std::format("{}> ", identifier_of(^^Cli))),
+        history_page_size_(std::max(1uz, history_page_size)), cli_(std::forward<Cli>(cli))
   {}
 
   int run()
@@ -25,7 +28,7 @@ public:
     std::string line;
     line.reserve(32);
     std::inplace_vector<std::string_view, 32> args{};
-    term_reader<Cli>                          reader{prompt_};
+    term_reader<Cli>                          reader{prompt_, history_page_size_};
     while(true)
     {
       std::cout << prompt_;

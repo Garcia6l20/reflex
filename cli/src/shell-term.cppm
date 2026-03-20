@@ -100,6 +100,12 @@ template <std::size_t N> class history
   std::optional<std::string> draft_line_{};
   std::size_t                cursor_ = 0;
 
+  std::optional<std::string_view> draft_or_empty() const
+  {
+    return draft_line_.has_value() ? std::optional{std::string_view{*draft_line_}}
+                                   : std::optional{std::string_view{}};
+  }
+
 public:
   void push(std::string_view line)
   {
@@ -129,7 +135,7 @@ public:
     draft_line_.reset();
   }
 
-  std::optional<std::string_view> previous(std::string_view current_line)
+  std::optional<std::string_view> previous(std::string_view current_line, std::size_t steps = 1)
   {
     if(entries_.empty())
     {
@@ -141,15 +147,12 @@ public:
       draft_line_ = std::string{current_line};
     }
 
-    if(cursor_ > 0)
-    {
-      --cursor_;
-    }
+    cursor_ = cursor_ > steps ? cursor_ - steps : 0;
 
     return std::string_view{entries_[cursor_]};
   }
 
-  std::optional<std::string_view> next()
+  std::optional<std::string_view> next(std::size_t steps = 1)
   {
     if(entries_.empty())
     {
@@ -158,17 +161,24 @@ public:
 
     if(cursor_ >= entries_.size())
     {
-      return draft_line_.has_value()
-               ? std::optional<std::string_view>{std::string_view{*draft_line_}}
-               : std::optional<std::string_view>{std::string_view{}};
+      return draft_or_empty();
     }
 
-    ++cursor_;
+    cursor_ = std::min(cursor_ + steps, entries_.size());
     if(cursor_ == entries_.size())
     {
-      return draft_line_.has_value()
-               ? std::optional<std::string_view>{std::string_view{*draft_line_}}
-               : std::optional<std::string_view>{std::string_view{}};
+      if(draft_line_.has_value() and not draft_line_->empty())
+      {
+        return std::string_view{*draft_line_};
+      }
+      else if(not entries_.empty())
+      {
+        return std::string_view{entries_.back()};
+      }
+      else
+      {
+        return std::nullopt;
+      }
     }
 
     return std::string_view{entries_[cursor_]};
@@ -206,8 +216,7 @@ template <typename Cli> class completion_session
   {
     detail::move_cursor_to_input_start(prompt_length);
     line.replace(token_start, token_end - token_start, replacement);
-    std::cout << sequences::clear_to_eol;
-    std::cout << line;
+    std::cout << sequences::clear_to_eol << line;
 
     cursor = token_start + replacement.size();
     detail::move_cursor_left(line.size() - cursor);
@@ -251,11 +260,6 @@ public:
     token_start_ = 0;
     token_end_   = 0;
     completions_.clear();
-  }
-
-  void on_non_tab_key()
-  {
-    reset();
   }
 
   void handle_tab(std::string& line, std::size_t& cursor)
@@ -307,15 +311,18 @@ public:
 
     active_ = true;
     apply_candidate(line, cursor, completions_.front().value);
-    next_index_ = 1 % completions_.size();
+    next_index_ = 1;
   }
 };
 
 template <typename Cli> class term_reader
 {
+  static constexpr std::size_t default_history_page_size = 10;
+
   std::string_view        prompt_;
   termios                 original_{};
-  bool                    raw_enabled_ = false;
+  bool                    raw_enabled_       = false;
+  std::size_t             history_page_size_ = default_history_page_size;
   history<64>             history_{};
   completion_session<Cli> completion_{};
 
@@ -339,7 +346,7 @@ template <typename Cli> class term_reader
       return false;
     }
     --cursor;
-    line.erase(line.begin() + static_cast<std::ptrdiff_t>(cursor));
+    line.erase(cursor, 1);
     return true;
   }
 
@@ -349,7 +356,7 @@ template <typename Cli> class term_reader
     {
       return false;
     }
-    line.erase(line.begin() + static_cast<std::ptrdiff_t>(cursor));
+    line.erase(cursor, 1);
     return true;
   }
 
@@ -383,15 +390,7 @@ template <typename Cli> class term_reader
     {
       return 0;
     }
-    auto target = cursor;
-    while(target > 0 and not is_word_char(line[target - 1]))
-    {
-      --target;
-    }
-    while(target > 0 and is_word_char(line[target - 1]))
-    {
-      --target;
-    }
+    auto       target = find_prev_word_start(line, cursor);
     const auto erased = cursor - target;
     line.erase(target, erased);
     cursor = target;
@@ -404,15 +403,7 @@ template <typename Cli> class term_reader
     {
       return 0;
     }
-    auto target = cursor;
-    while(target < line.size() and is_word_char(line[target]))
-    {
-      ++target;
-    }
-    while(target < line.size() and not is_word_char(line[target]))
-    {
-      ++target;
-    }
+    auto       target = find_next_word_end(line, cursor);
     const auto erased = target - cursor;
     line.erase(cursor, erased);
     return erased;
@@ -433,13 +424,8 @@ template <typename Cli> class term_reader
     return is_alphanum(uch) or ch == '-' or ch == '_';
   }
 
-  static void move_word_left(std::string const& line, std::size_t& cursor)
+  static std::size_t find_prev_word_start(std::string const& line, std::size_t cursor)
   {
-    if(cursor == 0)
-    {
-      return;
-    }
-
     auto target = cursor;
     while(target > 0 and not is_word_char(line[target - 1]))
     {
@@ -449,9 +435,33 @@ template <typename Cli> class term_reader
     {
       --target;
     }
+    return target;
+  }
 
-    auto delta = cursor - target;
-    cursor     = target;
+  static std::size_t find_next_word_end(std::string const& line, std::size_t cursor)
+  {
+    auto target = cursor;
+    while(target < line.size() and is_word_char(line[target]))
+    {
+      ++target;
+    }
+    while(target < line.size() and not is_word_char(line[target]))
+    {
+      ++target;
+    }
+    return target;
+  }
+
+  static void move_word_left(std::string const& line, std::size_t& cursor)
+  {
+    if(cursor == 0)
+    {
+      return;
+    }
+
+    auto target = find_prev_word_start(line, cursor);
+    auto delta  = cursor - target;
+    cursor      = target;
     detail::move_cursor_left(delta);
     std::cout.flush();
   }
@@ -485,18 +495,9 @@ template <typename Cli> class term_reader
       return;
     }
 
-    auto target = cursor;
-    while(target < line.size() and is_word_char(line[target]))
-    {
-      ++target;
-    }
-    while(target < line.size() and not is_word_char(line[target]))
-    {
-      ++target;
-    }
-
-    auto delta = target - cursor;
-    cursor     = target;
+    auto target = find_next_word_end(line, cursor);
+    auto delta  = target - cursor;
+    cursor      = target;
     detail::move_cursor_right(delta);
     std::cout.flush();
   }
@@ -541,6 +542,22 @@ template <typename Cli> class term_reader
         replace_visible_line(line, cursor, *next);
       }
       return;
+    }
+  }
+
+  void move_history_page_up(std::string& line, std::size_t& cursor)
+  {
+    if(auto prev = history_.previous(line, history_page_size_))
+    {
+      replace_visible_line(line, cursor, *prev);
+    }
+  }
+
+  void move_history_page_down(std::string& line, std::size_t& cursor)
+  {
+    if(auto next = history_.next(history_page_size_))
+    {
+      replace_visible_line(line, cursor, *next);
     }
   }
 
@@ -610,6 +627,18 @@ template <typename Cli> class term_reader
       return;
     }
 
+    if(final_char == '~' and params == "5")
+    {
+      move_history_page_up(line, cursor);
+      return;
+    }
+
+    if(final_char == '~' and params == "6")
+    {
+      move_history_page_down(line, cursor);
+      return;
+    }
+
 #ifdef DEBUG
     std::println(
         std::cerr, "\n[term] unhandled CSI: params='{}' final='{}'\n", std::string{params},
@@ -618,7 +647,9 @@ template <typename Cli> class term_reader
   }
 
 public:
-  term_reader(std::string_view prompt) : prompt_(prompt), completion_(prompt.size())
+  term_reader(std::string_view prompt, std::size_t history_page_size = default_history_page_size)
+      : prompt_(prompt), history_page_size_(std::max(1uz, history_page_size)),
+        completion_(prompt.size())
   {
     if(::isatty(STDIN_FILENO) == 0)
     {
@@ -672,7 +703,7 @@ public:
 
       if(ch != codes::tab)
       {
-        completion_.on_non_tab_key();
+        completion_.reset();
       }
 
       if(ch == codes::lf || ch == codes::cr)
