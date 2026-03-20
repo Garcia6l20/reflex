@@ -45,3 +45,9 @@ TEST_CASE("reflex::constant_string: string array")
   // static constexpr auto tmp3 = define_static_array(tmp2);
   // static constexpr auto from_arr = use_string_array{tmp3};
 }
+
+TEST_CASE("reflex::constant_string: formattable")
+{
+  static constexpr auto world = "world"_sc;
+  CHECK(std::format("hello {}", world) == "hello world");
+}

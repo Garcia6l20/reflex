@@ -10,8 +10,10 @@ template <typename Char> struct basic_constant_string
 {
   using value_type = std::basic_string_view<Char>;
 
-  const Char* data_;
-  std::size_t size_;
+  const Char* data_ = nullptr;
+  std::size_t size_ = 0;
+
+  constexpr basic_constant_string() = default;
 
   template <auto N> constexpr basic_constant_string(const Char (&str)[N])
   {
@@ -86,3 +88,16 @@ consteval constant_string operator""_sc(const char* data, std::size_t N)
 } // namespace literals
 
 } // namespace reflex
+
+export namespace std
+{
+template <typename Char>
+struct formatter<reflex::basic_constant_string<Char>>
+    : std::formatter<std::basic_string_view<Char>, Char>
+{
+  constexpr auto format(reflex::basic_constant_string<Char> const& str, auto& ctx) const
+  {
+    return std::formatter<std::basic_string_view<Char>, Char>::format(str.view(), ctx);
+  }
+};
+} // namespace std
