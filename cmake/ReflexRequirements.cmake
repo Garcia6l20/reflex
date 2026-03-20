@@ -8,3 +8,11 @@ if (REFLEX_BUILD_TESTS)
     )
     list(APPEND CMAKE_MODULE_PATH ${doctest_SOURCE_DIR}/scripts/cmake)
 endif()
+
+#
+# Check available headers
+#
+include(CheckIncludeFileCXX)
+
+check_include_file_cxx("termios.h" REFLEX_HAVE_TERMIOS_H)
+check_include_file_cxx("unistd.h"  REFLEX_HAVE_UNISTD_H)
