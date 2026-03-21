@@ -407,4 +407,10 @@ consteval bool is_alias_type(std::meta::info R)
 {
   return is_type(R) and (dealias(R) != R);
 }
+
+template <std::meta::reflection_range R = std::initializer_list<std::meta::info>>
+consteval bool eval_concept(std::meta::info concept_, R&& args)
+{
+  return extract<bool>(substitute(concept_, std::forward<R>(args)));
+}
 } // namespace reflex::meta

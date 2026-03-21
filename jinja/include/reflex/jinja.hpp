@@ -323,7 +323,7 @@ OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
         }
         else if constexpr(decays_to_c<T, for_block>)
         {
-          ctx.visit(v.iterable, [&]<typename U>(const U& it) {
+          ctx.visit(v.iterable, [&]<typename U>(U&& it) {
             using V = std::decay_t<U>;
             if constexpr(seq_c<V>)
             {
@@ -339,9 +339,9 @@ OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
                     .parent = parent,
               };
               scope.set("loop", std::ref(loop));
-              for(const auto& item : it)
+              for(auto& item : it)
               {
-                scope.set(v.loop_vars[0], item);
+                scope.set(v.loop_vars[0], std::ref(item));
                 // ctx.dump();
                 out = render_children_to(out, v.children, ctx);
                 ++loop.index0;
@@ -413,7 +413,8 @@ OutputIt render_children_to(OutputIt out, const std::vector<element>& children, 
 
 } // namespace detail
 
-using basic_context = expr::context<>;
+template <typename... Ts> using context = expr::context<Ts...>;
+using basic_context                     = context<>;
 
 template <typename OutputIt, typename ContextT = basic_context>
 OutputIt render_to(OutputIt out, const template_& tmpl, ContextT& ctx)

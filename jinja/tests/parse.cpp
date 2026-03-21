@@ -165,17 +165,60 @@ TEST_CASE("reflex::jinja: for decomposition")
 
 using namespace reflex::literals;
 
+struct aggregate1
+{
+  int         a;
+  std::string b;
+};
+
+struct aggregate2
+{
+  double     x;
+  aggregate1 nested;
+};
+
+struct aggregate3
+{
+  double                  x;
+  std::vector<aggregate1> nested_list;
+};
+
 TEST_CASE("reflex::jinja: aggregate support")
 {
-  struct aggregate
+  SUBCASE("basic")
   {
-    int         a;
-    std::string b;
-  };
-  aggregate agg{42, "hello"s};
-  auto      ctx = expr::context{"agg"_na = agg};
+    aggregate1 agg{42, "hello"s};
+    auto       ctx = expr::context{"agg"_na = agg};
 
-  auto tmpl   = parse("a={{ agg.a }}, b={{ agg.b }}");
-  auto result = render(tmpl, ctx);
-  CHECK(result == "a=42, b=hello");
+    auto tmpl   = parse("a={{ agg.a }}, b={{ agg.b }}");
+    auto result = render(tmpl, ctx);
+    CHECK(result == "a=42, b=hello");
+  }
+
+  SUBCASE("nested")
+  {
+    aggregate2 agg{
+        3.14, {42, "world"s}
+    };
+    auto ctx = expr::context{"agg"_na = agg};
+
+    auto tmpl   = parse("x={{ agg.x }}, a={{ agg.nested.a }}, b={{ agg.nested.b }}");
+    auto result = render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "x=3.14, a=42, b=world");
+  }
+  SUBCASE("nested list")
+  {
+    aggregate3 agg{
+        2.71, {{1, "one"s}, {2, "two"s}, {3, "three"s}}
+    };
+    auto ctx = expr::context{"agg"_na = agg};
+
+    auto tmpl = parse(
+        "x={{ agg.x }}\n{% for item in agg.nested_list %}a={{ item.a }}, b={{ item.b }}\n{% endfor "
+        "%}");
+    auto result = render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "x=2.71\na=1, b=one\na=2, b=two\na=3, b=three\n");
+  }
 }

@@ -207,16 +207,92 @@ struct aggregate1
   std::string b;
 };
 
+struct aggregate2
+{
+  float      x;
+  aggregate1 nested;
+};
+
+struct aggregate3
+{
+  double                  x;
+  std::vector<aggregate1> nested_list;
+};
+
 using namespace reflex::literals;
+
+consteval
+{
+  auto members = expr::scan_object_types(^^aggregate3);
+  const_assert(members.size() == 4);
+  const_assert(std::ranges::contains(members, ^^double));
+  const_assert(std::ranges::contains(members, ^^int));
+  const_assert(std::ranges::contains(members, dealias(^^std::string)));
+  const_assert(std::ranges::contains(members, ^^aggregate1));
+}
 
 TEST_CASE("reflex::jinja::expr: aggregates")
 {
   using namespace expr;
-  aggregate1    agg{1, "hello"};
-  expr::context ctx{"a"_na = agg};
-  ctx.set("x", 1).set("y", 0);
-  CHECK(expr::evaluate_bool("a.a == 1", ctx) == true);
-  CHECK(expr::evaluate_bool("a.b == \"hello\"", ctx) == true);
-  CHECK(expr::evaluate_bool("a.a == x", ctx) == true);
-  CHECK(expr::evaluate_bool("a.a != y", ctx) == true);
+
+  // template for(constexpr auto t : define_static_array(expr::scan_object_types(^^aggregate3)))
+  // {
+  //   std::println("{}", display_string_of(t));
+  // }
+
+  SUBCASE("basic")
+  {
+    aggregate1    agg{1, "hello"};
+    expr::context ctx{"a"_na = agg};
+    ctx.set("x", 1).set("y", 0);
+    CHECK(expr::evaluate_bool("a.a == 1", ctx) == true);
+    CHECK(expr::evaluate_bool("a.b == \"hello\"", ctx) == true);
+    CHECK(expr::evaluate_bool("a.a == x", ctx) == true);
+    CHECK(expr::evaluate_bool("a.a != y", ctx) == true);
+  }
+  SUBCASE("nested")
+  {
+    aggregate2 agg{
+        3.14, {42, "world"s}
+    };
+    expr::context ctx{"a"_na = agg};
+    // CHECK(expr::evaluate_bool("a.x == 3.14", ctx) == true); // approx required here
+    CHECK(expr::evaluate_bool("a.nested.a == 42", ctx) == true);
+    CHECK(expr::evaluate_bool("a.nested.b == \"world\"", ctx) == true);
+  }
+  SUBCASE("nested list")
+  {
+    aggregate3 agg{
+        2.71, {{1, "one"s}, {2, "two"s}, {3, "three"s}}
+    };
+    expr::context ctx{"a"_na = agg};
+
+    using value_type = decltype(ctx)::value_type;
+    std::println("value_type: {}", display_string_of(^^value_type));
+
+    CHECK(expr::evaluate_bool("a.nested_list[0].a == 1", ctx) == true);
+    CHECK(expr::evaluate_bool("a.nested_list[0].b == \"one\"", ctx) == true);
+    CHECK(expr::evaluate_bool("a.nested_list[1].a == 2", ctx) == true);
+    CHECK(expr::evaluate_bool("a.nested_list[1].b == \"two\"", ctx) == true);
+    CHECK(expr::evaluate_bool("a.nested_list[2].a == 3", ctx) == true);
+    CHECK(expr::evaluate_bool("a.nested_list[2].b == \"three\"", ctx) == true);
+  }
+
+  SUBCASE("direct subscript")
+  {
+    expr::context<>             ctx;
+    expr::context<>::array_type a{false, true, false};
+    ctx.set("a", a);
+
+    CHECK(expr::evaluate_bool("a[1] == true", ctx) == true);
+    CHECK(expr::evaluate_bool("a[0] == true", ctx) == false);
+    CHECK(expr::evaluate_bool("a[1]", ctx) == true);
+  }
+
+  SUBCASE("trailing tokens are rejected")
+  {
+    expr::context<> ctx;
+    ctx.set("a", 1);
+    CHECK_THROWS_AS(expr::evaluate_bool("a ]", ctx), std::runtime_error);
+  }
 }

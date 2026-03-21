@@ -50,6 +50,10 @@ enum class token_kind
   comma,  // ,
   dot,    // .
 
+  // subscript
+  lbracket, // [
+  rbracket, // ]
+
   eof,
 };
 
@@ -249,6 +253,10 @@ struct lexer
         return {token_kind::comma, lex};
       case '.':
         return {token_kind::dot, lex};
+      case '[':
+        return {token_kind::lbracket, lex};
+      case ']':
+        return {token_kind::rbracket, lex};
       default:
         throw std::runtime_error(std::format("Unexpected character '{}' in expression", c));
     }
@@ -267,11 +275,96 @@ struct loop_info
   std::optional<loop_info&> parent;
 };
 
+// scans the types of all nonstatic data members of an aggregate, including nested aggregates and
+// element types of sequences and maps
+consteval auto scan_object_types(
+    std::meta::info           agg,
+    std::meta::access_context ctx = std::meta::access_context::current())
+    -> std::vector<std::meta::info>
+{
+  std::vector<std::meta::info> types;
+  for(auto m : std::meta::nonstatic_data_members_of(agg, ctx))
+  {
+    auto t = dealias(type_of(m));
+    if(std::ranges::contains(types, t))
+    {
+      continue;
+    }
+    if(meta::eval_concept(
+           ^^seq_c, {
+                        t}))
+    {
+      // for sequences, also include the element type
+      auto value_type = dealias(meta::member_named(t, "value_type"));
+      if(!std::ranges::contains(types, value_type))
+      {
+        types.push_back(value_type);
+        if(is_aggregate_type(value_type))
+        {
+          // if the element type is an aggregate, also include its nonstatic data member types
+          for(auto nt : scan_object_types(value_type, ctx))
+          {
+            if(!std::ranges::contains(types, nt))
+            {
+              types.push_back(nt);
+            }
+          }
+        }
+      }
+    }
+    else if(
+        meta::eval_concept(
+            ^^map_c, {
+                         t}))
+    {
+      // for maps, also include the key and value types
+      auto key_type = dealias(meta::member_named(t, "key_type"));
+      if(!std::ranges::contains(types, key_type))
+      {
+        types.push_back(key_type);
+      }
+      auto mapped_type = dealias(meta::member_named(t, "mapped_type"));
+      if(!std::ranges::contains(types, mapped_type))
+      {
+        types.push_back(mapped_type);
+        if(is_aggregate_type(mapped_type))
+        {
+          // if the mapped type is an aggregate, also include its nonstatic data member types
+          for(auto nt : scan_object_types(mapped_type, ctx))
+          {
+            if(!std::ranges::contains(types, nt))
+            {
+              types.push_back(nt);
+            }
+          }
+        }
+      }
+    }
+    else
+    {
+      // regular type
+      types.push_back(t);
+      if(is_aggregate_type(t))
+      {
+        // if the type is an aggregate, also include its nonstatic data member types
+        for(auto nt : scan_object_types(t, ctx))
+        {
+          if(!std::ranges::contains(types, nt))
+          {
+            types.push_back(nt);
+          }
+        }
+      }
+    }
+  }
+  return types;
+}
+
 // A callable registered with the evaluator.
 template <typename... Ts> struct context
 {
   static constexpr auto _mandatory_types =
-      std::array{^^bool, ^^int, ^^double, ^^std::string, add_lvalue_reference(^^loop_info)};
+      std::array{^^bool, ^^int, ^^double, decay(^^std::string), add_lvalue_reference(^^loop_info)};
 
   context() = default;
 
@@ -281,14 +374,36 @@ template <typename... Ts> struct context
     (set(args.name, std::ref(args.value)), ...);
   }
 
-  using value_type    = typename[:[] {
+  using value_type    = typename[:[] consteval {
     auto types = std::vector{std::from_range, _mandatory_types};
-    template for(constexpr auto g : {^^Ts...})
+
+    template for(constexpr auto t : {^^Ts...})
     {
-      constexpr auto t = g;
       if(!std::ranges::contains(types, t))
       {
         types.push_back(t);
+        auto dt = decay(t);
+        if(is_aggregate_type(dt))
+        {
+          for(auto nt : scan_object_types(dt))
+          {
+            if(is_aggregate_type(nt))
+            {
+              auto ref_type = add_lvalue_reference(nt);
+              if(!std::ranges::contains(types, ref_type))
+              {
+                types.push_back(ref_type);
+              }
+            }
+            else
+            {
+              if(!std::ranges::contains(types, decay(nt)))
+              {
+                types.push_back(decay(nt));
+              }
+            }
+          }
+        }
       }
     }
     return substitute(^^poly::var, types);
@@ -328,10 +443,17 @@ template <typename... Ts> struct context
   decltype(auto) operator[](std::string_view name) const noexcept
   {
     value_type result = poly::null;
-    visit(name, [&](auto&& v) {
+    visit(name, [&]<typename V>(V&& v) {
+      using U = std::decay_t<V>;
       if constexpr(requires { result = v; })
       {
         result = v;
+      }
+      else if constexpr(seq_c<U> and requires { value_type{std::ref(v)}; })
+      {
+        result = v
+               | std::views::transform([](auto&& elem) { return std::ref(elem); })
+               | std::ranges::to<array_type>();
       }
       else
       {
@@ -341,9 +463,9 @@ template <typename... Ts> struct context
     return result;
   }
 
-  void get(std::string_view name, value_type const& result) const
+  void get(std::string_view name, value_type& result) const
   {
-    visit(name, [&result](auto&& v) { result = v; });
+    result = operator[](name);
   }
 
   template <typename T> std::optional<T&> get(std::string_view name) const
@@ -708,6 +830,115 @@ template <typename ContextT> struct parser
     return parse_primary();
   }
 
+  static std::int64_t to_index(const value_type& v)
+  {
+    if constexpr(integral_type_info != meta::null)
+    {
+      if(auto* i = std::get_if<integral_type>(&v))
+      {
+        return static_cast<std::int64_t>(*i);
+      }
+    }
+    throw std::runtime_error("Subscript index must be an integer");
+  }
+
+  static value_type access_member(const value_type& base, std::string_view key)
+  {
+    bool       found  = false;
+    value_type result = {};
+
+    try
+    {
+      serde::object_visit(key, base, [&](auto&& member) {
+        found = true;
+        if constexpr(requires { result = value_type{std::forward<decltype(member)>(member)}; })
+        {
+          result = value_type{std::forward<decltype(member)>(member)};
+        }
+        else if constexpr(requires { result = std::forward<decltype(member)>(member); })
+        {
+          result = std::forward<decltype(member)>(member);
+        }
+        else
+        {
+          throw std::runtime_error(std::format("Member '{}' is not readable", key));
+        }
+      });
+    }
+    catch(const std::runtime_error&)
+    {
+      return {};
+    }
+
+    if(!found)
+    {
+      return {};
+    }
+    return result;
+  }
+
+  static value_type access_index(const value_type& base, std::int64_t index)
+  {
+    if(index < 0)
+    {
+      return {};
+    }
+    const auto idx = static_cast<std::size_t>(index);
+
+    return std::visit(
+        reflex::match{
+            [&]<typename T>(const T& values) -> value_type
+              requires(
+                  not std::same_as<std::decay_t<T>, std::string>
+                  and requires {
+                    values.size();
+                    values[idx];
+                  })
+            {
+              if(idx < values.size())
+              {
+                if constexpr(requires { value_type{values[idx]}; })
+                {
+                  return value_type{values[idx]};
+                }
+                else
+                {
+                  return values[idx];
+                }
+              }
+              return {};
+            },
+            [](auto const&) -> value_type { return {}; },
+            },
+            base);
+  }
+
+  value_type parse_postfix(value_type base)
+  {
+    while(true)
+    {
+      if(at(token_kind::dot))
+      {
+        advance();
+        auto member = consume(token_kind::identifier).lexeme;
+        base        = access_member(base, member);
+        continue;
+      }
+
+      if(at(token_kind::lbracket))
+      {
+        advance();
+        auto index_expr = parse_expr();
+        consume(token_kind::rbracket);
+        base = access_index(base, to_index(index_expr));
+        continue;
+      }
+
+      break;
+    }
+    return base;
+  }
+
   value_type parse_primary()
   {
     switch(current.kind)
@@ -743,28 +974,21 @@ template <typename ContextT> struct parser
       }
       case token_kind::identifier:
       {
-        // member access chain: foo.bar.baz
-        char const* const full_start = current.lexeme.data();
-        char const*       full_end   = current.lexeme.data() + current.lexeme.size();
+        std::string name{current.lexeme};
         advance();
+
+        // Resolve the leading dotted chain through context so aggregate members remain readable.
         while(at(token_kind::dot))
         {
           advance();
-          if(!at(token_kind::identifier))
-          {
-            throw std::runtime_error("Expected identifier after '.'");
-          }
-          full_end = current.lexeme.data() + current.lexeme.size();
-          advance();
+          auto member = consume(token_kind::identifier).lexeme;
+          name.reserve(name.size() + member.size() + 1);
+          name += ".";
+          name += member;
         }
-        std::string_view full{full_start, static_cast<std::size_t>(full_end - full_start)};
 
-        if(ctx)
-        {
-          return (*ctx)[full];
-        }
-        // unknown variable -> null
-        return {};
+        auto value = ctx ? (*ctx)[name] : value_type{};
+        return parse_postfix(std::move(value));
       }
       case token_kind::call:
       {
@@ -783,7 +1007,7 @@ template <typename ContextT> struct parser
 
         if(ctx)
         {
-          return (*ctx)(name, args);
+          return parse_postfix((*ctx)(name, args));
         }
         throw std::runtime_error(std::format("Unknown function '{}'", name));
       }
@@ -792,7 +1016,7 @@ template <typename ContextT> struct parser
         advance();
         auto v = parse_expr();
         consume(token_kind::rparen);
-        return v;
+        return parse_postfix(std::move(v));
       }
       default:
         throw std::runtime_error(
@@ -977,7 +1201,10 @@ template <typename ContextT> struct parser
 template <typename ContextT = context<>>
 inline typename ContextT::value_type evaluate(std::string_view src, const ContextT& ctx = {})
 {
-  return parser<ContextT>{trim(src), &ctx}.parse_expr();
+  auto p = parser<ContextT>{trim(src), &ctx};
+  auto v = p.parse_expr();
+  p.consume(token_kind::eof);
+  return v;
 }
 
 template <typename ContextT = context<>>
