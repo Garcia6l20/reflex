@@ -1,8 +1,10 @@
 #pragma once
 
-#include <reflex/core.hpp>
 #include <reflex/serde.hpp>
 #include <reflex/serde/json.hpp>
+
+#include <reflex/named_arg.hpp>
+#include <reflex/parse.hpp>
 
 #include <functional>
 
@@ -275,6 +277,82 @@ struct loop_info
   std::optional<loop_info&> parent;
 };
 
+namespace detail
+{
+struct type_scan_accumulator
+{
+  std::vector<std::meta::info> types;
+  std::vector<std::meta::info> scanned_aggregates;
+
+  consteval bool append_unique(std::meta::info type)
+  {
+    if(std::ranges::contains(types, type))
+    {
+      return false;
+    }
+    types.push_back(type);
+    return true;
+  }
+
+  consteval bool mark_aggregate_scanned(std::meta::info agg)
+  {
+    if(std::ranges::contains(scanned_aggregates, agg))
+    {
+      return false;
+    }
+    scanned_aggregates.push_back(agg);
+    return true;
+  }
+
+  consteval void scan_aggregate(
+      std::meta::info           agg,
+      std::meta::access_context ctx = std::meta::access_context::current())
+  {
+    agg = dealias(agg);
+    if(!mark_aggregate_scanned(agg))
+    {
+      return;
+    }
+
+    for(auto m : std::meta::nonstatic_data_members_of(agg, ctx))
+    {
+      auto t = dealias(type_of(m));
+      if(meta::eval_concept(
+             ^^seq_c, {
+                          t}))
+      {
+        auto value_type = dealias(meta::member_named(t, "value_type"));
+        if(append_unique(value_type) and is_aggregate_type(value_type))
+        {
+          scan_aggregate(value_type, ctx);
+        }
+        continue;
+      }
+
+      if(meta::eval_concept(
+             ^^map_c, {
+                          t}))
+      {
+        auto key_type = dealias(meta::member_named(t, "key_type"));
+        append_unique(key_type);
+
+        auto mapped_type = dealias(meta::member_named(t, "mapped_type"));
+        if(append_unique(mapped_type) and is_aggregate_type(mapped_type))
+        {
+          scan_aggregate(mapped_type, ctx);
+        }
+        continue;
+      }
+
+      if(append_unique(t) and is_aggregate_type(t))
+      {
+        scan_aggregate(t, ctx);
+      }
+    }
+  }
+};
+} // namespace detail
+
 // scans the types of all nonstatic data members of an aggregate, including nested aggregates and
 // element types of sequences and maps
 consteval auto scan_object_types(
@@ -282,82 +360,9 @@ consteval auto scan_object_types(
     std::meta::access_context ctx = std::meta::access_context::current())
     -> std::vector<std::meta::info>
 {
-  std::vector<std::meta::info> types;
-  for(auto m : std::meta::nonstatic_data_members_of(agg, ctx))
-  {
-    auto t = dealias(type_of(m));
-    if(std::ranges::contains(types, t))
-    {
-      continue;
-    }
-    if(meta::eval_concept(
-           ^^seq_c, {
-                        t}))
-    {
-      // for sequences, also include the element type
-      auto value_type = dealias(meta::member_named(t, "value_type"));
-      if(!std::ranges::contains(types, value_type))
-      {
-        types.push_back(value_type);
-        if(is_aggregate_type(value_type))
-        {
-          // if the element type is an aggregate, also include its nonstatic data member types
-          for(auto nt : scan_object_types(value_type, ctx))
-          {
-            if(!std::ranges::contains(types, nt))
-            {
-              types.push_back(nt);
-            }
-          }
-        }
-      }
-    }
-    else if(
-        meta::eval_concept(
-            ^^map_c, {
-                         t}))
-    {
-      // for maps, also include the key and value types
-      auto key_type = dealias(meta::member_named(t, "key_type"));
-      if(!std::ranges::contains(types, key_type))
-      {
-        types.push_back(key_type);
-      }
-      auto mapped_type = dealias(meta::member_named(t, "mapped_type"));
-      if(!std::ranges::contains(types, mapped_type))
-      {
-        types.push_back(mapped_type);
-        if(is_aggregate_type(mapped_type))
-        {
-          // if the mapped type is an aggregate, also include its nonstatic data member types
-          for(auto nt : scan_object_types(mapped_type, ctx))
-          {
-            if(!std::ranges::contains(types, nt))
-            {
-              types.push_back(nt);
-            }
-          }
-        }
-      }
-    }
-    else
-    {
-      // regular type
-      types.push_back(t);
-      if(is_aggregate_type(t))
-      {
-        // if the type is an aggregate, also include its nonstatic data member types
-        for(auto nt : scan_object_types(t, ctx))
-        {
-          if(!std::ranges::contains(types, nt))
-          {
-            types.push_back(nt);
-          }
-        }
-      }
-    }
-  }
-  return types;
+  detail::type_scan_accumulator acc;
+  acc.scan_aggregate(agg, ctx);
+  return acc.types;
 }
 
 // A callable registered with the evaluator.
@@ -886,31 +891,29 @@ template <typename ContextT> struct parser
     const auto idx = static_cast<std::size_t>(index);
 
     return std::visit(
-        reflex::match{
-            [&]<typename T>(const T& values) -> value_type
-              requires(
-                  not std::same_as<std::decay_t<T>, std::string>
-                  and requires {
-                    values.size();
-                    values[idx];
-                  })
+        [idx]<typename T>(T const& value) -> value_type {
+          using U = std::decay_t<T>;
+          if constexpr(seq_c<U>)
+          {
+            if(idx < value.size())
             {
-              if(idx < values.size())
+              if constexpr(requires { value_type{value[idx]}; })
               {
-                if constexpr(requires { value_type{values[idx]}; })
-                {
-                  return value_type{values[idx]};
-                }
-                else
-                {
-                  return values[idx];
-                }
+                return value_type{value[idx]};
               }
-              return {};
-            },
-            [](auto const&) -> value_type { return {}; },
-            },
-            base);
+              else
+              {
+                return value[idx];
+              }
+            }
+            return {};
+          }
+          else
+          {
+            return {};
+          }
+        },
+        base);
   }
 
   value_type parse_postfix(value_type base)
@@ -1029,31 +1032,39 @@ template <typename ContextT> struct parser
   static value_type coerce_bool(const value_type& v)
   {
     return std::visit(
-        reflex::match{
-            // clang-format off
-            []<typename T>(T const& value) -> value_type
-              requires requires { static_cast<bool>(value); }
-            { return static_cast<bool>(value); },
-            []<typename T>(T const& value) -> value_type
-              requires requires {{ value.empty() } -> std::same_as<bool>; }
-            { return !value.empty(); },
-            // clang-format on
-            [](auto const&) -> value_type { return false; },
-            },
-            v);
+        [&]<typename T>(T const& value) -> value_type {
+          if constexpr(requires { static_cast<bool>(value); })
+          {
+            return static_cast<bool>(value);
+          }
+          else if constexpr(requires {
+                              { value.empty() } -> std::same_as<bool>;
+                            })
+          {
+            return !value.empty();
+          }
+          else
+          {
+            return false;
+          }
+        },
+        v);
   }
 
   static bool equal(const value_type& a, const value_type& b)
   {
     return std::visit(
-        reflex::match{
-            []<typename LHS, typename RHS>(LHS const& lhs, RHS const& rhs)
-              requires requires { lhs == rhs; }
-            { return lhs == rhs; },
-            [](auto&&, auto&&) { return false; },
-            },
-            a,
-            b);
+        [&]<typename LHS, typename RHS>(LHS const& lhs, RHS const& rhs) -> bool {
+          if constexpr(requires { lhs == rhs; })
+          {
+            return lhs == rhs;
+          }
+          else
+          {
+            return false;
+          }
+        },
+        a, b);
   }
 
   // Returns negative / zero / positive like strcmp

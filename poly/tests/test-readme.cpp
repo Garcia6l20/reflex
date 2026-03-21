@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <reflex/match.hpp>
 #include <reflex/poly.hpp>
 
 using namespace reflex;

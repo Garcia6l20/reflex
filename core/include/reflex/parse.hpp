@@ -3,11 +3,12 @@
 #include <reflex/utils.hpp>
 #include <reflex/exception.hpp>
 
-#include <string_view>
-#include <charconv>
+#include <algorithm>
 #include <array>
-#include <ranges>
+#include <charconv>
 #include <format>
+#include <ranges>
+#include <string_view>
 
 namespace reflex
 {
@@ -118,5 +119,13 @@ template <Parsable T> constexpr T parse(std::string_view s)
 {
   return parser<T>{}(s);
 }
+
+// commonly used parsers
+extern template struct parser<std::int32_t>;
+extern template struct parser<std::int64_t>;
+extern template struct parser<std::uint32_t>;
+extern template struct parser<std::uint64_t>;
+extern template struct parser<float>;
+extern template struct parser<double>;
 
 } // namespace reflex

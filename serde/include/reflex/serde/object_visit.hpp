@@ -41,12 +41,16 @@ constexpr decltype(auto) object_visit(std::span<std::string_view> keys, T&& valu
   else
   {
     return object_visitor<std::decay_t<T>>{}(
-        match{
-            [&](object_visitable_c auto&& nested) { //
-              return object_visit(
-                  rest, std::forward<decltype(nested)>(nested), std::forward<Fn>(fn));
-            },
-            [&](auto&& value) { std::forward<Fn>(fn)(std::forward<decltype(value)>(value)); },
+        [&]<typename N>(N&& nested) {
+          using U = std::decay_t<N>;
+          if constexpr(object_visitable_c<U>)
+          {
+            return object_visit(rest, std::forward<decltype(nested)>(nested), std::forward<Fn>(fn));
+          }
+          else
+          {
+            return std::forward<Fn>(fn)(std::forward<decltype(value)>(value));
+          }
         },
         first, std::forward<T>(value));
   }

@@ -1,6 +1,7 @@
 #pragma once
 
-#include <reflex/core.hpp>
+#include <reflex/caseconv.hpp>
+#include <reflex/constant_string.hpp>
 
 namespace reflex::serde
 {

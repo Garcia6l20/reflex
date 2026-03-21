@@ -1,6 +1,5 @@
 #pragma once
 
-#include <reflex/serde.hpp>
 #include <reflex/serde/poly.hpp>
 
 namespace reflex::serde::json

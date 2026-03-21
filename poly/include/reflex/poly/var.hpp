@@ -1,11 +1,14 @@
 #pragma once
 
-#include <reflex/core.hpp>
+#include <reflex/concepts.hpp>
+#include <reflex/meta.hpp>
+#include <reflex/utils.hpp>
+#include <reflex/visit.hpp>
 
 #include <map>
-#include <vector>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace reflex::poly
 {
@@ -301,14 +304,21 @@ public:
   constexpr std::size_t size() const
   {
     return reflex::visit(
-        match{
-            [](null_t const&) -> std::size_t { return 0; },
-            [](auto const& s) -> std::size_t
-              requires requires { s.size(); }
-            { return s.size(); },
-            [](auto const&) -> std::size_t { return 1; },
-            },
-            *this);
+        []<typename T>(T const& s) -> std::size_t {
+          if constexpr(requires { s.size(); })
+          {
+            return s.size();
+          }
+          else if constexpr(decays_to_c<T, null_t>)
+          {
+            return 0;
+          }
+          else
+          {
+            return 1;
+          }
+        },
+        *this);
   }
 
   constexpr bool empty() const
@@ -339,18 +349,20 @@ public:
   }
 
   // === equality operators
-
   template <typename T> constexpr bool operator==(T const& other) const
   {
     return reflex::visit(
-        match{
-            [&other](auto const& s) -> bool
-              requires requires { s == other; }
-            { return s == other; },
-            [&other](auto const&) //
-            { return false; },
-            },
-            *this);
+        [&other](auto const& s) -> bool {
+          if constexpr(requires { s == other; })
+          {
+            return s == other;
+          }
+          else
+          {
+            return false;
+          }
+        },
+        *this);
   }
 };
 
@@ -414,41 +426,42 @@ template <typename... Ts> struct formatter<var<Ts...>> : formatter<std::string_v
   auto format(var<Ts...> const& v, auto& ctx) const
   {
     using var_t = var<Ts...>;
+    using namespace reflex;
 
-    v.visit(
-        reflex::match{
-            [&ctx]<typename T>(T const& s)
-              requires((not reflex::decays_to_c<T, typename var_t::arr_type>)
-                       and (not reflex::decays_to_c<T, typename var_t::obj_type>)
-                       and std::formattable<std::decay_t<T>, char>)
-            { std::format_to(ctx.out(), "{}", s); },
-            [&ctx](var_t::arr_type const& arr) {
-              ctx.out() = '[';
-              for(std::size_t i = 0; i < arr.size(); ++i)
-              {
-                if(i > 0)
-                  ctx.out() = ',';
-                std::format_to(ctx.out(), "{}", arr[i]);
-              }
-              ctx.out() = ']';
-            },
-            [&ctx](var_t::obj_type const& obj) {
-              ctx.out()  = '{';
-              bool first = true;
-              for(auto const& [k, v] : obj)
-              {
-                if(!first)
-                  ctx.out() = ',';
-                first = false;
-                std::format_to(ctx.out(), "{}:{}", k, v);
-              }
-              ctx.out() = '}';
-            },
-            [&ctx]<typename T>(T const&) {
-              std::format_to(ctx.out(), "<unformattable:{}>", display_string_of(dealias(^^T)));
-            },
-        });
-
+    v.visit([&]<typename T>(T const& s) {
+      if constexpr(decays_to_c<T, typename var_t::arr_type>)
+      {
+        ctx.out() = '[';
+        for(std::size_t i = 0; i < s.size(); ++i)
+        {
+          if(i > 0)
+            ctx.out() = ',';
+          std::format_to(ctx.out(), "{}", s[i]);
+        }
+        ctx.out() = ']';
+      }
+      else if constexpr(decays_to_c<T, typename var_t::obj_type>)
+      {
+        ctx.out()  = '{';
+        bool first = true;
+        for(auto const& [k, v] : s)
+        {
+          if(!first)
+            ctx.out() = ',';
+          first = false;
+          std::format_to(ctx.out(), "{}:{}", k, v);
+        }
+        ctx.out() = '}';
+      }
+      else if constexpr(std::formattable<std::decay_t<T>, char>)
+      {
+        std::format_to(ctx.out(), "{}", s);
+      }
+      else
+      {
+        std::format_to(ctx.out(), "<unformattable:{}>", display_string_of(dealias(^^T)));
+      }
+    });
     return ctx.out();
   }
 };

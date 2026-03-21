@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <reflex/const_assert.hpp>
 #include <reflex/jinja/expr.hpp>
 
 using namespace reflex;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <reflex/exception.hpp>
 #include <reflex/poly.hpp>
 
 #include <reflex/serde/object_visit.hpp>
@@ -38,20 +39,23 @@ template <typename... Ts> struct object_visitor<poly::var<Ts...>>
   {
     using return_type = decltype(std::forward<Fn>(fn)(std::declval<poly::null_t&&>()));
     return visit(
-        match{
-            // clang-format off
-            [&]<decays_to_c<poly::obj<Ts...>> T>(T&& obj) -> return_type {
-              return object_visitor<poly::obj<Ts...>>{}(
-                  std::forward<Fn>(fn), key, std::forward<T>(obj));
-            },
-            [&]<object_visitable_c T>(T&& v) -> return_type
-              requires(not decays_to_c<T, poly::obj<Ts...>>)
-            { return object_visit(key, std::forward<T>(v), std::forward<Fn>(fn)); },
-            [&]<typename T>(T&& obj) -> return_type
-              requires(not decays_to_c<T, poly::obj<Ts...>> and not object_visitable_c<T>)
-            { throw runtime_error("Cannot access key '{}' of non-object value", key); }},
-            // clang-format on
-            var);
+        [&]<typename N>(N&& nested) {
+          using U = std::decay_t<N>;
+          if constexpr(decays_to_c<N, poly::obj<Ts...>>)
+          {
+            return object_visitor<poly::obj<Ts...>>{}(
+                std::forward<Fn>(fn), key, std::forward<N>(nested));
+          }
+          else if constexpr(object_visitable_c<U>)
+          {
+            return object_visit(key, std::forward<N>(nested), std::forward<Fn>(fn));
+          }
+          else
+          {
+            throw runtime_error("Cannot access key '{}' of non-object value", key);
+          }
+        },
+        var);
   }
 };
 
