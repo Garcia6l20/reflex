@@ -5,6 +5,7 @@ doctest_add_test(reflex-core-views-test
 )
 
 add_subdirectory(meta)
+add_subdirectory(heapless)
 
 doctest_add_test(reflex-core-to-tuple-test
   test-to-tuple.cpp
