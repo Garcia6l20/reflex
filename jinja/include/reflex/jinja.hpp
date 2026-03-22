@@ -51,6 +51,7 @@ struct block_end
 {
   block_end_kind   kind;
   std::string_view tag_content; // carries the elif condition string_view
+  bool             trim_next_text_left{false};
 };
 
 struct children_result
@@ -58,6 +59,56 @@ struct children_result
   std::vector<element>     children;
   std::optional<block_end> end_tag;
 };
+
+struct if_block_result
+{
+  if_block block;
+  bool     trim_next_text_left{false};
+};
+
+constexpr bool is_trim_char(char c)
+{
+  return c == ' ' or c == '\t' or c == '\n' or c == '\r';
+}
+
+constexpr void trim_left(std::string_view& s)
+{
+  while(!s.empty() and is_trim_char(s.front()))
+  {
+    s.remove_prefix(1);
+  }
+}
+
+constexpr void trim_right(std::string_view& s)
+{
+  while(!s.empty() and is_trim_char(s.back()))
+  {
+    s.remove_suffix(1);
+  }
+}
+
+constexpr void trim_right_last_text(std::vector<element>& children)
+{
+  if(children.empty())
+  {
+    return;
+  }
+
+  auto* txt = std::get_if<text>(&children.back());
+  if(txt == nullptr)
+  {
+    return;
+  }
+
+  auto content = txt->content;
+  trim_right(content);
+  txt->content = content;
+
+  if(txt->content.empty())
+  {
+    children.pop_back();
+  }
+}
 
 constexpr std::string_view consume_until(std::string_view& input, std::string_view marker)
 {
@@ -87,14 +138,17 @@ constexpr std::vector<std::string_view> parse_loop_vars(std::string_view vars_st
   return result;
 }
 
-constexpr children_result parse_children(std::string_view& input);
+constexpr children_result parse_children(std::string_view& input, bool trim_next_text_left = false);
 
-constexpr if_block parse_if_block(std::string_view condition, std::string_view& input)
+constexpr if_block_result parse_if_block(
+    std::string_view  condition,
+    std::string_view& input,
+    bool              trim_next_text_left = false)
 {
   if_block block;
   block.condition = condition;
 
-  auto result = parse_children(input);
+  auto result = parse_children(input, trim_next_text_left);
 
   if(!result.end_tag)
   {
@@ -107,34 +161,36 @@ constexpr if_block parse_if_block(std::string_view condition, std::string_view& 
   {
     case block_end_kind::endif_:
       // no else branch
-      break;
+      return {std::move(block), result.end_tag->trim_next_text_left};
 
     case block_end_kind::else_:
     {
-      auto else_result = parse_children(input);
+      auto else_result = parse_children(input, result.end_tag->trim_next_text_left);
       if(!else_result.end_tag || else_result.end_tag->kind != block_end_kind::endif_)
       {
         throw std::runtime_error("Expected {% endif %} after {% else %}");
       }
       block.else_children = std::move(else_result.children);
-      break;
+      return {std::move(block), else_result.end_tag->trim_next_text_left};
     }
 
     case block_end_kind::elif_:
     {
       // Recursively build the elif as a nested if_block in else_children.
-      block.else_children = {element{parse_if_block(result.end_tag->tag_content, input)}};
-      break;
+      auto elif_result =
+          parse_if_block(result.end_tag->tag_content, input, result.end_tag->trim_next_text_left);
+      block.else_children = {element{std::move(elif_result.block)}};
+      return {std::move(block), elif_result.trim_next_text_left};
     }
 
     default:
       throw std::runtime_error("Unexpected block-end tag inside {% if %}");
   }
 
-  return block;
+  return {std::move(block), false};
 }
 
-constexpr children_result parse_children(std::string_view& input)
+constexpr children_result parse_children(std::string_view& input, bool trim_next_text_left)
 {
   std::vector<element> children;
 
@@ -145,7 +201,16 @@ constexpr children_result parse_children(std::string_view& input)
     {
       if(!input.empty())
       {
-        children.push_back(text{input});
+        auto content = input;
+        if(trim_next_text_left)
+        {
+          trim_left(content);
+          trim_next_text_left = false;
+        }
+        if(!content.empty())
+        {
+          children.push_back(text{content});
+        }
       }
       input = {};
       break;
@@ -154,13 +219,31 @@ constexpr children_result parse_children(std::string_view& input)
     // Collect raw text before the tag
     if(next > 0)
     {
-      children.push_back(text{input.substr(0, next)});
+      auto content = input.substr(0, next);
+      if(trim_next_text_left)
+      {
+        trim_left(content);
+        trim_next_text_left = false;
+      }
+      if(!content.empty())
+      {
+        children.push_back(text{content});
+      }
       input.remove_prefix(next);
     }
 
     if(input.size() < 2)
     {
-      children.push_back(text{input});
+      auto content = input;
+      if(trim_next_text_left)
+      {
+        trim_left(content);
+        trim_next_text_left = false;
+      }
+      if(!content.empty())
+      {
+        children.push_back(text{content});
+      }
       input = {};
       break;
     }
@@ -184,27 +267,46 @@ constexpr children_result parse_children(std::string_view& input)
     {
       // Block tag: {% ... %}
       input.remove_prefix(2);
+      bool left_trim = false;
+      if(!input.empty() and input.front() == '-')
+      {
+        left_trim = true;
+        input.remove_prefix(1);
+      }
+
       auto tag_content = consume_until(input, "%}");
-      auto trimmed     = trim(tag_content);
+      bool right_trim  = false;
+      if(!tag_content.empty() and tag_content.back() == '-')
+      {
+        right_trim = true;
+        tag_content.remove_suffix(1);
+      }
+
+      if(left_trim)
+      {
+        trim_right_last_text(children);
+      }
+
+      auto trimmed = trim(tag_content);
 
       if(trimmed == "endif")
       {
         return {
-            std::move(children), block_end{block_end_kind::endif_, {}}
+            std::move(children), block_end{block_end_kind::endif_, {}, right_trim}
         };
       }
 
       if(trimmed == "endfor")
       {
         return {
-            std::move(children), block_end{block_end_kind::endfor_, {}}
+            std::move(children), block_end{block_end_kind::endfor_, {}, right_trim}
         };
       }
 
       if(trimmed == "else")
       {
         return {
-            std::move(children), block_end{block_end_kind::else_, {}}
+            std::move(children), block_end{block_end_kind::else_, {}, right_trim}
         };
       }
 
@@ -214,7 +316,7 @@ constexpr children_result parse_children(std::string_view& input)
         if(cond.empty())
           throw std::runtime_error("Empty condition in {% elif %}");
         return {
-            std::move(children), block_end{block_end_kind::elif_, cond}
+            std::move(children), block_end{block_end_kind::elif_, cond, right_trim}
         };
       }
 
@@ -223,7 +325,13 @@ constexpr children_result parse_children(std::string_view& input)
         auto cond = trim(trimmed.substr(2));
         if(cond.empty())
           throw std::runtime_error("Empty condition in {% if %}");
-        children.push_back(element{parse_if_block(cond, input)});
+
+        auto if_result = parse_if_block(cond, input, right_trim);
+        if(if_result.trim_next_text_left)
+        {
+          trim_next_text_left = true;
+        }
+        children.push_back(element{std::move(if_result.block)});
       }
       else if(trimmed.starts_with("for "))
       {
@@ -246,11 +354,16 @@ constexpr children_result parse_children(std::string_view& input)
           throw std::runtime_error("Malformed {% for %}: missing loop variable(s)");
         }
 
-        auto result    = parse_children(input);
+        auto result    = parse_children(input, right_trim);
         block.children = std::move(result.children);
 
         if(!result.end_tag || result.end_tag->kind != block_end_kind::endfor_)
           throw std::runtime_error("Unterminated {% for %} block");
+
+        if(result.end_tag->trim_next_text_left)
+        {
+          trim_next_text_left = true;
+        }
 
         children.push_back(element{std::move(block)});
       }
@@ -330,12 +443,12 @@ OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
               auto parent = ctx.template get<expr::loop_info>("loop");
               auto scope  = ctx.push_locals();
               auto loop   = expr::loop_info{
-                    .index0 = 0,
-                    .index  = 1,
-                    .first  = true,
-                    .length = int(it.size()),
-                    .last   = it.size() == 1,
-                    .parent = parent,
+                  .index0 = 0,
+                  .index  = 1,
+                  .first  = true,
+                  .length = int(it.size()),
+                  .last   = it.size() == 1,
+                  .parent = parent,
               };
               scope.set("loop", std::ref(loop));
               for(auto& item : it)
@@ -355,12 +468,12 @@ OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
               auto parent = ctx.template get<expr::loop_info>("loop");
               auto scope  = ctx.push_locals();
               auto loop   = expr::loop_info{
-                    .index0 = 0,
-                    .index  = 1,
-                    .first  = true,
-                    .length = int(it.size()),
-                    .last   = it.size() == 1,
-                    .parent = parent,
+                  .index0 = 0,
+                  .index  = 1,
+                  .first  = true,
+                  .length = int(it.size()),
+                  .last   = it.size() == 1,
+                  .parent = parent,
               };
               scope.set("loop", std::ref(loop));
               for(const auto& [key, val] : it)

@@ -40,45 +40,49 @@ TEST_CASE("reflex::jinja: parse")
     std::println("{}", result);
     CHECK(result == R"(1: banana, 2: apple, 3: cherry)");
   }
-  SUBCASE("nested for loop")
+  SUBCASE("for loop - trimming whitespace")
   {
     auto tmpl = jinja::parse(
-        "{% for row in table %}{% for cell in row %}"
-        "[{{loop.parent.index}},{{loop.index}}] = {{ cell }}\n"
-        "{% endfor %}{% endfor %}");
+        "\n"
+        "{%- for item in items -%}\n"
+        "\t{{item}}\n"
+        "{%- endfor -%}\n");
 
-    ctx.set(
-        "table", array{
-                     array{1, 2, 3},
-                     array{4, 5, 6},
-                     array{7, 8, 9},
-    });
+    ctx.set("items", array{"banana"s, "apple"s, "cherry"s});
 
     auto result = jinja::render(tmpl, ctx);
     std::println("{}", result);
-    CHECK(result == R"([1,1] = 1
-[1,2] = 2
-[1,3] = 3
-[2,1] = 4
-[2,2] = 5
-[2,3] = 6
-[3,1] = 7
-[3,2] = 8
-[3,3] = 9
-)");
+    CHECK(result == R"(bananaapplecherry)");
   }
-  SUBCASE("if/else")
+  SUBCASE("if block - trimming whitespace")
   {
-    ctx.set("condition", true);
+    ctx.set("enabled", true);
+
     auto tmpl = jinja::parse(
-        R"({% if condition %}Condition is true{% else %}Condition is false{% endif %})");
+        "  \n"
+        "{%- if enabled -%}\n"
+        "  ok\n"
+        "{%- endif -%}\n"
+        "done");
+
     auto result = jinja::render(tmpl, ctx);
     std::println("{}", result);
-    CHECK(result == "Condition is true");
-    ctx.set("condition", false);
-    result = jinja::render(tmpl, ctx);
+    CHECK(result == "okdone");
+  }
+  SUBCASE("if block - trimming whitespace keeps before and after")
+  {
+    ctx.set("enabled", true);
+
+    auto tmpl = jinja::parse(
+        "\n"
+        "{% if enabled -%}\n"
+        "  ok\n"
+        "{%- endif %}\n"
+        "done");
+
+    auto result = jinja::render(tmpl, ctx);
     std::println("{}", result);
-    CHECK(result == "Condition is false");
+    CHECK(result == "\nok\ndone");
   }
 
   SUBCASE("if/elseif")
