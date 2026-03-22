@@ -268,8 +268,10 @@ TEST_CASE("reflex::jinja::expr: aggregates")
     };
     expr::context ctx{"a"_na = agg};
 
+    using context_type = decltype(ctx);
+    std::println("context_type: {}", display_string_of(dealias(^^context_type)));
     using value_type = decltype(ctx)::value_type;
-    std::println("value_type: {}", display_string_of(^^value_type));
+    std::println("value_type: {}", display_string_of(dealias(^^value_type)));
 
     CHECK(expr::evaluate_bool("a.nested_list[0].a == 1", ctx) == true);
     CHECK(expr::evaluate_bool("a.nested_list[0].b == \"one\"", ctx) == true);

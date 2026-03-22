@@ -302,18 +302,17 @@ OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
         }
         else if constexpr(decays_to_c<T, expression>)
         {
-          ctx.visit(v.expr, [&out](const auto& value) {
-            using U = std::decay_t<decltype(value)>;
-            if constexpr(std::formattable<U, char>)
-            {
-              std::format_to(out, "{}", value);
-            }
-            else
-            {
-              throw runtime_error(
-                  "Value of type {} is not formattable", display_string_of(dealias(^^U)));
-            }
-          });
+          auto value = expr::evaluate(v.expr, ctx);
+          using U    = std::decay_t<decltype(value)>;
+          if constexpr(std::formattable<U, char>)
+          {
+            std::format_to(out, "{}", value);
+          }
+          else
+          {
+            throw runtime_error(
+                "Value of type {} is not formattable", display_string_of(dealias(^^U)));
+          }
           return out;
         }
         else if constexpr(decays_to_c<T, if_block>)

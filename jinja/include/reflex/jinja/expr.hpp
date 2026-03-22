@@ -45,6 +45,7 @@ enum class token_kind
   star,    // *
   slash,   // /
   percent, // %
+  pipe,    // |
 
   // punctuation
   lparen, // (
@@ -247,6 +248,8 @@ struct lexer
         return {token_kind::slash, lex};
       case '%':
         return {token_kind::percent, lex};
+      case '|':
+        return {token_kind::pipe, lex};
       case '(':
         return {token_kind::lparen, lex};
       case ')':
@@ -576,6 +579,8 @@ template <typename... Ts> struct context
 // Grammar (precedence, low -> high):
 //
 //   expr      := or_expr
+//   expr      := pipe_expr
+//   pipe_expr := or_expr ( '|' ( identifier | call ) )*
 //   or_expr   := and_expr  ( ('or' | '||')  and_expr  )*
 //   and_expr  := not_expr  ( ('and' | '&&') not_expr  )*
 //   not_expr  := ('not'|'!') not_expr  |  cmp_expr
@@ -696,7 +701,56 @@ template <typename ContextT> struct parser
 
   value_type parse_expr()
   {
-    return parse_or();
+    return parse_pipe();
+  }
+
+  value_type parse_pipe()
+  {
+    auto left = parse_or();
+
+    while(at(token_kind::pipe))
+    {
+      advance();
+
+      std::string             name;
+      std::vector<value_type> args;
+      args.push_back(left);
+
+      if(at(token_kind::call))
+      {
+        name = std::string{current.lexeme};
+        advance();
+        consume(token_kind::lparen);
+
+        while(!at(token_kind::rparen) and !at(token_kind::eof))
+        {
+          args.push_back(parse_expr());
+          if(at(token_kind::comma))
+          {
+            advance();
+          }
+        }
+        consume(token_kind::rparen);
+      }
+      else if(at(token_kind::identifier))
+      {
+        name = std::string{current.lexeme};
+        advance();
+      }
+      else
+      {
+        throw std::runtime_error(
+            std::format("Expected function name after pipe, got '{}'", current.lexeme));
+      }
+
+      if(!ctx)
+      {
+        throw std::runtime_error(std::format("Unknown function '{}'", name));
+      }
+      left = (*ctx)(name, args);
+    }
+
+    return left;
   }
 
   value_type parse_or()

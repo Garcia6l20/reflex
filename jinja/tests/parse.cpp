@@ -215,10 +215,147 @@ TEST_CASE("reflex::jinja: aggregate support")
     auto ctx = expr::context{"agg"_na = agg};
 
     auto tmpl = parse(
-        "x={{ agg.x }}\n{% for item in agg.nested_list %}a={{ item.a }}, b={{ item.b }}\n{% endfor "
-        "%}");
+        "x={{ agg.x }}\n"
+        "{% for item in agg.nested_list %}a={{ item.a }}, b={{ item.b }}\n"
+        "{% endfor %}");
     auto result = render(tmpl, ctx);
     std::println("{}", result);
     CHECK(result == "x=2.71\na=1, b=one\na=2, b=two\na=3, b=three\n");
+  }
+}
+
+template <typename ValueT> ValueT jinja_format(std::span<ValueT const> args)
+{
+  if(args.size() > 2)
+  {
+    throw std::runtime_error("format(value, pattern) expects 2 arguments");
+  }
+  auto [fmt, arg] = [&] -> std::tuple<std::string_view, const ValueT*> {
+    if(args.size() == 1)
+    {
+      return {"{}", &args[0]};
+    }
+    auto* fmt = std::get_if<std::string>(&args[1]);
+    if(fmt == nullptr)
+    {
+      throw std::runtime_error("pattern must be a string");
+    }
+    return {*fmt, &args[0]};
+  }();
+  return reflex::visit(
+      [fmt]<typename V>(V&& value) -> ValueT {
+        using U = std::decay_t<V>;
+        if constexpr(std::formattable<U, char>)
+        {
+          return std::vformat(fmt, std::make_format_args(value));
+        }
+        else
+        {
+          throw runtime_error(
+              "Value of type {} is not formattable", display_string_of(dealias(^^U)));
+        }
+      },
+      *arg);
+}
+
+TEST_CASE("reflex::jinja: pipe operator")
+{
+  jinja::basic_context ctx;
+  using value_type = decltype(ctx)::value_type;
+  ctx.set("value", 42).def("format", jinja_format<value_type>);
+
+  SUBCASE("simple format")
+  {
+    auto tmpl   = jinja::parse(R"({{ value | format() }})");
+    auto result = jinja::render(tmpl, ctx);
+    CHECK(result == "42");
+  }
+  SUBCASE("format with spec")
+  {
+    auto tmpl   = jinja::parse(R"({{ value | format("0x{:x}") }})");
+    auto result = jinja::render(tmpl, ctx);
+    CHECK(result == "0x2a");
+  }
+}
+
+TEST_CASE("reflex::jinja: pipe operator chaining")
+{
+  auto                 tmpl = jinja::parse(R"({{ value | add(2) | mul(3) | format("{}") }})");
+  jinja::basic_context ctx;
+  using value_type = decltype(ctx)::value_type;
+
+  ctx.set("value", 4)
+      .def(
+          "add",
+          [](std::span<const value_type> args) -> value_type {
+            if(args.size() != 2)
+            {
+              throw std::runtime_error("add(value, rhs) expects 2 arguments");
+            }
+
+            auto* lhs = std::get_if<int>(&args[0]);
+            auto* rhs = std::get_if<int>(&args[1]);
+            if(lhs == nullptr or rhs == nullptr)
+            {
+              throw std::runtime_error("add(value, rhs) expects (int, int)");
+            }
+            return *lhs + *rhs;
+          })
+      .def(
+          "mul",
+          [](std::span<const value_type> args) -> value_type {
+            if(args.size() != 2)
+            {
+              throw std::runtime_error("mul(value, rhs) expects 2 arguments");
+            }
+
+            auto* lhs = std::get_if<int>(&args[0]);
+            auto* rhs = std::get_if<int>(&args[1]);
+            if(lhs == nullptr or rhs == nullptr)
+            {
+              throw std::runtime_error("mul(value, rhs) expects (int, int)");
+            }
+            return *lhs * *rhs;
+          })
+      .def("format", jinja_format<value_type>);
+
+  auto result = jinja::render(tmpl, ctx);
+  CHECK(result == "18");
+}
+
+TEST_CASE("reflex::jinja: pipe operator edge cases")
+{
+  using context_type = jinja::basic_context;
+  using value_type   = context_type::value_type;
+
+  SUBCASE("unknown function")
+  {
+    auto         tmpl = jinja::parse(R"({{ value | missing_filter }})");
+    context_type ctx;
+    ctx.set("value", 42);
+    CHECK_THROWS_AS(jinja::render(tmpl, ctx), std::runtime_error);
+  }
+
+  SUBCASE("invalid pipe target")
+  {
+    auto         tmpl = jinja::parse(R"({{ value | 123 }})");
+    context_type ctx;
+    ctx.set("value", 42);
+    CHECK_THROWS_AS(jinja::render(tmpl, ctx), std::runtime_error);
+  }
+
+  SUBCASE("wrong arity")
+  {
+    auto         tmpl = jinja::parse(R"({{ value | format }})");
+    context_type ctx;
+    ctx.set("value", 42).def("format", [](std::span<const value_type> args) -> value_type {
+      if(args.size() != 2)
+      {
+        throw std::runtime_error("format(value, pattern) expects 2 arguments");
+      }
+      return args[0];
+    });
+
+    CHECK_THROWS_AS(jinja::render(tmpl, ctx), std::runtime_error);
   }
 }
