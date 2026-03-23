@@ -54,6 +54,31 @@ TEST_CASE("reflex::jinja: parse")
     std::println("{}", result);
     CHECK(result == R"(bananaapplecherry)");
   }
+  SUBCASE("for loop - trimming whitespace 2")
+  {
+    auto tmpl = jinja::parse(
+        "\n"
+        "{%- for item in items -%}\n"
+        "{{item.a}}\n"
+        "{{item.b}}\n"
+        "{%- endfor -%}\n");
+
+    ctx.set(
+        "items", array{
+                     object{
+                            {"a", "A"s},
+                            {"b", "B"s},
+                            },
+                     object{
+                            {"a", "C"s},
+                            {"b", "D"s},
+                            }
+    });
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "A\nBC\nD");
+  }
   SUBCASE("if block - trimming whitespace")
   {
     ctx.set("enabled", true);
@@ -84,11 +109,127 @@ TEST_CASE("reflex::jinja: parse")
     std::println("{}", result);
     CHECK(result == "\nok\ndone");
   }
+  SUBCASE("if block - trimming whitespace keeps inner")
+  {
+    ctx.set("enabled", true);
+
+    auto tmpl = jinja::parse(
+        "\n"
+        "{%- if enabled %}\n"
+        "  ok\n"
+        "{% endif -%}\n"
+        "done");
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "\n  ok\ndone");
+  }
+  SUBCASE("if block - trimming whitespace keeps inner render blocks")
+  {
+    ctx.set("a", "A"s).set("b", "B"s).set("enabled", true);
+
+    auto tmpl = jinja::parse(
+        "\n"
+        "{%- if enabled -%}\n"
+        "  {{ a }}\n"
+        "  {{ b }}\n"
+        "{%- endif -%}\n"
+        "done");
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "A\n  Bdone");
+  }
+  SUBCASE("if block - trimming whitespace with else branch")
+  {
+    ctx.set("enabled", false);
+
+    auto tmpl = jinja::parse(
+        "A"
+        "{%- if enabled -%}\n"
+        "  yes\n"
+        "{%- else -%}\n"
+        "  no\n"
+        "{%- endif -%}"
+        "B");
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "AnoB");
+  }
+  SUBCASE("if block - trimming whitespace with elif branch")
+  {
+    ctx.set("condition", "b"s);
+
+    auto tmpl = jinja::parse(
+        "{%- if condition == \"a\" -%}\n"
+        "  A\n"
+        "{%- elif condition == \"b\" -%}\n"
+        "  B\n"
+        "{%- else -%}\n"
+        "  C\n"
+        "{%- endif -%}");
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "B");
+  }
+  SUBCASE("if block - trimming whitespace with empty body")
+  {
+    ctx.set("enabled", true);
+
+    auto tmpl = jinja::parse("before{%- if enabled -%}{%- endif -%}after");
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "beforeafter");
+  }
+  SUBCASE("nested for loop")
+  {
+    auto tmpl = jinja::parse(
+        "{% for row in table %}{% for cell in row %}"
+        "[{{loop.parent.index}},{{loop.index}}] = {{ cell }}\n"
+        "{% endfor %}{% endfor %}");
+
+    ctx.set(
+        "table", array{
+                     array{1, 2, 3},
+                     array{4, 5, 6},
+                     array{7, 8, 9},
+    });
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == R"([1,1] = 1
+[1,2] = 2
+[1,3] = 3
+[2,1] = 4
+[2,2] = 5
+[2,3] = 6
+[3,1] = 7
+[3,2] = 8
+[3,3] = 9
+)");
+  }
+  SUBCASE("if/else")
+  {
+    ctx.set("condition", true);
+    auto tmpl = jinja::parse(
+        R"({% if condition %}Condition is true{% else %}Condition is false{% endif %})");
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "Condition is true");
+    ctx.set("condition", false);
+    result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "Condition is false");
+  }
 
   SUBCASE("if/elseif")
   {
     auto tmpl = jinja::parse(
-        R"({% if condition == "a" %}A{% elif condition == "b" %}B{% else %}Unknown{% endif %})");
+        R"({% if condition == "a" %}A{% elif condition == "b" %}B{% else %}Unknown{% endif
+        %})");
 
     ctx.set("condition", "a"s);
 

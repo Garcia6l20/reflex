@@ -3,6 +3,8 @@
 #include <reflex/const_assert.hpp>
 #include <reflex/jinja/expr.hpp>
 
+#include <types.hpp>
+
 using namespace reflex;
 using namespace reflex::jinja;
 using namespace std::string_literals;
@@ -202,24 +204,6 @@ TEST_CASE("reflex::jinja: expr")
   }
 }
 
-struct aggregate1
-{
-  int         a;
-  std::string b;
-};
-
-struct aggregate2
-{
-  float      x;
-  aggregate1 nested;
-};
-
-struct aggregate3
-{
-  double                  x;
-  std::vector<aggregate1> nested_list;
-};
-
 using namespace reflex::literals;
 
 consteval
@@ -298,4 +282,28 @@ TEST_CASE("reflex::jinja::expr: aggregates")
     ctx.set("a", 1);
     CHECK_THROWS_AS(expr::evaluate_bool("a ]", ctx), std::runtime_error);
   }
+}
+
+TEST_CASE("reflex::jinja::expr: pipe operator")
+{
+  basic_context ctx;
+  using value_type = decltype(ctx)::value_type;
+  ctx.set("value", 42).def("add", [](std::span<const value_type> args) -> value_type {
+    if(args.size() != 2)
+    {
+      throw std::runtime_error("add(value, rhs) expects 2 arguments");
+    }
+
+    auto* lhs = std::get_if<int>(&args[0]);
+    auto* rhs = std::get_if<int>(&args[1]);
+    if(lhs == nullptr or rhs == nullptr)
+    {
+      throw std::runtime_error("add(value, rhs) expects (int, int)");
+    }
+    return *lhs + *rhs;
+  });
+
+  auto tmpl   = jinja::parse(R"({{ value | add(1) }})");
+  auto result = jinja::render(tmpl, ctx);
+  CHECK(result == "43");
 }
