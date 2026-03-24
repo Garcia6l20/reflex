@@ -55,6 +55,16 @@ template <typename CharT, std::size_t N> struct basic_string : vector<CharT, N>
     this->insert(this->end(), suffix.begin(), suffix.end());
     return *this;
   }
+
+  constexpr auto operator+=(CharT c)
+  {
+    if(this->size() + 1 > N)
+    {
+      throw std::length_error("Resulting string too long for basic_string");
+    }
+    this->push_back(c);
+    return *this;
+  }
 };
 
 template <std::size_t N> using string = basic_string<char, N>;
