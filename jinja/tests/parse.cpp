@@ -200,16 +200,17 @@ TEST_CASE("reflex::jinja: parse")
 
     auto result = jinja::render(tmpl, ctx);
     std::println("{}", result);
-    CHECK(result == R"([1,1] = 1
-[1,2] = 2
-[1,3] = 3
-[2,1] = 4
-[2,2] = 5
-[2,3] = 6
-[3,1] = 7
-[3,2] = 8
-[3,3] = 9
-)");
+    CHECK(
+        result
+        == "[1,1] = 1\n"
+           "[1,2] = 2\n"
+           "[1,3] = 3\n"
+           "[2,1] = 4\n"
+           "[2,2] = 5\n"
+           "[2,3] = 6\n"
+           "[3,1] = 7\n"
+           "[3,2] = 8\n"
+           "[3,3] = 9\n");
   }
   SUBCASE("if/else")
   {
@@ -229,7 +230,7 @@ TEST_CASE("reflex::jinja: parse")
   {
     auto tmpl = jinja::parse(
         R"({% if condition == "a" %}A{% elif condition == "b" %}B{% else %}Unknown{% endif
-        %})");
+          %})");
 
     ctx.set("condition", "a"s);
 
@@ -502,5 +503,63 @@ TEST_CASE("reflex::jinja: pipe operator edge cases")
     });
 
     CHECK_THROWS_AS(jinja::render(tmpl, ctx), std::runtime_error);
+  }
+}
+
+value reverse(std::span<value const> args)
+{
+  if(args.size() != 1)
+  {
+    throw std::runtime_error("reverse(value) expects exactly 1 argument");
+  }
+  auto& arg = args[0];
+  return reflex::visit(
+      [](auto&& v) -> value {
+        using U = std::decay_t<decltype(v)>;
+        if constexpr(std::same_as<U, array>)
+        {
+          return v | std::views::reverse | std::ranges::to<array>();
+        }
+        else
+        {
+          throw runtime_error("Value of type {} is not an array", display_string_of(dealias(^^U)));
+        }
+      },
+      arg);
+}
+
+TEST_CASE("reflex::jinja: pipes within expressions")
+{
+  jinja::basic_context ctx;
+  ctx.def("reverse", reverse);
+
+  SUBCASE("for loop - reverse")
+  {
+    auto tmpl = jinja::parse(
+        "{% for item in items | reverse() %}"
+        "{% if not loop.first %}, {% endif %}{{ loop.index }}: {{item}}"
+        "{% endfor %}");
+
+    ctx.set("items", array{"banana"s, "apple"s, "cherry"s});
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == R"(1: cherry, 2: apple, 3: banana)");
+  }
+  SUBCASE("for loop - reverse - nested item")
+  {
+    auto tmpl = jinja::parse(
+        "{% for item in root.items | reverse() %}"
+        "{% if not loop.first %}, {% endif %}{{ loop.index }}: {{item}}"
+        "{% endfor %}");
+
+    ctx.set(
+        "root", object{
+                    {"items", array{"banana"s, "apple"s, "cherry"s}}
+    });
+
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == R"(1: cherry, 2: apple, 3: banana)");
   }
 }

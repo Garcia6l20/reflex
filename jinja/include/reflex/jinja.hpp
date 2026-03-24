@@ -435,74 +435,80 @@ OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
         }
         else if constexpr(decays_to_c<T, for_block>)
         {
-          ctx.visit(v.iterable, [&]<typename U>(U&& it) {
-            using V = std::decay_t<U>;
-            if constexpr(seq_c<V>)
-            {
-              // === sequence: {% for item in list %}
-              auto parent = ctx.template get<expr::loop_info>("loop");
-              auto scope  = ctx.push_locals();
-              auto loop   = expr::loop_info{
-                  .index0 = 0,
-                  .index  = 1,
-                  .first  = true,
-                  .length = int(it.size()),
-                  .last   = it.size() == 1,
-                  .parent = parent,
-              };
-              scope.set("loop", std::ref(loop));
-              for(auto& item : it)
-              {
-                scope.set(v.loop_vars[0], std::ref(item));
-                // ctx.dump();
-                out = render_children_to(out, v.children, ctx);
-                ++loop.index0;
-                ++loop.index;
-                loop.first = false;
-                loop.last  = (loop.index0 == it.size() - 1);
-              }
-            }
-            else if constexpr(map_c<V>)
-            {
-              // === mapping: {% for k, v in obj %}
-              auto parent = ctx.template get<expr::loop_info>("loop");
-              auto scope  = ctx.push_locals();
-              auto loop   = expr::loop_info{
-                  .index0 = 0,
-                  .index  = 1,
-                  .first  = true,
-                  .length = int(it.size()),
-                  .last   = it.size() == 1,
-                  .parent = parent,
-              };
-              scope.set("loop", std::ref(loop));
-              for(const auto& [key, val] : it)
-              {
-                if(v.loop_vars.size() == 1)
+          // Evaluate the iterable as a full expression so filters/pipes work.
+          auto iterable_val = expr::evaluate(v.iterable, ctx);
+
+          std::visit(
+              [&]<typename U>(U&& it) {
+                using V = std::decay_t<U>;
+                if constexpr(seq_c<V>)
                 {
-                  // {% for k in map %} — bind key and value
-                  scope.set(v.loop_vars[0], key);
+                  // === sequence: {% for item in list %}
+                  auto parent = ctx.template get<expr::loop_info>("loop");
+                  auto scope  = ctx.push_locals();
+                  auto loop   = expr::loop_info{
+                      .index0 = 0,
+                      .index  = 1,
+                      .first  = true,
+                      .length = int(it.size()),
+                      .last   = it.size() == 1,
+                      .parent = parent,
+                  };
+                  scope.set("loop", std::ref(loop));
+                  for(auto& item : it)
+                  {
+                    scope.set(v.loop_vars[0], std::ref(item));
+                    out = render_children_to(out, v.children, ctx);
+                    ++loop.index0;
+                    ++loop.index;
+                    loop.first = false;
+                    loop.last  = (loop.index0 == it.size() - 1);
+                  }
+                }
+                else if constexpr(map_c<V>)
+                {
+                  // === mapping: {% for k, v in obj %}
+                  auto parent = ctx.template get<expr::loop_info>("loop");
+                  auto scope  = ctx.push_locals();
+                  auto loop   = expr::loop_info{
+                      .index0 = 0,
+                      .index  = 1,
+                      .first  = true,
+                      .length = int(it.size()),
+                      .last   = it.size() == 1,
+                      .parent = parent,
+                  };
+                  scope.set("loop", std::ref(loop));
+                  for(const auto& [key, val] : it)
+                  {
+                    if(v.loop_vars.size() == 1)
+                    {
+                      // {% for k in map %} — bind key and value
+                      scope.set(v.loop_vars[0], key);
+                    }
+                    else
+                    {
+                      // {% for k, v in map %} — bind key and value
+                      scope.set(v.loop_vars[0], key);
+                      scope.set(v.loop_vars[1], val);
+                    }
+                    out = render_children_to(out, v.children, ctx);
+                    ++loop.index0;
+                    ++loop.index;
+                    loop.first = false;
+                    loop.last  = (loop.index0 == it.size() - 1);
+                  }
                 }
                 else
                 {
-                  // {% for k, v in map %} — bind key and value
-                  scope.set(v.loop_vars[0], key);
-                  scope.set(v.loop_vars[1], val);
+                  throw std::runtime_error(
+                      std::format(
+                          "Value of '{}' is not iterable ({})", v.iterable,
+                          display_string_of(^^V)));
                 }
-                out = render_children_to(out, v.children, ctx);
-                ++loop.index0;
-                ++loop.index;
-                loop.first = false;
-                loop.last  = (loop.index0 == it.size() - 1);
-              }
-            }
-            else
-            {
-              throw std::runtime_error(
-                  std::format(
-                      "Value of '{}' is not iterable ({})", v.iterable, display_string_of(^^V)));
-            }
-          });
+              },
+              iterable_val);
+
           return out;
         }
         else
