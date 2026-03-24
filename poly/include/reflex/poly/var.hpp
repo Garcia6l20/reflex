@@ -332,6 +332,25 @@ public:
     as<arr_type>().push_back(std::forward<decltype(v)>(v));
   }
 
+  template <typename T> constexpr auto& ensure()
+  {
+    if(!is<T>())
+    {
+      *this = T{};
+    }
+    return as<T>();
+  }
+
+  constexpr auto& ensure_array()
+  {
+    return ensure<arr_type>();
+  }
+
+  constexpr auto& ensure_object()
+  {
+    return ensure<obj_type>();
+  }
+
   // === merge another object into this one
   constexpr void merge(obj_type const& other)
   {
