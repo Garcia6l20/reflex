@@ -113,10 +113,28 @@ template <typename... Ts> struct var : detail::base_variant_type<Ts...>
   using floating_point_type                     = typename[:infos::__floating_point_type():];
   static constexpr bool has_floating_point_type = dealias(^^floating_point_type) != ^^void;
 
+  template <typename T> static constexpr bool can_hold() noexcept
+  {
+    template for(constexpr auto t : infos::base_types)
+    {
+      if constexpr(dealias(t) == dealias(^^T))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
   using variant_type::variant_type; // inherit constructors
 
   template <typename T>
   constexpr var(std::reference_wrapper<T> ref) : variant_type(std::addressof(ref.get()))
+  {}
+
+  template <typename T>
+  constexpr var(T& ref)
+    requires(can_hold<std::remove_reference_t<T>&>())
+      : variant_type(std::addressof(ref))
   {}
 
   // === numeric catch-all (int, float, size_t, …)
@@ -159,6 +177,7 @@ template <typename... Ts> struct var : detail::base_variant_type<Ts...>
   {}
 
   // === type predicates
+
   template <typename T> constexpr bool is() const
   {
     if constexpr(is_reference_type(^^T))

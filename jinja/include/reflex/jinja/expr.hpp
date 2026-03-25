@@ -977,20 +977,24 @@ inline bool evaluate_bool(std::string_view src, const ContextT& ctx = {})
 
 namespace reflex::serde
 {
-// specialization to allow visiting std::optional<reflex::jinja::expr::loop_info>
-template <> struct object_visitor<std::optional<reflex::jinja::expr::loop_info&>>
+// Generic specialization to allow visiting `std::optional<T>` where `T` is
+// itself visitable as an object. When the optional is empty the visitor is
+// invoked with `poly::null`.
+template <typename T>
+  requires(object_visitable_c<std::remove_reference_t<T>>)
+struct object_visitor<std::optional<T>>
 {
   template <typename Fn, typename Agg>
   static inline constexpr decltype(auto) operator()(Fn&& fn, std::string_view key, Agg&& agg)
   {
+    using Inner = std::remove_reference_t<T>;
     if(agg.has_value())
     {
-      object_visitor<reflex::jinja::expr::loop_info>{}(
-          std::forward<Fn>(fn), key, std::forward<Agg>(agg).value());
+      return object_visitor<Inner>{}(std::forward<Fn>(fn), key, std::forward<Agg>(agg).value());
     }
     else
     {
-      std::forward<Fn>(fn)(poly::null);
+      return std::forward<Fn>(fn)(poly::null);
     }
   }
 };

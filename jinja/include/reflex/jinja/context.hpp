@@ -49,6 +49,11 @@ struct type_scan_accumulator
     for(auto m : std::meta::nonstatic_data_members_of(agg, ctx))
     {
       auto t = dealias(type_of(m));
+      // extract value_type from std::optional
+      if(meta::is_template_instance_of(t, ^^std::optional))
+      {
+        t = dealias(template_arguments_of(t)[0]);
+      }
       if(meta::eval_concept(
              ^^seq_c, {
                           t}))
@@ -96,7 +101,6 @@ consteval auto scan_object_types(
   acc.scan_aggregate(agg, ctx);
   return acc.types;
 }
-
 
 struct loop_info
 {
@@ -160,6 +164,11 @@ template <typename... Ts> struct context
   using array_type    = typename value_type::arr_type;
   using function_type = std::function<value_type(std::span<const value_type>)>;
 
+  template <typename T> static constexpr bool can_hold() noexcept
+  {
+    return value_type::template can_hold<T>();
+  }
+
   object_type              global_vars;
   std::vector<object_type> local_vars;
 
@@ -197,15 +206,44 @@ template <typename... Ts> struct context
       {
         result = v;
       }
+      else if constexpr(can_hold<U&>())
+      {
+        result = std::ref(v);
+      }
       else if constexpr(seq_c<U> and requires { value_type{std::ref(v)}; })
       {
         result = v
                | std::views::transform([](auto&& elem) { return std::ref(elem); })
                | std::ranges::to<array_type>();
       }
+      else if constexpr(meta::is_template_instance_of(dealias(^^U), ^^std::optional))
+      {
+        if(v.has_value())
+        {
+          using T = std::decay_t<decltype(v.value())>;
+          if constexpr(requires { result = v.value(); })
+          {
+            result = v.value();
+          }
+          else if constexpr(requires { result = std::ref(v.value()); })
+          {
+            result = std::ref(v.value());
+          }
+          else
+          {
+            throw runtime_error(
+                "Variable '{}' is not readable ({})", name, display_string_of(dealias(^^T)));
+          }
+        }
+        else
+        {
+          result = poly::null;
+        }
+      }
       else
       {
-        throw runtime_error(std::format("Variable '{}' is not readable", name));
+        throw runtime_error(
+            "Variable '{}' is not readable ({})", name, display_string_of(dealias(^^U)));
       }
     });
     return result;
@@ -252,7 +290,7 @@ template <typename... Ts> struct context
           }
           else
           {
-            std::forward<decltype(fn)>(fn)(poly::null);
+            std::forward<decltype(fn)>(fn)(value_type{poly::null});
           }
         }
         else

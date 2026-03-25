@@ -8,6 +8,7 @@
 using namespace reflex;
 using namespace reflex::jinja;
 using namespace std::string_literals;
+using namespace reflex::literals;
 
 #define JINJA(...) #__VA_ARGS__
 
@@ -220,11 +221,6 @@ TEST_CASE("reflex::jinja::expr: aggregates")
 {
   using namespace expr;
 
-  // template for(constexpr auto t : define_static_array(expr::scan_object_types(^^aggregate3)))
-  // {
-  //   std::println("{}", display_string_of(t));
-  // }
-
   SUBCASE("basic")
   {
     aggregate1    agg{1, "hello"};
@@ -263,6 +259,29 @@ TEST_CASE("reflex::jinja::expr: aggregates")
     CHECK(expr::evaluate_bool("a.nested_list[1].b == \"two\"", ctx) == true);
     CHECK(expr::evaluate_bool("a.nested_list[2].a == 3", ctx) == true);
     CHECK(expr::evaluate_bool("a.nested_list[2].b == \"three\"", ctx) == true);
+  }
+
+  SUBCASE("optional nested")
+  {
+    aggregate4 agg;
+    agg.flag            = true;
+    agg.optional_nested = aggregate2{
+        1.23f, aggregate1{42, "opt"s}
+    };
+
+    expr::context ctx{"a"_na = agg};
+
+    static_assert(meta::is_template_instance_of(^^std::optional<aggregate2>, ^^std::optional));
+
+    using value_type = decltype(ctx)::value_type;
+    std::println("optional nested value_type: {}", display_string_of(dealias(^^value_type)));
+
+    CHECK(expr::evaluate_bool("a.optional_nested.nested.a == 42", ctx) == true);
+
+    agg.optional_nested = std::nullopt;
+    expr::context ctx2{"a"_na = agg};
+    auto          v = expr::evaluate("a.optional_nested", ctx2);
+    CHECK(v.is_null());
   }
 
   SUBCASE("direct subscript")
