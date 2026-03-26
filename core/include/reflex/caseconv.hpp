@@ -87,8 +87,20 @@ template <typename OutputT = std::string> constexpr OutputT to_camel_case(std::s
   return result;
 }
 
+template <typename OutputT = std::string> constexpr OutputT to_upper(std::string_view str)
+{
+  return str | std::views::transform(reflex::to_upper) | std::ranges::to<OutputT>();
+}
+
+template <typename OutputT = std::string> constexpr OutputT to_lower(std::string_view str)
+{
+  return str | std::views::transform(reflex::to_lower) | std::ranges::to<OutputT>();
+}
+
 enum class naming
 {
+  lower,
+  upper,
   camel_case,
   snake_case,
   kebab_case,
@@ -99,6 +111,10 @@ template <typename OutputT = std::string> constexpr OutputT to_case(std::string_
 {
   switch(n)
   {
+    case naming::lower:
+      return to_lower<OutputT>(str);
+    case naming::upper:
+      return to_upper<OutputT>(str);
     case naming::camel_case:
       return to_camel_case<OutputT>(str);
     case naming::snake_case:
