@@ -6,6 +6,16 @@
 #include <reflex/named_arg.hpp>
 #include <reflex/parse.hpp>
 
+#ifdef REFLEX_EXPR_ABORT_ON_NON_MATCHED_ELEMENT
+#define REFLEX_EXPR_UNREACHABLE_OR_NULL() \
+  [] {                                    \
+    std::abort();                         \
+    return reflex::poly::null;            \
+  }()
+#else
+#define REFLEX_EXPR_UNREACHABLE_OR_NULL() reflex::poly::null
+#endif
+
 namespace reflex::jinja::expr
 {
 
@@ -292,6 +302,8 @@ template <typename ContextT> struct parser
 
   using context_type = ContextT;
   using value_type   = typename ContextT::value_type;
+  using array_type   = typename ContextT::array_type;
+  using object_type  = typename ContextT::object_type;
 
   static consteval std::meta::info __integral_type()
   {
@@ -601,28 +613,40 @@ template <typename ContextT> struct parser
     bool       found  = false;
     value_type result = {};
 
-    try
-    {
-      serde::object_visit(key, base, [&](auto&& member) {
-        found = true;
-        if constexpr(requires { result = value_type{std::forward<decltype(member)>(member)}; })
-        {
-          result = value_type{std::forward<decltype(member)>(member)};
-        }
-        else if constexpr(requires { result = std::forward<decltype(member)>(member); })
-        {
-          result = std::forward<decltype(member)>(member);
-        }
-        else
-        {
-          throw std::runtime_error(std::format("Member '{}' is not readable", key));
-        }
-      });
-    }
-    catch(const std::runtime_error&)
-    {
-      return {};
-    }
+    serde::object_visit(key, base, [&]<typename M>(M&& member) {
+      found = true;
+      if constexpr(requires { result = value_type{std::forward<M>(member)}; })
+      {
+        result = value_type{std::forward<M>(member)};
+      }
+      else if constexpr(requires { result = std::forward<M>(member); })
+      {
+        result = std::forward<M>(member);
+      }
+      else if constexpr(seq_c<std::decay_t<M>>)
+      {
+        result = member
+               | std::views::transform([]<typename E>(E&& elem) -> value_type {
+                   if constexpr(requires { value_type{std::ref(elem)}; })
+                   {
+                     return value_type{std::ref(elem)};
+                   }
+                   else if constexpr(requires { value_type{std::forward<E>(elem)}; })
+                   {
+                     return value_type{std::forward<E>(elem)};
+                   }
+                   else
+                   {
+                     return REFLEX_EXPR_UNREACHABLE_OR_NULL();
+                   }
+                 })
+               | std::ranges::to<array_type>();
+      }
+      else
+      {
+        result = REFLEX_EXPR_UNREACHABLE_OR_NULL();
+      }
+    });
 
     if(!found)
     {

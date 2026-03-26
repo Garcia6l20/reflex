@@ -17,7 +17,7 @@ using value         = basic_context::value_type;
 using object        = basic_context::object_type;
 using array         = basic_context::array_type;
 
-TEST_CASE("reflex::jinja: expr")
+TEST_CASE("reflex::jinja::expr: basic evaluation")
 {
   SUBCASE("literals")
   {
@@ -132,7 +132,10 @@ TEST_CASE("reflex::jinja: expr")
     CHECK(std::get<bool>(expr::evaluate("x < 0", ctx)) == false);
     CHECK(std::get<bool>(expr::evaluate("x == 0", ctx)) == false);
   }
+}
 
+TEST_CASE("reflex::jinja::expr: objects, arrays and functions")
+{
   SUBCASE("dotted member access")
   {
     basic_context ctx;
@@ -259,6 +262,20 @@ TEST_CASE("reflex::jinja::expr: aggregates")
     CHECK(expr::evaluate_bool("a.nested_list[1].b == \"two\"", ctx) == true);
     CHECK(expr::evaluate_bool("a.nested_list[2].a == 3", ctx) == true);
     CHECK(expr::evaluate_bool("a.nested_list[2].b == \"three\"", ctx) == true);
+  }
+
+  SUBCASE("nested list of aggregates")
+  {
+    aggregate5 agg{
+        42,
+        {{2.71, {{1, "one"s}, {2, "two"s}, {3, "three"s}}},
+          {22.71, {{21, "twenty-one"s}, {22, "twenty-two"s}, {23, "twenty-three"s}}}}
+    };
+    expr::context ctx{"a"_na = agg};
+
+    CHECK(expr::evaluate_bool("a.nested_list[0].x == 2.71", ctx) == true);
+    CHECK(expr::evaluate_bool("a.nested_list[0].nested_list[0].a == 1", ctx) == true);
+    CHECK(expr::evaluate_bool("a.nested_list[0].nested_list[0].b == \"one\"", ctx) == true);
   }
 
   SUBCASE("optional nested")

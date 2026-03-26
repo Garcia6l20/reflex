@@ -2,10 +2,13 @@
 
 #include <reflex/jinja.hpp>
 
+#include <types.hpp>
+
 using namespace reflex;
 using namespace reflex::jinja;
 using namespace reflex::serde;
 
+using namespace reflex::literals;
 using namespace std::string_literals;
 
 #define JINJA(...) #__VA_ARGS__
@@ -309,26 +312,6 @@ TEST_CASE("reflex::jinja: for decomposition")
   }
 }
 
-using namespace reflex::literals;
-
-struct aggregate1
-{
-  int         a;
-  std::string b;
-};
-
-struct aggregate2
-{
-  double     x;
-  aggregate1 nested;
-};
-
-struct aggregate3
-{
-  double                  x;
-  std::vector<aggregate1> nested_list;
-};
-
 TEST_CASE("reflex::jinja: aggregate support")
 {
   SUBCASE("basic")
@@ -367,6 +350,22 @@ TEST_CASE("reflex::jinja: aggregate support")
     auto result = render(tmpl, ctx);
     std::println("{}", result);
     CHECK(result == "x=2.71\na=1, b=one\na=2, b=two\na=3, b=three\n");
+  }
+  SUBCASE("list of aggregates")
+  {
+    aggregate5 agg{
+        42,
+        {{2.71, {{1, "one"s}, {2, "two"s}, {3, "three"s}}},
+          {22.71, {{21, "twenty-one"s}, {22, "twenty-two"s}, {23, "twenty-three"s}}}}
+    };
+    auto ctx = expr::context{"agg"_na = agg};
+
+    auto tmpl = parse(
+        "{% for item in agg.nested_list[0].nested_list %}a={{ item.a }}, b={{ item.b }}\n"
+        "{% endfor %}");
+    auto result = render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "a=1, b=one\na=2, b=two\na=3, b=three\n");
   }
 }
 

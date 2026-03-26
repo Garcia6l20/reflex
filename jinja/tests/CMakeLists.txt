@@ -1,5 +1,7 @@
 link_libraries(reflex.jinja)
 
+add_compile_definitions(REFLEX_EXPR_ABORT_ON_NON_MATCHED_ELEMENT)
+
 add_library(reflex.jinja.types
   types.cpp
 )

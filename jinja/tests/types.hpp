@@ -26,6 +26,12 @@ struct aggregate4
   std::optional<aggregate2> optional_nested;
 };
 
+struct aggregate5
+{
+  int                     x;
+  std::vector<aggregate3> nested_list;
+};
+
 // namespace reflex::poly {
 //     extern template class var<bool, int, double, std::string, jinja::expr::loop_info&>;
 //     extern template class var<bool, int, double, std::string, jinja::expr::loop_info&, aggregate1&>;
