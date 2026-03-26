@@ -10,40 +10,47 @@
  *   _REFLEX_COMP_POINT=6           - number of completed words
  *
  */
+
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
+#ifndef REFLEX_MODULE
 #include <reflex/cli/base.hpp>
 
 #include <inplace_vector>
 #include <optional>
+#endif
 
-namespace reflex::cli
+REFLEX_EXPORT namespace reflex::cli
 {
-struct complete
-{
-  std::meta::info completer{};
-};
-
-enum class completion_type
-{
-  plain, // simple completion with no description
-  dir,   // complete with directories
-  file   // complete with files
-};
-
-struct completion
-{
-  completion_type  type = completion_type::plain;
-  std::string_view value;
-  std::string_view description;
-
-  void print() const
+  struct complete
   {
-    std::println("{}\n{}\n{}", type, value, description);
-  }
-};
+    std::meta::info completer{};
+  };
+
+  enum class completion_type
+  {
+    plain, // simple completion with no description
+    dir,   // complete with directories
+    file   // complete with files
+  };
+
+  struct completion
+  {
+    completion_type  type = completion_type::plain;
+    std::string_view value;
+    std::string_view description;
+
+    void print() const
+    {
+      std::println("{}\n{}\n{}", type, value, description);
+    }
+  };
 
 } // namespace reflex::cli
 
-namespace reflex::cli::detail
+REFLEX_EXPORT namespace reflex::cli::detail
 {
 using word_vector       = std::inplace_vector<std::string_view, 32>;
 using completion_vector = std::inplace_vector<completion, 16>;
@@ -294,7 +301,7 @@ void emit_zsh_source(std::string_view program);
 void emit_bash_source(std::string_view program);
 } // namespace reflex::cli::detail
 
-namespace reflex::cli::completers
+REFLEX_EXPORT namespace reflex::cli::completers
 {
 struct[[= complete{}]] path
 {

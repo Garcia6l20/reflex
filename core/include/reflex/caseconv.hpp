@@ -1,8 +1,12 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
 #include <reflex/utils.hpp>
 
-namespace reflex::caseconv
+REFLEX_EXPORT namespace reflex::caseconv
 {
 template <typename OutputT = std::string> constexpr OutputT to_snake_case(std::string_view str)
 {

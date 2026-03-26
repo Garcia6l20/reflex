@@ -1,3 +1,4 @@
+set(REFLEX_TEST_GROUP reflex-poly)
 
 link_libraries(reflex.poly)
 

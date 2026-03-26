@@ -1,0 +1,27 @@
+export module reflex.core;
+
+import std;
+
+#define REFLEX_MODULE
+
+#define REFLEX_EXPORT       export
+#define REFLEX_BEGIN_EXPORT export {
+#define REFLEX_END_EXPORT   }
+
+#include <reflex/const_assert.hpp>
+#include <reflex/constant_string.hpp>
+#include <reflex/exception.hpp>
+#include <reflex/formatters.hpp>
+#include <reflex/heapless/string.hpp>
+#include <reflex/heapless/vector.hpp>
+#include <reflex/parse.hpp>
+#include <reflex/to_tuple.hpp>
+#include <reflex/visit.hpp>
+#include <reflex/meta.hpp>
+#include <reflex/views/cartesian_product.hpp>
+#include <reflex/concepts.hpp>
+#include <reflex/caseconv.hpp>
+#include <reflex/utils.hpp>
+#include <reflex/named_arg.hpp>
+#include <reflex/meta/reg.hpp>
+#include <reflex/match.hpp>

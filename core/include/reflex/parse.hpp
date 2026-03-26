@@ -1,131 +1,138 @@
 #pragma once
 
-#include <reflex/utils.hpp>
-#include <reflex/exception.hpp>
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
 
+#include <reflex/exception.hpp>
+#include <reflex/utils.hpp>
+
+#ifndef REFLEX_MODULE
 #include <algorithm>
 #include <array>
 #include <charconv>
 #include <format>
 #include <ranges>
 #include <string_view>
+#endif
 
-namespace reflex
+REFLEX_EXPORT namespace reflex
 {
-template <typename T> struct parser;
+  template <typename T> struct parser;
 
-template <typename T>
-concept Parsable = requires(std::string_view s) {
-  { parser<T>{}(s) } -> std::same_as<T>;
-};
+  template <typename T>
+  concept Parsable = requires(std::string_view s) {
+    { parser<T>{}(s) } -> std::same_as<T>;
+  };
 
-template <std::integral T> struct parser<T>
-{
-  constexpr T operator()(std::string_view s) const
+  template <std::integral T> struct parser<T>
   {
-    T value;
-
-    int base = 10;
-    if(s.size() > 2 && s[0] == '0')
+    constexpr T operator()(std::string_view s) const
     {
-      if(s[1] == 'x' || s[1] == 'X')
+      T value;
+
+      int base = 10;
+      if(s.size() > 2 && s[0] == '0')
       {
-        base = 16;
-        s.remove_prefix(2);
+        if(s[1] == 'x' || s[1] == 'X')
+        {
+          base = 16;
+          s.remove_prefix(2);
+        }
+        else if(s[1] == 'b' || s[1] == 'B')
+        {
+          base = 2;
+          s.remove_prefix(2);
+        }
       }
-      else if(s[1] == 'b' || s[1] == 'B')
+
+      auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value, base);
+      if(ec != std::errc())
       {
-        base = 2;
-        s.remove_prefix(2);
+        throw runtime_error("Failed to parse int from string: {}", s);
       }
+      return value;
     }
+  };
 
-    auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value, base);
-    if(ec != std::errc())
-    {
-      throw runtime_error("Failed to parse int from string: {}", s);
-    }
-    return value;
-  }
-};
-
-template <std::floating_point T> struct parser<T>
-{
-  constexpr T operator()(std::string_view s) const
+  template <std::floating_point T> struct parser<T>
   {
-    T value;
-    auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
-    if(ec != std::errc())
+    constexpr T operator()(std::string_view s) const
     {
-      throw runtime_error(std::format("Failed to parse float from string: {}", s));
-    }
-    return value;
-  }
-};
-
-template <> struct parser<std::string>
-{
-  constexpr std::string operator()(std::string_view s) const
-  {
-    return std::string(s);
-  }
-};
-
-template <> struct parser<std::string_view>
-{
-  constexpr std::string_view operator()(std::string_view s) const
-  {
-    return s;
-  }
-};
-
-template <> struct parser<bool>
-{
-  constexpr bool operator()(std::string_view s) const
-  {
-    static constexpr std::array true_values  = {"true", "yes", "on", "1"};
-    static constexpr std::array false_values = {"false", "no", "off", "0"};
-    if(std::ranges::contains(true_values, s))
-    {
-      return true;
-    }
-    else if(std::ranges::contains(false_values, s))
-    {
-      return false;
-    }
-    else
-    {
-      throw runtime_error("Failed to parse bool from string: {}", s);
-    }
-  }
-};
-
-template <enum_c E> struct parser<E>
-{
-  constexpr E operator()(std::string_view s) const
-  {
-    template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
-    {
-      if(identifier_of(e) == s)
+      T value;
+      auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
+      if(ec != std::errc())
       {
-        return extract<E>(e);
+        throw runtime_error(std::format("Failed to parse float from string: {}", s));
+      }
+      return value;
+    }
+  };
+
+  template <> struct parser<std::string>
+  {
+    constexpr std::string operator()(std::string_view s) const
+    {
+      return std::string(s);
+    }
+  };
+
+  template <> struct parser<std::string_view>
+  {
+    constexpr std::string_view operator()(std::string_view s) const
+    {
+      return s;
+    }
+  };
+
+  template <> struct parser<bool>
+  {
+    constexpr bool operator()(std::string_view s) const
+    {
+      static constexpr std::array true_values  = {"true", "yes", "on", "1"};
+      static constexpr std::array false_values = {"false", "no", "off", "0"};
+      if(std::ranges::contains(true_values, s))
+      {
+        return true;
+      }
+      else if(std::ranges::contains(false_values, s))
+      {
+        return false;
+      }
+      else
+      {
+        throw runtime_error("Failed to parse bool from string: {}", s);
       }
     }
-    throw runtime_error("Failed to parse enum from string: {}", s);
+  };
+
+  template <enum_c E> struct parser<E>
+  {
+    constexpr E operator()(std::string_view s) const
+    {
+      template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
+      {
+        if(identifier_of(e) == s)
+        {
+          return extract<E>(e);
+        }
+      }
+      throw runtime_error("Failed to parse enum from string: {}", s);
+    }
+  };
+
+  template <Parsable T> constexpr T parse(std::string_view s)
+  {
+    return parser<T>{}(s);
   }
-};
 
-template <Parsable T> constexpr T parse(std::string_view s)
-{
-  return parser<T>{}(s);
-}
-
-// commonly used parsers
-extern template struct parser<std::int32_t>;
-extern template struct parser<std::int64_t>;
-extern template struct parser<std::uint32_t>;
-extern template struct parser<std::uint64_t>;
-extern template struct parser<float>;
-extern template struct parser<double>;
-
+#ifdef REFLEX_MODULE
+  // commonly used parsers
+  extern template struct parser<std::int32_t>;
+  extern template struct parser<std::int64_t>;
+  extern template struct parser<std::uint32_t>;
+  extern template struct parser<std::uint64_t>;
+  extern template struct parser<float>;
+  extern template struct parser<double>;
+#endif
 } // namespace reflex

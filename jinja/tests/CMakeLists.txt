@@ -1,11 +1,15 @@
 link_libraries(reflex.jinja)
 
+set(REFLEX_TEST_GROUP reflex-jinja)
+
 add_compile_definitions(REFLEX_EXPR_ABORT_ON_NON_MATCHED_ELEMENT)
 
-add_library(reflex.jinja.types
+reflex_add_cxx_module_library(reflex.jinja.types
   types.cpp
+  types.cppm
 )
 target_include_directories(reflex.jinja.types PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 link_libraries(reflex.jinja.types)
 
 doctest_add_test(reflex-jinja-parse-test

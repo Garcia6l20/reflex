@@ -1,8 +1,8 @@
 #include <doctest/doctest.h>
 
-#include <reflex/jinja.hpp>
-
-#include <types.hpp>
+import jinja.tests.types;
+import reflex.jinja;
+import std;
 
 using namespace reflex;
 using namespace reflex::jinja;
@@ -10,6 +10,8 @@ using namespace reflex::serde;
 
 using namespace reflex::literals;
 using namespace std::string_literals;
+
+using namespace testing;
 
 #define JINJA(...) #__VA_ARGS__
 

@@ -1,7 +1,7 @@
 #include <doctest/doctest.h>
 
-#include <reflex/match.hpp>
-#include <reflex/poly.hpp>
+import reflex.poly;
+import std;
 
 using namespace reflex;
 using namespace reflex::poly;

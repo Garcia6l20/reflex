@@ -1,5 +1,7 @@
 link_libraries(reflex.core)
 
+set(REFLEX_TEST_GROUP "reflex-core")
+
 doctest_add_test(reflex-core-views-test
   views/cartesian-product.cpp
 )

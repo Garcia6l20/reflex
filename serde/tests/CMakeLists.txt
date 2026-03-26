@@ -1,5 +1,7 @@
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
+set(REFLEX_TEST_GROUP reflex-serde)
+
 link_libraries(reflex.serde)
 
 doctest_add_test(reflex-serde-test

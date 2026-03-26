@@ -1,6 +1,8 @@
-#include <reflex/shell.hpp>
+#define MODULE_MODE
 
 #include <git.hpp>
+
+import reflex.shell;
 
 using namespace reflex;
 

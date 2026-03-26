@@ -1,11 +1,17 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
+#ifndef REFLEX_MODULE
 #include <format>
 #include <stdexcept>
 #include <string_view>
 #include <source_location>
+#endif
 
-namespace reflex
+REFLEX_EXPORT namespace reflex
 {
 struct assertion_error : std::logic_error
 {

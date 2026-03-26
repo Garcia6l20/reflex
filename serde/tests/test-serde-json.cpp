@@ -1,8 +1,7 @@
 #include <doctest/doctest.h>
 
-#include <reflex/serde/json.hpp>
-
-#include <sstream>
+import reflex.serde.json;
+import std;
 
 using namespace reflex;
 using namespace reflex::serde;

@@ -1,8 +1,12 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
 #include <reflex/meta.hpp>
 
-namespace reflex
+REFLEX_EXPORT namespace reflex
 {
 template <typename Char> struct basic_constant_string
 {

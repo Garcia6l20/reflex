@@ -1,11 +1,17 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
+#ifndef REFLEX_MODULE
 #include <reflex/exception.hpp>
 #include <reflex/poly.hpp>
 
 #include <reflex/serde/object_visit.hpp>
+#endif
 
-namespace reflex::serde
+REFLEX_EXPORT namespace reflex::serde
 {
 
 template <typename... Ts> struct object_visitor<poly::obj<Ts...>>

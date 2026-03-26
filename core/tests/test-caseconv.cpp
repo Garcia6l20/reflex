@@ -1,8 +1,11 @@
 #include <doctest/doctest.h>
 
-#include <meta>
-#include <print>
-#include <reflex/core.hpp>
+import reflex.core;
+import std;
+
+// #include <meta>
+// #include <print>
+// #include <reflex/core.hpp>
 
 TEST_CASE("caseconv: basics")
 {

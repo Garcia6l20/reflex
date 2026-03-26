@@ -1,10 +1,14 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
 #include <reflex/visit.hpp>
 
 #define fwd(...) std::forward<decltype(__VA_ARGS__)>(__VA_ARGS__)
 
-namespace reflex
+REFLEX_EXPORT namespace reflex
 {
 template <class... Ts> struct match : Ts...
 {

@@ -1,8 +1,16 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
+#ifndef REFLEX_MODULE
+#include <format>
+#endif
+
 #include <reflex/heapless/vector.hpp>
 
-namespace reflex::heapless
+REFLEX_EXPORT namespace reflex::heapless
 {
 
 template <typename CharT, std::size_t N> struct basic_string : vector<CharT, N>

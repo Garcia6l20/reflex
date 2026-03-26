@@ -1,9 +1,15 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
+#ifndef REFLEX_MODULE
 #include <stdexcept>
 #include <format>
+#endif
 
-namespace reflex
+REFLEX_EXPORT namespace reflex
 {
 
 struct runtime_error : std::runtime_error

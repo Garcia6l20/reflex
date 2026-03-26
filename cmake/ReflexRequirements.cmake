@@ -7,6 +7,7 @@ if (REFLEX_BUILD_TESTS)
         GIT_TAG v2.4.12
     )
     list(APPEND CMAKE_MODULE_PATH ${doctest_SOURCE_DIR}/scripts/cmake)
+    target_compile_features(doctest_with_main PUBLIC cxx_std_26)
 endif()
 
 #

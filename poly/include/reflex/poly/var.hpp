@@ -1,5 +1,10 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
+#ifndef REFLEX_MODULE
 #include <reflex/concepts.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/utils.hpp>
@@ -9,8 +14,9 @@
 #include <string>
 #include <variant>
 #include <vector>
+#endif
 
-namespace reflex::poly
+REFLEX_EXPORT namespace reflex::poly
 {
 struct null_t
 {
@@ -406,7 +412,7 @@ public:
 
 } // namespace reflex::poly
 
-namespace reflex
+REFLEX_EXPORT namespace reflex
 {
 
 #define fwd(...) std::forward<decltype(__VA_ARGS__)>(__VA_ARGS__)
@@ -447,7 +453,7 @@ template <typename... Ts> struct visitor<poly::var<Ts...>>
 };
 } // namespace reflex
 
-namespace std
+REFLEX_EXPORT namespace std
 {
 using namespace reflex::poly;
 

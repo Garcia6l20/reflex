@@ -1,32 +1,38 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
+#ifndef REFLEX_MODULE
 #include <string_view>
+#endif
 
-namespace reflex
+REFLEX_EXPORT namespace reflex
 {
-template <typename T> struct named_arg
-{
-  std::string_view name;
-  T                value;
-};
-
-struct arg_name
-{
-  std::string_view name;
-
-  template <typename T> named_arg<T> operator=(T&& value) const
+  template <typename T> struct named_arg
   {
-    return {name, std::forward<T>(value)};
-  }
-};
-
-namespace literals
-{
-consteval arg_name operator""_na(const char* data, std::size_t N)
-{
-  return arg_name{
-      std::string_view{data, N}
+    std::string_view name;
+    T                value;
   };
-}
-} // namespace literals
+
+  struct arg_name
+  {
+    std::string_view name;
+
+    template <typename T> named_arg<T> operator=(T&& value) const
+    {
+      return {name, std::forward<T>(value)};
+    }
+  };
+
+  namespace literals
+  {
+  consteval arg_name operator""_na(const char* data, std::size_t N)
+  {
+    return arg_name{
+        std::string_view{data, N}
+    };
+  }
+  } // namespace literals
 } // namespace reflex

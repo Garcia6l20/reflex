@@ -1,10 +1,14 @@
 #pragma once
 
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
 #include <reflex/const_assert.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/exception.hpp>
 
-namespace reflex::meta::reg
+REFLEX_EXPORT namespace reflex::meta::reg
 {
 /** @brief Marks a type or template as a registration provider.
  *

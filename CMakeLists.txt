@@ -13,7 +13,7 @@ option(REFLEX_BUILD_EXAMPLES "Build reflex examples" OFF)
 option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 
 add_subdirectory(std)
-link_libraries(reflex.std)
+link_libraries(std)
 
 include(ReflexRequirements)
 
