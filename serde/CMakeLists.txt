@@ -16,6 +16,18 @@ reflex_add_cxx_module_library(reflex.serde_json
 )
 target_link_libraries(reflex.serde_json PUBLIC reflex.serde)
 
+reflex_add_cxx_module_library(reflex.serde_bson
+  src/serde_bson.cppm
+
+  include/reflex/serde/bson.hpp
+  include/reflex/serde/bson_value.hpp
+)
+target_link_libraries(reflex.serde_bson PUBLIC reflex.serde)
+
 if(REFLEX_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
+
+# if(REFLEX_BUILD_PROGRAMS)
+#   add_subdirectory(programs)
+# endif()

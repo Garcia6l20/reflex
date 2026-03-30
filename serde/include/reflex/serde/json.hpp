@@ -29,6 +29,12 @@ REFLEX_EXPORT namespace reflex::serde::json
       return out;
     }
 
+    template <typename Out> constexpr Out& operator()(Out& out, std::byte num) const
+    {
+      out << std::to_integer<unsigned int>(num);
+      return out;
+    }
+
     template <typename Out> constexpr Out& operator()(Out& out, boolean b) const
     {
       out << (b ? "true" : "false");
@@ -95,7 +101,9 @@ REFLEX_EXPORT namespace reflex::serde::json
       return out;
     }
 
-    template <typename Out> constexpr Out& operator()(Out& out, aggregate_c auto const& val) const
+    template <typename Out, aggregate_c T>
+      requires(not seq_c<T> and not pair_c<T> and not map_c<T>)
+    constexpr Out& operator()(Out& out, T const& val) const
     {
       out << '{';
 
@@ -121,47 +129,84 @@ REFLEX_EXPORT namespace reflex::serde::json
       out << '}';
       return out;
     }
+
+    template <typename Out, visitable_c T>
+      requires(not seq_c<T> and not pair_c<T> and not map_c<T> and not aggregate_c<T>)
+    constexpr Out& operator()(Out& out, T const& val) const
+    {
+      reflex::visit([&](const auto& v) { (*this)(out, v); }, val);
+      return out;
+    }
   };
 
   class deserializer
   {
   private:
-    deserializer(std::string_view in) : lexme(in)
-    {}
+    template <std::input_iterator It, std::sentinel_for<It> End>
+    using range_cursor = std::ranges::subrange<It, End>;
 
-    std::string_view lexme;
-
-    auto advance(std::size_t n = 1)
+    template <typename R> static bool at_end(R const& r)
     {
-      char c = lexme.front();
-      lexme.remove_prefix(n);
+      return r.empty();
+    }
+
+    template <typename R> static char peek(R const& r)
+    {
+      if(at_end(r))
+        throw std::runtime_error("Unexpected end of JSON input");
+      return static_cast<char>(*r.begin());
+    }
+
+    template <typename R> static char advance(R& r)
+    {
+      const char c = peek(r);
+      r.advance(1);
       return c;
     }
 
-    void ltrim()
+    template <typename R> static void expect(R& r, std::string_view token)
     {
-      lexme = reflex::ltrim(lexme);
+      for(char expected : token)
+      {
+        if(advance(r) != expected)
+        {
+          throw std::runtime_error(std::format("Expected '{}'", token));
+        }
+      }
     }
 
-    constexpr void load_into(str_c auto& value)
+    template <typename R> static void ltrim(R& r)
     {
-      if(lexme.empty() || lexme.front() != '"')
-        throw std::runtime_error("Expected '\"' at start of JSON string");
-
-      lexme.remove_prefix(1); // consume opening quote
-      while(!lexme.empty())
+      while(!at_end(r))
       {
-        char c = advance();
-        if(c == '"') // closing quote
+        const unsigned char ch = static_cast<unsigned char>(peek(r));
+        if(std::isspace(ch))
+        {
+          advance(r);
+        }
+        else
+        {
+          break;
+        }
+      }
+    }
+
+    template <typename R> static constexpr void load_into(R& r, str_c auto& value)
+    {
+      if(advance(r) != '"')
+      {
+        throw std::runtime_error("Expected '\"' at start of JSON string");
+      }
+
+      while(!at_end(r))
+      {
+        const char c = advance(r);
+        if(c == '"')
           return;
 
-        if(c == '\\') // escape
+        if(c == '\\')
         {
-          if(lexme.empty())
-          {
-            throw std::runtime_error("Invalid escape at end of input");
-          }
-          char esc = advance();
+          const char esc = advance(r);
           switch(esc)
           {
             case '"':
@@ -202,45 +247,32 @@ REFLEX_EXPORT namespace reflex::serde::json
       throw std::runtime_error("Unterminated JSON string");
     }
 
-    constexpr void load_into(bool& value)
+    template <typename R> static constexpr void load_into(R& r, bool& value)
     {
-      if(lexme.size() >= 4 && lexme.substr(0, 4) == "true")
+      if(peek(r) == 't')
       {
+        expect(r, "true");
         value = true;
-        advance(4);
+        return;
       }
-      else if(lexme.size() >= 5 && lexme.substr(0, 5) == "false")
+      if(peek(r) == 'f')
       {
+        expect(r, "false");
         value = false;
-        advance(5);
+        return;
       }
-      else
-      {
-        throw std::runtime_error("Expected 'true' or 'false'");
-      }
+      throw std::runtime_error("Expected 'true' or 'false'");
     }
 
-    constexpr void load_into(json::null_t& value)
+    template <typename R> static constexpr void load_into(R& r, json::null_t&)
     {
-      if(lexme.size() >= 4 && lexme.substr(0, 4) == "null")
-      {
-        advance(4);
-      }
-      else
-      {
-        throw std::runtime_error("Expected 'null'");
-      }
+      expect(r, "null");
     }
 
-    constexpr void load_into(number_c auto& value)
+    template <typename R> static constexpr void load_into(R& r, number_c auto& value)
     {
-      // Collect number characters into a temporary string, then convert.
-      if(lexme.empty())
-        throw std::runtime_error("Unexpected end when parsing number");
-
-      // A permissive set of number characters: sign, digits, decimal point, exponent.
       static const auto is_num_char = [](char ch) {
-        return (ch >= '0' && ch <= '9')
+        return std::isdigit(static_cast<unsigned char>(ch))
             or (ch == '+')
             or (ch == '-')
             or (ch == '.')
@@ -248,134 +280,124 @@ REFLEX_EXPORT namespace reflex::serde::json
             or (ch == 'E');
       };
 
-      // Accept optional leading sign
-      if(not lexme.empty() and (lexme.front() == '+' or lexme.front() == '-'))
+      std::inplace_vector<char, 64> token;
+      while(!at_end(r) and is_num_char(peek(r)))
       {
-        advance();
+        token.push_back(advance(r));
       }
 
-      auto begin     = lexme.data();
-      auto end       = lexme.data() + lexme.size();
-      auto [ptr, ec] = std::from_chars(begin, end, value);
-      if(ec != std::errc{})
+      if(token.empty())
       {
         throw std::runtime_error("Failed to parse number");
       }
-      advance(ptr - begin);
+
+      auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
+      if(ec != std::errc{} or ptr != token.data() + token.size())
+      {
+        throw std::runtime_error("Failed to parse number");
+      }
     }
 
-    constexpr void load_into(seq_c auto& value)
+    template <typename R> static constexpr void load_into(R& r, seq_c auto& value)
     {
-      if(lexme.empty() || lexme.front() != '[')
+      if(advance(r) != '[')
         throw std::runtime_error("Expected '[' at start of JSON array");
-      advance(); // consume '['
-      ltrim();
-      if(!lexme.empty() && lexme.front() == ']')
+
+      ltrim(r);
+      if(!at_end(r) and peek(r) == ']')
       {
-        advance(); // consume ']'
+        advance(r);
         return;
-      } // empty array
+      }
 
       while(true)
       {
         json::value elem;
-        load_into(elem);
+        load_into(r, elem);
         value.push_back(std::move(elem));
-        ltrim();
-        if(lexme.empty())
-          throw std::runtime_error("Unterminated array");
-        if(lexme.front() == ',')
+
+        ltrim(r);
+        const char sep = advance(r);
+        if(sep == ',')
         {
-          advance(); // consume ','
+          ltrim(r);
           continue;
         }
-        if(lexme.front() == ']')
+        if(sep == ']')
         {
-          advance(); // consume ']'
           break;
         }
         throw std::runtime_error("Expected ',' or ']' in array");
       }
     }
 
-    constexpr void load_into(json::value& value)
+    template <typename R> static constexpr void load_into(R& r, json::value& value)
     {
-      ltrim();
-      switch(lexme.front())
+      ltrim(r);
+      switch(peek(r))
       {
-        case 't': // assuming true
-          advance(4);
+        case 't':
+          expect(r, "true");
           value = true;
           return;
-        case 'f': // assuming false
-          advance(5);
+        case 'f':
+          expect(r, "false");
           value = false;
           return;
-        case 'n': // assuming null
-          advance(4);
+        case 'n':
+          expect(r, "null");
           value = null;
           return;
         case '{':
-        {
-          load_into(value.template emplace<json::object>());
+          load_into(r, value.template emplace<json::object>());
           return;
-        }
         case '[':
-        {
-          load_into(value.template emplace<json::array>());
+          load_into(r, value.template emplace<json::array>());
           return;
-        }
         case '"':
-        {
-          load_into(value.template emplace<json::string>());
+          load_into(r, value.template emplace<json::string>());
           return;
-        }
         default:
-        {
-          load_into(value.template emplace<json::number>());
+          load_into(r, value.template emplace<json::number>());
           return;
-        }
       }
     }
 
-    template <object_visitable_c Map> constexpr void load_into(Map& value)
+    template <typename R, object_visitable_c Map> static constexpr void load_into(R& r, Map& value)
     {
-      if(lexme.empty() || lexme.front() != '{')
+      if(advance(r) != '{')
         throw std::runtime_error("Expected '{' at start of JSON object");
-      advance(); // consume '{'
-      ltrim();
-      if(!lexme.empty() && lexme.front() == '}')
+
+      ltrim(r);
+      if(!at_end(r) and peek(r) == '}')
       {
-        advance(); // consume '}'
+        advance(r);
         return;
-      } // empty object
+      }
+
       while(true)
       {
-        ltrim();
-        // key must be a string
+        ltrim(r);
         std::string key;
-        load_into(key);
-        ltrim();
-        if(lexme.empty() || lexme.front() != ':')
-          throw std::runtime_error("Expected ':' after object key");
-        advance(); // consume ':'
-        ltrim();
-        serde::object_visit(
-            key, value,
-            [this](auto&& v) { //
-              load_into(v);
-            });
-        ltrim();
-        if(lexme.empty())
-          throw std::runtime_error("Unterminated object");
-        if(lexme.front() == ',')
+        load_into(r, key);
+
+        ltrim(r);
+        if(advance(r) != ':')
         {
-          advance(); // consume ','
+          throw std::runtime_error("Expected ':' after object key");
+        }
+
+        ltrim(r);
+        serde::object_visit(key, value, [&](auto&& v) { load_into(r, v); });
+
+        ltrim(r);
+        const char sep = advance(r);
+        if(sep == ',')
+        {
           continue;
         }
-        if(lexme.front() == '}')
+        if(sep == '}')
         {
-          advance(); // consume '}'
           break;
         }
         throw std::runtime_error("Expected ',' or '}' in object");
@@ -383,19 +405,41 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
   public:
+    deserializer() = default;
+
+    template <typename T = json::value, std::input_iterator It, std::sentinel_for<It> End>
+    static T load(It first, End last)
+    {
+      range_cursor<It, End> input{first, last};
+      T                     value{};
+      ltrim(input);
+      load_into(input, value);
+      ltrim(input);
+      if(!at_end(input))
+      {
+        throw std::runtime_error("Unexpected trailing JSON input");
+      }
+      return value;
+    }
+
     template <typename T = json::value> static T load(str_c auto&& in)
     {
-      auto self = deserializer{in};
-      T    value{};
-      self.load_into(value);
-      return value;
+      std::string_view view{in};
+      return load<T>(view.begin(), view.end());
     }
 
     template <typename T = json::value>
     static T load(auto&& in)
       requires requires() { in.view(); }
     {
-      return load<T>(in.view());
+      auto view = in.view();
+      return load<T>(view.begin(), view.end());
+    }
+
+    template <typename T = json::value, std::input_iterator It, std::sentinel_for<It> End>
+    static T operator()(It first, End last)
+    {
+      return load<T>(first, last);
     }
 
     static auto operator()(auto&& in)
@@ -403,5 +447,14 @@ REFLEX_EXPORT namespace reflex::serde::json
       return load(in);
     }
   };
-
 } // namespace reflex::serde::json
+
+REFLEX_EXPORT namespace reflex::serde::ser
+{
+  using json = reflex::serde::json::serializer;
+}
+
+REFLEX_EXPORT namespace reflex::serde::de
+{
+  using json = reflex::serde::json::deserializer;
+}

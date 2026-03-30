@@ -55,6 +55,11 @@ REFLEX_EXPORT namespace reflex::cli
     return run(std::forward<Cli>(cli), program, argv + 1, argv + argc);
   }
 
+  template <typename Cli> int run(int argc, const char** argv)
+  {
+    return run(Cli{}, argc, argv);
+  }
+
   template <typename Cli, std::ranges::range R = std::initializer_list<std::string_view>>
   int run(Cli && cli, R && args)
   {

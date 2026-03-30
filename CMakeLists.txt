@@ -9,6 +9,7 @@ project(reflex LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
+option(REFLEX_BUILD_PROGRAMS "Build reflex programs" ON)
 option(REFLEX_BUILD_EXAMPLES "Build reflex examples" OFF)
 option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 

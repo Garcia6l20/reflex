@@ -175,15 +175,31 @@ REFLEX_EXPORT namespace reflex
 
 } // namespace reflex
 
-template <reflex::enum_c E, typename CharT> struct std::formatter<E, CharT>
+REFLEX_EXPORT namespace std
 {
-  constexpr auto parse(auto& ctx)
+  template <typename CharT> struct formatter<std::byte, CharT>
   {
-    return ctx.begin();
-  }
+    constexpr auto parse(auto& ctx)
+    {
+      return ctx.begin();
+    }
 
-  constexpr auto format(const E& e, auto& ctx) const
+    constexpr auto format(const std::byte& b, auto& ctx) const
+    {
+      return format_to(ctx.out(), "{:02x}h", to_integer<std::uint8_t>(b));
+    }
+  };
+
+  template <reflex::enum_c E, typename CharT> struct formatter<E, CharT>
   {
-    return std::format_to(ctx.out(), "{}", reflex::enum_value_name(e));
-  }
-};
+    constexpr auto parse(auto& ctx)
+    {
+      return ctx.begin();
+    }
+
+    constexpr auto format(const E& e, auto& ctx) const
+    {
+      return format_to(ctx.out(), "{}", reflex::enum_value_name(e));
+    }
+  };
+}

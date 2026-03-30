@@ -1,6 +1,10 @@
 #include <doctest/doctest.h>
 
-#include <reflex/serde.hpp>
+import reflex.core;
+import reflex.poly;
+import reflex.serde;
+
+import std;
 
 using namespace reflex;
 using namespace reflex::poly;

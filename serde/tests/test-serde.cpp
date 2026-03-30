@@ -1,6 +1,8 @@
 #include <doctest/doctest.h>
 
-#include <reflex/serde.hpp>
+import reflex.serde;
+
+import std;
 
 using namespace reflex;
 using namespace reflex::serde;
@@ -29,7 +31,7 @@ TEST_CASE("serde::serialized_name")
   struct[[= naming::camel_case]] S3
   {
     [[= naming::kebab_case]] int         memberOne;
-    [[= reflex::serde::rename{"memberTwoRenamed"}]] int memberTwo;
+    [[= rename{"memberTwoRenamed"}]] int memberTwo;
   };
 
   CHECK_EQ(serialized_name(^^S3::memberOne), "member-one"sv);

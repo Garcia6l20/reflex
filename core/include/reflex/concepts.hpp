@@ -13,7 +13,7 @@
 REFLEX_EXPORT namespace reflex
 {
   template <typename E>
-  concept enum_c = std::is_enum_v<E>;
+  concept enum_c = std::is_enum_v<E> and not std::same_as<E, std::byte>;
 
   template <typename T>
   concept aggregate_c = std::meta::is_aggregate_type(^^T) and not std::meta::is_array_type(^^T);

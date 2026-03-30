@@ -17,6 +17,7 @@ Currently ships with a **JSON** backend (`reflex.serde.json`).
 |---|---|
 | `reflex.serde` | Core concepts, annotations, `object_visit` |
 | `reflex.serde.json` | JSON serializer + deserializer |
+| `reflex.serde.bson` | BSON serializer + deserializer |
 
 ---
 

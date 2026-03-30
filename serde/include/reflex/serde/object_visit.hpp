@@ -69,7 +69,13 @@ REFLEX_EXPORT namespace reflex::serde
     const auto to_sv = [](auto&& r) { return std::string_view(r.begin(), r.end()); };
     auto       rng   = key | std::views::split('.') | std::views::transform(to_sv);
     std::array<std::string_view, 16> keys{};
-    auto const key_count = std::ranges::copy(rng, keys.begin()).out - keys.begin();
+    auto key_count = std::ranges::copy(rng, keys.begin()).out - keys.begin();
+    if(key_count == 0)
+    {
+      // empty key, treat as single key with empty string
+      keys[0]   = key;
+      key_count = 1;
+    }
     return object_visit(
         std::span(keys.data(), key_count), std::forward<T>(value), std::forward<Fn>(fn));
   }
