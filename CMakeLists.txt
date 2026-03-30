@@ -12,8 +12,33 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 option(REFLEX_BUILD_EXAMPLES "Build reflex examples" OFF)
 option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 
-add_subdirectory(std)
-link_libraries(std)
+option(REFLEX_CXX_MODULES_ENABLED "Enable Reflex CXX Modules" ON)
+
+if (REFLEX_CXX_MODULES_ENABLED)
+  message(STATUS "C++ modules enabled")
+  add_subdirectory(std)
+  link_libraries(std)
+  add_compile_definitions(REFLEX_CXX_MODULES_ENABLED=1)
+else()
+  add_compile_definitions(REFLEX_CXX_MODULES_ENABLED=0)
+endif()
+
+include(CMakeDependentOption)
+
+option(REFLEX_CORE_ENABLED "Enable Reflex Core" ON)
+cmake_dependent_option(REFLEX_CLI_ENABLED "Enable Reflex CLI" ON
+  REFLEX_CORE_ENABLED OFF
+)
+cmake_dependent_option(REFLEX_POLY_ENABLED "Enable Reflex Poly" ON
+  REFLEX_CORE_ENABLED OFF
+)
+cmake_dependent_option(REFLEX_SERDE_ENABLED "Enable Reflex Serde" ON
+  "REFLEX_CORE_ENABLED AND REFLEX_POLY_ENABLED" OFF
+)
+cmake_dependent_option(REFLEX_JINJA_ENABLED "Enable Reflex Jinja" ON
+  REFLEX_SERDE_ENABLED OFF
+)
+
 
 include(ReflexRequirements)
 
@@ -28,8 +53,19 @@ if(REFLEX_BUILD_TESTS)
   enable_testing()
 endif()
 
-add_subdirectory(core)
-add_subdirectory(cli)
-add_subdirectory(poly)
-add_subdirectory(serde)
-add_subdirectory(jinja)
+if(REFLEX_CORE_ENABLED)
+  add_subdirectory(core)
+endif()
+if(REFLEX_CLI_ENABLED)
+  add_subdirectory(cli)
+endif()
+if(REFLEX_POLY_ENABLED)
+  add_subdirectory(poly)
+endif()
+if(REFLEX_SERDE_ENABLED)
+  add_subdirectory(serde)
+endif()
+if(REFLEX_JINJA_ENABLED)
+  add_subdirectory(jinja)
+endif()
+

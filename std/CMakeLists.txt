@@ -33,11 +33,22 @@ if(UNIX)
     set(LIBSTDCPP_INCLUDE
         "${GCC_PREFIX}/include/c++/${CMAKE_CXX_COMPILER_VERSION}"
     )
+    message(STATUS "libstdc++ include root: ${LIBSTDCPP_INCLUDE}")
 elseif(WIN32)
     execute_process(
         COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=include/c++
         OUTPUT_VARIABLE LIBSTDCPP_INCLUDE
         OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    message(STATUS "libstdc++ include root (fallback): ${LIBSTDCPP_INCLUDE}")
+else()
+    # locate std.cc
+    find_path(
+        LIBSTDCPP_INCLUDE
+        NAMES bits/std.cc bits/std.compat.cc
+        PATHS ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES}
+        NO_DEFAULT_PATH
+        REQUIRED
     )
 endif()
 

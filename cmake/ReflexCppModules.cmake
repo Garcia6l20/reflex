@@ -77,16 +77,16 @@ function(reflex_add_cxx_module_library target)
     endif()
   endif()
 
-  if (_cppm_sources)
+  if (_cppm_sources AND REFLEX_CXX_MODULES_ENABLED)
     target_sources(${target}
       PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
           ${_cppm_sources}
     )
+    set_property(TARGET ${target} PROPERTY CXX_MODULE_BMI_DIRECTORY "${CMAKE_CXX_MODULE_BMI_DIRECTORY}")
   endif()
 
   target_compile_features(${target} ${_public_dep_mode} cxx_std_26)
   target_include_directories(${target} ${_public_dep_mode} ${CMAKE_CURRENT_SOURCE_DIR}/include)
-  set_property(TARGET ${target} PROPERTY CXX_MODULE_BMI_DIRECTORY "${CMAKE_CXX_MODULE_BMI_DIRECTORY}")
 
 endfunction()

@@ -49,7 +49,11 @@ REFLEX_EXPORT namespace reflex
       auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value, base);
       if(ec != std::errc())
       {
+#ifdef __cpp_exceptions
         throw runtime_error("Failed to parse int from string: {}", s);
+#else
+        std::abort();
+#endif
       }
       return value;
     }
@@ -63,7 +67,11 @@ REFLEX_EXPORT namespace reflex
       auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
       if(ec != std::errc())
       {
+#ifdef __cpp_exceptions
         throw runtime_error(std::format("Failed to parse float from string: {}", s));
+#else
+        std::abort();
+#endif
       }
       return value;
     }
@@ -101,7 +109,11 @@ REFLEX_EXPORT namespace reflex
       }
       else
       {
+#ifdef __cpp_exceptions
         throw runtime_error("Failed to parse bool from string: {}", s);
+#else
+        std::abort();
+#endif
       }
     }
   };
@@ -117,7 +129,11 @@ REFLEX_EXPORT namespace reflex
           return extract<E>(e);
         }
       }
+#ifdef __cpp_exceptions
       throw runtime_error("Failed to parse enum from string: {}", s);
+#else
+      std::abort();
+#endif
     }
   };
 

@@ -220,8 +220,7 @@ REFLEX_EXPORT namespace reflex::meta
   consteval auto first_nonstatic_data_member_annotated_with(
       info R, info A, access_context ctx = access_context::current())
   {
-    auto members =
-        meta::nonstatic_data_members_annotated_with(R, A, meta::access_context::unchecked());
+    auto members = meta::nonstatic_data_members_annotated_with(R, A, ctx);
     if(not members.empty())
     {
       return members.front();
@@ -250,7 +249,7 @@ REFLEX_EXPORT namespace reflex::meta
   consteval auto first_member_function_annotated_with(
       info R, info A, access_context ctx = access_context::current())
   {
-    auto functions = meta::member_functions_annotated_with(R, A, meta::access_context::unchecked());
+    auto functions = meta::member_functions_annotated_with(R, A, ctx);
     if(not functions.empty())
     {
       return functions.front();
@@ -344,15 +343,15 @@ REFLEX_EXPORT namespace reflex::meta
     const auto ctx = meta::access_context::unchecked();
     return is_scalar_type(R)
         or is_lvalue_reference_type(R)
-        or is_class_type(R)
-       and all_of(
-               bases_of(R, ctx),
-               [](info o) { return is_public(o) and is_structural_type(type_of(o)); })
-       and all_of(nonstatic_data_members_of(R, ctx), [](info o) {
-             return is_public(o)
-                and not is_mutable_member(o)
-                and is_structural_type(remove_all_extents(type_of(o)));
-           });
+        or (is_class_type(R)
+            and all_of(
+                bases_of(R, ctx),
+                [](info o) { return is_public(o) and is_structural_type(type_of(o)); })
+            and all_of(nonstatic_data_members_of(R, ctx), [](info o) {
+                  return is_public(o)
+                     and not is_mutable_member(o)
+                     and is_structural_type(remove_all_extents(type_of(o)));
+                }));
   }
 
   template <typename E>
