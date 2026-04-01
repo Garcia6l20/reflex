@@ -30,7 +30,7 @@ REFLEX_EXPORT namespace reflex
     auto const RR = dealias(decay(R));
     if(not is_class_type(RR))
     {
-      throw std::meta::exception("not a class type", R);
+      return meta::null;
     }
     if(has_template_arguments(RR) and (template_of(RR) == ^^std::variant))
     {
@@ -43,22 +43,19 @@ REFLEX_EXPORT namespace reflex
     });
     if(base == std::ranges::end(bases))
     {
-      throw std::meta::exception("not a variant type", R);
+      return meta::null;
     }
     return dealias(type_of(*base));
   }
 
   consteval bool is_variant_type(meta::info R)
   {
-    try
-    {
-      variant_type_of(R);
-      return true;
-    }
-    catch(std::meta::exception const&)
+    auto t = variant_type_of(R);
+    if(t == meta::null)
     {
       return false;
     }
+    return true;
   }
 
   template <typename T>
