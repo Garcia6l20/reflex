@@ -37,4 +37,15 @@ REFLEX_EXPORT namespace reflex
           int(diags::severity::error | diags::severity::parent_location), "", message);
     }
   }
+
+  template <typename... Args>
+  consteval void const_assert(bool b, std::format_string<Args...> fmt, Args&&... args)
+  {
+    if(!b)
+    {
+      __builtin_constexpr_diag(
+          int(diags::severity::error | diags::severity::parent_location), "",
+          std::format(fmt, std::forward<Args>(args)...));
+    }
+  }
 } // namespace reflex
