@@ -833,9 +833,19 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     {
       return std::visit(
           [&]<typename LHS, typename RHS>(LHS const& lhs, RHS const& rhs) -> bool {
+            using DLHS = std::decay_t<LHS>;
+            using DRHS = std::decay_t<RHS>;
             if constexpr(requires { lhs == rhs; })
             {
               return lhs == rhs;
+            }
+            else if constexpr(parsable_c<DLHS> and str_c<DRHS>)
+            {
+              return parse<DLHS>(rhs) == lhs;
+            }
+            else if constexpr(str_c<DLHS> and parsable_c<DRHS>)
+            {
+              return rhs == parse<DRHS>(lhs);
             }
             else
             {

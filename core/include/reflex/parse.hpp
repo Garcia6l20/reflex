@@ -25,6 +25,11 @@ REFLEX_EXPORT namespace reflex
     { parser<T>{}(s) } -> std::same_as<T>;
   };
 
+  template <typename T>
+  concept parsable_c = requires(std::string_view s) {
+    { parser<T>{}(s) } -> std::same_as<T>;
+  };
+
   template <std::integral T> struct parser<T>
   {
     constexpr T operator()(std::string_view s) const

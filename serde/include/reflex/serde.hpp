@@ -18,6 +18,10 @@ REFLEX_EXPORT namespace reflex::serde::de
 
 REFLEX_EXPORT namespace reflex::serde
 {
+  constexpr struct _optional
+  {
+  } optional;
+
   consteval auto serializers()
   {
     constexpr auto ctx = std::meta::access_context::current();
