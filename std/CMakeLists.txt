@@ -78,29 +78,13 @@ message(STATUS "std module: ${STD_MODULE_SRC}")
 message(STATUS "std.compat module: ${STD_COMPAT_MODULE_SRC}")
 
 # Module target
-add_library(std)
+add_library(reflex.std)
 
-target_sources(std
+target_sources(reflex.std
     PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES
         BASE_DIRS ${LIBSTDCPP_INCLUDE}
         FILES
             ${STD_MODULE_SRC}
             ${STD_COMPAT_MODULE_SRC}
-)
-
-# see: https://gcc.gnu.org/onlinedocs/gcc/C_002b_002b-Dialect-Options.html#index-fabi-version
-# summary:
-#   - fixes unnecessary captures in noexcept lambdas (c++/119764)
-#   - layout of a base class with all explicitly defaulted constructors (c++/120012)
-#   - and mangling of class and array objects with implicitly zero-initialized non-trailing subobjects (c++/121231)
-set(ABI_VERSION 21)
-
-# Constexpr all the things + reflection
-target_compile_options(std
-    PUBLIC
-        -fimplicit-constexpr
-        -freflection
-        -Wabi=${ABI_VERSION}
-        -fabi-version=${ABI_VERSION}
 )

@@ -1,4 +1,7 @@
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
+if (NOT REFLEX_CXX_MODULES_ENABLED)
+  # serde tests require C++ modules, so skip if not enabled
+  return()
+endif()
 
 set(REFLEX_TEST_GROUP reflex-serde)
 

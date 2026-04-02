@@ -1,3 +1,7 @@
+if (NOT REFLEX_CXX_MODULES_ENABLED)
+    return()
+endif()
+
 add_executable(reflex-convert
     convert.cpp
 )

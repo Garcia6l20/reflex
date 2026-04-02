@@ -22,6 +22,7 @@ reflex_add_cxx_module_library(reflex.core
   include/reflex/match.hpp
   include/reflex/diags.hpp
 )
+target_link_libraries(reflex.core PUBLIC reflex.std)
 
 if(REFLEX_BUILD_TESTS)
   add_subdirectory(tests)

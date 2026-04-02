@@ -15,13 +15,32 @@ option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 
 option(REFLEX_CXX_MODULES_ENABLED "Enable Reflex CXX Modules" ON)
 
+
+add_library(reflex.common_flags INTERFACE)
+
+# see: https://gcc.gnu.org/onlinedocs/gcc/C_002b_002b-Dialect-Options.html#index-fabi-version
+# summary:
+#   - fixes unnecessary captures in noexcept lambdas (c++/119764)
+#   - layout of a base class with all explicitly defaulted constructors (c++/120012)
+#   - and mangling of class and array objects with implicitly zero-initialized non-trailing subobjects (c++/121231)
+set(ABI_VERSION 21)
+
+target_compile_options(reflex.common_flags INTERFACE
+    -fimplicit-constexpr
+    -freflection
+    -Wabi=${ABI_VERSION}
+    -fabi-version=${ABI_VERSION}
+)
+
 if (REFLEX_CXX_MODULES_ENABLED)
   message(STATUS "C++ modules enabled")
-  add_compile_definitions(REFLEX_CXX_MODULES_ENABLED=1)
+  target_compile_definitions(reflex.common_flags INTERFACE REFLEX_CXX_MODULES_ENABLED=1)
   add_subdirectory(std)
-  link_libraries(std)
+  target_link_libraries(reflex.std PUBLIC reflex.common_flags)
 else()
-  add_compile_definitions(REFLEX_CXX_MODULES_ENABLED=0)
+  target_compile_definitions(reflex.common_flags INTERFACE REFLEX_CXX_MODULES_ENABLED=0)
+
+  add_library(reflex.std ALIAS reflex.common_flags)
 endif()
 
 include(CMakeDependentOption)
