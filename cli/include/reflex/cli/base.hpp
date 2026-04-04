@@ -375,7 +375,15 @@ REFLEX_EXPORT namespace reflex::cli
                 {
                   it              = std::next(it);
                   auto value_view = std::string_view{*it};
-                  target          = reflex::parse<T>(value_view);
+
+                  if constexpr(seq_c<T>)
+                  {
+                    target.push_back(reflex::parse<typename T::value_type>(value_view));
+                  }
+                  else
+                  {
+                    target = reflex::parse<T>(value_view);
+                  }
                 }
               }
             }
