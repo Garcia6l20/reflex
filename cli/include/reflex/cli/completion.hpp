@@ -190,7 +190,6 @@ REFLEX_EXPORT namespace reflex::cli::detail
         constexpr auto comp = completer_of(a.member);
         if constexpr(comp != meta::null)
         {
-          constexpr auto fn         = comp;
           auto           candidates = [:comp:](current);
           for(auto candidate : candidates)
           {

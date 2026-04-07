@@ -42,7 +42,7 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
   {
     git& up;
 
-    [[= cli::argument{"Commit message."}]] std::string message;
+    [[= cli::argument{"Commit message."}]] std::string message = "";
 
     int operator()() const
     {
@@ -69,7 +69,8 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
   {
     git& up;
 
-    [[= cli::argument{"Branch name."}, = cli::complete{^^branch_name_completer}]] std::string name;
+    [[= cli::argument{"Branch name."}, = cli::complete{^^branch_name_completer}]] //
+        std::string name = "";
 
     [[= cli::option{"-d/--delete", "Delete the branch."}.flag()]] bool del = false;
 
@@ -91,7 +92,8 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
   {
     git& up;
 
-    [[= cli::argument{"A text file."}, = cli::completers::path{"*.txt"}]] std::string file;
+    [[= cli::argument{"A text file."}, = cli::completers::path{"*.txt"}]] //
+        std::string file = "";
 
     int operator()() const
     {
@@ -105,7 +107,7 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
     git& up;
 
     [[= cli::argument{"Path specs."}, = cli::completers::path{}]] std::vector<std::string>
-        path_specs;
+        path_specs{};
 
     // assertion failure: repeated arguments must be last
     // [[= cli::argument{"Invalid"}]] int value = 0;

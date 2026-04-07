@@ -58,7 +58,8 @@ REFLEX_EXPORT namespace reflex::shell
     }
   };
 
-  template <typename Cli> int run(Cli && cli, int argc, const char** argv)
+  template <typename Cli>
+  int run(Cli && cli, [[maybe_unused]] int argc, [[maybe_unused]] const char** argv)
   {
     shell<Cli> sh{std::forward<Cli>(cli)};
     return sh.run();

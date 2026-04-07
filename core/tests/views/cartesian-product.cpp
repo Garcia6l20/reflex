@@ -42,10 +42,7 @@ TEST_CASE("reflex.core.views.cartesian_product")
     std::println("arr = {}", [:arr:]);
 
     using RangeT = decltype(rng);
-    using ArrT = decltype(arr);
-    // std::println("ArrT = {}", display_string_of(type_of(arr)));
-    // static_assert(is_array_type(type_of(arr)));
-    
+
     static_assert(std::ranges::input_range<RangeT>);
     using RangeValueT = std::ranges::range_value_t<RangeT>;
     std::println("RangeValueT = {}", display_string_of(dealias(^^RangeValueT)));
@@ -62,8 +59,6 @@ TEST_CASE("reflex.core.views.cartesian_product")
     static_assert(test1.size() == 4);
 
     static constexpr auto p2 = define_static_array(v | views::cartesian_product<2>);
-    static constexpr auto p2_span = test_define_static_array(v | views::cartesian_product<2>);
-    // static_assert(p2_span[1][0] == 1); // fails
 
     template for(constexpr auto p : p2)
     {

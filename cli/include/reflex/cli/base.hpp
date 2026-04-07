@@ -412,7 +412,6 @@ REFLEX_EXPORT namespace reflex::cli
         }
 
         // assume argument
-        auto value_view = view;
         bool found      = false;
         template for(constexpr auto ii : std::views::iota(std::size_t(0), args.size()))
         {

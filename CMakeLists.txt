@@ -30,6 +30,7 @@ target_compile_options(reflex.common_flags INTERFACE
     -freflection
     -Wabi=${ABI_VERSION}
     -fabi-version=${ABI_VERSION}
+    -Wall -Wextra -Werror
 )
 
 if (REFLEX_CXX_MODULES_ENABLED)

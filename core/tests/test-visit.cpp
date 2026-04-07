@@ -117,7 +117,7 @@ TEST_CASE("reflex::visit: variant-derived")
   visit(
       match{
           [](int v) { CHECK_EQ(v, 42); },
-          [](auto&& v) { FAIL("unexpected visit"); },
+          [](auto&&) { FAIL("unexpected visit"); },
       },
       subvar{42});
 }
