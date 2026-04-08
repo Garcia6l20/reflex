@@ -323,6 +323,8 @@ REFLEX_EXPORT namespace reflex::cli
     while(it != end)
     {
       auto view = std::string_view{*it};
+      bool treat_as_argument = false;
+
       if(view[0] == '-')
       {
         // option lookup
@@ -394,13 +396,23 @@ REFLEX_EXPORT namespace reflex::cli
         }
         if(!found)
         {
-          std::println(std::cerr, "unknown option: {}", view);
-          std::println(std::cerr);
-          usage_of<cli_type>(program);
-          return 1;
+          // If a positional argument is still expected, accept values prefixed with '-'
+          // (for example negative numbers) as arguments instead of unknown options.
+          if(current_pos_arg < args.size())
+          {
+            treat_as_argument = true;
+          }
+          else
+          {
+            std::println(std::cerr, "unknown option: {}", view);
+            std::println(std::cerr);
+            usage_of<cli_type>(program);
+            return 1;
+          }
         }
       }
-      else
+
+      if((view[0] != '-') or treat_as_argument)
       {
         template for(constexpr auto cmd : s_cmds)
         {

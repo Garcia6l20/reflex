@@ -23,6 +23,18 @@ struct[[= cli::command{"Simple echo command."}]] echo
   }
 };
 
+struct[[= cli::command{"Add command."}]] add
+{
+  [[= cli::argument{"LHS."}]] int lhs;
+  [[= cli::argument{"RHS."}]] int rhs;
+
+  int operator()() const
+  {
+    std::println("{}", lhs + rhs);
+    return 0;
+  }
+};
+
 using namespace std::string_view_literals;
 
 TEST_CASE("reflex::cli: echo")
@@ -42,5 +54,23 @@ TEST_CASE("reflex::cli: echo")
         [] { CHECK_EQ(cli::run(echo{}, {"echo"sv, "hello"sv, "-rr"sv}), 0); });
     CHECK(err.empty());
     CHECK_EQ(out, "hello\nhello\nhello\n");
+  }
+}
+
+TEST_CASE("reflex::cli: add")
+{
+  SUBCASE("integer addition works correctly")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run(add{}, {"add"sv, "2"sv, "3"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "5\n");
+  }
+  SUBCASE("negative number handled correctly")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run(add{}, {"add"sv, "-2"sv, "-3"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "-5\n");
   }
 }
