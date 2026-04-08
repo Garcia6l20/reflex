@@ -121,4 +121,9 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
       return 0;
     }
   } add{*this};
+
+  template <std::meta::info M> void operator()()
+  {
+    std::println(std::cerr, "going to execute: {}...", identifier_of(M));
+  }
 };

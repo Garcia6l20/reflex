@@ -79,13 +79,13 @@ TEST_CASE("reflex::cli: git")
   {
     const auto [rc, out, err] = run("commit", "Initial commit");
     CHECK_EQ(rc, 0);
-    CHECK(err.empty());
+    CHECK(err == "going to execute: commit...\n");
     CHECK_EQ(out, "Committing with message: Initial commit\n");
   }
   SUBCASE("add")
   {
     const auto [rc, out, err] = run("add", "test", "data");
-    CHECK(err.empty());
+    CHECK(err == "going to execute: add...\n");
     CHECK_EQ(out, "Adding: test\nAdding: data\n");
   }
 }

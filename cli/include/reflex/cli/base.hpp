@@ -418,13 +418,22 @@ REFLEX_EXPORT namespace reflex::cli
         {
           if(view == cmd.display_name())
           {
+            if constexpr(requires { cli.template operator()<cmd.member>(); })
+            {
+              // groups may want initialization call
+              cli.template operator()<cmd.member>();
+            }
+            else if constexpr(requires { cli(); })
+            {
+              cli();
+            }
             return process_cmdline(cli.[:cmd.member:], std::format("{} {}", program, view),
                                                      std::next(it), end);
           }
         }
 
         // assume argument
-        bool found      = false;
+        bool found = false;
         template for(constexpr auto ii : std::views::iota(std::size_t(0), args.size()))
         {
           if(ii >= current_pos_arg)
@@ -511,7 +520,17 @@ REFLEX_EXPORT namespace reflex::cli
     if constexpr(requires { cli(); })
     {
       // actual command execution
-      return cli();
+      if constexpr(requires {
+                     { cli() } -> std::convertible_to<int>;
+                   })
+      {
+        return cli();
+      }
+      else
+      {
+        cli();
+        return 0;
+      }
     }
     else
     {

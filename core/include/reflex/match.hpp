@@ -22,8 +22,10 @@ inline constexpr auto unreachable = [](auto&&...) { std::unreachable(); };
 inline constexpr auto abort       = [](auto&&...) { std::abort(); };
 inline constexpr auto terminate   = [](auto&&...) { std::terminate(); };
 inline constexpr auto ignore      = [](auto&&...) {};
-inline constexpr auto make = [](auto value) { return [value](auto&&...) { return auto(value); }; };
-inline constexpr auto throw_ = [](auto value) { return [value](auto&&...) { throw value; }; };
+inline constexpr auto make        = [](auto&& value) {
+  return [value](auto&&...) { return auto(value); };
+};
+inline constexpr auto throw_ = [](auto&& value) { return [value](auto&&...) { throw value; }; };
 
 template <typename T>
 inline constexpr auto forward = [](T&& value) { return std::forward<T>(value); };
