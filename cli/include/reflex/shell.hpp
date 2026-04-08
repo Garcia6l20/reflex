@@ -10,16 +10,16 @@ REFLEX_EXPORT namespace reflex::shell
 {
   template <typename Cli> class shell
   {
-    static constexpr auto cli_type                  = type_of(^^Cli);
+    static constexpr auto cli_type                  = decay(^^Cli);
     static constexpr auto default_history_page_size = 10UZ;
 
     std::string prompt_;
     std::size_t history_page_size_ = default_history_page_size;
-    Cli         cli_;
+    Cli&&       cli_;
 
   public:
     shell(Cli&& cli, std::size_t history_page_size = default_history_page_size)
-        : prompt_(std::format("{}> ", identifier_of(^^Cli))),
+        : prompt_(std::format("{}> ", identifier_of(cli_type))),
           history_page_size_(std::max(1uz, history_page_size)), cli_(std::forward<Cli>(cli))
     {}
 
@@ -28,7 +28,7 @@ REFLEX_EXPORT namespace reflex::shell
       std::string line;
       line.reserve(32);
       std::inplace_vector<std::string_view, 32> args{};
-      term_reader<Cli>                          reader{prompt_, history_page_size_};
+      term_reader<std::decay_t<Cli>>            reader{prompt_, history_page_size_};
       while(true)
       {
         std::cout << prompt_;
@@ -47,7 +47,7 @@ REFLEX_EXPORT namespace reflex::shell
         if(!args.empty())
         {
           const auto rc = reflex::cli::detail::process_cmdline(
-              cli_, identifier_of(^^Cli), args.begin(), args.end());
+              cli_, identifier_of(cli_type), args.begin(), args.end());
           if(rc != 0)
           {
             std::cerr << "Error: command exited with code " << rc << "\n";
@@ -71,7 +71,7 @@ REFLEX_EXPORT namespace reflex::shell
     auto argv = args
               | std::views::transform([](std::string_view arg) { return arg.data(); })
               | std::ranges::to<std::vector>();
-    return cli::run(std::forward<Cli>(cli), argv.size(), argv.data());
+    return reflex::shell::run(std::forward<Cli>(cli), argv.size(), argv.data());
   }
 
 } // namespace reflex::shell
