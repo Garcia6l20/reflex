@@ -410,7 +410,6 @@ REFLEX_EXPORT namespace reflex::jinja
   template <typename OutputIt, typename ContextT>
   OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
   {
-    using object_type = typename ContextT::object_type;
     return std::visit(
         [&]<typename T>(const T& v) -> OutputIt {
           if constexpr(decays_to_c<T, text>)

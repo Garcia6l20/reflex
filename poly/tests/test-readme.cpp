@@ -35,7 +35,8 @@ TEST_CASE("poly::var: README")
 
   SUBCASE("Typed access")
   {
-    auto n = v1.template as<std::int64_t>(); // throws std::bad_variant_access on mismatch
+    [[maybe_unused]] auto n =
+        v1.template as<std::int64_t>();      // throws std::bad_variant_access on mismatch
     auto s = v3.template get<std::string>(); // → std::optional<std::string&>
 
     CHECK(v5["key"] == 1);               // object subscript — returns var&

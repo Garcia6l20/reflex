@@ -84,7 +84,6 @@ REFLEX_EXPORT namespace reflex::serde::json
 
       auto view = std::views::all(obj);
 
-      std::size_t count = 0;
       for(const auto& [key, val] : view | std::views::take(obj.size() - 1))
       {
         (*this)(out, key);

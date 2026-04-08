@@ -52,8 +52,8 @@ REFLEX_EXPORT namespace reflex::cli
 
 REFLEX_EXPORT namespace reflex::cli::detail
 {
-  using word_vector       = std::inplace_vector<std::string_view, 32>;
-  using completion_vector = std::inplace_vector<completion, 16>;
+  using word_vector       = std::inplace_vector<std::string_view, 64>;
+  using completion_vector = std::inplace_vector<completion, 128>;
   consteval std::meta::info completer_of(std::meta::info mem)
   {
     for(auto ann : annotations_of(mem))
@@ -185,18 +185,71 @@ REFLEX_EXPORT namespace reflex::cli::detail
       }
 
       // at this point we should try for argument completion
-      template for(constexpr auto a : args)
+      if constexpr(not args.empty())
       {
-        constexpr auto comp = completer_of(a.member);
-        if constexpr(comp != meta::null)
+        std::size_t current_arg_count = 0;
+        for(std::size_t i = 0; i < words.size(); ++i)
         {
-          auto           candidates = [:comp:](current);
-          for(auto candidate : candidates)
+          const auto token = words[i];
+          if(token.starts_with('-'))
           {
-            if(candidate.value.starts_with(current))
+            bool matched_option         = false;
+            bool consumes_next_as_value = false;
+            template for(constexpr auto opt : opts)
             {
-              completions.push_back(candidate);
+              constexpr auto [short_sw, long_sw] = opt.switches;
+              const bool is_counter_group =
+                  short_sw.size()
+                  > 1
+                  and token.starts_with(short_sw)
+                  and std::ranges::all_of(
+                      token | std::views::drop(2), [&](auto c) { return c == short_sw[1]; });
+
+              if(token == short_sw or token == long_sw or (opt.is_counter() and is_counter_group))
+              {
+                matched_option      = true;
+                constexpr auto type = opt.type();
+                if constexpr(type != ^^bool)
+                {
+                  if constexpr(not opt.is_counter())
+                  {
+                    consumes_next_as_value = true;
+                  }
+                }
+              }
             }
+
+            if(matched_option)
+            {
+              if(consumes_next_as_value and (i + 1) < words.size())
+              {
+                ++i;
+              }
+              continue;
+            }
+
+            continue;
+          }
+
+          ++current_arg_count;
+        }
+        template for(constexpr auto ii : std::views::iota(std::size_t{0}, args.size()))
+        {
+          if(ii >= current_arg_count)
+          {
+            constexpr auto comp = completer_of(args[ii].member);
+            if constexpr(comp != meta::null)
+            {
+              auto candidates = [:comp:](current);
+              for(auto candidate : candidates)
+              {
+                if(candidate.value.starts_with(current))
+                {
+                  completions.push_back(candidate);
+                }
+              }
+            }
+            return completions;
           }
         }
       }

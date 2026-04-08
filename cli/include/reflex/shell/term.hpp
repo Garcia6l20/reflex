@@ -284,7 +284,7 @@ REFLEX_EXPORT namespace reflex::shell
 
       const auto current = std::string_view{line}.substr(token_start_, token_end_ - token_start_);
 
-      std::inplace_vector<std::string_view, 32> args{};
+      cli::detail::word_vector args{};
       if(!cli::detail::tokenize(line_prefix_, std::back_inserter(args)))
       {
         std::cout << codes::bel;

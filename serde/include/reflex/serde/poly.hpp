@@ -43,7 +43,7 @@ template <typename... Ts> struct object_visitor<poly::var<Ts...>>
   template <typename Fn, decays_to_c<poly::var<Ts...>> Var>
   static inline constexpr decltype(auto) operator()(Fn&& fn, std::string_view key, Var&& var)
   {
-    using return_type = decltype(std::forward<Fn>(fn)(std::declval<poly::null_t&&>()));
+    // using return_type = decltype(std::forward<Fn>(fn)(std::declval<poly::null_t&&>()));
     return visit(
         [&]<typename N>(N&& nested) {
           using U = std::decay_t<N>;

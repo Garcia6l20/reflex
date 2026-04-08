@@ -322,7 +322,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Unexpected end of BSON input");
         }
-        using item_t    = std::remove_cvref_t<std::ranges::range_reference_t<R>>;
+        // using item_t    = std::remove_cvref_t<std::ranges::range_reference_t<R>>;
         const auto byte = std::bit_cast<std::byte>(*range.begin());
         range.advance(1);
         ++position;

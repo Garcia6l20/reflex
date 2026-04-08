@@ -368,7 +368,7 @@ REFLEX_EXPORT namespace reflex::cli
                   }
                   else
                   {
-                    target += std::ranges::count(view, short_switch[1]);
+                    target += T(std::ranges::count(view, short_switch[1]));
                   }
                 }
                 else
