@@ -30,6 +30,9 @@ target_compile_options(reflex.common_flags INTERFACE
     -freflection
     -Wabi=${ABI_VERSION}
     -fabi-version=${ABI_VERSION}
+)
+
+add_compile_options(
     -Wall -Wextra -Werror
 )
 
