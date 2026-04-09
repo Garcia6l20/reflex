@@ -13,312 +13,14 @@
 #endif
 
 #include <reflex/cli.hpp>
-
-#include <deque>
 #endif
+
+#include <reflex/shell/completion_session.hpp>
+#include <reflex/shell/history.hpp>
 
 REFLEX_EXPORT namespace reflex::shell
 {
-  namespace codes
-  {
-  constexpr auto esc_seq = '\x1b';
-  constexpr auto bs      = '\b';
-  constexpr auto del     = '\x7f';
-  constexpr auto eot     = '\x04';
-  constexpr auto tab     = '\t';
-  constexpr auto bel     = '\a';
-  constexpr auto lf      = '\n';
-  constexpr auto cr      = '\r';
-  constexpr auto ctrl_w  = '\x17';
-  } // namespace codes
-
-  namespace sequences
-  {
-  constexpr auto csi = "\x1b[";
-
-  constexpr auto cursor_up(std::size_t n)
-  {
-    return std::format("\x1b[{}A", n);
-  }
-  constexpr auto cursor_down(std::size_t n)
-  {
-    return std::format("\x1b[{}B", n);
-  }
-  constexpr auto cursor_right(std::size_t n)
-  {
-    return std::format("\x1b[{}C", n);
-  }
-  constexpr auto cursor_left(std::size_t n)
-  {
-    return std::format("\x1b[{}D", n);
-  }
-  constexpr auto cursor_to_column(std::size_t n)
-  {
-    return std::format("\x1b[{}G", n);
-  }
-
-  constexpr auto arrow_up    = "\x1b[A";
-  constexpr auto arrow_down  = "\x1b[B";
-  constexpr auto arrow_right = "\x1b[C";
-  constexpr auto arrow_left  = "\x1b[D";
-
-  constexpr auto delete_char  = "\x1b[P";
-  constexpr auto insert_char  = "\x1b[@";
-  constexpr auto clear_line   = "\x1b[K";
-  constexpr auto clear_screen = "\x1b[2J\x1b[H";
-  constexpr auto clear_to_eol = "\x1b[K";
-  constexpr auto clear_to_bol = "\x1b[1K";
-  constexpr auto cursor_home  = "\x1b[H";
-  constexpr auto cursor_end   = "\x1b[F";
-
-  } // namespace sequences
-
-  namespace detail
-  {
-  inline void move_cursor_left(std::size_t count)
-  {
-    if(count > 0)
-    {
-      std::cout << sequences::cursor_left(count);
-    }
-  }
-
-  inline void move_cursor_right(std::size_t count)
-  {
-    if(count > 0)
-    {
-      std::cout << sequences::cursor_right(count);
-    }
-  }
-
-  inline void move_cursor_to_input_start(std::size_t prompt_length)
-  {
-    std::cout << sequences::cursor_to_column(prompt_length + 1);
-  }
-  } // namespace detail
-
-  template <std::size_t N> class history
-  {
-    std::deque<std::string>    entries_{};
-    std::optional<std::string> draft_line_{};
-    std::size_t                cursor_ = 0;
-
-    std::optional<std::string_view> draft_or_empty() const
-    {
-      return draft_line_.has_value() ? std::optional{std::string_view{*draft_line_}}
-                                     : std::optional{std::string_view{}};
-    }
-
-  public:
-    void push(std::string_view line)
-    {
-      if(line.empty())
-      {
-        reset_navigation();
-        return;
-      }
-
-      if(!entries_.empty() && entries_.back() == line)
-      {
-        reset_navigation();
-        return;
-      }
-
-      if(entries_.size() == N)
-      {
-        entries_.pop_front();
-      }
-      entries_.emplace_back(line);
-      reset_navigation();
-    }
-
-    void reset_navigation()
-    {
-      cursor_ = entries_.size();
-      draft_line_.reset();
-    }
-
-    std::optional<std::string_view> previous(std::string_view current_line, std::size_t steps = 1)
-    {
-      if(entries_.empty())
-      {
-        return std::nullopt;
-      }
-
-      if(cursor_ == entries_.size())
-      {
-        draft_line_ = std::string{current_line};
-      }
-
-      cursor_ = cursor_ > steps ? cursor_ - steps : 0;
-
-      return std::string_view{entries_[cursor_]};
-    }
-
-    std::optional<std::string_view> next(std::size_t steps = 1)
-    {
-      if(entries_.empty())
-      {
-        return std::nullopt;
-      }
-
-      if(cursor_ >= entries_.size())
-      {
-        return draft_or_empty();
-      }
-
-      cursor_ = std::min(cursor_ + steps, entries_.size());
-      if(cursor_ == entries_.size())
-      {
-        if(draft_line_.has_value() and not draft_line_->empty())
-        {
-          return std::string_view{*draft_line_};
-        }
-        else if(not entries_.empty())
-        {
-          return std::string_view{entries_.back()};
-        }
-        else
-        {
-          return std::nullopt;
-        }
-      }
-
-      return std::string_view{entries_[cursor_]};
-    }
-  };
-
-  template <typename Cli> class completion_session
-  {
-    std::size_t                    prompt_length_ = 0;
-    cli::detail::completion_vector completions_{};
-    bool                           active_     = false;
-    std::size_t                    next_index_ = 0;
-    std::string                    line_prefix_{};
-    std::string                    line_suffix_{};
-    std::size_t                    token_start_ = 0;
-    std::size_t                    token_end_   = 0;
-
-    static std::size_t token_start_at(std::string const& line, std::size_t cursor)
-    {
-      auto pos = cursor;
-      while(pos > 0 and not is_space(static_cast<unsigned char>(line[pos - 1])))
-      {
-        --pos;
-      }
-      return pos;
-    }
-
-    static void replace_token(
-        std::size_t      prompt_length,
-        std::string&     line,
-        std::size_t&     cursor,
-        std::size_t      token_start,
-        std::size_t      token_end,
-        std::string_view replacement)
-    {
-      detail::move_cursor_to_input_start(prompt_length);
-      line.replace(token_start, token_end - token_start, replacement);
-      std::cout << sequences::clear_to_eol << line;
-
-      cursor = token_start + replacement.size();
-      detail::move_cursor_left(line.size() - cursor);
-      std::cout.flush();
-    }
-
-    bool can_cycle(std::string const& line) const
-    {
-      if(not active_)
-      {
-        return false;
-      }
-      if(completions_.empty())
-      {
-        return false;
-      }
-      if(line.size() < line_prefix_.size() + line_suffix_.size())
-      {
-        return false;
-      }
-      return std::string_view{line}.starts_with(line_prefix_)
-         and std::string_view{line}.ends_with(line_suffix_);
-    }
-
-    void apply_candidate(std::string& line, std::size_t& cursor, std::string_view value)
-    {
-      replace_token(prompt_length_, line, cursor, token_start_, token_end_, value);
-      token_end_ = token_start_ + value.size();
-    }
-
-  public:
-    completion_session(std::size_t prompt_length) : prompt_length_(prompt_length)
-    {}
-
-    void reset()
-    {
-      active_     = false;
-      next_index_ = 0;
-      line_prefix_.clear();
-      line_suffix_.clear();
-      token_start_ = 0;
-      token_end_   = 0;
-      completions_.clear();
-    }
-
-    void handle_tab(std::string& line, std::size_t& cursor)
-    {
-      if(can_cycle(line))
-      {
-        const auto& candidate = completions_[next_index_];
-        apply_candidate(line, cursor, candidate.value);
-        next_index_ = (next_index_ + 1) % completions_.size();
-        return;
-      }
-
-      reset();
-
-      token_start_ = token_start_at(line, cursor);
-      token_end_   = cursor;
-      line_prefix_ = line.substr(0, token_start_);
-      line_suffix_ = line.substr(cursor);
-
-      const auto current = std::string_view{line}.substr(token_start_, token_end_ - token_start_);
-
-      cli::detail::word_vector args{};
-      if(!cli::detail::tokenize(line_prefix_, std::back_inserter(args)))
-      {
-        std::cout << codes::bel;
-        std::cout.flush();
-        return;
-      }
-
-      completions_ = cli::detail::complete_for<^^Cli>(args, current);
-      if(completions_.empty())
-      {
-        std::cout << codes::bel;
-        std::cout.flush();
-        return;
-      }
-
-      if(completions_.size() == 1)
-      {
-        std::string insert = std::string{completions_.front().value};
-        if(line_suffix_.empty() or is_space(static_cast<unsigned char>(line_suffix_.front())))
-        {
-          insert.push_back(' ');
-        }
-        apply_candidate(line, cursor, insert);
-        reset();
-        return;
-      }
-
-      active_ = true;
-      apply_candidate(line, cursor, completions_.front().value);
-      next_index_ = 1;
-    }
-  };
-
-  template <typename Cli> class term_reader
+  template <typename Cli> class term
   {
     static constexpr std::size_t default_history_page_size = 10;
 
@@ -650,7 +352,7 @@ REFLEX_EXPORT namespace reflex::shell
     }
 
   public:
-    term_reader(std::string_view prompt, std::size_t history_page_size = default_history_page_size)
+    term(std::string_view prompt, std::size_t history_page_size = default_history_page_size)
         : prompt_(prompt), history_page_size_(std::max(1uz, history_page_size)),
           completion_(prompt.size())
     {
@@ -677,7 +379,7 @@ REFLEX_EXPORT namespace reflex::shell
       raw_enabled_ = true;
     }
 
-    ~term_reader()
+    ~term()
     {
       if(raw_enabled_)
       {
@@ -685,8 +387,8 @@ REFLEX_EXPORT namespace reflex::shell
       }
     }
 
-    term_reader(term_reader const&)            = delete;
-    term_reader& operator=(term_reader const&) = delete;
+    term(term const&)            = delete;
+    term& operator=(term const&) = delete;
 
     bool read_line(std::string& line)
     {
