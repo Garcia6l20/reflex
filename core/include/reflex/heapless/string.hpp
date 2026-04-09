@@ -14,6 +14,9 @@ REFLEX_EXPORT namespace reflex::heapless
 {
   template <typename CharT, std::size_t N> struct basic_string : vector<CharT, N>
   {
+    using view_type            = std::basic_string_view<CharT>;
+    static constexpr auto npos = view_type::npos;
+
     using vector_type = vector<CharT, N>;
 
     using vector_type::vector_type;
@@ -24,7 +27,7 @@ REFLEX_EXPORT namespace reflex::heapless
       this->assign(str, str + M - 1); // exclude null terminator
     }
 
-    constexpr basic_string(std::basic_string_view<CharT> sv)
+    constexpr basic_string(view_type sv)
     {
       if(sv.size() > N)
       {
@@ -33,27 +36,27 @@ REFLEX_EXPORT namespace reflex::heapless
       this->assign(sv.begin(), sv.end());
     }
 
-    constexpr std::basic_string_view<CharT> view() const noexcept
+    constexpr view_type view() const noexcept
     {
       return {this->data(), this->size()};
     }
 
-    constexpr operator std::basic_string_view<CharT>() const noexcept
+    constexpr operator view_type() const noexcept
     {
       return view();
     }
 
-    constexpr bool operator==(std::basic_string_view<CharT> other) const
+    constexpr bool operator==(view_type other) const
     {
       return view() == other;
     }
 
-    constexpr auto operator<=>(std::basic_string_view<CharT> other) const
+    constexpr auto operator<=>(view_type other) const
     {
       return view() <=> other;
     }
 
-    constexpr auto operator+=(std::basic_string_view<CharT> suffix)
+    constexpr auto operator+=(view_type suffix)
     {
       if(this->size() + suffix.size() > N)
       {
@@ -71,6 +74,56 @@ REFLEX_EXPORT namespace reflex::heapless
       }
       this->push_back(c);
       return *this;
+    }
+
+    using vector_type::operator=;
+
+    template <template <typename, typename...> typename Container, typename... Ts>
+    constexpr basic_string& operator=(Container<CharT, Ts...> const& other)
+    {
+      std::ranges::copy(other, this->begin());
+      return *this;
+    }
+
+    auto erase(std::size_t pos, std::size_t count = 1)
+    {
+      if(pos >= this->size())
+      {
+        return;
+      }
+      count = std::min(count, this->size() - pos);
+      vector_type::erase(this->begin() + pos, this->begin() + pos + count);
+    }
+
+    auto replace(std::size_t pos, std::size_t count, view_type replacement)
+    {
+      if(pos > this->size())
+      {
+        return;
+      }
+      count = std::min(count, this->size() - pos);
+      if(this->size() - count + replacement.size() > N)
+      {
+        throw std::length_error("Resulting string too long for basic_string");
+      }
+      vector_type::erase(this->begin() + pos, this->begin() + pos + count);
+      this->insert(this->begin() + pos, replacement.begin(), replacement.end());
+    }
+
+    auto substr(std::size_t pos, std::size_t count = basic_string::npos) const
+    {
+      if(pos > this->size())
+      {
+        return view_type{};
+      }
+      count = std::min(count, this->size() - pos);
+      return view_type{this->data() + pos, count};
+    }
+
+    friend std::basic_ostream<CharT>&
+        operator<<(std::basic_ostream<CharT>& os, basic_string const& str)
+    {
+      return os << str.view();
     }
   };
 

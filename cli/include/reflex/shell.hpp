@@ -25,8 +25,7 @@ REFLEX_EXPORT namespace reflex::shell
 
     int run()
     {
-      std::string line;
-      line.reserve(32);
+      line_type                                 line;
       std::inplace_vector<std::string_view, 32> args{};
       term<std::decay_t<Cli>>                   reader{prompt_, history_page_size_};
       while(true)

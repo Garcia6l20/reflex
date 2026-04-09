@@ -9,6 +9,7 @@
 #endif
 
 #include <reflex/shell/codes.hpp>
+#include <reflex/shell/config.hpp>
 
 REFLEX_EXPORT namespace reflex::shell
 {
@@ -18,12 +19,12 @@ REFLEX_EXPORT namespace reflex::shell
     cli::detail::completion_vector completions_{};
     bool                           active_     = false;
     std::size_t                    next_index_ = 0;
-    std::string                    line_prefix_{};
-    std::string                    line_suffix_{};
+    string<32>                     line_prefix_{};
+    string<32>                     line_suffix_{};
     std::size_t                    token_start_ = 0;
     std::size_t                    token_end_   = 0;
 
-    static std::size_t token_start_at(std::string const& line, std::size_t cursor)
+    static std::size_t token_start_at(line_type const& line, std::size_t cursor)
     {
       auto pos = cursor;
       while(pos > 0 and not is_space(static_cast<unsigned char>(line[pos - 1])))
@@ -35,7 +36,7 @@ REFLEX_EXPORT namespace reflex::shell
 
     static void replace_token(
         std::size_t      prompt_length,
-        std::string&     line,
+        line_type&       line,
         std::size_t&     cursor,
         std::size_t      token_start,
         std::size_t      token_end,
@@ -50,7 +51,7 @@ REFLEX_EXPORT namespace reflex::shell
       std::cout.flush();
     }
 
-    bool can_cycle(std::string const& line) const
+    bool can_cycle(line_type const& line) const
     {
       if(not active_)
       {
@@ -68,7 +69,7 @@ REFLEX_EXPORT namespace reflex::shell
          and std::string_view{line}.ends_with(line_suffix_);
     }
 
-    void apply_candidate(std::string& line, std::size_t& cursor, std::string_view value)
+    void apply_candidate(line_type& line, std::size_t& cursor, std::string_view value)
     {
       replace_token(prompt_length_, line, cursor, token_start_, token_end_, value);
       token_end_ = token_start_ + value.size();
@@ -89,7 +90,7 @@ REFLEX_EXPORT namespace reflex::shell
       completions_.clear();
     }
 
-    void handle_tab(std::string& line, std::size_t& cursor)
+    void handle_tab(line_type& line, std::size_t& cursor)
     {
       if(can_cycle(line))
       {

@@ -31,7 +31,7 @@ REFLEX_EXPORT namespace reflex::shell
     history<64>             history_{};
     completion_session<Cli> completion_{};
 
-    static void insert_char(std::string& line, std::size_t& cursor, char ch)
+    static void insert_char(line_type& line, std::size_t& cursor, char ch)
     {
       if(cursor < line.size())
       {
@@ -44,7 +44,7 @@ REFLEX_EXPORT namespace reflex::shell
       ++cursor;
     }
 
-    static bool erase_before_cursor(std::string& line, std::size_t& cursor)
+    static bool erase_before_cursor(line_type& line, std::size_t& cursor)
     {
       if(cursor == 0)
       {
@@ -55,7 +55,7 @@ REFLEX_EXPORT namespace reflex::shell
       return true;
     }
 
-    static bool erase_at_cursor(std::string& line, std::size_t cursor)
+    static bool erase_at_cursor(line_type& line, std::size_t cursor)
     {
       if(cursor >= line.size())
       {
@@ -65,7 +65,7 @@ REFLEX_EXPORT namespace reflex::shell
       return true;
     }
 
-    static void redraw_after_edit(std::string const& line, std::size_t cursor)
+    static void redraw_after_edit(line_type const& line, std::size_t cursor)
     {
       if(cursor < line.size())
       {
@@ -81,7 +81,7 @@ REFLEX_EXPORT namespace reflex::shell
     }
 
     // Redraws from cursor to end of line and clears any stale characters beyond the new end.
-    static void redraw_line_from(std::string const& line, std::size_t cursor)
+    static void redraw_line_from(line_type const& line, std::size_t cursor)
     {
       auto tail = std::string_view{line}.substr(cursor);
       std::cout << tail << sequences::clear_to_eol;
@@ -89,7 +89,7 @@ REFLEX_EXPORT namespace reflex::shell
       std::cout.flush();
     }
 
-    static std::size_t erase_word_before_cursor(std::string& line, std::size_t& cursor)
+    static std::size_t erase_word_before_cursor(line_type& line, std::size_t& cursor)
     {
       if(cursor == 0)
       {
@@ -102,7 +102,7 @@ REFLEX_EXPORT namespace reflex::shell
       return erased;
     }
 
-    static std::size_t erase_word_at_cursor(std::string& line, std::size_t cursor)
+    static std::size_t erase_word_at_cursor(line_type& line, std::size_t cursor)
     {
       if(cursor >= line.size())
       {
@@ -114,7 +114,7 @@ REFLEX_EXPORT namespace reflex::shell
       return erased;
     }
 
-    void replace_visible_line(std::string& line, std::size_t& cursor, std::string_view replacement)
+    void replace_visible_line(line_type& line, std::size_t& cursor, std::string_view replacement)
     {
       detail::move_cursor_to_input_start(prompt_.size());
       line.assign(replacement.begin(), replacement.end());
@@ -129,7 +129,7 @@ REFLEX_EXPORT namespace reflex::shell
       return is_alphanum(uch) or ch == '-' or ch == '_';
     }
 
-    static std::size_t find_prev_word_start(std::string const& line, std::size_t cursor)
+    static std::size_t find_prev_word_start(line_type const& line, std::size_t cursor)
     {
       auto target = cursor;
       while(target > 0 and not is_word_char(line[target - 1]))
@@ -143,7 +143,7 @@ REFLEX_EXPORT namespace reflex::shell
       return target;
     }
 
-    static std::size_t find_next_word_end(std::string const& line, std::size_t cursor)
+    static std::size_t find_next_word_end(line_type const& line, std::size_t cursor)
     {
       auto target = cursor;
       while(target < line.size() and is_word_char(line[target]))
@@ -157,7 +157,7 @@ REFLEX_EXPORT namespace reflex::shell
       return target;
     }
 
-    static void move_word_left(std::string const& line, std::size_t& cursor)
+    static void move_word_left(line_type const& line, std::size_t& cursor)
     {
       if(cursor == 0)
       {
@@ -171,7 +171,7 @@ REFLEX_EXPORT namespace reflex::shell
       std::cout.flush();
     }
 
-    static void move_home([[maybe_unused]] std::string const& line, std::size_t& cursor)
+    static void move_home([[maybe_unused]] line_type const& line, std::size_t& cursor)
     {
       if(cursor == 0)
       {
@@ -182,7 +182,7 @@ REFLEX_EXPORT namespace reflex::shell
       std::cout.flush();
     }
 
-    static void move_end(std::string const& line, std::size_t& cursor)
+    static void move_end(line_type const& line, std::size_t& cursor)
     {
       if(cursor >= line.size())
       {
@@ -193,7 +193,7 @@ REFLEX_EXPORT namespace reflex::shell
       std::cout.flush();
     }
 
-    static void move_word_right(std::string const& line, std::size_t& cursor)
+    static void move_word_right(line_type const& line, std::size_t& cursor)
     {
       if(cursor >= line.size())
       {
@@ -207,7 +207,7 @@ REFLEX_EXPORT namespace reflex::shell
       std::cout.flush();
     }
 
-    void handle_arrow(char code, std::string& line, std::size_t& cursor)
+    void handle_arrow(char code, line_type& line, std::size_t& cursor)
     {
       if(code == 'C')
       {
@@ -250,7 +250,7 @@ REFLEX_EXPORT namespace reflex::shell
       }
     }
 
-    void move_history_page_up(std::string& line, std::size_t& cursor)
+    void move_history_page_up(line_type& line, std::size_t& cursor)
     {
       if(auto prev = history_.previous(line, history_page_size_))
       {
@@ -258,7 +258,7 @@ REFLEX_EXPORT namespace reflex::shell
       }
     }
 
-    void move_history_page_down(std::string& line, std::size_t& cursor)
+    void move_history_page_down(line_type& line, std::size_t& cursor)
     {
       if(auto next = history_.next(history_page_size_))
       {
@@ -269,7 +269,7 @@ REFLEX_EXPORT namespace reflex::shell
     void handle_csi_sequence(
         std::string_view params,
         char             final_char,
-        std::string&     line,
+        line_type&       line,
         std::size_t&     cursor)
     {
       auto is_ctrl_modified = [&]() {
@@ -390,7 +390,7 @@ REFLEX_EXPORT namespace reflex::shell
     term(term const&)            = delete;
     term& operator=(term const&) = delete;
 
-    bool read_line(std::string& line)
+    bool read_line(line_type& line)
     {
       line.clear();
       history_.reset_navigation();
