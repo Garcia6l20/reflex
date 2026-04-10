@@ -55,12 +55,14 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
   {
     git& up;
 
+    [[= cli::option{"-y/--yes", "Skip confirmation prompt."}.flag()]] bool yes = false;
+
     [[= cli::option{"-r/--remote", "Remote name."},
       = cli::complete{^^remote_name_completer}]] std::string remote = "origin";
 
     int operator()() const
     {
-      std::println("Pushing to remote: {}", remote);
+      std::println("Pushing to remote: {} {}", remote, yes ? "(no confirmation)" : "");
       return 0;
     }
   } push{*this};

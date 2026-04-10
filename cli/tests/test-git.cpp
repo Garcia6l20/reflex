@@ -88,6 +88,13 @@ TEST_CASE("reflex::cli: git")
     // CHECK(err == "going to execute: add...\n");
     CHECK_EQ(out, "Adding: test\nAdding: data\n");
   }
+  SUBCASE("push with remote and yes")
+  {
+    const auto [rc, out, err] = run("push", "-r", "origin", "-y");
+    CHECK_EQ(rc, 0);
+    // CHECK(err == "going to execute: push...\n");
+    CHECK_EQ(out, "Pushing to remote: origin (no confirmation)\n");
+  }
 }
 
 TEST_CASE("reflex::cli: git completion")
@@ -291,6 +298,15 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "origin"sv));
     CHECK_FALSE(std::ranges::contains(v, "upstream"sv));
+  }
+
+  SUBCASE("trailing --yes after 'origin' is handled correctly")
+  {
+    auto v = completion_values(complete("git push --remote origin --yes", 5))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "--help"sv));
+    CHECK_FALSE(std::ranges::contains(v, "--yes"sv));
   }
 }
 

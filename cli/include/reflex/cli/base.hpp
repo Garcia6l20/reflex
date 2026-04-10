@@ -514,6 +514,7 @@ REFLEX_EXPORT namespace reflex::cli
     trackers.program = program;
     trackers.index   = index;
 
+    bool        treat_as_argument = false;
     std::size_t current_pos_arg = 0;
     while(it != end)
     {
@@ -524,7 +525,7 @@ REFLEX_EXPORT namespace reflex::cli
         continue;
       }
 
-      bool treat_as_argument = false;
+      treat_as_argument = false;
 
       if(trackers.current.is_option())
       {
@@ -737,7 +738,7 @@ REFLEX_EXPORT namespace reflex::cli
       }
     }
 
-    if(trackers.current.is_option())
+    if(treat_as_argument and trackers.current.is_option())
     {
       trackers.state = parsing_state::unknown_option;
       state_handler(trackers);
