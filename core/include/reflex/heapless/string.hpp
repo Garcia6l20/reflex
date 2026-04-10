@@ -85,7 +85,7 @@ REFLEX_EXPORT namespace reflex::heapless
       return *this;
     }
 
-    auto erase(std::size_t pos, std::size_t count = 1)
+    constexpr auto erase(std::size_t pos, std::size_t count = 1)
     {
       if(pos >= this->size())
       {
@@ -95,7 +95,7 @@ REFLEX_EXPORT namespace reflex::heapless
       vector_type::erase(this->begin() + pos, this->begin() + pos + count);
     }
 
-    auto replace(std::size_t pos, std::size_t count, view_type replacement)
+    constexpr auto replace(std::size_t pos, std::size_t count, view_type replacement)
     {
       if(pos > this->size())
       {
@@ -110,7 +110,7 @@ REFLEX_EXPORT namespace reflex::heapless
       this->insert(this->begin() + pos, replacement.begin(), replacement.end());
     }
 
-    auto substr(std::size_t pos, std::size_t count = basic_string::npos) const
+    constexpr auto substr(std::size_t pos, std::size_t count = basic_string::npos) const
     {
       if(pos > this->size())
       {
@@ -118,6 +118,16 @@ REFLEX_EXPORT namespace reflex::heapless
       }
       count = std::min(count, this->size() - pos);
       return view_type{this->data() + pos, count};
+    }
+
+    template <typename Prefix> constexpr bool starts_with(Prefix prefix) const noexcept
+    {
+      return view().starts_with(prefix);
+    }
+
+    template <typename Suffix> constexpr bool ends_with(Suffix suffix) const noexcept
+    {
+      return view().ends_with(suffix);
     }
 
     friend std::basic_ostream<CharT>&

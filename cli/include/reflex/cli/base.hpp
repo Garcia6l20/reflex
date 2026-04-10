@@ -500,7 +500,7 @@ REFLEX_EXPORT namespace reflex::cli
     }
   };
 
-  template <typename Cli>
+  template <bool show_help = true, typename Cli>
   int process_cmdline(
       Cli&&            cli,
       std::string_view program,
@@ -546,7 +546,10 @@ REFLEX_EXPORT namespace reflex::cli
           {
             if constexpr(o == ^^help_option)
             {
-              usage_of<cli_type>(program);
+              if(show_help)
+              {
+                usage_of<cli_type>(program);
+              }
               return 0;
             }
             else
@@ -656,7 +659,7 @@ REFLEX_EXPORT namespace reflex::cli
               return 1;
             }
             ++trackers.index;
-            return process_cmdline(
+            return process_cmdline<show_help>(
                 cli.[:cmd.member:], std::format("{} {}", program, trackers.current.view), it, end,
                                   state_handler, trackers.index);
           }

@@ -110,14 +110,14 @@ REFLEX_EXPORT namespace reflex::shell
       line_suffix_ = line.substr(cursor);
 
       cli::detail::word_vector args{};
-      if(!cli::detail::tokenize(line_prefix_, std::back_inserter(args)))
+      if(!cli::detail::tokenize(line, std::back_inserter(args)))
       {
         std::cout << codes::bel;
         std::cout.flush();
         return;
       }
-
-      completions_ = cli::detail::complete_for(cli_, args, args.size());
+      const std::size_t comp_point = args.size() + (line.ends_with(' ') ? 1 : 0);
+      completions_                 = cli::detail::complete_for(cli_, args, comp_point);
       if(completions_.empty())
       {
         std::cout << codes::bel;

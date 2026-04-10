@@ -87,7 +87,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
   template <typename Cli> auto complete_for(Cli && cli, word_vector words, std::size_t comp_point)
   {
     completion_vector completions{};
-    cli::detail::process_cmdline(
+    cli::detail::process_cmdline<false>(
         cli, identifier_of(decay(^^Cli)), words.begin(), words.end(), [&](auto const& trackers) {
           const auto state      = trackers.state;
           const auto view       = trackers.current.view;
