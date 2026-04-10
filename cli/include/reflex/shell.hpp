@@ -27,7 +27,7 @@ REFLEX_EXPORT namespace reflex::shell
     {
       line_type                                 line;
       std::inplace_vector<std::string_view, 32> args{};
-      term<std::decay_t<Cli>>                   reader{prompt_, history_page_size_};
+      term<Cli>                                 reader{std::ref(cli_), prompt_, history_page_size_};
       while(true)
       {
         std::cout << prompt_;
@@ -45,8 +45,8 @@ REFLEX_EXPORT namespace reflex::shell
         }
         if(!args.empty())
         {
-          const auto rc = reflex::cli::detail::process_cmdline(
-              cli_, identifier_of(cli_type), args.begin(), args.end());
+          const auto rc =
+              reflex::cli::detail::process(cli_, identifier_of(cli_type), args.begin(), args.end());
           if(rc != 0)
           {
             std::cerr << "Error: command exited with code " << rc << "\n";

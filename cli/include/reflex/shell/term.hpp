@@ -352,9 +352,12 @@ REFLEX_EXPORT namespace reflex::shell
     }
 
   public:
-    term(std::string_view prompt, std::size_t history_page_size = default_history_page_size)
+    term(
+        Cli&             cli,
+        std::string_view prompt,
+        std::size_t      history_page_size = default_history_page_size)
         : prompt_(prompt), history_page_size_(std::max(1uz, history_page_size)),
-          completion_(prompt.size())
+          completion_(cli, prompt.size())
     {
       if(::isatty(STDIN_FILENO) == 0)
       {

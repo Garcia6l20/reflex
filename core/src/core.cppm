@@ -11,6 +11,7 @@ import std;
 #include <reflex/caseconv.hpp>
 #include <reflex/concepts.hpp>
 #include <reflex/const_assert.hpp>
+#include <reflex/constant_span.hpp>
 #include <reflex/constant_string.hpp>
 #include <reflex/diags.hpp>
 #include <reflex/enum_flags.hpp>

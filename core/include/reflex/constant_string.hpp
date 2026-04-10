@@ -60,9 +60,19 @@ REFLEX_EXPORT namespace reflex
       return size_ == 0;
     }
 
-    constexpr operator value_type() const noexcept
+    constexpr auto starts_with(std::basic_string_view<Char> prefix) const noexcept
     {
-      return view();
+      return view().starts_with(prefix);
+    }
+
+    constexpr auto ends_with(std::basic_string_view<Char> suffix) const noexcept
+    {
+      return view().ends_with(suffix);
+    }
+
+    constexpr decltype(auto) operator[](std::size_t idx) const
+    {
+      return view()[idx];
     }
 
     constexpr value_type operator*() const noexcept
@@ -77,6 +87,11 @@ REFLEX_EXPORT namespace reflex
     constexpr auto operator<=>(basic_constant_string const& other) const noexcept
     {
       return view() <=> other.view();
+    }
+
+    constexpr operator value_type() const noexcept
+    {
+      return view();
     }
   };
 

@@ -5,7 +5,9 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <reflex/constant_span.hpp>
 #include <reflex/core.hpp>
+#include <reflex/heapless/vector.hpp>
 
 #include <iostream>
 #endif
@@ -140,14 +142,19 @@ REFLEX_EXPORT namespace reflex::cli
     {
       return member == mem;
     }
+
+    consteval bool operator==(base_info const& other) const
+    {
+      return member == other.member;
+    }
   };
 
   struct option_info : base_info<option_info, option>
   {
     struct _switches
     {
-      std::string_view s;
-      std::string_view l;
+      constant_string s;
+      constant_string l;
     } switches;
 
     consteval option_info(std::meta::info mem)
@@ -313,34 +320,229 @@ REFLEX_EXPORT namespace reflex::cli
     std::println();
   }
 
-  template <typename Cli>
-  int process_cmdline(Cli&& cli, std::string_view program, auto it, auto end)
+  enum class parsing_state
   {
-    static constexpr auto cli_type             = remove_cvref(^^Cli);
-    static constexpr auto [args, opts, s_cmds] = parse<cli_type>();
+    completed,
+    completion_check,
+    missing_option,
+    missing_option_value,
+    option_value_check,
+    missing_argument,
+    missing_command,
+    unknown_option,
+    unexpected_argument,
+  };
+
+  template <constant_span items> struct item_tracker
+  {
+    static constexpr auto N = items.size();
+    std::array<bool, N>   _used{};
+
+    using value_type = typename decltype(items)::value_type;
+
+    constexpr void mark_used(std::size_t idx)
+    {
+      _used[idx] = true;
+    }
+
+    template <value_type value> constexpr void mark_used()
+    {
+      template for(constexpr auto ii : std::views::iota(0uz, N))
+      {
+        if constexpr(value == items.view()[ii])
+        {
+          _used[ii] = true;
+          return;
+        }
+      }
+    }
+
+    constexpr bool is_used(std::size_t idx) const
+    {
+      return _used[idx];
+    }
+
+    template <value_type value> constexpr bool is_used()
+    {
+      template for(constexpr auto ii : std::views::iota(0uz, N))
+      {
+        if constexpr(value == items.view()[ii])
+        {
+          return _used[ii];
+        }
+      }
+      std::unreachable();
+    }
+
+    static constexpr std::size_t size()
+    {
+      return N;
+    }
+
+    constexpr bool all_used() const
+    {
+      return std::ranges::all_of(_used, std::identity{});
+    }
+
+    auto unused([[maybe_unused]] auto fn) const
+    {
+      template for(constexpr auto ii : std::views::iota(0uz, N))
+      {
+        if(not _used[ii])
+        {
+          fn.template operator()<items[ii]>();
+        }
+      }
+    }
+
+    auto first_unused([[maybe_unused]] auto fn) const
+    {
+      template for(constexpr auto ii : std::views::iota(0uz, N))
+      {
+        if(not _used[ii])
+        {
+          fn.template operator()<items[ii]>();
+          return;
+        }
+      }
+    }
+
+    auto last_used([[maybe_unused]] auto fn) const
+    {
+      // FIXME: this double loop is a workaround due to GCC bug...
+      [[maybe_unused]] std::size_t last_used_idx = std::numeric_limits<std::size_t>::max();
+      template for(constexpr auto ii : std::views::iota(0uz, N))
+      {
+        if(_used[ii])
+        {
+          last_used_idx = ii;
+        }
+      }
+      template for(constexpr auto ii : std::views::iota(0uz, N))
+      {
+        if(ii == last_used_idx)
+        {
+          fn.template operator()<items[ii]>();
+          return;
+        }
+      }
+    }
+
+    auto used([[maybe_unused]] auto fn) const
+    {
+      template for(constexpr auto ii : std::views::iota(0uz, N))
+      {
+        if(_used[ii])
+        {
+          fn(items.view()[ii]);
+        }
+      }
+    }
+
+    constexpr auto all([[maybe_unused]] auto fn) const
+    {
+      template for(constexpr auto ii : std::views::iota(0uz, N))
+      {
+        fn.template operator()<items[ii]>();
+      }
+    }
+  };
+
+  template <constant_span items> constexpr auto make_tracker()
+  {
+    return item_tracker<items>{};
+  }
+
+  template <typename Cmd> struct parse_trackers
+  {
+    static constexpr auto cmd_type = remove_cvref(^^Cmd);
+
+    static constexpr auto _raw = raw_parse<cmd_type>();
+
+    static constexpr auto args = argument_info::from_info_range(std::get<0>(_raw));
+    static constexpr auto opts = option_info::from_info_range(std::get<1>(_raw));
+    static constexpr auto cmds = command_info::from_info_range(std::get<2>(_raw));
+
+    Cmd& root;
+
+    decltype(make_tracker<constant_span(define_static_array(args))>()) args_track =
+        make_tracker<constant_span(define_static_array(args))>();
+    decltype(make_tracker<constant_span(define_static_array(opts))>()) opts_track =
+        make_tracker<constant_span(define_static_array(opts))>();
+    decltype(make_tracker<constant_span(define_static_array(cmds))>()) cmds_track =
+        make_tracker<constant_span(define_static_array(cmds))>();
+
+    struct _current
+    {
+      std::string_view view;
+      std::string_view value_view;
+
+      bool is_option() const
+      {
+        return not view.empty() and view[0] == '-';
+      }
+
+    } current{};
+
+    void init_current(std::string_view v)
+    {
+      current.view       = v;
+      current.value_view = {};
+    }
+
+    std::string_view program{};
+    parsing_state    state = parsing_state::completed;
+    std::size_t      index = 1;
+
+    void usage() const
+    {
+      usage_of<cmd_type>(program);
+    }
+  };
+
+  template <typename Cli>
+  int process_cmdline(
+      Cli&&            cli,
+      std::string_view program,
+      auto             it,
+      auto             end,
+      auto             state_handler,
+      std::size_t      index = 1)
+  {
+    static constexpr auto cli_type = remove_cvref(^^Cli);
+    parse_trackers<Cli>   trackers{cli};
+    trackers.program = program;
+    trackers.index   = index;
 
     std::size_t current_pos_arg = 0;
     while(it != end)
     {
-      auto view = std::string_view{*it};
+      trackers.init_current(*it);
+      if(trackers.current.view.empty())
+      {
+        ++it;
+        continue;
+      }
+
       bool treat_as_argument = false;
 
-      if(view[0] == '-')
+      if(trackers.current.is_option())
       {
         // option lookup
         bool found = false;
-        template for(constexpr auto o : opts)
+        template for(constexpr auto o : trackers.opts)
         {
           auto [short_switch, long_switch] = o.switches;
 
-          if((view == short_switch)
-             or (view == long_switch)
+          if((trackers.current.view == *short_switch)
+             or (trackers.current.view == *long_switch)
              or
              // counters accepts repeated short switch (ie.: -vvv => counter = 3)
              (o.is_counter()
-              and view.starts_with(short_switch)
-              and (std::ranges::all_of(
-                  view | std::views::drop(2), [&](auto c) { return c == short_switch[1]; }))))
+              and trackers.current.view.starts_with(short_switch)
+              and (std::ranges::all_of(trackers.current.view | std::views::drop(2), [&](auto c) {
+                    return c == short_switch[1];
+                  }))))
           {
             if constexpr(o == ^^help_option)
             {
@@ -366,28 +568,45 @@ REFLEX_EXPORT namespace reflex::cli
                     {
                       target.emplace();
                     }
-                    target.value() += std::ranges::count(view, short_switch[1]);
+                    target.value() += std::ranges::count(trackers.current.view, short_switch[1]);
                   }
                   else
                   {
-                    target += T(std::ranges::count(view, short_switch[1]));
+                    target += T(std::ranges::count(trackers.current.view, short_switch[1]));
                   }
                 }
                 else
                 {
-                  it              = std::next(it);
-                  auto value_view = std::string_view{*it};
-
-                  if constexpr(seq_c<T>)
+                  if(it != end)
                   {
-                    target.push_back(reflex::parse<typename T::value_type>(value_view));
+                    ++it;
+                  }
+                  trackers.current.value_view = std::string_view{*it};
+                  if(it == end)
+                  {
+                    trackers.state = parsing_state::missing_option_value;
+                    state_handler(trackers);
+                    return 1;
                   }
                   else
                   {
-                    target = reflex::parse<T>(value_view);
+                    trackers.state = parsing_state::option_value_check;
+                    state_handler(trackers);
+                  }
+                  ++trackers.index;
+
+                  if constexpr(seq_c<T>)
+                  {
+                    target.push_back(
+                        reflex::parse<typename T::value_type>(trackers.current.value_view));
+                  }
+                  else
+                  {
+                    target = reflex::parse<T>(trackers.current.value_view);
                   }
                 }
               }
+              trackers.opts_track.template mark_used<o>();
             }
 
             found = true;
@@ -398,26 +617,26 @@ REFLEX_EXPORT namespace reflex::cli
         {
           // If a positional argument is still expected, accept values prefixed with '-'
           // (for example negative numbers) as arguments instead of unknown options.
-          if(current_pos_arg < args.size())
+          if(current_pos_arg < trackers.args.size())
           {
             treat_as_argument = true;
           }
           else
           {
-            std::println(std::cerr, "unknown option: {}", view);
-            std::println(std::cerr);
-            usage_of<cli_type>(program);
+            trackers.state = parsing_state::unknown_option;
+            state_handler(trackers);
             return 1;
           }
         }
       }
 
-      if((view[0] != '-') or treat_as_argument)
+      if((not trackers.current.is_option()) or treat_as_argument)
       {
-        template for(constexpr auto cmd : s_cmds)
+        template for(constexpr auto cmd : trackers.cmds)
         {
-          if(view == cmd.display_name())
+          if(trackers.current.view == cmd.display_name())
           {
+            trackers.cmds_track.template mark_used<cmd>();
             if constexpr(requires { cli.template operator()<cmd.member>(); })
             {
               // groups may want initialization call
@@ -427,36 +646,47 @@ REFLEX_EXPORT namespace reflex::cli
             {
               cli();
             }
-            return process_cmdline(cli.[:cmd.member:], std::format("{} {}", program, view),
-                                                     std::next(it), end);
+            if(it != end)
+            {
+              ++it;
+            }
+            trackers.state = parsing_state::completion_check;
+            if(state_handler(trackers) != 0)
+            {
+              return 1;
+            }
+            ++trackers.index;
+            return process_cmdline(
+                cli.[:cmd.member:], std::format("{} {}", program, trackers.current.view), it, end,
+                                  state_handler, trackers.index);
           }
         }
 
         // assume argument
         bool found = false;
-        template for(constexpr auto ii : std::views::iota(std::size_t(0), args.size()))
+        template for(constexpr auto ii : std::views::iota(std::size_t(0), trackers.args.size()))
         {
           if(ii >= current_pos_arg)
           {
             ++current_pos_arg;
-            constexpr auto arg  = argument_info{args[ii]};
+            constexpr auto arg  = argument_info{trackers.args[ii]};
             constexpr auto type = arg.type();
             using T             = [:type:];
             T& target           = cli.[:arg.member:];
+            trackers.args_track.template mark_used<arg>();
 
             if constexpr(seq_c<T>)
             {
               const_assert(
-                  ii == args.size() - 1, "repeated arguments must be last", arg.source_location());
-              auto prev = it;
+                  ii == trackers.args.size() - 1, "repeated arguments must be last",
+                  arg.source_location());
               do
               {
                 // consume all remaining arguments
                 auto view = std::string_view(*it);
                 target.push_back(reflex::parse<typename T::value_type>(view));
-                prev = it;
+                ++trackers.index;
               } while(++it != end);
-              it = prev;
             }
             else
             {
@@ -469,23 +699,26 @@ REFLEX_EXPORT namespace reflex::cli
         }
         if(!found)
         {
-          std::println(std::cerr, "unexpected argument: {}", view);
-          std::println(std::cerr);
-          usage_of<cli_type>(program);
+          trackers.state = parsing_state::unexpected_argument;
+          state_handler(trackers);
           return 1;
         }
       }
-      it = std::next(it);
+      if(it != end)
+      {
+        ++it;
+        ++trackers.index;
+      }
     }
 
-    constexpr auto arg_count = args.size();
+    constexpr auto arg_count = trackers.args.size();
     if(current_pos_arg < arg_count)
     {
-      template for(constexpr auto ii : std::views::iota(std::size_t(0), args.size()))
+      template for(constexpr auto ii : std::views::iota(std::size_t(0), trackers.args.size()))
       {
         if(ii >= current_pos_arg)
         {
-          constexpr auto arg  = argument_info{args[ii]};
+          constexpr auto arg  = argument_info{trackers.args[ii]};
           constexpr auto type = arg.type();
           if constexpr(meta::is_template_instance_of(type, ^^std::optional))
           {
@@ -493,50 +726,30 @@ REFLEX_EXPORT namespace reflex::cli
           }
           else
           {
-            std::print(std::cerr, "missing required argument: ");
-            bool first = true;
-            template for(constexpr auto jj : std::views::iota(std::size_t(ii), args.size()))
-            {
-              if(jj >= current_pos_arg)
-              {
-                if(!first)
-                {
-                  std::print(std::cerr, ", ");
-                }
-                constexpr auto name = arg.display_name();
-                std::print(std::cerr, "{}", name);
-                first = false;
-              }
-            }
-            std::println(std::cerr);
-            std::println(std::cerr);
-            usage_of<cli_type>(program);
+            trackers.state = parsing_state::missing_argument;
+            state_handler(trackers);
             return 1;
           }
         }
       }
     }
 
+    if(trackers.current.is_option())
+    {
+      trackers.state = parsing_state::unknown_option;
+      state_handler(trackers);
+      return 1;
+    }
+
     if constexpr(requires { cli(); })
     {
-      // actual command execution
-      if constexpr(requires {
-                     { cli() } -> std::convertible_to<int>;
-                   })
-      {
-        return cli();
-      }
-      else
-      {
-        cli();
-        return 0;
-      }
+      trackers.state = parsing_state::completed;
+      return state_handler(trackers);
     }
     else
     {
-      std::println(std::cerr, "no command to execute");
-      std::println(std::cerr);
-      usage_of<cli_type>(program);
+      trackers.state = parsing_state::missing_command;
+      state_handler(trackers);
       return 1;
     }
   }

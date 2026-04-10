@@ -15,6 +15,7 @@ REFLEX_EXPORT namespace reflex::shell
 {
   template <typename Cli> class completion_session
   {
+    Cli&                           cli_;
     std::size_t                    prompt_length_ = 0;
     cli::detail::completion_vector completions_{};
     bool                           active_     = false;
@@ -76,7 +77,8 @@ REFLEX_EXPORT namespace reflex::shell
     }
 
   public:
-    completion_session(std::size_t prompt_length) : prompt_length_(prompt_length)
+    completion_session(Cli& cli, std::size_t prompt_length)
+        : cli_(cli), prompt_length_(prompt_length)
     {}
 
     void reset()
@@ -107,8 +109,6 @@ REFLEX_EXPORT namespace reflex::shell
       line_prefix_ = line.substr(0, token_start_);
       line_suffix_ = line.substr(cursor);
 
-      const auto current = std::string_view{line}.substr(token_start_, token_end_ - token_start_);
-
       cli::detail::word_vector args{};
       if(!cli::detail::tokenize(line_prefix_, std::back_inserter(args)))
       {
@@ -117,7 +117,7 @@ REFLEX_EXPORT namespace reflex::shell
         return;
       }
 
-      completions_ = cli::detail::complete_for<^^Cli>(args, current);
+      completions_ = cli::detail::complete_for(cli_, args, args.size());
       if(completions_.empty())
       {
         std::cout << codes::bel;

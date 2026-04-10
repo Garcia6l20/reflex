@@ -84,177 +84,170 @@ REFLEX_EXPORT namespace reflex::cli::detail
     return meta::null; // no completer found
   }
 
-  template <meta::info I> auto complete_for(word_vector words, std::string_view current)
+  template <typename Cli> auto complete_for(Cli && cli, word_vector words, std::size_t comp_point)
   {
     completion_vector completions{};
+    cli::detail::process_cmdline(
+        cli, identifier_of(decay(^^Cli)), words.begin(), words.end(), [&](auto const& trackers) {
+          const auto state      = trackers.state;
+          const auto view       = trackers.current.view;
+          const auto value_view = trackers.current.value_view;
+          const auto index      = trackers.index;
 
-    static constexpr auto [args, opts, s_cmds] = parse<I>();
-
-    // If there are still words before the cursor that are not the current one,
-    // check whether the first of them names a sub-command we should recurse into.
-    if(not words.empty())
-    {
-      template for(constexpr auto c : s_cmds)
-      {
-        auto it = std::ranges::find(words, c.display_name());
-        if(it != words.end())
-        {
-          constexpr auto sub_type = c.type();
-          return complete_for<sub_type>(word_vector{it + 1, words.end()}, current);
-        }
-      }
-    }
-    template for(constexpr auto c : s_cmds)
-    {
-      if(current == c.display_name())
-      {
-        constexpr auto sub_type = c.type();
-        return complete_for<sub_type>(words, {});
-      }
-    }
-
-    // Emit matching sub-command names.
-    template for(constexpr auto c : s_cmds)
-    {
-      constexpr auto name = c.display_name();
-      if(current.empty() or name.starts_with(current))
-      {
-        completions.push_back({.value = name, .description = c.help()});
-      }
-    }
-    if(not current.empty() and not completions.empty())
-    {
-      return completions;
-    }
-
-    if(current.starts_with('-'))
-    {
-      // Emit matching option switches.
-      template for(constexpr auto opt : opts)
-      {
-        constexpr auto [short_sw, long_sw] = opt.switches;
-        if(std::ranges::find_if(words, [&](auto w) { return w == long_sw or w == short_sw; })
-           != words.end())
-        {
-          continue; // already present in command line, don't offer again
-        }
-
-        constexpr auto descr = opt.help();
-        if(current == long_sw)
-        {
-          return completion_vector{
-              {.value = long_sw, .description = descr}
-          };
-        }
-        else if(current == short_sw)
-        {
-          return completion_vector{
-              {.value = short_sw, .description = descr}
-          };
-        }
-        if(long_sw.starts_with(current))
-        {
-          completions.push_back({.value = long_sw, .description = descr});
-        }
-        if(short_sw.starts_with(current))
-        {
-          completions.push_back({.value = short_sw, .description = descr});
-        }
-      }
-    }
-
-    std::string_view last_word = words.empty() ? "" : words.back();
-    if(completions.empty())
-    {
-      if(not last_word.empty())
-      {
-        template for(constexpr auto opt : opts)
-        {
-          constexpr auto comp = completer_of(opt.member);
-          if constexpr(comp != meta::null)
+          if(state == cli::detail::parsing_state::missing_command)
           {
-            constexpr auto [short_sw, long_sw] = opt.switches;
-            if(last_word == short_sw or last_word == long_sw)
-            {
-              constexpr auto fn = comp;
-              completions.append_range([:fn:](current));
-              return completions;
-            }
-          }
-        }
-      }
-
-      // at this point we should try for argument completion
-      if constexpr(not args.empty())
-      {
-        std::size_t current_arg_count = 0;
-        for(std::size_t i = 0; i < words.size(); ++i)
-        {
-          const auto token = words[i];
-          if(token.starts_with('-'))
-          {
-            bool matched_option         = false;
-            bool consumes_next_as_value = false;
-            template for(constexpr auto opt : opts)
-            {
-              constexpr auto [short_sw, long_sw] = opt.switches;
-              const bool is_counter_group =
-                  short_sw.size()
-                  > 1
-                  and token.starts_with(short_sw)
-                  and std::ranges::all_of(
-                      token | std::views::drop(2), [&](auto c) { return c == short_sw[1]; });
-
-              if(token == short_sw or token == long_sw or (opt.is_counter() and is_counter_group))
+            trackers.cmds_track.unused([&]<auto cmd> {
+              constexpr auto dname = cmd.display_name();
+              if(dname.starts_with(view))
               {
-                matched_option      = true;
-                constexpr auto type = opt.type();
-                if constexpr(type != ^^bool)
+                completions.push_back({.value = dname, .description = cmd.help()});
+              }
+            });
+          }
+          else if(state == cli::detail::parsing_state::unknown_option)
+          {
+            // offer unused options
+            trackers.opts_track.unused([&]<auto opt> {
+              constexpr auto [short_sw, long_sw] = opt.switches;
+              if(short_sw.starts_with(view))
+              {
+                completions.push_back({.value = short_sw, .description = opt.help()});
+              }
+              if(long_sw.starts_with(view))
+              {
+                completions.push_back({.value = long_sw, .description = opt.help()});
+              }
+            });
+          }
+          else if(state == cli::detail::parsing_state::missing_argument)
+          {
+            // if argument has completer... use it
+            trackers.args_track.first_unused([&]<auto arg> {
+              constexpr auto comp = completer_of(arg.member);
+              if constexpr(comp != meta::null)
+              {
+                constexpr auto fn = comp;
+                completions.append_range([:fn:](view));
+              }
+            });
+          }
+          else if(state == cli::detail::parsing_state::missing_option_value)
+          {
+            trackers.opts_track.all([&]<auto opt> {
+              constexpr auto [short_sw, long_sw] = opt.switches;
+              if(view == *short_sw or view == *long_sw)
+              {
+                if(index >= comp_point)
                 {
-                  if constexpr(not opt.is_counter())
+                  if(view == *short_sw)
                   {
-                    consumes_next_as_value = true;
+                    completions.push_back({.value = short_sw, .description = opt.help()});
+                  }
+                  else if(view == *long_sw)
+                  {
+                    completions.push_back({.value = long_sw, .description = opt.help()});
+                  }
+                }
+                else
+                {
+                  constexpr auto comp = completer_of(opt.member);
+                  if constexpr(comp != meta::null)
+                  {
+                    constexpr auto fn = comp;
+                    completions.append_range([:
+                                              fn:](value_view)
+                                                  | std::views::filter([value_view](auto const& c) {
+                                                      return c.value.starts_with(value_view);
+                                                    }));
                   }
                 }
               }
-            }
-
-            if(matched_option)
-            {
-              if(consumes_next_as_value and (i + 1) < words.size())
-              {
-                ++i;
-              }
-              continue;
-            }
-
-            continue;
+            });
           }
-
-          ++current_arg_count;
-        }
-        template for(constexpr auto ii : std::views::iota(std::size_t{0}, args.size()))
-        {
-          if(ii >= current_arg_count)
+          else if(state == cli::detail::parsing_state::completion_check)
           {
-            constexpr auto comp = completer_of(args[ii].member);
-            if constexpr(comp != meta::null)
+            if(index >= comp_point)
             {
-              auto candidates = [:comp:](current);
-              for(auto candidate : candidates)
-              {
-                if(candidate.value.starts_with(current))
+              trackers.cmds_track.all([&]<auto cmd> {
+                if(cmd.display_name().starts_with(view))
                 {
-                  completions.push_back(candidate);
+                  completions.push_back({.value = cmd.display_name(), .description = cmd.help()});
+                }
+              });
+              return 1;
+            }
+          }
+          else if(state == cli::detail::parsing_state::completed)
+          {
+            bool completed = false;
+            // check for completion on last argument
+            trackers.args_track.last_used([&]<auto arg> {
+              constexpr auto comp = completer_of(arg.member);
+              if constexpr(comp != meta::null)
+              {
+                constexpr auto fn = comp;
+                completions.append_range([:fn:](view) | std::views::filter([view](auto const& c) {
+                                                 return c.value.starts_with(view);
+                                               }));
+                completed = true;
+              }
+            });
+            if(completed and not view.empty())
+            {
+              return 0;
+            }
+            // offer unused options
+            trackers.opts_track.unused([&]<auto opt> {
+              constexpr auto [short_sw, long_sw] = opt.switches;
+              completions.push_back({.value = long_sw, .description = opt.help()});
+              completions.push_back({.value = short_sw, .description = opt.help()});
+            });
+          }
+          else if(state == cli::detail::parsing_state::option_value_check)
+          {
+            // may be a partial completed option
+            trackers.opts_track.unused([&]<auto opt> {
+              constexpr auto [short_sw, long_sw] = opt.switches;
+              if(view == *short_sw or view == *long_sw)
+              {
+                constexpr auto comp = completer_of(opt.member);
+                if constexpr(comp != meta::null)
+                {
+                  constexpr auto fn = comp;
+                  completions.append_range([:fn:](value_view)
+                                                 | std::views::filter([value_view](auto const& c) {
+                                                     return (value_view != c.value)
+                                                        and c.value.starts_with(value_view);
+                                                   }));
                 }
               }
-            }
-            return completions;
+            });
           }
-        }
-      }
-    }
-
+          else if(state == cli::detail::parsing_state::unexpected_argument)
+          {
+            if(index >= comp_point)
+            {
+              // probably a command
+              trackers.cmds_track.unused([&]<auto cmd> {
+                constexpr auto dname = cmd.display_name();
+                if(dname.starts_with(view))
+                {
+                  completions.push_back({.value = dname, .description = cmd.help()});
+                }
+              });
+              if(not completions.empty())
+              {
+                return 0;
+              }
+            }
+            return 0;
+          }
+          else
+          {
+            std::unreachable();
+          }
+          return 0;
+        });
     return completions;
   }
 
@@ -280,30 +273,14 @@ REFLEX_EXPORT namespace reflex::cli::detail
     }
   }
 
-  template <meta::info I> int do_complete(std::string_view comp_line, std::size_t comp_point)
+  template <typename Cmd>
+  int do_complete(Cmd && cmd, std::string_view comp_line, std::size_t comp_point)
   {
     next_word(comp_line); // drop command name
 
-    word_vector      words;
-    std::string_view current;
-    while(true)
-    {
-      if(auto word = next_word(comp_line); word.has_value())
-      {
-        if(--comp_point == 0)
-        {
-          current = word.value();
-          break;
-        }
-        words.push_back(word.value());
-      }
-      else
-      {
-        break;
-      }
-    }
-
-    const auto completions = complete_for<I>(words, current);
+    word_vector words;
+    detail::tokenize(comp_line, std::back_inserter(words));
+    const auto completions = complete_for(cmd, words, comp_point);
     for(auto const& comp : completions)
     {
       comp.print();
@@ -312,7 +289,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
   }
 
   // Entry-point called from run() when _REFLEX_COMPLETE is set to xxx_complete.
-  template <meta::info I> int do_complete()
+  template <typename Cmd> int do_complete(Cmd && cmd)
   {
     std::string_view comp_line = [] {
       if(const auto env = std::getenv("_REFLEX_COMP_LINE"); env != nullptr)
@@ -346,7 +323,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
       }
     }
 
-    return do_complete<I>(comp_line, comp_point);
+    return do_complete(cmd, comp_line, comp_point);
   }
 
   extern "C++" void emit_zsh_source(std::string_view program);

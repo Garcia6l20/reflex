@@ -61,7 +61,7 @@ public:
     ssize_t               count;
     while((count = ::read(pipe_fd_[0], buffer.data(), buffer.size())) > 0)
     {
-      result.append(buffer.data(), count);
+      result.append(buffer.data(), std::size_t(count));
     }
     ::close(pipe_fd_[0]);
     return result;

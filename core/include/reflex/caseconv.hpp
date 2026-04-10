@@ -24,7 +24,7 @@ template <typename OutputT = std::string> constexpr OutputT to_snake_case(std::s
       {
         result += '_';
       }
-      result += to_lower(c);
+      result += char(to_lower(c));
     }
     else if(c == '-')
     {
@@ -51,7 +51,7 @@ template <typename OutputT = std::string> constexpr OutputT to_pascal_case(std::
     {
       if(capitalize_next)
       {
-        result += to_upper(c);
+        result += char(to_upper(c));
         capitalize_next = false;
       }
       else
@@ -87,7 +87,8 @@ template <typename OutputT = std::string> constexpr OutputT to_camel_case(std::s
   {
     return result;
   }
-  result[0] = to_lower(result[0]);
+  using value_type = typename OutputT::value_type;
+  result[0]        = value_type(to_lower(result[0]));
   return result;
 }
 
