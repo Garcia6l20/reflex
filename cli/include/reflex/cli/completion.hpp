@@ -157,7 +157,9 @@ REFLEX_EXPORT namespace reflex::cli::detail
                     completions.append_range([:
                                               fn:](value_view)
                                                   | std::views::filter([value_view](auto const& c) {
-                                                      return c.value.starts_with(value_view);
+                                                      return c.type
+                                                          != cli::completion_type::plain
+                                                          or c.value.starts_with(value_view);
                                                     }));
                   }
                 }
@@ -187,7 +189,9 @@ REFLEX_EXPORT namespace reflex::cli::detail
               {
                 constexpr auto fn = comp;
                 completions.append_range([:fn:](view) | std::views::filter([view](auto const& c) {
-                                                 return c.value.starts_with(view);
+                                                 return c.type
+                                                     != cli::completion_type::plain
+                                                     or c.value.starts_with(view);
                                                }));
                 completed = true;
               }
@@ -216,8 +220,10 @@ REFLEX_EXPORT namespace reflex::cli::detail
                   constexpr auto fn = comp;
                   completions.append_range([:fn:](value_view)
                                                  | std::views::filter([value_view](auto const& c) {
-                                                     return (value_view != c.value)
-                                                        and c.value.starts_with(value_view);
+                                                     return c.type
+                                                         != cli::completion_type::plain
+                                                         or ((value_view != c.value)
+                                                             and c.value.starts_with(value_view));
                                                    }));
                 }
               }
@@ -336,28 +342,14 @@ REFLEX_EXPORT namespace reflex::cli::completers
   {
     constant_string pattern{"*"};
 
-    auto operator()(std::string_view current) const
+    auto operator()(std::string_view /* current */) const
     {
-      if(not current.empty())
-      {
-        // static data is OK, because there is only a single call to any completer at a time
-        static std::string current_pattern = std::format("{}{}", current, pattern.view());
-        return std::array{
-            cli::completion{
-                            .type        = cli::completion_type::file,
-                            .value       = current_pattern,
-                            .description = "File system path"}
-        };
-      }
-      else
-      {
-        return std::array{
-            cli::completion{
-                            .type        = cli::completion_type::file,
-                            .value       = pattern,
-                            .description = "File system path"}
-        };
-      }
+      return std::array{
+          cli::completion{
+                          .type        = cli::completion_type::file,
+                          .value       = pattern,
+                          .description = "File system path"}
+      };
     }
   };
 

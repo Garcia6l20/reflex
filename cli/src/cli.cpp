@@ -27,9 +27,9 @@ _{1}_completion() {{
             _path_files -/
         elif [[ "$type" == "file" ]]; then
             if [[ "$key" == "*" ]]; then
-                _path_files -f
+                _path_files
             else
-                _path_files -g "$key"
+                _path_files -g "$key" -/
             fi
         fi
     done
@@ -80,7 +80,7 @@ void emit_bash_source(std::string_view program)
                 if [[ "$value" == "*" ]]; then
                     compopt -o default
                 else
-                    COMPREPLY=( $(compgen -G "${{COMP_WORDS[COMP_CWORD]}}$value" 2>/dev/null) )
+                    COMPREPLY=( $(compgen -G "${{COMP_WORDS[COMP_CWORD]}}$value" 2>/dev/null) $(compgen -d -- "${{COMP_WORDS[COMP_CWORD]}}" 2>/dev/null) )
                     [[ ${{#COMPREPLY[@]}} -eq 0 ]] && compopt -o default
                 fi
                 ;;
