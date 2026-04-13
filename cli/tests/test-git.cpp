@@ -320,3 +320,26 @@ TEST_CASE("reflex::cli: git completion - add-text-file")
     CHECK(v.at(0).value == "*.txt"sv);
   }
 }
+
+TEST_CASE("reflex::cli: git completion - diff")
+{
+  SUBCASE("complete first argument")
+  {
+    auto v = completion_values(complete("git diff ", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "master"sv));
+    CHECK(std::ranges::contains(v, "develop"sv));
+    CHECK(std::ranges::contains(v, "feature/foo"sv));
+    CHECK(std::ranges::contains(v, "feature/bar"sv));
+  }
+  SUBCASE("complete second argument")
+  {
+    auto v = completion_values(complete("git diff master ", 3))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "develop"sv));
+    CHECK(std::ranges::contains(v, "feature/foo"sv));
+    CHECK(std::ranges::contains(v, "feature/bar"sv));
+  }
+}

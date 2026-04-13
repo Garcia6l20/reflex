@@ -18,6 +18,7 @@
 #ifndef REFLEX_MODULE
 #include <reflex/cli/base.hpp>
 
+#include <cctype>
 #include <inplace_vector>
 #include <optional>
 #endif
@@ -291,6 +292,12 @@ REFLEX_EXPORT namespace reflex::cli::detail
 
     word_vector<Config> words;
     detail::tokenize(comp_line, std::back_inserter(words));
+    // preserve a trailing empty word so completion runs for the current argument slot instead of
+    // reusing the previous token.
+    if(is_space(comp_line.back()))
+    {
+      words.push_back(std::string_view{});
+    }
     const auto completions = complete_for<Config>(cmd, words, comp_point);
     for(auto const& comp : completions)
     {

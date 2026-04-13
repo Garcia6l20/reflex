@@ -116,6 +116,10 @@ REFLEX_EXPORT namespace reflex::shell
         std::cout.flush();
         return;
       }
+      if(is_space(line.back()))
+      {
+        args.push_back(std::string_view{});
+      }
       const std::size_t comp_point = args.size() + (line.ends_with(' ') ? 1 : 0);
       completions_                 = cli::detail::complete_for<Config>(cli_, args, comp_point);
       if(completions_.empty())

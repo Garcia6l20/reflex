@@ -90,6 +90,23 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
     }
   } branch{*this};
 
+  struct[[= cli::command{"Compare branches."}]]
+  {
+    git& up;
+
+    [[= cli::argument{"Branch name."}, = cli::complete{^^branch_name_completer}]] //
+        std::string left = "";
+
+    [[= cli::argument{"Branch name."}, = cli::complete{^^branch_name_completer}]] //
+        std::string right = "";
+
+    int operator()() const
+    {
+      std::println("Comparing branches: {} vs {}", left, right);
+      return 0;
+    }
+  } diff{*this};
+
   struct[[= cli::command{"Add one text file to staging."}]]
   {
     git& up;
