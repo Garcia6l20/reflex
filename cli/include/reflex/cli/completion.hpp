@@ -127,15 +127,27 @@ REFLEX_EXPORT namespace reflex::cli::detail
           }
           else if(state == cli::detail::parsing_state::missing_argument)
           {
-            // if argument has completer... use it
-            trackers.args_track.first_unused([&]<auto arg> {
+            auto complete_arg = [&]<auto arg>() {
               constexpr auto comp = completer_of(arg.member);
               if constexpr(comp != meta::null)
               {
                 constexpr auto fn = comp;
                 completions.append_range([:fn:](view));
               }
-            });
+            };
+
+            // If the parser index already moved past the completion point, we are
+            // still completing the current (partially typed) argument.
+            if(index > comp_point)
+            {
+              trackers.args_track.last_used(
+                  [&]<auto arg> { complete_arg.template operator()<arg>(); });
+            }
+            else
+            {
+              trackers.args_track.first_unused(
+                  [&]<auto arg> { complete_arg.template operator()<arg>(); });
+            }
           }
           else if(state == cli::detail::parsing_state::missing_option_value)
           {
@@ -294,7 +306,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
     detail::tokenize(comp_line, std::back_inserter(words));
     // preserve a trailing empty word so completion runs for the current argument slot instead of
     // reusing the previous token.
-    if(is_space(comp_line.back()))
+    if(not comp_line.empty() and is_space(comp_line.back()))
     {
       words.push_back(std::string_view{});
     }

@@ -107,6 +107,23 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
     }
   } diff{*this};
 
+  struct[[= cli::command{"Show branch details."}]]
+  {
+    git& up;
+
+    [[= cli::argument{"Remote name."}, = cli::complete{^^remote_name_completer}]] //
+        std::string remote = "";
+
+    [[= cli::argument{"Branch name."}, = cli::complete{^^branch_name_completer}]] //
+        std::string branch = "";
+
+    int operator()() const
+    {
+      std::println("Showing branch details for: {} {}", remote, branch);
+      return 0;
+    }
+  } show{*this};
+
   struct[[= cli::command{"Add one text file to staging."}]]
   {
     git& up;

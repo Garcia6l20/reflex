@@ -333,6 +333,14 @@ TEST_CASE("reflex::cli: git completion - diff")
     CHECK(std::ranges::contains(v, "feature/foo"sv));
     CHECK(std::ranges::contains(v, "feature/bar"sv));
   }
+  SUBCASE("complete partial first argument")
+  {
+    auto v = completion_values(complete("git diff ma", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "master"sv));
+    CHECK(std::ranges::contains(v, "main"sv));
+  }
   SUBCASE("complete second argument")
   {
     auto v = completion_values(complete("git diff master ", 3))
@@ -341,5 +349,48 @@ TEST_CASE("reflex::cli: git completion - diff")
     CHECK(std::ranges::contains(v, "develop"sv));
     CHECK(std::ranges::contains(v, "feature/foo"sv));
     CHECK(std::ranges::contains(v, "feature/bar"sv));
+  }
+  SUBCASE("complete partial second argument")
+  {
+    auto v = completion_values(complete("git diff master de", 3))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "develop"sv));
+  }
+}
+
+TEST_CASE("reflex::cli: git completion - show")
+{
+  SUBCASE("complete first argument")
+  {
+    auto v = completion_values(complete("git show ", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "origin"sv));
+    CHECK(std::ranges::contains(v, "upstream"sv));
+    CHECK(std::ranges::contains(v, "fork"sv));
+  }
+  SUBCASE("complete partial first argument")
+  {
+    auto v = completion_values(complete("git show or", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "origin"sv));
+  }
+  SUBCASE("complete second argument")
+  {
+    auto v = completion_values(complete("git show origin ", 3))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "develop"sv));
+    CHECK(std::ranges::contains(v, "feature/foo"sv));
+    CHECK(std::ranges::contains(v, "feature/bar"sv));
+  }
+  SUBCASE("complete partial second argument")
+  {
+    auto v = completion_values(complete("git show origin de", 3))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "develop"sv));
   }
 }
