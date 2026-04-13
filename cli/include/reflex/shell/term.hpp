@@ -20,7 +20,7 @@
 
 REFLEX_EXPORT namespace reflex::shell
 {
-  template <typename Cli> class term
+  template <typename Cli, cli::configuration Config = {}> class term
   {
     static constexpr std::size_t default_history_page_size = 10;
 
@@ -29,7 +29,7 @@ REFLEX_EXPORT namespace reflex::shell
     bool                    raw_enabled_       = false;
     std::size_t             history_page_size_ = default_history_page_size;
     history<64>             history_{};
-    completion_session<Cli> completion_{};
+    completion_session<Cli, Config> completion_{};
 
     static void insert_char(line_type& line, std::size_t& cursor, char ch)
     {

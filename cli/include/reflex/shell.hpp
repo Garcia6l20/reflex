@@ -8,7 +8,7 @@
 
 REFLEX_EXPORT namespace reflex::shell
 {
-  template <typename Cli> class shell
+  template <typename Cli, cli::configuration Config = {}> class shell
   {
     static constexpr auto cli_type                  = decay(^^Cli);
     static constexpr auto default_history_page_size = 10UZ;
@@ -25,9 +25,9 @@ REFLEX_EXPORT namespace reflex::shell
 
     int run()
     {
-      line_type                                 line;
-      std::inplace_vector<std::string_view, 32> args{};
-      term<Cli>                                 reader{std::ref(cli_), prompt_, history_page_size_};
+      line_type                      line;
+      cli::detail::word_vector<Config> args{};
+      term<Cli, Config>              reader{std::ref(cli_), prompt_, history_page_size_};
       while(true)
       {
         std::cout << prompt_;
@@ -57,20 +57,22 @@ REFLEX_EXPORT namespace reflex::shell
     }
   };
 
-  template <typename Cli>
+  template <typename Cli, cli::configuration Config = {}>
   int run(Cli && cli, [[maybe_unused]] int argc, [[maybe_unused]] const char** argv)
   {
-    shell<Cli> sh{std::forward<Cli>(cli)};
+    shell<Cli, Config> sh{std::forward<Cli>(cli)};
     return sh.run();
   }
 
-  template <typename Cli, std::ranges::range R = std::initializer_list<std::string_view>>
+  template <
+      typename Cli, cli::configuration Config = {},
+      std::ranges::range R = std::initializer_list<std::string_view>>
   int run(Cli && cli, R && args)
   {
     auto argv = args
               | std::views::transform([](std::string_view arg) { return arg.data(); })
               | std::ranges::to<std::vector>();
-    return reflex::shell::run(std::forward<Cli>(cli), argv.size(), argv.data());
+    return reflex::shell::run<Cli, Config>(std::forward<Cli>(cli), argv.size(), argv.data());
   }
 
 } // namespace reflex::shell

@@ -52,8 +52,12 @@ REFLEX_EXPORT namespace reflex::cli
 
 REFLEX_EXPORT namespace reflex::cli::detail
 {
-  using word_vector       = std::inplace_vector<std::string_view, 64>;
-  using completion_vector = std::inplace_vector<completion, 128>;
+  template <configuration Config = {}>
+  using word_vector = std::inplace_vector<std::string_view, Config.max_string_length>;
+
+  template <configuration Config = {}>
+  using completion_vector = std::inplace_vector<completion, Config.max_completion_items>;
+
   consteval std::meta::info completer_of(std::meta::info mem)
   {
     for(auto ann : annotations_of(mem))
@@ -84,9 +88,10 @@ REFLEX_EXPORT namespace reflex::cli::detail
     return meta::null; // no completer found
   }
 
-  template <typename Cli> auto complete_for(Cli && cli, word_vector words, std::size_t comp_point)
+  template <configuration Config = {}, typename Cli>
+  auto complete_for(Cli && cli, word_vector<Config> words, std::size_t comp_point)
   {
-    completion_vector completions{};
+    completion_vector<Config> completions{};
     cli::detail::process_cmdline<false>(
         cli, identifier_of(decay(^^Cli)), words.begin(), words.end(), [&](auto const& trackers) {
           const auto state      = trackers.state;
@@ -279,14 +284,14 @@ REFLEX_EXPORT namespace reflex::cli::detail
     }
   }
 
-  template <typename Cmd>
+  template <configuration Config = {}, typename Cmd>
   int do_complete(Cmd && cmd, std::string_view comp_line, std::size_t comp_point)
   {
     next_word(comp_line); // drop command name
 
-    word_vector words;
+    word_vector<Config> words;
     detail::tokenize(comp_line, std::back_inserter(words));
-    const auto completions = complete_for(cmd, words, comp_point);
+    const auto completions = complete_for<Config>(cmd, words, comp_point);
     for(auto const& comp : completions)
     {
       comp.print();
@@ -295,7 +300,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
   }
 
   // Entry-point called from run() when _REFLEX_COMPLETE is set to xxx_complete.
-  template <typename Cmd> int do_complete(Cmd && cmd)
+  template <configuration Config = {}, typename Cmd> int do_complete(Cmd && cmd)
   {
     std::string_view comp_line = [] {
       if(const auto env = std::getenv("_REFLEX_COMP_LINE"); env != nullptr)
@@ -329,7 +334,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
       }
     }
 
-    return do_complete(cmd, comp_line, comp_point);
+    return do_complete<Config>(cmd, comp_line, comp_point);
   }
 
   extern "C++" void emit_zsh_source(std::string_view program);

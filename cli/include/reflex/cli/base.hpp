@@ -14,6 +14,14 @@
 
 REFLEX_EXPORT namespace reflex::cli
 {
+  struct configuration
+  {
+    bool enable_completion = true;
+
+    std::size_t max_completion_items = 128;
+    std::size_t max_string_length    = 64;
+  };
+
   struct argument
   {
     constant_string help;
@@ -515,7 +523,7 @@ REFLEX_EXPORT namespace reflex::cli
     trackers.index   = index;
 
     bool        treat_as_argument = false;
-    std::size_t current_pos_arg = 0;
+    std::size_t current_pos_arg   = 0;
     while(it != end)
     {
       trackers.init_current(*it);
