@@ -465,7 +465,7 @@ REFLEX_EXPORT namespace reflex::jinja
                       ++loop.index0;
                       ++loop.index;
                       loop.first = false;
-                      loop.last  = (loop.index0 == it.size() - 1);
+                      loop.last  = (loop.index0 == int(it.size()) - 1);
                     }
                   }
                   else if constexpr(map_c<V>)
@@ -499,7 +499,7 @@ REFLEX_EXPORT namespace reflex::jinja
                       ++loop.index0;
                       ++loop.index;
                       loop.first = false;
-                      loop.last  = (loop.index0 == it.size() - 1);
+                      loop.last  = (loop.index0 == int(it.size()) - 1);
                     }
                   }
                   else

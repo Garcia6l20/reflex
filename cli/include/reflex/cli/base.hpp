@@ -332,6 +332,8 @@ REFLEX_EXPORT namespace reflex::cli
   {
     completed,
     completion_check,
+    invalid_argument_value,
+    invalid_option_value,
     missing_option,
     missing_option_value,
     option_value_check,
@@ -484,6 +486,7 @@ REFLEX_EXPORT namespace reflex::cli
     {
       std::string_view view;
       std::string_view value_view;
+      std::error_code  parse_error;
 
       bool is_option() const
       {
@@ -496,6 +499,7 @@ REFLEX_EXPORT namespace reflex::cli
     {
       current.view       = v;
       current.value_view = {};
+      current.parse_error.clear();
     }
 
     std::string_view program{};
@@ -609,12 +613,27 @@ REFLEX_EXPORT namespace reflex::cli
 
                   if constexpr(seq_c<T>)
                   {
-                    target.push_back(
-                        reflex::parse<typename T::value_type>(trackers.current.value_view));
+                    auto parsed = reflex::parse<typename T::value_type>(trackers.current.value_view);
+                    if(not parsed)
+                    {
+                      trackers.current.parse_error = parsed.error();
+                      trackers.state               = parsing_state::invalid_option_value;
+                      state_handler(trackers);
+                      return 1;
+                    }
+                    target.push_back(std::move(parsed).value());
                   }
                   else
                   {
-                    target = reflex::parse<T>(trackers.current.value_view);
+                    auto parsed = reflex::parse<T>(trackers.current.value_view);
+                    if(not parsed)
+                    {
+                      trackers.current.parse_error = parsed.error();
+                      trackers.state               = parsing_state::invalid_option_value;
+                      state_handler(trackers);
+                      return 1;
+                    }
+                    target = std::move(parsed).value();
                   }
                 }
               }
@@ -696,14 +715,32 @@ REFLEX_EXPORT namespace reflex::cli
               {
                 // consume all remaining arguments
                 auto view = std::string_view(*it);
-                target.push_back(reflex::parse<typename T::value_type>(view));
+                trackers.current.view = view;
+                auto parsed           = reflex::parse<typename T::value_type>(view);
+                if(not parsed)
+                {
+                  trackers.current.parse_error = parsed.error();
+                  trackers.state               = parsing_state::invalid_argument_value;
+                  state_handler(trackers);
+                  return 1;
+                }
+                target.push_back(std::move(parsed).value());
                 ++trackers.index;
               } while(++it != end);
             }
             else
             {
               auto view = std::string_view(*it);
-              target    = reflex::parse<T>(view);
+              trackers.current.view = view;
+              auto parsed           = reflex::parse<T>(view);
+              if(not parsed)
+              {
+                trackers.current.parse_error = parsed.error();
+                trackers.state               = parsing_state::invalid_argument_value;
+                state_handler(trackers);
+                return 1;
+              }
+              target = std::move(parsed).value();
             }
             found = true;
             break;

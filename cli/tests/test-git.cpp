@@ -45,7 +45,9 @@ static auto completion_values(const std::vector<std::string>& lines)
   std::vector<cli::completion> result;
   for(std::size_t i = 0; i < lines.size(); i += 3)
   {
-    result.push_back({parse<cli::completion_type>(lines[i]), lines[i + 1], lines[i + 2]});
+    auto type = parse<cli::completion_type>(lines[i]);
+    REQUIRE(type.has_value());
+    result.push_back({type.value(), lines[i + 1], lines[i + 2]});
   }
   return result;
 }

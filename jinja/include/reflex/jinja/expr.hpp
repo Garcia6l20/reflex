@@ -721,25 +721,37 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       return base;
     }
 
+    template <typename T> static T parse_literal(std::string_view lexeme)
+    {
+      auto parsed = reflex::parse<T>(lexeme);
+      if(parsed)
+      {
+        return std::move(parsed).value();
+      }
+
+      throw std::runtime_error(
+          std::format("Failed to parse literal '{}': {}", lexeme, parsed.error().message()));
+    }
+
     value_type parse_primary()
     {
       switch(current.kind)
       {
         case token_kind::integer:
         {
-          auto v = parse<std::int64_t>(current.lexeme);
+          auto v = parse_literal<std::int64_t>(current.lexeme);
           advance();
           return v;
         }
         case token_kind::real:
         {
-          auto v = parse<double>(current.lexeme);
+          auto v = parse_literal<double>(current.lexeme);
           advance();
           return v;
         }
         case token_kind::boolean:
         {
-          auto v = parse<bool>(current.lexeme);
+          auto v = parse_literal<bool>(current.lexeme);
           advance();
           return {v};
         }
@@ -841,11 +853,13 @@ REFLEX_EXPORT namespace reflex::jinja::expr
             }
             else if constexpr(parsable_c<DLHS> and str_c<DRHS>)
             {
-              return parse<DLHS>(rhs) == lhs;
+              auto parsed = parse<DLHS>(rhs);
+              return parsed and (std::move(parsed).value() == lhs);
             }
             else if constexpr(str_c<DLHS> and parsable_c<DRHS>)
             {
-              return rhs == parse<DRHS>(lhs);
+              auto parsed = parse<DRHS>(lhs);
+              return parsed and (rhs == std::move(parsed).value());
             }
             else
             {

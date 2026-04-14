@@ -184,6 +184,27 @@ REFLEX_EXPORT namespace reflex::cli::detail
               }
             });
           }
+          else if(state == cli::detail::parsing_state::invalid_option_value)
+          {
+            trackers.opts_track.unused([&]<auto opt> {
+              constexpr auto [short_sw, long_sw] = opt.switches;
+              if(view == *short_sw or view == *long_sw)
+              {
+                constexpr auto comp = completer_of(opt.member);
+                if constexpr(comp != meta::null)
+                {
+                  constexpr auto fn = comp;
+                  completions.append_range([:fn:](value_view)
+                                                 | std::views::filter([value_view](auto const& c) {
+                                                     return c.type
+                                                         != cli::completion_type::plain
+                                                         or ((value_view != c.value)
+                                                             and c.value.starts_with(value_view));
+                                                   }));
+                }
+              }
+            });
+          }
           else if(state == cli::detail::parsing_state::completion_check)
           {
             if(index >= comp_point)
@@ -197,10 +218,26 @@ REFLEX_EXPORT namespace reflex::cli::detail
               return 1;
             }
           }
+          else if(state == cli::detail::parsing_state::invalid_argument_value)
+          {
+            trackers.args_track.last_used([&]<auto arg> {
+              constexpr auto comp = completer_of(arg.member);
+              if constexpr(comp != meta::null)
+              {
+                constexpr auto fn = comp;
+                completions.append_range([:fn:](view) | std::views::filter([view](auto const& c) {
+                                                 return c.type
+                                                     != cli::completion_type::plain
+                                                     or ((view != c.value)
+                                                         and c.value.starts_with(view));
+                                               }));
+              }
+            });
+          }
           else if(state == cli::detail::parsing_state::completed)
           {
             bool completed = false;
-            // check for completion on last argument
+
             trackers.args_track.last_used([&]<auto arg> {
               constexpr auto comp = completer_of(arg.member);
               if constexpr(comp != meta::null)
@@ -214,11 +251,12 @@ REFLEX_EXPORT namespace reflex::cli::detail
                 completed = true;
               }
             });
+
             if(completed and not view.empty())
             {
               return 0;
             }
-            // offer unused options
+
             trackers.opts_track.unused([&]<auto opt> {
               constexpr auto [short_sw, long_sw] = opt.switches;
               completions.push_back({.value = long_sw, .description = opt.help()});
@@ -277,7 +315,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
 
   constexpr std::optional<std::string_view> next_word(std::string_view & line)
   {
-    line = ltrim(line);
+    line = reflex::ltrim(line);
     if(line.empty())
     {
       return std::nullopt;
@@ -306,7 +344,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
     detail::tokenize(comp_line, std::back_inserter(words));
     // preserve a trailing empty word so completion runs for the current argument slot instead of
     // reusing the previous token.
-    if(not comp_line.empty() and is_space(comp_line.back()))
+    if(not comp_line.empty() and reflex::is_space(comp_line.back()))
     {
       words.push_back(std::string_view{});
     }

@@ -4,15 +4,17 @@
 #define REFLEX_EXPORT
 #endif
 
-#include <reflex/exception.hpp>
 #include <reflex/utils.hpp>
 
 #ifndef REFLEX_MODULE
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <expected>
 #include <format>
 #include <ranges>
+#include <system_error>
+#include <string>
 #include <string_view>
 #endif
 
@@ -20,21 +22,23 @@ REFLEX_EXPORT namespace reflex
 {
   template <typename T> struct parser;
 
+  template <typename T> using parse_result = std::expected<T, std::error_code>;
+
   template <typename T>
   concept Parsable = requires(std::string_view s) {
-    { parser<T>{}(s) } -> std::same_as<T>;
+    { parser<T>{}(s) } -> std::same_as<parse_result<T>>;
   };
 
   template <typename T>
   concept parsable_c = requires(std::string_view s) {
-    { parser<T>{}(s) } -> std::same_as<T>;
+    { parser<T>{}(s) } -> std::same_as<parse_result<T>>;
   };
 
   template <std::integral T> struct parser<T>
   {
-    constexpr T operator()(std::string_view s) const
+    constexpr parse_result<T> operator()(std::string_view s) const noexcept
     {
-      T value;
+      T value{};
 
       int base = 10;
       if(s.size() > 2 && s[0] == '0')
@@ -54,11 +58,11 @@ REFLEX_EXPORT namespace reflex
       auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value, base);
       if(ec != std::errc())
       {
-#ifdef __cpp_exceptions
-        throw runtime_error("Failed to parse int from string: {}", s);
-#else
-        std::abort();
-#endif
+        return std::unexpected(std::make_error_code(ec));
+      }
+      if(ptr != s.data() + s.size())
+      {
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
       }
       return value;
     }
@@ -66,17 +70,17 @@ REFLEX_EXPORT namespace reflex
 
   template <std::floating_point T> struct parser<T>
   {
-    constexpr T operator()(std::string_view s) const
+    constexpr parse_result<T> operator()(std::string_view s) const noexcept
     {
-      T value;
+      T value{};
       auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
       if(ec != std::errc())
       {
-#ifdef __cpp_exceptions
-        throw runtime_error(std::format("Failed to parse float from string: {}", s));
-#else
-        std::abort();
-#endif
+        return std::unexpected(std::make_error_code(ec));
+      }
+      if(ptr != s.data() + s.size())
+      {
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
       }
       return value;
     }
@@ -84,7 +88,7 @@ REFLEX_EXPORT namespace reflex
 
   template <> struct parser<std::string>
   {
-    constexpr std::string operator()(std::string_view s) const
+    constexpr parse_result<std::string> operator()(std::string_view s) const noexcept
     {
       return std::string(s);
     }
@@ -92,7 +96,7 @@ REFLEX_EXPORT namespace reflex
 
   template <> struct parser<std::string_view>
   {
-    constexpr std::string_view operator()(std::string_view s) const
+    constexpr parse_result<std::string_view> operator()(std::string_view s) const noexcept
     {
       return s;
     }
@@ -100,7 +104,7 @@ REFLEX_EXPORT namespace reflex
 
   template <> struct parser<bool>
   {
-    constexpr bool operator()(std::string_view s) const
+    constexpr parse_result<bool> operator()(std::string_view s) const noexcept
     {
       static constexpr std::array true_values  = {"true", "yes", "on", "1"};
       static constexpr std::array false_values = {"false", "no", "off", "0"};
@@ -114,18 +118,14 @@ REFLEX_EXPORT namespace reflex
       }
       else
       {
-#ifdef __cpp_exceptions
-        throw runtime_error("Failed to parse bool from string: {}", s);
-#else
-        std::abort();
-#endif
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
       }
     }
   };
 
   template <enum_c E> struct parser<E>
   {
-    constexpr E operator()(std::string_view s) const
+    constexpr parse_result<E> operator()(std::string_view s) const noexcept
     {
       template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
       {
@@ -134,15 +134,12 @@ REFLEX_EXPORT namespace reflex
           return extract<E>(e);
         }
       }
-#ifdef __cpp_exceptions
-      throw runtime_error("Failed to parse enum from string: {}", s);
-#else
-      std::abort();
-#endif
+      return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
   };
 
-  template <Parsable T> constexpr T parse(std::string_view s)
+  template <Parsable T>
+  constexpr parse_result<T> parse(std::string_view s) noexcept(noexcept(parser<T>{}(s)))
   {
     return parser<T>{}(s);
   }

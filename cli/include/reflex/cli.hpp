@@ -35,6 +35,20 @@ REFLEX_EXPORT namespace reflex::cli
             std::println(std::cerr, "missing required argument: {}", view);
             std::println(std::cerr);
           }
+          else if(state == parsing_state::invalid_option_value)
+          {
+            std::println(
+                std::cerr, "invalid value for option {}: {} ({})", view,
+                trackers.current.value_view, trackers.current.parse_error.message());
+            std::println(std::cerr);
+          }
+          else if(state == parsing_state::invalid_argument_value)
+          {
+            std::println(
+                std::cerr, "invalid argument value: {} ({})", view,
+                trackers.current.parse_error.message());
+            std::println(std::cerr);
+          }
           else if(state == detail::parsing_state::missing_command)
           {
             std::println(std::cerr, "no command to execute");
