@@ -158,6 +158,28 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
     }
   } add{*this};
 
+  struct[[= cli::command{"Set log level."}]]
+  {
+    enum class level
+    {
+      verbose,
+      debug,
+      info,
+      warning,
+      error,
+    };
+
+    [[= cli::argument{"Log level."}, = cli::completers::enumeration<level>{}]] //
+        level lvl = level::info;
+
+    int operator()() const
+    {
+      std::println("log level: {}", lvl);
+      return 0;
+    }
+
+  } log_level;
+
   template <std::meta::info M> void operator()()
   {
     // std::println(std::cerr, "going to execute: {}...", identifier_of(M));

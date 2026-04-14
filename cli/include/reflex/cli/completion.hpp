@@ -415,4 +415,24 @@ REFLEX_EXPORT namespace reflex::cli::completers
     }
   };
 
+  template <enum_c E> struct[[= complete{}]] enumeration
+  {
+    constexpr auto operator()(std::string_view current) const
+    {
+      static constexpr auto names =
+          define_static_array(enumerators_of(^^E) | std::views::transform([](auto e) {
+                                return constant_string(identifier_of(e));
+                              }));
+      return names
+           | std::views::filter(
+                 [current](auto name) { return current.empty() or name.starts_with(current); })
+           | std::views::transform([](auto name) {
+               return cli::completion{
+                   .type        = cli::completion_type::plain,
+                   .value       = name,
+                   .description = identifier_of(^^E)};
+             });
+    }
+  };
+
 } // namespace reflex::cli::completers

@@ -396,3 +396,27 @@ TEST_CASE("reflex::cli: git completion - show")
     CHECK(std::ranges::contains(v, "develop"sv));
   }
 }
+
+TEST_CASE("reflex::cli: git completion - log-level")
+{
+  SUBCASE("complete first argument")
+  {
+    auto v = completion_values(complete("git log-level ", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "verbose"sv));
+    CHECK(std::ranges::contains(v, "debug"sv));
+    CHECK(std::ranges::contains(v, "info"sv));
+    CHECK(std::ranges::contains(v, "warning"sv));
+    CHECK(std::ranges::contains(v, "error"sv));
+  }
+  SUBCASE("complete partial first argument")
+  {
+    auto v = completion_values(complete("git log-level de", 2))
+           | std::views::transform(&cli::completion::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "debug"sv));
+    CHECK_FALSE(std::ranges::contains(v, "verbose"sv));
+    CHECK_FALSE(std::ranges::contains(v, "info"sv));
+  }
+}
