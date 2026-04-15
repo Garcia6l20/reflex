@@ -17,6 +17,7 @@
 
 #ifndef REFLEX_MODULE
 #include <reflex/cli/base.hpp>
+#include <reflex/heapless/string.hpp>
 
 #include <cctype>
 #include <inplace_vector>
@@ -40,8 +41,8 @@ REFLEX_EXPORT namespace reflex::cli
   struct completion
   {
     completion_type  type = completion_type::plain;
-    std::string_view value;
-    std::string_view description;
+    heapless::string<32> value;
+    heapless::string<32> description;
 
     void print() const
     {

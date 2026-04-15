@@ -5,7 +5,9 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <concepts>
 #include <format>
+#include <type_traits>
 #endif
 
 #include <reflex/heapless/vector.hpp>
@@ -36,6 +38,13 @@ REFLEX_EXPORT namespace reflex::heapless
       this->assign(sv.begin(), sv.end());
     }
 
+    template <typename StringLike>
+      requires(
+          not std::same_as<std::remove_cvref_t<StringLike>, basic_string>
+          and std::convertible_to<StringLike const&, view_type>)
+    constexpr basic_string(StringLike const& str) : basic_string(view_type{str})
+    {}
+
     constexpr view_type view() const noexcept
     {
       return {this->data(), this->size()};
@@ -46,14 +55,34 @@ REFLEX_EXPORT namespace reflex::heapless
       return view();
     }
 
-    constexpr bool operator==(view_type other) const
+    friend constexpr bool operator==(basic_string const& lhs, basic_string const& rhs)
     {
-      return view() == other;
+      return lhs.view() == rhs.view();
     }
 
-    constexpr auto operator<=>(view_type other) const
+    friend constexpr bool operator==(basic_string const& lhs, view_type rhs)
     {
-      return view() <=> other;
+      return lhs.view() == rhs;
+    }
+
+    friend constexpr bool operator==(view_type lhs, basic_string const& rhs)
+    {
+      return lhs == rhs.view();
+    }
+
+    friend constexpr auto operator<=>(basic_string const& lhs, basic_string const& rhs)
+    {
+      return lhs.view() <=> rhs.view();
+    }
+
+    friend constexpr auto operator<=>(basic_string const& lhs, view_type rhs)
+    {
+      return lhs.view() <=> rhs;
+    }
+
+    friend constexpr auto operator<=>(view_type lhs, basic_string const& rhs)
+    {
+      return lhs <=> rhs.view();
     }
 
     constexpr auto operator+=(view_type suffix)
@@ -78,8 +107,7 @@ REFLEX_EXPORT namespace reflex::heapless
 
     using vector_type::operator=;
 
-    template <template <typename, typename...> typename Container, typename... Ts>
-    constexpr basic_string& operator=(Container<CharT, Ts...> const& other)
+    constexpr basic_string& operator=(std::basic_string_view<CharT> const& other)
     {
       const auto other_size = std::ranges::size(other);
       if(other_size > N)
@@ -90,6 +118,15 @@ REFLEX_EXPORT namespace reflex::heapless
       this->clear();
       this->insert(this->end(), std::ranges::begin(other), std::ranges::end(other));
       return *this;
+    }
+
+    template <typename StringLike>
+      requires(
+          not std::same_as<std::remove_cvref_t<StringLike>, basic_string>
+          and std::convertible_to<StringLike const&, view_type>)
+    constexpr basic_string& operator=(StringLike const& other)
+    {
+      return (*this = view_type{other});
     }
 
     constexpr auto erase(std::size_t pos, std::size_t count = 1)
@@ -150,6 +187,36 @@ REFLEX_EXPORT namespace reflex::heapless
 
 REFLEX_EXPORT namespace std
 {
+  template <typename CharT, std::size_t N, typename Traits>
+  struct common_type<reflex::heapless::basic_string<CharT, N>, std::basic_string_view<CharT, Traits>>
+  {
+    using type = std::basic_string_view<CharT, Traits>;
+  };
+
+  template <typename CharT, std::size_t N, typename Traits>
+  struct common_type<std::basic_string_view<CharT, Traits>, reflex::heapless::basic_string<CharT, N>>
+  {
+    using type = std::basic_string_view<CharT, Traits>;
+  };
+
+  template <typename CharT, std::size_t N, typename Traits, template <typename> typename TQual,
+            template <typename> typename UQual>
+  struct basic_common_reference<
+      reflex::heapless::basic_string<CharT, N>, std::basic_string_view<CharT, Traits>, TQual,
+      UQual>
+  {
+    using type = std::basic_string_view<CharT, Traits>;
+  };
+
+  template <typename CharT, std::size_t N, typename Traits, template <typename> typename TQual,
+            template <typename> typename UQual>
+  struct basic_common_reference<
+      std::basic_string_view<CharT, Traits>, reflex::heapless::basic_string<CharT, N>, TQual,
+      UQual>
+  {
+    using type = std::basic_string_view<CharT, Traits>;
+  };
+
   template <typename CharT, std::size_t N>
   struct formatter<reflex::heapless::basic_string<CharT, N>>
       : formatter<std::basic_string_view<CharT>>
