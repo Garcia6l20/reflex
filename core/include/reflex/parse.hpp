@@ -25,11 +25,6 @@ REFLEX_EXPORT namespace reflex
   template <typename T> using parse_result = std::expected<T, std::error_code>;
 
   template <typename T>
-  concept Parsable = requires(std::string_view s) {
-    { parser<T>{}(s) } -> std::same_as<parse_result<T>>;
-  };
-
-  template <typename T>
   concept parsable_c = requires(std::string_view s) {
     { parser<T>{}(s) } -> std::same_as<parse_result<T>>;
   };
@@ -138,7 +133,7 @@ REFLEX_EXPORT namespace reflex
     }
   };
 
-  template <Parsable T>
+  template <parsable_c T>
   constexpr parse_result<T> parse(std::string_view s) noexcept(noexcept(parser<T>{}(s)))
   {
     return parser<T>{}(s);
