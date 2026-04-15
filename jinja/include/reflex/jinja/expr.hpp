@@ -723,14 +723,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     template <typename T> static T parse_literal(std::string_view lexeme)
     {
-      auto parsed = reflex::parse<T>(lexeme);
-      if(parsed)
-      {
-        return std::move(parsed).value();
-      }
-
-      throw std::runtime_error(
-          std::format("Failed to parse literal '{}': {}", lexeme, parsed.error().message()));
+      return reflex::parse_or_throw<T>(lexeme);
     }
 
     value_type parse_primary()

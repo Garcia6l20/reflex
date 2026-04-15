@@ -22,3 +22,20 @@ TEST_CASE("reflex::parse: failures return error codes")
   REQUIRE_FALSE(invalid_bool.has_value());
   CHECK_EQ(invalid_bool.error().value(), std::make_error_code(std::errc::invalid_argument).value());
 }
+
+TEST_CASE("reflex::parse_result::value_or_throw")
+{
+  CHECK_EQ(reflex::parse_or_throw<int>("7"), 7);
+
+  CHECK_THROWS_AS(reflex::parse_or_throw<int>("7x"), reflex::parse_error);
+
+  try
+  {
+    (void)reflex::parse_or_throw<int>("7x");
+    FAIL("expected parse_or_throw to throw");
+  }
+  catch(reflex::parse_error const& e)
+  {
+    CHECK(std::string_view{e.what()}.contains("Parsing '7x' as 'int' failed:"));
+  }
+}

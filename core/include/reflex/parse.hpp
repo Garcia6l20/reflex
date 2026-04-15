@@ -4,6 +4,7 @@
 #define REFLEX_EXPORT
 #endif
 
+#include <reflex/exception.hpp>
 #include <reflex/utils.hpp>
 
 #ifndef REFLEX_MODULE
@@ -13,9 +14,10 @@
 #include <expected>
 #include <format>
 #include <ranges>
-#include <system_error>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 #endif
 
 REFLEX_EXPORT namespace reflex
@@ -137,6 +139,48 @@ REFLEX_EXPORT namespace reflex
   constexpr parse_result<T> parse(std::string_view s) noexcept(noexcept(parser<T>{}(s)))
   {
     return parser<T>{}(s);
+  }
+
+  template <parsable_c T> constexpr T parse_or(std::string_view s, T fallback)
+  {
+    auto parsed = parse<T>(s);
+    if(parsed)
+    {
+      return std::move(parsed).value();
+    }
+    return fallback;
+  }
+
+  template <parsable_c T, typename OnError>
+  constexpr T parse_or_else(std::string_view s, OnError && on_error)
+  {
+    auto parsed = parse<T>(s);
+    if(parsed)
+    {
+      return std::move(parsed).value();
+    }
+    return std::forward<OnError>(on_error)(parsed.error());
+  }
+
+  template <parsable_c T> T parse_or_throw(std::string_view s)
+  {
+    auto parsed = parse<T>(s);
+    if(parsed)
+    {
+      return std::move(parsed).value();
+    }
+
+    constexpr auto type_name = [] {
+      if constexpr(has_identifier(^^T))
+      {
+        return identifier_of(^^T);
+      }
+      else
+      {
+        return display_string_of(^^T);
+      }
+    }();
+    throw parse_error("Parsing '{}' as '{}' failed: {}", s, type_name, parsed.error().message());
   }
 
 #ifdef REFLEX_MODULE

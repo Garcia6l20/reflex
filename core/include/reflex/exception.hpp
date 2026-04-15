@@ -42,4 +42,9 @@ struct logic_error : std::logic_error
   {}
 };
 
+struct parse_error : runtime_error
+{
+  using runtime_error::runtime_error;
+};
+
 } // namespace reflex
