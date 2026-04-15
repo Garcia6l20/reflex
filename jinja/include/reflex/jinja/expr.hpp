@@ -6,6 +6,7 @@
 
 #ifndef REFLEX_MODULE
 #include <reflex/heapless/string.hpp>
+#include <reflex/scope_guard.hpp>
 
 #include <reflex/named_arg.hpp>
 #include <reflex/parse.hpp>
@@ -303,13 +304,16 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     lexer lex;
     token current;
 
-    static constexpr auto _max_identifier_size = 32uz;
-    using id_string                            = heapless::string<_max_identifier_size>;
-
     using context_type = ContextT;
     using value_type   = typename ContextT::value_type;
     using array_type   = typename ContextT::array_type;
     using object_type  = typename ContextT::object_type;
+
+    static constexpr auto _max_identifier_size = 32uz;
+    static constexpr auto _max_call_args       = 8uz;
+
+    using id_string   = heapless::string<_max_identifier_size>;
+    using args_vector = heapless::vector<value_type, _max_call_args>;
 
     static consteval std::meta::info __integral_type()
     {
@@ -359,6 +363,16 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     bool at(token_kind k) const noexcept
     {
       return current.kind == k;
+    }
+
+    void push_call_arg(args_vector& args, value_type arg)
+    {
+      if(args.size() >= _max_call_args)
+      {
+        throw std::runtime_error(
+            std::format("Too many function arguments (max {})", _max_call_args));
+      }
+      args.push_back(std::move(arg));
     }
 
     token consume(token_kind k)
@@ -425,9 +439,9 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       {
         advance();
 
-        id_string               name;
-        std::vector<value_type> args;
-        args.push_back(left);
+        std::string_view name;
+        args_vector      args;
+        push_call_arg(args, left);
 
         if(at(token_kind::call))
         {
@@ -437,7 +451,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
           while(!at(token_kind::rparen) and !at(token_kind::eof))
           {
-            args.push_back(parse_expr());
+            push_call_arg(args, parse_expr());
             if(at(token_kind::comma))
             {
               advance();
@@ -460,7 +474,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         {
           throw std::runtime_error(std::format("Unknown function '{}'", name));
         }
-        left = (*ctx)(name, args);
+        left = (*ctx)(name, std::span<value_type>{args.data(), args.size()});
       }
 
       return left;
@@ -732,21 +746,18 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       {
         case token_kind::integer:
         {
-          auto v = parse_literal<std::int64_t>(current.lexeme);
-          advance();
-          return v;
+          reflex::scope_guard _ = [this] { advance(); };
+          return parse_literal<std::int64_t>(current.lexeme);
         }
         case token_kind::real:
         {
-          auto v = parse_literal<double>(current.lexeme);
-          advance();
-          return v;
+          reflex::scope_guard _ = [this] { advance(); };
+          return parse_literal<double>(current.lexeme);
         }
         case token_kind::boolean:
         {
-          auto v = parse_literal<bool>(current.lexeme);
-          advance();
-          return {v};
+          reflex::scope_guard _ = [this] { advance(); };
+          return parse_literal<bool>(current.lexeme);
         }
         case token_kind::null_:
         {
@@ -755,9 +766,8 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         }
         case token_kind::string:
         {
-          auto v = parse_string(current.lexeme);
-          advance();
-          return v;
+          reflex::scope_guard _ = [this] { advance(); };
+          return parse_string(current.lexeme);
         }
         case token_kind::identifier:
         {
@@ -782,10 +792,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
           advance();
           consume(token_kind::lparen);
 
-          std::vector<value_type> args;
+          args_vector args;
           while(!at(token_kind::rparen) and !at(token_kind::eof))
           {
-            args.push_back(parse_expr());
+            push_call_arg(args, parse_expr());
             if(at(token_kind::comma))
               advance();
           }
@@ -793,7 +803,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
           if(ctx)
           {
-            return parse_postfix((*ctx)(name, args));
+            return parse_postfix((*ctx)(name, std::span<value_type>{args.data(), args.size()}));
           }
           throw std::runtime_error(std::format("Unknown function '{}'", name));
         }
