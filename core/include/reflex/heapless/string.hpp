@@ -81,7 +81,14 @@ REFLEX_EXPORT namespace reflex::heapless
     template <template <typename, typename...> typename Container, typename... Ts>
     constexpr basic_string& operator=(Container<CharT, Ts...> const& other)
     {
-      std::ranges::copy(other, this->begin());
+      const auto other_size = std::ranges::size(other);
+      if(other_size > N)
+      {
+        throw std::length_error("String assignment too long for basic_string");
+      }
+
+      this->clear();
+      this->insert(this->end(), std::ranges::begin(other), std::ranges::end(other));
       return *this;
     }
 
