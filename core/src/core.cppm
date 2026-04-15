@@ -24,6 +24,7 @@ import std;
 #include <reflex/meta/reg.hpp>
 #include <reflex/named_arg.hpp>
 #include <reflex/parse.hpp>
+#include <reflex/scope_guard.hpp>
 #include <reflex/to_tuple.hpp>
 #include <reflex/utils.hpp>
 #include <reflex/views/cartesian_product.hpp>
