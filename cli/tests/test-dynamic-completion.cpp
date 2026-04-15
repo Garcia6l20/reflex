@@ -38,10 +38,10 @@ struct[[= cli::command{"Simple echo command."}]] dynamic_completion_cli
         return "*";
       }();
       return std::array{
-          cli::completion{
-                          .type        = cli::completion_type::file,
-                          .value       = pattern,
-                          .description = "File system path"}
+          cli::completion<>{
+                            .type        = cli::completion_type::file,
+                            .value       = std::string(pattern),
+                            .description = "File system path"}
       };
     }
 
@@ -62,7 +62,7 @@ TEST_CASE("reflex::cli:dynamic completion")
   SUBCASE("nominal enum completion")
   {
     auto v = completion_values(complete<dynamic_completion_cli>("dynamic_completion_cli test ", 3))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "text"sv));
     CHECK(std::ranges::contains(v, "binary"sv));
@@ -72,7 +72,7 @@ TEST_CASE("reflex::cli:dynamic completion")
   {
     auto v =
         completion_values(complete<dynamic_completion_cli>("dynamic_completion_cli test text ", 4))
-        | std::views::transform(&cli::completion::value)
+        | std::views::transform(&cli::completion<>::value)
         | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "*.txt"sv));
   }
@@ -80,7 +80,7 @@ TEST_CASE("reflex::cli:dynamic completion")
   {
     auto v = completion_values(
                  complete<dynamic_completion_cli>("dynamic_completion_cli test binary ", 4))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "*.bin"sv));
   }
@@ -88,7 +88,7 @@ TEST_CASE("reflex::cli:dynamic completion")
   {
     auto v = completion_values(
                  complete<dynamic_completion_cli>("dynamic_completion_cli test archive ", 4))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "*.zip"sv));
   }

@@ -44,9 +44,10 @@ std::vector<std::string> complete(std::string_view comp_line, int comp_point)
 }
 
 // Extract just the "value" from completion output lines.
+template <cli::configuration config = {}>
 auto completion_values(const std::vector<std::string>& lines)
 {
-  std::vector<cli::completion> result;
+  std::vector<cli::completion<config>> result;
   for(std::size_t i = 0; i < lines.size(); i += 3)
   {
     auto type = parse<cli::completion_type>(lines[i]);

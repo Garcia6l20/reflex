@@ -158,7 +158,7 @@ TEST_CASE("reflex::cli: git completion - branch subcommand")
   SUBCASE("empty argument: all branch fixtures offered")
   {
     auto v = completion_values(complete<git>("git branch ", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "main"sv));
     CHECK(std::ranges::contains(v, "master"sv));
@@ -171,7 +171,7 @@ TEST_CASE("reflex::cli: git completion - branch subcommand")
   SUBCASE("partial 'feat' filters correctly")
   {
     auto v = completion_values(complete<git>("git branch feat", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "feature/foo"sv));
     CHECK(std::ranges::contains(v, "feature/bar"sv));
@@ -182,7 +182,7 @@ TEST_CASE("reflex::cli: git completion - branch subcommand")
   SUBCASE("partial 'main' returns only 'main'")
   {
     auto v = completion_values(complete<git>("git branch main", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "main"sv));
     CHECK_FALSE(std::ranges::contains(v, "master"sv));
@@ -191,7 +191,7 @@ TEST_CASE("reflex::cli: git completion - branch subcommand")
   SUBCASE("partial 'ma' returns 'main' and 'master'")
   {
     auto v = completion_values(complete<git>("git branch ma", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "main"sv));
     CHECK(std::ranges::contains(v, "master"sv));
@@ -201,7 +201,7 @@ TEST_CASE("reflex::cli: git completion - branch subcommand")
   SUBCASE("option '--' still offered alongside branch names")
   {
     auto v = completion_values(complete<git>("git branch -", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "--delete"sv));
     CHECK(std::ranges::contains(v, "-d"sv));
@@ -215,7 +215,7 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
   SUBCASE("empty value after -r: all remotes offered")
   {
     auto v = completion_values(complete<git>("git push -r ", 3))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "origin"sv));
     CHECK(std::ranges::contains(v, "upstream"sv));
@@ -225,7 +225,7 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
   SUBCASE("complete upstream should not repeat")
   {
     auto v = completion_values(complete<git>("git push -r upstream", 3))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK_FALSE(std::ranges::contains(v, "upstream"sv));
     CHECK_FALSE(std::ranges::contains(v, "origin"sv));
@@ -235,7 +235,7 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
   SUBCASE("partial 'up' after -r filters to 'upstream'")
   {
     auto v = completion_values(complete<git>("git push -r up", 3))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "upstream"sv));
     CHECK_FALSE(std::ranges::contains(v, "origin"sv));
@@ -245,7 +245,7 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
   SUBCASE("partial 'or' after --remote filters to 'origin'")
   {
     auto v = completion_values(complete<git>("git push --remote or", 4))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "origin"sv));
     CHECK_FALSE(std::ranges::contains(v, "upstream"sv));
@@ -254,7 +254,7 @@ TEST_CASE("reflex::cli: git completion - push subcommand with custom option comp
   SUBCASE("trailing --yes after 'origin' is handled correctly")
   {
     auto v = completion_values(complete<git>("git push --remote origin --yes", 5))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "--help"sv));
     CHECK_FALSE(std::ranges::contains(v, "--yes"sv));
@@ -277,7 +277,7 @@ TEST_CASE("reflex::cli: git completion - diff")
   SUBCASE("complete first argument")
   {
     auto v = completion_values(complete<git>("git diff ", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "master"sv));
     CHECK(std::ranges::contains(v, "develop"sv));
@@ -287,7 +287,7 @@ TEST_CASE("reflex::cli: git completion - diff")
   SUBCASE("complete partial first argument")
   {
     auto v = completion_values(complete<git>("git diff ma", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "master"sv));
     CHECK(std::ranges::contains(v, "main"sv));
@@ -295,7 +295,7 @@ TEST_CASE("reflex::cli: git completion - diff")
   SUBCASE("complete second argument")
   {
     auto v = completion_values(complete<git>("git diff master ", 3))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "develop"sv));
     CHECK(std::ranges::contains(v, "feature/foo"sv));
@@ -304,7 +304,7 @@ TEST_CASE("reflex::cli: git completion - diff")
   SUBCASE("complete partial second argument")
   {
     auto v = completion_values(complete<git>("git diff master de", 3))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "develop"sv));
   }
@@ -315,7 +315,7 @@ TEST_CASE("reflex::cli: git completion - show")
   SUBCASE("complete first argument")
   {
     auto v = completion_values(complete<git>("git show ", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "origin"sv));
     CHECK(std::ranges::contains(v, "upstream"sv));
@@ -324,14 +324,14 @@ TEST_CASE("reflex::cli: git completion - show")
   SUBCASE("complete partial first argument")
   {
     auto v = completion_values(complete<git>("git show or", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "origin"sv));
   }
   SUBCASE("complete second argument")
   {
     auto v = completion_values(complete<git>("git show origin ", 3))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "develop"sv));
     CHECK(std::ranges::contains(v, "feature/foo"sv));
@@ -340,7 +340,7 @@ TEST_CASE("reflex::cli: git completion - show")
   SUBCASE("complete partial second argument")
   {
     auto v = completion_values(complete<git>("git show origin de", 3))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "develop"sv));
   }
@@ -351,7 +351,7 @@ TEST_CASE("reflex::cli: git completion - log-level")
   SUBCASE("complete first argument")
   {
     auto v = completion_values(complete<git>("git log-level ", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "verbose"sv));
     CHECK(std::ranges::contains(v, "debug"sv));
@@ -362,7 +362,7 @@ TEST_CASE("reflex::cli: git completion - log-level")
   SUBCASE("complete partial first argument")
   {
     auto v = completion_values(complete<git>("git log-level de", 2))
-           | std::views::transform(&cli::completion::value)
+           | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
     CHECK(std::ranges::contains(v, "debug"sv));
     CHECK_FALSE(std::ranges::contains(v, "verbose"sv));

@@ -18,7 +18,7 @@ auto branch_name_completer(std::string_view current)
        | std::views::filter(
              [current](std::string_view b) { return current.empty() or b.starts_with(current); })
        | std::views::transform([](std::string_view b) {
-           return cli::completion{.value = b, .description = "Available branches"};
+           return cli::completion<>{.value = std::string(b), .description = "Available branches"};
          });
 }
 
@@ -30,7 +30,7 @@ auto remote_name_completer(std::string_view current)
        | std::views::filter(
              [current](std::string_view r) { return current.empty() or r.starts_with(current); })
        | std::views::transform([](std::string_view r) {
-           return cli::completion{.value = r, .description = "Available remotes"};
+           return cli::completion<>{.value = std::string(r), .description = "Available remotes"};
          });
 }
 

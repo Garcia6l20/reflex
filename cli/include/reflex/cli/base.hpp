@@ -14,13 +14,48 @@
 
 REFLEX_EXPORT namespace reflex::cli
 {
+  enum class completion_type
+  {
+    plain, // simple completion with no description
+    dir,   // complete with directories
+    file   // complete with files
+  };
+
+  template <typename Value, typename Description> struct completion_item
+  {
+    using value_type       = Value;
+    using description_type = Description;
+
+    completion_type  type = completion_type::plain;
+    value_type       value;
+    description_type description;
+
+    void print() const
+    {
+      std::println("{}\n{}\n{}", type, value, description);
+    }
+  };
+
+  struct completion_config
+  {
+    bool            enabled           = true;
+    std::meta::info word_vector       = ^^std::vector<std::string_view>;
+    std::meta::info completion_vector = ^^std::vector<completion_item<std::string, std::string>>;
+  };
+
   struct configuration
   {
-    bool enable_completion = true;
-
-    std::size_t max_completion_items = 128;
-    std::size_t max_string_length    = 64;
+    completion_config completion{};
   };
+
+  template <configuration config = {}>
+  using word_vector = typename[:config.completion.word_vector:];
+
+  template <configuration config = {}>
+  using completion_vector = typename[:config.completion.completion_vector:];
+
+  template <configuration config = {}>
+  using completion = typename completion_vector<config>::value_type;
 
   struct argument
   {
@@ -613,7 +648,8 @@ REFLEX_EXPORT namespace reflex::cli
 
                   if constexpr(seq_c<T>)
                   {
-                    auto parsed = reflex::parse<typename T::value_type>(trackers.current.value_view);
+                    auto parsed =
+                        reflex::parse<typename T::value_type>(trackers.current.value_view);
                     if(not parsed)
                     {
                       trackers.current.parse_error = parsed.error();
@@ -646,6 +682,18 @@ REFLEX_EXPORT namespace reflex::cli
         }
         if(!found)
         {
+          // In completion mode, a bare '-' is an option probe and should list
+          // available switches instead of being consumed as a positional string.
+          if constexpr(not show_help)
+          {
+            if(trackers.current.view == "-")
+            {
+              trackers.state = parsing_state::unknown_option;
+              state_handler(trackers);
+              return 1;
+            }
+          }
+
           // If a positional argument is still expected, accept values prefixed with '-'
           // (for example negative numbers) as arguments instead of unknown options.
           if(current_pos_arg < trackers.args.size())
@@ -714,7 +762,7 @@ REFLEX_EXPORT namespace reflex::cli
               do
               {
                 // consume all remaining arguments
-                auto view = std::string_view(*it);
+                auto view             = std::string_view(*it);
                 trackers.current.view = view;
                 auto parsed           = reflex::parse<typename T::value_type>(view);
                 if(not parsed)
@@ -730,7 +778,7 @@ REFLEX_EXPORT namespace reflex::cli
             }
             else
             {
-              auto view = std::string_view(*it);
+              auto view             = std::string_view(*it);
               trackers.current.view = view;
               auto parsed           = reflex::parse<T>(view);
               if(not parsed)
@@ -781,13 +829,6 @@ REFLEX_EXPORT namespace reflex::cli
           }
         }
       }
-    }
-
-    if(treat_as_argument and trackers.current.is_option())
-    {
-      trackers.state = parsing_state::unknown_option;
-      state_handler(trackers);
-      return 1;
     }
 
     if constexpr(requires { cli(); })

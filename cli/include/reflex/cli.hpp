@@ -86,11 +86,11 @@ REFLEX_EXPORT namespace reflex::cli
   }
   } // namespace detail
 
-  template <typename Cli, configuration Config = {}>
+  template <typename Cli, configuration config = {}>
   int run(Cli && cli, std::string_view program, auto it, auto end)
   {
     // constexpr auto cli_type = decay(type_of(^^cli));
-    if constexpr(Config.enable_completion)
+    if constexpr(config.completion.enabled)
     {
       // Completion management
       if(const auto complete_env = std::getenv("_REFLEX_COMPLETE"); complete_env != nullptr)
@@ -100,7 +100,7 @@ REFLEX_EXPORT namespace reflex::cli
         {
           if(complete.ends_with("complete"))
           {
-            return detail::do_complete<Config>(cli);
+            return detail::do_complete<config>(cli);
           }
           else if(complete == "bash_source")
           {
@@ -123,7 +123,7 @@ REFLEX_EXPORT namespace reflex::cli
     return detail::process(cli, program, it, end);
   }
 
-  template <typename Cli, configuration Config = {}>
+  template <typename Cli, configuration config = {}>
   int run(Cli && cli, int argc, const char** argv)
   {
     auto program = std::string_view{argv[0]};
@@ -131,23 +131,23 @@ REFLEX_EXPORT namespace reflex::cli
     {
       program.remove_prefix(pos + 1);
     }
-    return run<Cli, Config>(std::forward<Cli>(cli), program, argv + 1, argv + argc);
+    return run<Cli, config>(std::forward<Cli>(cli), program, argv + 1, argv + argc);
   }
 
-  template <typename Cli, configuration Config = {}> int run(int argc, const char** argv)
+  template <typename Cli, configuration config = {}> int run(int argc, const char** argv)
   {
-    return run<Cli, Config>(Cli{}, argc, argv);
+    return run<Cli, config>(Cli{}, argc, argv);
   }
 
   template <
-      typename Cli, configuration Config = {},
+      typename Cli, configuration config = {},
       std::ranges::range R = std::initializer_list<std::string_view>>
   int run(Cli && cli, R && args)
   {
     auto argv = args
               | std::views::transform([](std::string_view arg) { return arg.data(); })
               | std::ranges::to<std::vector>();
-    return cli::run<Cli, Config>(std::forward<Cli>(cli), int(argv.size()), argv.data());
+    return cli::run<Cli, config>(std::forward<Cli>(cli), int(argv.size()), argv.data());
   }
 
 } // namespace reflex::cli
