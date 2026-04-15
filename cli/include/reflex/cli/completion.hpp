@@ -127,10 +127,11 @@ REFLEX_EXPORT namespace reflex::cli::detail
     completion_vector<Config> completions{};
     cli::detail::process_cmdline<false>(
         cli, identifier_of(decay(^^Cli)), words.begin(), words.end(), [&](auto const& trackers) {
-          const auto state      = trackers.state;
-          const auto view       = trackers.current.view;
-          const auto value_view = trackers.current.value_view;
-          const auto index      = trackers.index;
+          const auto  state      = trackers.state;
+          const auto  view       = trackers.current.view;
+          const auto  value_view = trackers.current.value_view;
+          const auto  index      = trackers.index;
+          const auto& cmd        = trackers.root;
 
           if(state == cli::detail::parsing_state::missing_command)
           {
@@ -164,13 +165,13 @@ REFLEX_EXPORT namespace reflex::cli::detail
             if(index > comp_point)
             {
               trackers.args_track.last_used([&]<auto arg> {
-                completions.append_range(arg_completer<arg>::complete(cli, view));
+                completions.append_range(arg_completer<arg>::complete(cmd, view));
               });
             }
             else
             {
               trackers.args_track.first_unused([&]<auto arg> {
-                completions.append_range(arg_completer<arg>::complete(cli, view));
+                completions.append_range(arg_completer<arg>::complete(cmd, view));
               });
             }
           }
@@ -194,7 +195,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
                 else
                 {
                   completions.append_range(
-                      arg_completer<opt>::complete(cli, value_view)
+                      arg_completer<opt>::complete(cmd, value_view)
                       | std::views::filter([value_view](auto const& c) {
                           return (c.type != cli::completion_type::plain)
                               or c.value.starts_with(value_view);
@@ -210,7 +211,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
               if(view == *short_sw or view == *long_sw)
               {
                 completions.append_range(
-                    arg_completer<opt>::complete(cli, value_view)
+                    arg_completer<opt>::complete(cmd, value_view)
                     | std::views::filter([value_view](auto const& c) {
                         return (c.type != cli::completion_type::plain)
                             or ((value_view != c.value) and c.value.starts_with(value_view));
@@ -234,7 +235,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
           else if(state == cli::detail::parsing_state::invalid_argument_value)
           {
             trackers.args_track.last_used([&]<auto arg> {
-              completions.append_range(arg_completer<arg>::complete(cli, view));
+              completions.append_range(arg_completer<arg>::complete(cmd, view));
             });
           }
           else if(state == cli::detail::parsing_state::completed)
@@ -245,7 +246,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
               using completer = arg_completer<arg>;
               if constexpr(completer::has_comp)
               {
-                completions.append_range(completer::complete(cli, view));
+                completions.append_range(completer::complete(cmd, view));
                 completed = true;
               }
             });
@@ -269,7 +270,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
               if(view == *short_sw or view == *long_sw)
               {
                 completions.append_range(
-                    arg_completer<opt>::complete(cli, value_view)
+                    arg_completer<opt>::complete(cmd, value_view)
                     | std::views::filter([value_view](auto const& c) {
                         return (c.type != cli::completion_type::plain)
                             or ((value_view != c.value) and c.value.starts_with(value_view));
