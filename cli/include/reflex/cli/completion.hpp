@@ -89,6 +89,38 @@ REFLEX_EXPORT namespace reflex::cli::detail
     return meta::null; // no completer found
   }
 
+  template <auto arg> struct arg_completer
+  {
+    static constexpr auto comp     = completer_of(arg.member);
+    static constexpr bool has_comp = comp != meta::null;
+    static auto           complete([[maybe_unused]] auto&& cli, std::string_view current)
+    {
+      if constexpr(has_comp)
+      {
+        if constexpr(requires { [:comp:](current); })
+        {
+          return [:comp:](current);
+        }
+        else if constexpr(requires { [:comp:](cli, current); })
+        {
+          return [:comp:](cli, current);
+        }
+        else if constexpr(requires { cli.[:comp:](current); })
+        {
+          return cli.[:comp:](current);
+        }
+        else
+        {
+          static_assert(false, "Completer must be callable with (std::string_view)");
+        }
+      }
+      else
+      {
+        return std::array<completion, 0>{};
+      }
+    }
+  };
+
   template <configuration Config = {}, typename Cli>
   auto complete_for(Cli && cli, word_vector<Config> words, std::size_t comp_point)
   {
@@ -127,26 +159,19 @@ REFLEX_EXPORT namespace reflex::cli::detail
           }
           else if(state == cli::detail::parsing_state::missing_argument)
           {
-            auto complete_arg = [&]<auto arg>() {
-              constexpr auto comp = completer_of(arg.member);
-              if constexpr(comp != meta::null)
-              {
-                constexpr auto fn = comp;
-                completions.append_range([:fn:](view));
-              }
-            };
-
             // If the parser index already moved past the completion point, we are
             // still completing the current (partially typed) argument.
             if(index > comp_point)
             {
-              trackers.args_track.last_used(
-                  [&]<auto arg> { complete_arg.template operator()<arg>(); });
+              trackers.args_track.last_used([&]<auto arg> {
+                completions.append_range(arg_completer<arg>::complete(cli, view));
+              });
             }
             else
             {
-              trackers.args_track.first_unused(
-                  [&]<auto arg> { complete_arg.template operator()<arg>(); });
+              trackers.args_track.first_unused([&]<auto arg> {
+                completions.append_range(arg_completer<arg>::complete(cli, view));
+              });
             }
           }
           else if(state == cli::detail::parsing_state::missing_option_value)
@@ -168,18 +193,12 @@ REFLEX_EXPORT namespace reflex::cli::detail
                 }
                 else
                 {
-                  constexpr auto comp = completer_of(opt.member);
-                  if constexpr(comp != meta::null)
-                  {
-                    constexpr auto fn = comp;
-                    completions.append_range([:
-                                              fn:](value_view)
-                                                  | std::views::filter([value_view](auto const& c) {
-                                                      return c.type
-                                                          != cli::completion_type::plain
-                                                          or c.value.starts_with(value_view);
-                                                    }));
-                  }
+                  completions.append_range(
+                      arg_completer<opt>::complete(cli, value_view)
+                      | std::views::filter([value_view](auto const& c) {
+                          return (c.type != cli::completion_type::plain)
+                              or c.value.starts_with(value_view);
+                        }));
                 }
               }
             });
@@ -190,18 +209,12 @@ REFLEX_EXPORT namespace reflex::cli::detail
               constexpr auto [short_sw, long_sw] = opt.switches;
               if(view == *short_sw or view == *long_sw)
               {
-                constexpr auto comp = completer_of(opt.member);
-                if constexpr(comp != meta::null)
-                {
-                  constexpr auto fn = comp;
-                  completions.append_range([:fn:](value_view)
-                                                 | std::views::filter([value_view](auto const& c) {
-                                                     return c.type
-                                                         != cli::completion_type::plain
-                                                         or ((value_view != c.value)
-                                                             and c.value.starts_with(value_view));
-                                                   }));
-                }
+                completions.append_range(
+                    arg_completer<opt>::complete(cli, value_view)
+                    | std::views::filter([value_view](auto const& c) {
+                        return (c.type != cli::completion_type::plain)
+                            or ((value_view != c.value) and c.value.starts_with(value_view));
+                      }));
               }
             });
           }
@@ -221,17 +234,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
           else if(state == cli::detail::parsing_state::invalid_argument_value)
           {
             trackers.args_track.last_used([&]<auto arg> {
-              constexpr auto comp = completer_of(arg.member);
-              if constexpr(comp != meta::null)
-              {
-                constexpr auto fn = comp;
-                completions.append_range([:fn:](view) | std::views::filter([view](auto const& c) {
-                                                 return c.type
-                                                     != cli::completion_type::plain
-                                                     or ((view != c.value)
-                                                         and c.value.starts_with(view));
-                                               }));
-              }
+              completions.append_range(arg_completer<arg>::complete(cli, view));
             });
           }
           else if(state == cli::detail::parsing_state::completed)
@@ -239,15 +242,10 @@ REFLEX_EXPORT namespace reflex::cli::detail
             bool completed = false;
 
             trackers.args_track.last_used([&]<auto arg> {
-              constexpr auto comp = completer_of(arg.member);
-              if constexpr(comp != meta::null)
+              using completer = arg_completer<arg>;
+              if constexpr(completer::has_comp)
               {
-                constexpr auto fn = comp;
-                completions.append_range([:fn:](view) | std::views::filter([view](auto const& c) {
-                                                 return c.type
-                                                     != cli::completion_type::plain
-                                                     or c.value.starts_with(view);
-                                               }));
+                completions.append_range(completer::complete(cli, view));
                 completed = true;
               }
             });
@@ -270,18 +268,12 @@ REFLEX_EXPORT namespace reflex::cli::detail
               constexpr auto [short_sw, long_sw] = opt.switches;
               if(view == *short_sw or view == *long_sw)
               {
-                constexpr auto comp = completer_of(opt.member);
-                if constexpr(comp != meta::null)
-                {
-                  constexpr auto fn = comp;
-                  completions.append_range([:fn:](value_view)
-                                                 | std::views::filter([value_view](auto const& c) {
-                                                     return c.type
-                                                         != cli::completion_type::plain
-                                                         or ((value_view != c.value)
-                                                             and c.value.starts_with(value_view));
-                                                   }));
-                }
+                completions.append_range(
+                    arg_completer<opt>::complete(cli, value_view)
+                    | std::views::filter([value_view](auto const& c) {
+                        return (c.type != cli::completion_type::plain)
+                            or ((value_view != c.value) and c.value.starts_with(value_view));
+                      }));
               }
             });
           }

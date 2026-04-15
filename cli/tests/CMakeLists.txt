@@ -23,3 +23,7 @@ endif()
 doctest_add_test(reflex-cli-test-git
   test-git.cpp
 )
+
+doctest_add_test(reflex-cli-test-dynamic-completion
+  test-dynamic-completion.cpp
+)
