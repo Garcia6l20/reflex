@@ -4,6 +4,10 @@
 #define REFLEX_EXPORT
 #endif
 
+#ifndef REFLEX_MODULE
+#include <filesystem>
+#endif
+
 #include <reflex/cli/base.hpp>
 #include <reflex/cli/completion.hpp>
 
@@ -87,7 +91,7 @@ REFLEX_EXPORT namespace reflex::cli
   } // namespace detail
 
   template <typename Cli, configuration config = {}>
-  int run(Cli && cli, std::string_view program, auto it, auto end)
+  int run(Cli && cli, std::string_view executable, auto it, auto end)
   {
     // constexpr auto cli_type = decay(type_of(^^cli));
     if constexpr(config.completion.enabled)
@@ -104,12 +108,12 @@ REFLEX_EXPORT namespace reflex::cli
           }
           else if(complete == "bash_source")
           {
-            detail::emit_bash_source(program);
+            detail::emit_bash_source(executable);
             return 0;
           }
           else if(complete == "zsh_source")
           {
-            detail::emit_zsh_source(program);
+            detail::emit_zsh_source(executable);
             return 0;
           }
           else
@@ -120,18 +124,16 @@ REFLEX_EXPORT namespace reflex::cli
         }
       }
     }
+
+    auto program = std::filesystem::path{executable}.filename().string();
     return detail::process(cli, program, it, end);
   }
 
   template <typename Cli, configuration config = {}>
   int run(Cli && cli, int argc, const char** argv)
   {
-    auto program = std::string_view{argv[0]};
-    if(auto pos = program.find_last_of("/"); pos != std::string_view::npos)
-    {
-      program.remove_prefix(pos + 1);
-    }
-    return run<Cli, config>(std::forward<Cli>(cli), program, argv + 1, argv + argc);
+    return run<Cli, config>(
+        std::forward<Cli>(cli), std::string_view{argv[0]}, argv + 1, argv + argc);
   }
 
   template <typename Cli, configuration config = {}> int run(int argc, const char** argv)

@@ -413,8 +413,8 @@ REFLEX_EXPORT namespace reflex::cli::detail
     return do_complete<Config>(cmd, comp_line, comp_point);
   }
 
-  extern "C++" void emit_zsh_source(std::string_view program);
-  extern "C++" void emit_bash_source(std::string_view program);
+  extern "C++" void emit_zsh_source(std::string_view executable);
+  extern "C++" void emit_bash_source(std::string_view executable);
 } // namespace reflex::cli::detail
 
 REFLEX_EXPORT namespace reflex::cli::completers

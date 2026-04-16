@@ -48,7 +48,8 @@ template <cli::configuration config = {}>
 auto completion_values(const std::vector<std::string>& lines)
 {
   std::vector<cli::completion<config>> result;
-  for(std::size_t i = 0; i < lines.size(); i += 3)
+  // first line is completion status, skip it
+  for(std::size_t i = 1; i < lines.size(); i += 3)
   {
     auto type = parse<cli::completion_type>(lines[i]);
     REQUIRE(type.has_value());
