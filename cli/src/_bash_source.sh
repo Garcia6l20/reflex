@@ -33,7 +33,7 @@ _{1}_completion() {{
     response=$(env \
         _REFLEX_COMP_LINE="$reflex_line" \
         _REFLEX_COMP_POINT=$reflex_point \
-        _REFLEX_COMPLETE=bash_complete "{2}")
+        _REFLEX_COMPLETE=bash_complete "{2}"{4})
     mapfile -t lines <<< "$response"
 
     if [[ ${{#lines[@]}} -gt 0 ]]; then

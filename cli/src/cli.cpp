@@ -93,6 +93,13 @@ void emit_bash_source(std::string_view executable)
 #embed "_bash_source.sh"
       , 0};
 
-  std::println(__source_template, info.program, info.id, info.executable_full(), info.dir);
+  std::println(
+      __source_template, info.program, info.id, info.executable_full(), info.dir,
+#ifdef _WIN32
+      " | tr -d '\\r'"
+#else
+      ""
+#endif
+  );
 }
 } // namespace reflex::cli::detail
