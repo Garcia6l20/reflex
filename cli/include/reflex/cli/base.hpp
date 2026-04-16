@@ -32,7 +32,7 @@ REFLEX_EXPORT namespace reflex::cli
 
     void print() const
     {
-      std::println("{}\n{}\n{}", type, value, description);
+      std::print("{}\n{}\n{}\n", type, value, description);
     }
   };
 

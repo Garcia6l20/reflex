@@ -50,10 +50,24 @@ path_info resolve_path(std::string_view executable)
   }
   else
   {
+    input = fs::absolute(input);
+#ifdef _WIN32
+    // create mingw-like path (e.g.: /c/Program Files/foo.exe)
+    {
+      auto root_name = input.root_name().generic_string();
+      if(root_name.size() == 2 and root_name[1] == ':')
+      {
+        const char drive_letter = to_lower(root_name[0]);
+        input                   = fs::relative(input, input.root_path());
+        input = fs::path{std::format("/{}", drive_letter)} / input.lexically_normal();
+      }
+    }
+#else
     input = input.lexically_normal();
+#endif
     return {
         .program = input.filename().generic_string(),
-        .dir     = fs::absolute(input).parent_path().generic_string(),
+        .dir     = input.parent_path().generic_string(),
         .id      = id,
     };
   }

@@ -367,7 +367,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
       words.push_back(std::string_view{});
     }
     const auto [completed, completions] = complete_for<Config>(cmd, words, comp_point);
-    std::println("{}", completed ? '1' : '0');
+    std::print("{}\n", completed ? '1' : '0');
     for(auto const& comp : completions)
     {
       comp.print();
