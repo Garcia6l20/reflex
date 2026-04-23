@@ -18,7 +18,8 @@ auto input_format_completer(std::string_view current)
        | std::views::filter(
              [current](std::string_view b) { return current.empty() or b.starts_with(current); })
        | std::views::transform([](std::string_view b) {
-           return cli::completion{.value = b, .description = "Available input formats"};
+           return cli::completion<>{
+               .value = std::string(b), .description = "Available input formats"};
          });
 }
 
@@ -33,7 +34,8 @@ auto output_format_completer(std::string_view current)
        | std::views::filter(
              [current](std::string_view b) { return current.empty() or b.starts_with(current); })
        | std::views::transform([](std::string_view b) {
-           return cli::completion{.value = b, .description = "Available output formats"};
+           return cli::completion<>{
+               .value = std::string(b), .description = "Available output formats"};
          });
 }
 
