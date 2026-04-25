@@ -17,7 +17,7 @@ REFLEX_EXPORT namespace reflex::shell
   {
     Cli&                           cli_;
     std::size_t                    prompt_length_ = 0;
-    cli::detail::completion_vector<Config> completions_{};
+    cli::completion_vector<Config> completions_{};
     bool                           active_     = false;
     std::size_t                    next_index_ = 0;
     string<32>                     line_prefix_{};
@@ -109,7 +109,7 @@ REFLEX_EXPORT namespace reflex::shell
       line_prefix_ = line.substr(0, token_start_);
       line_suffix_ = line.substr(cursor);
 
-      cli::detail::word_vector<Config> args{};
+      cli::word_vector<Config> args{};
       if(!cli::detail::tokenize(line, std::back_inserter(args)))
       {
         std::cout << codes::bel;
@@ -121,7 +121,8 @@ REFLEX_EXPORT namespace reflex::shell
         args.push_back(std::string_view{});
       }
       const std::size_t comp_point = args.size() + (line.ends_with(' ') ? 1 : 0);
-      completions_                 = cli::detail::complete_for<Config>(cli_, args, comp_point);
+      bool              completed       = false;
+      std::tie(completed, completions_) = cli::detail::complete_for<Config>(cli_, args, comp_point);
       if(completions_.empty())
       {
         std::cout << codes::bel;

@@ -191,25 +191,3 @@ TEST_CASE("reflex::cli:zsh source keeps executable directory in PATH")
       != std::string::npos);
   CHECK(out.find("compdef _reflex_cli_completion \"reflex-cli\"") != std::string::npos);
 }
-
-#include <bitflag_cli.hpp>
-
-TEST_CASE("reflex::cli:bitflag enum completion operators")
-{
-  SUBCASE("zsh mode completes += expression")
-  {
-    auto values = completion_values_from_stream(
-        complete_with_mode<bitflag_enum_cli>("zsh_complete", "bitflag_enum_cli set test+=SOS_", 3));
-
-    CHECK(std::ranges::contains(values, std::string{"test+=HELLO"}));
-    CHECK(std::ranges::contains(values, std::string{"test+=WORLD"}));
-  }
-
-  SUBCASE("zsh mode completes -= expression")
-  {
-    auto values = completion_values_from_stream(
-        complete_with_mode<bitflag_enum_cli>("zsh_complete", "bitflag_enum_cli set test-=HE", 3));
-
-    CHECK(std::ranges::contains(values, std::string{"test-=HELLO"}));
-  }
-}

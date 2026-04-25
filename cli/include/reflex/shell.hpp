@@ -26,7 +26,7 @@ REFLEX_EXPORT namespace reflex::shell
     int run()
     {
       line_type                      line;
-      cli::detail::word_vector<Config> args{};
+      cli::word_vector<Config>       args{};
       term<Cli, Config>              reader{std::ref(cli_), prompt_, history_page_size_};
       while(true)
       {

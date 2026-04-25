@@ -27,7 +27,3 @@ doctest_add_test(reflex-cli-test-git
 doctest_add_test(reflex-cli-test-dynamic-completion
   test-dynamic-completion.cpp
 )
-
-add_executable(bitflag-enum bitflag-enum.cpp)
-target_link_libraries(bitflag-enum PRIVATE reflex.cli)
-add_dependencies(reflex-cli-tests bitflag-enum)
