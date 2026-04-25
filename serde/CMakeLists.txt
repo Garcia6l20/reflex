@@ -8,21 +8,21 @@ reflex_add_cxx_module_library(reflex.serde
 )
 target_link_libraries(reflex.serde PUBLIC reflex.core reflex.poly)
 
-reflex_add_cxx_module_library(reflex.serde_json
+reflex_add_cxx_module_library(reflex.serde.json
   src/serde_json.cppm
 
   include/reflex/serde/json_value.hpp
   include/reflex/serde/json.hpp
 )
-target_link_libraries(reflex.serde_json PUBLIC reflex.serde)
+target_link_libraries(reflex.serde.json PUBLIC reflex.serde)
 
-reflex_add_cxx_module_library(reflex.serde_bson
+reflex_add_cxx_module_library(reflex.serde.bson
   src/serde_bson.cppm
 
   include/reflex/serde/bson.hpp
   include/reflex/serde/bson_value.hpp
 )
-target_link_libraries(reflex.serde_bson PUBLIC reflex.serde)
+target_link_libraries(reflex.serde.bson PUBLIC reflex.serde)
 
 if(REFLEX_BUILD_TESTS)
   add_subdirectory(tests)

@@ -4,7 +4,9 @@
 #define REFLEX_EXPORT
 #endif
 
+#ifndef REFLEX_MODULE
 #include <reflex/serde/bson_value.hpp>
+#endif
 
 namespace reflex::serde::bson::detail
 {

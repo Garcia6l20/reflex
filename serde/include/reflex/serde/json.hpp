@@ -4,7 +4,9 @@
 #define REFLEX_EXPORT
 #endif
 
+#ifndef REFLEX_MODULE
 #include <reflex/serde/json_value.hpp>
+#endif
 
 REFLEX_EXPORT namespace reflex::serde::json
 {
@@ -108,10 +110,11 @@ REFLEX_EXPORT namespace reflex::serde::json
 
       bool first = true;
 
-      template for(constexpr auto member : define_static_array(nonstatic_data_members_of(
-                       decay(^^decltype(val)), std::meta::access_context::current())))
+      static constexpr auto type = decay(type_of(^^val));
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(type, std::meta::access_context::current())))
       {
-        constexpr std::string_view name = serialized_name(member);
+        constexpr std::string_view name = reflex::serde::serialized_name(member);
         if(not first)
         {
           out << ',';
@@ -122,7 +125,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         }
         (*this)(out, name);
         out << ':';
-        auto& member_value = val.[:member:];
+        auto const& member_value = val.[:member:];
         reflex::visit([this, &out](const auto& value) { (*this)(out, value); }, member_value);
       }
       out << '}';

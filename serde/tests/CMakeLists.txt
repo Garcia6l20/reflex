@@ -14,17 +14,17 @@ doctest_add_test(reflex-serde-test
 doctest_add_test(reflex-serde-json-value-test
   test-json-value.cpp
 )
-target_link_libraries(reflex-serde-json-value-test PRIVATE reflex.serde_json)
+target_link_libraries(reflex-serde-json-value-test PRIVATE reflex.serde.json)
 
 doctest_add_test(reflex-serde-json-test
   test-serde-json.cpp
 )
-target_link_libraries(reflex-serde-json-test PRIVATE reflex.serde_json)
+target_link_libraries(reflex-serde-json-test PRIVATE reflex.serde.json)
 
 doctest_add_test(reflex-serde-bson-test
   test-serde-bson.cpp
 )
-target_link_libraries(reflex-serde-bson-test PRIVATE reflex.serde_bson)
+target_link_libraries(reflex-serde-bson-test PRIVATE reflex.serde.bson)
 
 
 doctest_add_test(reflex-serde-test-object-visit

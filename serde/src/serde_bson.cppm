@@ -11,4 +11,6 @@ export import reflex.poly;
 #define REFLEX_BEGIN_EXPORT export {
 #define REFLEX_END_EXPORT   }
 
+#include <reflex/serde/bson_value.hpp>
+
 #include <reflex/serde/bson.hpp>
