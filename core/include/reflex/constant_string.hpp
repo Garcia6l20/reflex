@@ -88,6 +88,22 @@ REFLEX_EXPORT namespace reflex
     {
       return view() <=> other.view();
     }
+    constexpr bool operator==(value_type const& other) const noexcept
+    {
+      return view() == other;
+    }
+    constexpr auto operator<=>(value_type const& other) const noexcept
+    {
+      return view() <=> other;
+    }
+    template <auto N> constexpr bool operator==(Char const (&other)[N]) const noexcept
+    {
+      return view() == other;
+    }
+    template <auto N> constexpr auto operator<=>(Char const (&other)[N]) const noexcept
+    {
+      return view() <=> other;
+    }
 
     constexpr operator value_type() const noexcept
     {

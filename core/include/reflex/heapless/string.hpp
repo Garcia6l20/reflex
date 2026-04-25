@@ -55,14 +55,14 @@ REFLEX_EXPORT namespace reflex::heapless
       return view();
     }
 
-    friend constexpr bool operator==(basic_string const& lhs, basic_string const& rhs)
+    constexpr bool operator==(basic_string const& rhs) const
     {
-      return lhs.view() == rhs.view();
+      return view() == rhs.view();
     }
 
-    friend constexpr bool operator==(basic_string const& lhs, view_type rhs)
+    constexpr bool operator==(view_type rhs) const
     {
-      return lhs.view() == rhs;
+      return view() == rhs;
     }
 
     friend constexpr bool operator==(view_type lhs, basic_string const& rhs)
@@ -70,14 +70,14 @@ REFLEX_EXPORT namespace reflex::heapless
       return lhs == rhs.view();
     }
 
-    friend constexpr auto operator<=>(basic_string const& lhs, basic_string const& rhs)
+    constexpr auto operator<=>(basic_string const& rhs) const
     {
-      return lhs.view() <=> rhs.view();
+      return view() <=> rhs.view();
     }
 
-    friend constexpr auto operator<=>(basic_string const& lhs, view_type rhs)
+    constexpr auto operator<=>(view_type rhs) const
     {
-      return lhs.view() <=> rhs;
+      return view() <=> rhs;
     }
 
     friend constexpr auto operator<=>(view_type lhs, basic_string const& rhs)
