@@ -134,7 +134,7 @@ auto branch_completer(std::string_view current)
   return branches
        | std::views::filter([current](auto b){ return b.starts_with(current); })
        | std::views::transform([](auto b){
-           return cli::completion{.value = b, .description = "branch"};
+           return cli::completion<>{.value = std::string(b), .description = "branch"};
          });
 }
 
@@ -149,10 +149,10 @@ struct [[= cli::command{"Manage branches."}]] branch_cmd
 ### Built-in path completers
 
 ```cpp
-[[= cli::argument{"Any path."},           = cli::completers::path{}]]        std::string path;
-[[= cli::argument{"A directory."},        = cli::completers::path::dirs{}]]  std::string dir;
-[[= cli::argument{"Any file."},           = cli::completers::path::files{}]] std::string file;
-[[= cli::argument{"A JSON file."},        = cli::completers::path{"*.json"}]] std::string cfg;
+[[= cli::argument{"Any path."},    = cli::completers::path{}]]         std::string path;
+[[= cli::argument{"A directory."}, = cli::completers::path::dirs{}]]   std::string dir;
+[[= cli::argument{"Any file."},    = cli::completers::path::files{}]]  std::string file;
+[[= cli::argument{"A JSON file."}, = cli::completers::path{"*.json"}]] std::string cfg;
 ```
 
 ---
