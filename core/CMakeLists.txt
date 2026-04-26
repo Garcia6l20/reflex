@@ -1,6 +1,8 @@
 reflex_add_cxx_module_library(reflex.core
+  INSTALL_TARGETS reflex-targets
+
   src/parse.cpp
-  src/core.cppm
+  modules/reflex/core.cppm
 
   include/reflex/visit.hpp
   include/reflex/exception.hpp
@@ -21,8 +23,14 @@ reflex_add_cxx_module_library(reflex.core
   include/reflex/meta/reg.hpp
   include/reflex/match.hpp
   include/reflex/diags.hpp
+  include/reflex/enum_flags.hpp
+  include/reflex/constant_span.hpp
+  include/reflex/scope_guard.hpp
 )
-target_link_libraries(reflex.core PUBLIC reflex.std)
+target_link_libraries(reflex.core
+  PUBLIC
+    reflex::common_flags
+)
 
 if(REFLEX_BUILD_TESTS)
   add_subdirectory(tests)

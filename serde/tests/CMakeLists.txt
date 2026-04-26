@@ -5,7 +5,7 @@ endif()
 
 set(REFLEX_TEST_GROUP reflex-serde)
 
-link_libraries(reflex.serde)
+link_libraries(reflex::serde)
 
 doctest_add_test(reflex-serde-test
   test-serde.cpp
@@ -14,20 +14,20 @@ doctest_add_test(reflex-serde-test
 doctest_add_test(reflex-serde-json-value-test
   test-json-value.cpp
 )
-target_link_libraries(reflex-serde-json-value-test PRIVATE reflex.serde.json)
+target_link_libraries(reflex-serde-json-value-test PRIVATE reflex::serde::json)
 
 doctest_add_test(reflex-serde-json-test
   test-serde-json.cpp
 )
-target_link_libraries(reflex-serde-json-test PRIVATE reflex.serde.json)
+target_link_libraries(reflex-serde-json-test PRIVATE reflex::serde::json)
 
 doctest_add_test(reflex-serde-bson-test
   test-serde-bson.cpp
 )
-target_link_libraries(reflex-serde-bson-test PRIVATE reflex.serde.bson)
+target_link_libraries(reflex-serde-bson-test PRIVATE reflex::serde::bson)
 
 
 doctest_add_test(reflex-serde-test-object-visit
   test-object-visit.cpp
 )
-target_link_libraries(reflex-serde-test-object-visit PRIVATE reflex.poly)
+target_link_libraries(reflex-serde-test-object-visit PRIVATE reflex::poly)

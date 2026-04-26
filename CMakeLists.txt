@@ -14,9 +14,11 @@ option(REFLEX_BUILD_EXAMPLES "Build reflex examples" OFF)
 option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 
 option(REFLEX_CXX_MODULES_ENABLED "Enable Reflex CXX Modules" ON)
+option(REFLEX_INSTALL "Install Reflex targets" ON)
 
 
 add_library(reflex.common_flags INTERFACE)
+add_library(reflex::common_flags ALIAS reflex.common_flags)
 
 # see: https://gcc.gnu.org/onlinedocs/gcc/C_002b_002b-Dialect-Options.html#index-fabi-version
 # summary:
@@ -26,25 +28,24 @@ add_library(reflex.common_flags INTERFACE)
 set(ABI_VERSION 21)
 
 target_compile_options(reflex.common_flags INTERFACE
+    -Wall -Wextra -Werror
+
     -fimplicit-constexpr
     -freflection
     -Wabi=${ABI_VERSION}
     -fabi-version=${ABI_VERSION}
 )
 
-add_compile_options(
-    -Wall -Wextra -Werror
-)
 
 if (REFLEX_CXX_MODULES_ENABLED)
   message(STATUS "C++ modules enabled")
   target_compile_definitions(reflex.common_flags INTERFACE REFLEX_CXX_MODULES_ENABLED=1)
-  add_subdirectory(std)
-  target_link_libraries(reflex.std PUBLIC reflex.common_flags)
+  # add_subdirectory(std)
+  # target_link_libraries(reflex.std PUBLIC reflex.common_flags)
 else()
   target_compile_definitions(reflex.common_flags INTERFACE REFLEX_CXX_MODULES_ENABLED=0)
 
-  add_library(reflex.std ALIAS reflex.common_flags)
+  # add_library(reflex.std ALIAS reflex.common_flags)
 endif()
 
 include(CMakeDependentOption)
@@ -93,3 +94,42 @@ if(REFLEX_JINJA_ENABLED)
   add_subdirectory(jinja)
 endif()
 
+if (REFLEX_INSTALL)
+
+  install(TARGETS reflex.common_flags
+    EXPORT reflex-targets
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+  )
+
+  include(CMakePackageConfigHelpers)
+
+  configure_package_config_file(
+    cmake/reflexConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/reflexConfig.cmake
+    INSTALL_DESTINATION lib/cmake/reflex
+  )
+
+  install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/reflexConfig.cmake
+    DESTINATION lib/cmake/reflex
+  )
+
+  write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/reflexConfigVersion.cmake
+    VERSION 0.0.1
+    COMPATIBILITY SameMajorVersion
+  )
+
+  install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/reflexConfigVersion.cmake
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ReflexCppModules.cmake
+    DESTINATION lib/cmake/reflex
+  )
+
+  install(EXPORT reflex-targets
+    NAMESPACE reflex::
+    DESTINATION lib/cmake/reflex
+  )
+endif()

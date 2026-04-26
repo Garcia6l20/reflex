@@ -5,6 +5,7 @@ if (REFLEX_BUILD_TESTS)
         NAME doctest
         GITHUB_REPOSITORY doctest/doctest
         GIT_TAG v2.4.12
+        OPTIONS "DOCTEST_NO_INSTALL ON"
     )
     list(APPEND CMAKE_MODULE_PATH ${doctest_SOURCE_DIR}/scripts/cmake)
     target_compile_features(doctest_with_main PUBLIC cxx_std_26)

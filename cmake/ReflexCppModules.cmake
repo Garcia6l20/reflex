@@ -7,12 +7,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_MODULE_BMI_DIRECTORY "${CMAKE_BINARY_DIR}/bmi")
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
-set(CMAKE_CXX_MODULE_STD OFF)
+# set(CMAKE_CXX_MODULE_STD OFF)
+set(CMAKE_CXX_MODULE_STD ON)
+
+set(REFLEX_CXX_ABI_VERSION 21)
+set(REFLEX_REQUIRED_FLAGS
+    -fimplicit-constexpr
+    -freflection
+    -Wabi=${REFLEX_CXX_ABI_VERSION}
+    -fabi-version=${REFLEX_CXX_ABI_VERSION}
+)
+
+if (CMAKE_CXX_MODULE_STD)
+  set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+
+  add_compile_options(${REFLEX_REQUIRED_FLAGS})
+endif()
 
 function(reflex_add_cxx_module_library target)
 
   set(options SHARED STATIC MODULE_STD)
-  set(oneValueArgs)
+  set(oneValueArgs INSTALL_TARGETS EXPORT_NAME)
   set(multiValueArgs)
   cmake_parse_arguments(ARGS
     "${options}" "${oneValueArgs}" "${multiValueArgs}"
@@ -64,29 +79,80 @@ function(reflex_add_cxx_module_library target)
     if (_public_hpp_source)
       target_sources(${target}
         ${_public_dep_mode}
-          FILE_SET public_headers TYPE HEADERS FILES
-            ${_public_hpp_source}
+          FILE_SET public_headers
+            TYPE HEADERS
+            BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
+            FILES ${_public_hpp_source}
       )
     endif()
     if (_private_hpp_source)
       target_sources(${target}
         PRIVATE
-          FILE_SET private_headers TYPE HEADERS FILES
-            ${_private_hpp_source}
+          FILE_SET private_headers
+            TYPE HEADERS
+            FILES ${_private_hpp_source}
       )
     endif()
   endif()
 
   if (_cppm_sources AND REFLEX_CXX_MODULES_ENABLED)
-    target_sources(${target}
-      PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-          ${_cppm_sources}
-    )
+    set(_public_cppm_source ${_cppm_sources})
+    list(FILTER _public_cppm_source INCLUDE REGEX ".?modules/.*\\.cppm$")
+    set(_private_cppm_source ${_cppm_sources})
+    list(FILTER _private_cppm_source EXCLUDE REGEX ".?modules/.*\\.cppm$")
+
+    if (_public_cppm_source)
+      target_sources(${target}
+        PUBLIC
+          FILE_SET cxx_modules
+          TYPE CXX_MODULES
+          BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/modules
+          FILES ${_public_cppm_source}
+      )
+    endif()
+    if (_private_cppm_source)
+      target_sources(${target}
+        PUBLIC
+          FILE_SET cxx_modules
+          TYPE CXX_MODULES
+          FILES ${_private_cppm_source}
+      )
+    endif()
     set_property(TARGET ${target} PROPERTY CXX_MODULE_BMI_DIRECTORY "${CMAKE_CXX_MODULE_BMI_DIRECTORY}")
   endif()
 
   target_compile_features(${target} ${_public_dep_mode} cxx_std_26)
-  target_include_directories(${target} ${_public_dep_mode} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_include_directories(${target} ${_public_dep_mode} 
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  # if target contains dots (e.g. reflex.poly), create an alias with cmake namespace style (e.g. reflex::poly)
+  if (target MATCHES "\\.")
+    string(REPLACE "." "::" alias_target ${target})
+    add_library(${alias_target} ALIAS ${target})
+
+    if (NOT ARGS_EXPORT_NAME)
+      # remove prefix and use it as EXPORT_NAME
+      string(REGEX REPLACE "^[^\\.]+\\." "" export_name ${target})
+      set_target_properties(${target} PROPERTIES EXPORT_NAME ${export_name})
+    endif()
+
+  endif()
+
+  if (ARGS_EXPORT_NAME)
+    set_target_properties(${target} PROPERTIES EXPORT_NAME ${ARGS_EXPORT_NAME})
+  endif()
+
+  if (ARGS_INSTALL_TARGETS AND REFLEX_INSTALL)
+    install(TARGETS ${target}
+      EXPORT ${ARGS_INSTALL_TARGETS}
+      RUNTIME DESTINATION bin
+      LIBRARY DESTINATION lib
+      ARCHIVE DESTINATION lib
+      FILE_SET public_headers DESTINATION include
+      FILE_SET cxx_modules DESTINATION share/cxxmodules
+    )
+  endif()
 
 endfunction()

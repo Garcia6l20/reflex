@@ -10,4 +10,4 @@ doctest_add_test(reflex-core-meta-annotation-queries-test
 doctest_add_test(reflex-core-meta-reg-test
   reg.cpp
 )
-target_link_libraries(reflex-core-meta-reg-test PRIVATE reflex.core)
+target_link_libraries(reflex-core-meta-reg-test PRIVATE reflex::core)

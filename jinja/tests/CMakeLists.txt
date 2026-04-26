@@ -3,7 +3,7 @@ if (NOT REFLEX_CXX_MODULES_ENABLED)
   return()
 endif()
 
-link_libraries(reflex.jinja)
+link_libraries(reflex::jinja)
 
 set(REFLEX_TEST_GROUP reflex-jinja)
 
@@ -15,7 +15,7 @@ reflex_add_cxx_module_library(reflex.jinja.types
 )
 target_include_directories(reflex.jinja.types PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-link_libraries(reflex.jinja.types)
+link_libraries(reflex::jinja::types)
 
 doctest_add_test(reflex-jinja-parse-test
   parse.cpp

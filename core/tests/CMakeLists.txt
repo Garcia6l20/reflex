@@ -1,4 +1,4 @@
-link_libraries(reflex.core)
+link_libraries(reflex::core)
 
 set(REFLEX_TEST_GROUP "reflex-core")
 
