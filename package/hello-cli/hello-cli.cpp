@@ -5,7 +5,7 @@ using namespace reflex;
 
 struct [[= cli::command{"hello"}]] hello_command {
 
-    [[= cli::option{"-n/--name", "Your name"}]]
+    [[= cli::option{"-n/--name", "Your name."}]]
     std::string name = "World";
 
     void operator()() const {

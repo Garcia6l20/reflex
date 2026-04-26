@@ -169,6 +169,10 @@ source ~/.zsh/completions/_my-tool
 # bash
 _REFLEX_COMPLETE=bash_source my-tool > ~/.bash_completion.d/my-tool
 source ~/.bash_completion.d/my-tool
+
+# auto detect and source on each run
+_REFLEX_COMPLETE=auto my-tool > ~/.$SHELL_completion.d/my-tool
+source ~/.$SHELL_completion.d/my-tool
 ```
 
 ### Inline sourcing
@@ -176,6 +180,19 @@ source ~/.bash_completion.d/my-tool
 ```zsh
 source <(_REFLEX_COMPLETE=zsh_source my-tool)   # zsh
 source <(_REFLEX_COMPLETE=bash_source my-tool)  # bash
+source <(_REFLEX_COMPLETE=auto my-tool)         # auto
+```
+
+### Example (from [/package/hello-cli](../package/hello-cli))
+
+```zsh
+$ cd package/hello-cli
+$ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+$ cmake --build build -j
+$ source <(_REFLEX_COMPLETE=auto build/hello-cli) # note: also updates your path to the binary if needed
+$ hello-cli -[TAB]
+--help  -h  -- Print this message and exit.
+--name  -n  -- Your name.
 ```
 
 ### Completion protocol

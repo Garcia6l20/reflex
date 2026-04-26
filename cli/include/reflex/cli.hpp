@@ -118,8 +118,32 @@ REFLEX_EXPORT namespace reflex::cli
           }
           else
           {
-            std::println(std::cerr, "invalid value for _REFLEX_COMPLETE: {}", complete_env);
-            return 1;
+            const auto shell_env = std::getenv("SHELL");
+            if(shell_env != nullptr)
+            {
+              std::string_view shell{shell_env};
+              if(shell.ends_with("bash"))
+              {
+                detail::emit_bash_source(executable);
+                return 0;
+              }
+              else if(shell.ends_with("zsh"))
+              {
+                detail::emit_zsh_source(executable);
+                return 0;
+              }
+              else
+              {
+                std::println(std::cerr, "unsupported shell for auto completion: {}", shell);
+                return 1;
+              }
+            }
+            else
+            {
+              std::println(
+                  std::cerr, "cannot detect shell for auto completion (SHELL env var not set)");
+              return 1;
+            }
           }
         }
       }
