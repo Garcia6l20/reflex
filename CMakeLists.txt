@@ -36,7 +36,6 @@ target_compile_options(reflex.common_flags INTERFACE
     -fabi-version=${ABI_VERSION}
 )
 
-
 if (REFLEX_CXX_MODULES_ENABLED)
   message(STATUS "C++ modules enabled")
   target_compile_definitions(reflex.common_flags INTERFACE REFLEX_CXX_MODULES_ENABLED=1)
