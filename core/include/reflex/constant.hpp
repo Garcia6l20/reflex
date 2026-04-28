@@ -32,13 +32,12 @@ REFLEX_EXPORT namespace reflex
 
 REFLEX_EXPORT namespace std
 {
-  template <>
-  struct formatter<reflex::constant_string>
-      : std::formatter<std::string_view, char>
+  template <typename T, typename CharT>
+  struct formatter<reflex::constant<T>, CharT> : std::formatter<typename reflex::constant<T>::type, CharT>
   {
-    constexpr auto format(reflex::constant_string const& str, auto& ctx) const
+    constexpr auto format(reflex::constant<T> const& cst, auto& ctx) const
     {
-      return std::formatter<std::string_view, char>::format(str.get(), ctx);
+      return std::formatter<typename reflex::constant<T>::type, CharT>::format(cst.get(), ctx);
     }
   };
 } // namespace std

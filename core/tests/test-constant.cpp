@@ -31,6 +31,9 @@ TEST_CASE("reflex::constant: basics")
         static_assert(*c1 == 42);
         static_assert(constant{42} == c1);
         static_assert(constant{43} != c1);
+        // Check that it's formattable via std::format as its underlying type
+        CHECK(std::format("{}", c1) == "42");
+        CHECK(std::format("{:08x}", c1) == "0000002a");
     }
     SUBCASE("aggregate of structural types")
     {
