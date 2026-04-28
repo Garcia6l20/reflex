@@ -10,7 +10,12 @@ reflex_add_cxx_module_library(reflex.core
   include/reflex/heapless/vector.hpp
   include/reflex/parse.hpp
   include/reflex/to_tuple.hpp
-  include/reflex/constant_string.hpp
+  include/reflex/ctp/ctp.hpp
+  include/reflex/ctp/core.hpp
+  include/reflex/ctp/custom.hpp
+  include/reflex/ctp/param.hpp
+  include/reflex/ctp/serialize.hpp
+  include/reflex/constant.hpp
   include/reflex/formatters.hpp
   include/reflex/const_assert.hpp
   include/reflex/core.hpp
@@ -24,7 +29,6 @@ reflex_add_cxx_module_library(reflex.core
   include/reflex/match.hpp
   include/reflex/diags.hpp
   include/reflex/enum_flags.hpp
-  include/reflex/constant_span.hpp
   include/reflex/scope_guard.hpp
 )
 target_link_libraries(reflex.core

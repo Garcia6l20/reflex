@@ -3,7 +3,7 @@
 #include <reflex/caseconv.hpp>
 #include <reflex/concepts.hpp>
 #include <reflex/const_assert.hpp>
-#include <reflex/constant_string.hpp>
+#include <reflex/constant.hpp>
 #include <reflex/core.hpp>
 #include <reflex/exception.hpp>
 #include <reflex/formatters.hpp>

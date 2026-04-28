@@ -20,8 +20,8 @@ TEST_CASE("reflex::constant_string: basics")
   static constexpr auto from_s = use_string<"hello"s>::s;
   static_assert(from_s == "hello");
 
-  static_assert(from_s.data() == from_lit.data());
-  static_assert(from_sv.data() == from_lit.data());
+  static_assert(from_s->data() == from_lit->data());
+  static_assert(from_sv->data() == from_lit->data());
 }
 
 struct use_string_array
