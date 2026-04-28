@@ -15,6 +15,11 @@ target_link_libraries(fake-git PRIVATE reflex::cli)
 add_dependencies(reflex-cli-tests fake-git)
 
 if (REFLEX_CXX_MODULES_ENABLED)
+
+  doctest_add_test(reflex-cli-test-dev
+    test-dev.cpp
+  )
+
   add_executable(fake-git-shell fake-git-shell.cpp)
   target_link_libraries(fake-git-shell PRIVATE reflex::shell)
   add_dependencies(reflex-cli-tests fake-git-shell)

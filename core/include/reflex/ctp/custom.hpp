@@ -32,7 +32,12 @@ REFLEX_EXPORT namespace reflex::ctp {
         }
 
         static consteval auto deserialize(std::meta::info r) -> target_type {
-            return std::span(extract<target<T> const*>(r), extent(type_of(r)));
+            const auto e = extent(type_of(r));
+            if (e == 0) {
+                return target_type{};
+            } else {
+                return std::span(extract<target<T> const*>(r), e);
+            }
         }
     };
 

@@ -18,9 +18,6 @@ REFLEX_EXPORT namespace reflex
 
     using constant_string = constant<std::string>;
 
-    template <typename T>
-    using constant_span = constant<std::vector<T>>;
-
     namespace literals
     {
     consteval constant_string operator""_sc(const char* data, std::size_t N)

@@ -5,7 +5,7 @@
 #endif
 
 #ifndef REFLEX_MODULE
-#include <reflex/constant_span.hpp>
+#include <reflex/constant.hpp>
 #include <reflex/core.hpp>
 #include <reflex/heapless/vector.hpp>
 
@@ -59,13 +59,13 @@ REFLEX_EXPORT namespace reflex::cli
 
   struct argument
   {
-    constant_string help;
+    reflex::constant_string help = "";
   };
 
   struct option
   {
-    constant_string switches;
-    constant_string help;
+    reflex::constant_string switches = "";
+    reflex::constant_string help     = "";
 
     bool is_flag    = false;
     bool is_counter = false;
@@ -86,7 +86,7 @@ REFLEX_EXPORT namespace reflex::cli
     constexpr std::tuple<std::string_view, std::string_view> split_switches() const
     {
       static constexpr auto npos  = std::string_view::npos;
-      std::string_view      view  = switches.view();
+      std::string_view      view  = switches;
       auto                  slash = view.find('/');
 
       if(slash != npos)
@@ -117,7 +117,7 @@ REFLEX_EXPORT namespace reflex::cli
 
   struct command
   {
-    constant_string help;
+    reflex::constant_string help = "";
   };
   namespace detail
   {
@@ -207,6 +207,11 @@ REFLEX_EXPORT namespace reflex::cli
     consteval bool is_counter() const
     {
       return annotation.is_counter;
+    }
+
+    consteval bool is_flag() const
+    {
+      return annotation.is_flag;
     }
   };
 
@@ -304,10 +309,10 @@ REFLEX_EXPORT namespace reflex::cli
 
     std::println("USAGE: {} [OPTIONS...] ARGUMENTS...", program);
 
-    if constexpr(constexpr auto help = command.help(); not help.empty())
+    if constexpr(constexpr auto help = command.help(); not help->empty())
     {
       std::println();
-      std::println("{}", help);
+      std::println("{}", *help);
       std::println();
     }
 
@@ -317,14 +322,14 @@ REFLEX_EXPORT namespace reflex::cli
       std::size_t max_id_size = min_id_size;
       template for(constexpr auto opt : opts)
       {
-        constexpr auto sz = opt.switches.s.size() + opt.switches.l.size() + 1;
+        constexpr auto sz = opt.switches.s->size() + opt.switches.l->size() + 1;
         max_id_size       = std::max(max_id_size, sz);
       }
       template for(constexpr auto opt : opts)
       {
         constexpr auto [s, l] = opt.switches;
-        auto switches_str     = std::format("{}/{}", s, l);
-        std::println("  {:{}} {}", switches_str, max_id_size, opt.help());
+        auto switches_str     = std::format("{}/{}", *s, *l);
+        std::println("  {:{}} {}", switches_str, max_id_size, *opt.help());
       }
 
       std::println();
@@ -340,7 +345,7 @@ REFLEX_EXPORT namespace reflex::cli
       }
       template for(constexpr auto a : args)
       {
-        std::println("  {:{}} {}", a.display_name(), max_id_size, a.help());
+        std::println("  {:{}} {}", a.display_name(), max_id_size, *a.help());
       }
 
       std::println();
@@ -356,7 +361,7 @@ REFLEX_EXPORT namespace reflex::cli
       }
       template for(constexpr auto c : s_cmds)
       {
-        std::println("  {:{}} {}", c.display_name(), max_id_size, c.help());
+        std::println("  {:{}} {}", c.display_name(), max_id_size, *c.help());
       }
     }
 
@@ -378,12 +383,12 @@ REFLEX_EXPORT namespace reflex::cli
     unexpected_argument,
   };
 
-  template <constant_span items> struct item_tracker
+  template <constant items> struct item_tracker
   {
-    static constexpr auto N = items.size();
+    static constexpr auto N = items->size();
     std::array<bool, N>   _used{};
 
-    using value_type = typename decltype(items)::value_type;
+    using value_type = typename decltype(items)::type::value_type;
 
     constexpr void mark_used(std::size_t idx)
     {
@@ -394,7 +399,7 @@ REFLEX_EXPORT namespace reflex::cli
     {
       template for(constexpr auto ii : std::views::iota(0uz, N))
       {
-        if constexpr(value == items.view()[ii])
+        if constexpr(value == items->at(ii))
         {
           _used[ii] = true;
           return;
@@ -411,7 +416,7 @@ REFLEX_EXPORT namespace reflex::cli
     {
       template for(constexpr auto ii : std::views::iota(0uz, N))
       {
-        if constexpr(value == items.view()[ii])
+        if constexpr(value == items->at(ii))
         {
           return _used[ii];
         }
@@ -435,7 +440,7 @@ REFLEX_EXPORT namespace reflex::cli
       {
         if(not _used[ii])
         {
-          fn.template operator()<items[ii]>();
+          fn.template operator()<items->at(ii)>();
         }
       }
     }
@@ -446,7 +451,7 @@ REFLEX_EXPORT namespace reflex::cli
       {
         if(not _used[ii])
         {
-          fn.template operator()<items[ii]>();
+          fn.template operator()<items->at(ii)>();
           return;
         }
       }
@@ -467,7 +472,7 @@ REFLEX_EXPORT namespace reflex::cli
       {
         if(ii == last_used_idx)
         {
-          fn.template operator()<items[ii]>();
+          fn.template operator()<items->at(ii)>();
           return;
         }
       }
@@ -488,12 +493,12 @@ REFLEX_EXPORT namespace reflex::cli
     {
       template for(constexpr auto ii : std::views::iota(0uz, N))
       {
-        fn.template operator()<items[ii]>();
+        fn.template operator()<items->at(ii)>();
       }
     }
   };
 
-  template <constant_span items> constexpr auto make_tracker()
+  template <constant items> constexpr auto make_tracker()
   {
     return item_tracker<items>{};
   }
@@ -504,18 +509,18 @@ REFLEX_EXPORT namespace reflex::cli
 
     static constexpr auto _raw = raw_parse<cmd_type>();
 
-    static constexpr auto args = argument_info::from_info_range(std::get<0>(_raw));
-    static constexpr auto opts = option_info::from_info_range(std::get<1>(_raw));
-    static constexpr auto cmds = command_info::from_info_range(std::get<2>(_raw));
+    static constexpr constant<std::vector<argument_info>> args =
+        argument_info::from_info_range(std::get<0>(_raw)) | std::ranges::to<std::vector>();
+    static constexpr constant<std::vector<option_info>> opts =
+        option_info::from_info_range(std::get<1>(_raw)) | std::ranges::to<std::vector>();
+    static constexpr constant<std::vector<command_info>> cmds =
+        command_info::from_info_range(std::get<2>(_raw)) | std::ranges::to<std::vector>();
 
     Cmd& root;
 
-    decltype(make_tracker<constant_span(define_static_array(args))>()) args_track =
-        make_tracker<constant_span(define_static_array(args))>();
-    decltype(make_tracker<constant_span(define_static_array(opts))>()) opts_track =
-        make_tracker<constant_span(define_static_array(opts))>();
-    decltype(make_tracker<constant_span(define_static_array(cmds))>()) cmds_track =
-        make_tracker<constant_span(define_static_array(cmds))>();
+    item_tracker<args> args_track{};
+    item_tracker<opts> opts_track{};
+    item_tracker<cmds> cmds_track{};
 
     struct _current
     {
@@ -578,7 +583,7 @@ REFLEX_EXPORT namespace reflex::cli
       {
         // option lookup
         bool found = false;
-        template for(constexpr auto o : trackers.opts)
+        template for(constexpr auto o : *trackers.opts)
         {
           auto [short_switch, long_switch] = o.switches;
 
@@ -589,7 +594,7 @@ REFLEX_EXPORT namespace reflex::cli
              (o.is_counter()
               and trackers.current.view.starts_with(short_switch)
               and (std::ranges::all_of(trackers.current.view | std::views::drop(2), [&](auto c) {
-                    return c == short_switch[1];
+                    return c == short_switch->at(1);
                   }))))
           {
             if constexpr(o == ^^help_option)
@@ -619,11 +624,11 @@ REFLEX_EXPORT namespace reflex::cli
                     {
                       target.emplace();
                     }
-                    target.value() += std::ranges::count(trackers.current.view, short_switch[1]);
+                    target.value() += std::ranges::count(trackers.current.view, short_switch->at(1));
                   }
                   else
                   {
-                    target += T(std::ranges::count(trackers.current.view, short_switch[1]));
+                    target += T(std::ranges::count(trackers.current.view, short_switch->at(1)));
                   }
                 }
                 else
@@ -696,7 +701,7 @@ REFLEX_EXPORT namespace reflex::cli
 
           // If a positional argument is still expected, accept values prefixed with '-'
           // (for example negative numbers) as arguments instead of unknown options.
-          if(current_pos_arg < trackers.args.size())
+          if(current_pos_arg < trackers.args->size())
           {
             treat_as_argument = true;
           }
@@ -711,7 +716,7 @@ REFLEX_EXPORT namespace reflex::cli
 
       if((not trackers.current.is_option()) or treat_as_argument)
       {
-        template for(constexpr auto cmd : trackers.cmds)
+        template for(constexpr auto cmd : *trackers.cmds)
         {
           if(trackers.current.view == cmd.display_name())
           {
@@ -743,12 +748,12 @@ REFLEX_EXPORT namespace reflex::cli
 
         // assume argument
         bool found = false;
-        template for(constexpr auto ii : std::views::iota(std::size_t(0), trackers.args.size()))
+        template for(constexpr auto ii : std::views::iota(std::size_t(0), trackers.args->size()))
         {
           if(ii >= current_pos_arg)
           {
             ++current_pos_arg;
-            constexpr auto arg  = argument_info{trackers.args[ii]};
+            constexpr auto arg  = argument_info{trackers.args->at(ii)};
             constexpr auto type = arg.type();
             using T             = [:type:];
             T& target           = cli.[:arg.member:];
@@ -757,7 +762,7 @@ REFLEX_EXPORT namespace reflex::cli
             if constexpr(seq_c<T>)
             {
               const_assert(
-                  ii == trackers.args.size() - 1, "repeated arguments must be last",
+                  ii == trackers.args->size() - 1, "repeated arguments must be last",
                   arg.source_location());
               do
               {
@@ -808,14 +813,14 @@ REFLEX_EXPORT namespace reflex::cli
       }
     }
 
-    constexpr auto arg_count = trackers.args.size();
+    constexpr auto arg_count = trackers.args->size();
     if(current_pos_arg < arg_count)
     {
-      template for(constexpr auto ii : std::views::iota(std::size_t(0), trackers.args.size()))
+      template for(constexpr auto ii : std::views::iota(std::size_t(0), trackers.args->size()))
       {
         if(ii >= current_pos_arg)
         {
-          constexpr auto arg  = argument_info{trackers.args[ii]};
+          constexpr auto arg  = argument_info{trackers.args->at(ii)};
           constexpr auto type = arg.type();
           if constexpr(meta::is_template_instance_of(type, ^^std::optional))
           {

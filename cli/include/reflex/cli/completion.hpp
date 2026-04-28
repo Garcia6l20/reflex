@@ -147,14 +147,14 @@ REFLEX_EXPORT namespace reflex::cli::detail
             // offer unused options
             trackers.opts_track.unused([&]<auto opt> {
               constexpr auto [short_sw, long_sw] = opt.switches;
-              if(short_sw.starts_with(view))
+              if(short_sw->starts_with(view))
               {
                 completions.push_back(
                     completion<config>{
                         .value       = static_cast<completion_value_type>(short_sw),
                         .description = static_cast<completion_description_type>(opt.help())});
               }
-              if(long_sw.starts_with(view))
+              if(long_sw->starts_with(view))
               {
                 completions.push_back(
                     completion<config>{
@@ -446,7 +446,7 @@ REFLEX_EXPORT namespace reflex::cli::completers
                               }));
       return std::make_tuple(
           true, names | std::views::filter([current](auto name) {
-                  return current.empty() or name.starts_with(current);
+                  return current.empty() or name->starts_with(current);
                 }) | std::views::transform([](auto name) {
                   return cli::completion<config>{
                       .type        = cli::completion_type::plain,
