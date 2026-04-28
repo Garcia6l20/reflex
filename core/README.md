@@ -59,12 +59,39 @@ auto f = reflex::parse<float>("3.14");      // → 3.14f
 auto s = reflex::parse<std::string>("hi");  // → "hi"
 ```
 
-### `constant_string` - NTTP-compatible strings
+### `constant<...>` - non-structural compile-time constants
+
+> The constant API is derived from the [ctp](https://github.com/brevzin/ctp) library by Barry Revzin, with modifications for integration into this project. See [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES) for details.
 
 ```cpp
 constexpr reflex::constant_string cs{"hello"};
-static_assert(cs.view() == "hello");
-// Usable as non-type template parameter
+static_assert(cs == "hello");
+
+// Usable as NTTP:
+template <constant_string Str>
+struct use_nttp_string
+{
+  static_assert(Str == "hello");
+};
+using example_nttp_string = use_nttp_string<"hello">;
+
+// Useful for annotations:
+struct my_annotation
+{
+  reflex::constant_string name;
+  int value;
+};
+
+[[= my_annotation{"example", 42}]] struct annotated_struct {};
+
+// Also with sequences:
+template <constant<std::vector<int>> Seq> struct use_nttp_sequence {
+  static_assert(Seq->at(0) == 1);
+  static_assert(Seq->at(1) == 2);
+  static_assert(Seq->at(2) == 3);
+};
+
+using example_nttp_sequence = use_nttp_sequence<std::vector{1, 2, 3}>;
 ```
 
 ---

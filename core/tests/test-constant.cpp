@@ -82,3 +82,18 @@ TEST_CASE("reflex::constant: vector")
     static_assert(c3->at(1).y == "world");
   }
 }
+
+template <constant_string Str>
+struct use_nttp_string
+{
+  static_assert(Str == "hello");
+};
+using example_nttp_string = use_nttp_string<"hello">;
+
+template <constant<std::vector<int>> Seq> struct use_nttp_sequence {
+  static_assert(Seq->at(0) == 1);
+  static_assert(Seq->at(1) == 2);
+  static_assert(Seq->at(2) == 3);
+};
+
+using example_nttp_sequence = use_nttp_sequence<std::vector{1, 2, 3}>;
