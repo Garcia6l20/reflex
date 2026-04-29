@@ -7,7 +7,7 @@ import std;
 using namespace reflex;
 using namespace reflex::serde;
 
-TEST_CASE("serde::json::value: formattable")
+TEST_CASE("reflex::serde::json::value: formattable")
 {
   SUBCASE("null")
   {

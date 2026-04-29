@@ -14,7 +14,7 @@ struct[[= serde::naming::camel_case]] S
   [[= serde::naming::kebab_case]] double double_member;
 };
 
-TEST_CASE("serde::bson: base types round-trip")
+TEST_CASE("reflex::serde::bson: base types round-trip")
 {
   bson::serializer       serializer;
   std::vector<std::byte> out;
@@ -64,7 +64,7 @@ TEST_CASE("serde::bson: base types round-trip")
   }
 }
 
-TEST_CASE("serde::bson: sequence and map")
+TEST_CASE("reflex::serde::bson: sequence and map")
 {
   bson::serializer serializer;
 
@@ -96,7 +96,7 @@ TEST_CASE("serde::bson: sequence and map")
   }
 }
 
-TEST_CASE("serde::bson: aggregate")
+TEST_CASE("reflex::serde::bson: aggregate")
 {
   bson::serializer       serializer;
   std::vector<std::byte> out;
@@ -110,7 +110,7 @@ TEST_CASE("serde::bson: aggregate")
   CHECK(value.double_member == doctest::Approx(3.14));
 }
 
-TEST_CASE("serde::bson: explicit bson scalar types")
+TEST_CASE("reflex::serde::bson: explicit bson scalar types")
 {
   bson::serializer       serializer;
   std::vector<std::byte> out;
@@ -168,7 +168,7 @@ TEST_CASE("serde::bson: explicit bson scalar types")
   }
 }
 
-TEST_CASE("serde::bson: value from map")
+TEST_CASE("reflex::serde::bson: value from map")
 {
   bson::serializer       serializer;
   std::vector<std::byte> out;
@@ -187,7 +187,7 @@ TEST_CASE("serde::bson: value from map")
   CHECK_EQ(value.as<bson::object>().at("b"), 2);
 }
 
-TEST_CASE("serde::bson: value preserves bson scalar types")
+TEST_CASE("reflex::serde::bson: value preserves bson scalar types")
 {
   bson::serializer       serializer;
   std::vector<std::byte> out;
@@ -238,7 +238,7 @@ TEST_CASE("serde::bson: value preserves bson scalar types")
   CHECK_EQ(bson::datetime{1'701'234'567'890ll}, obj.at("dt").as<bson::datetime>());
 }
 
-TEST_CASE("serde::bson: malformed input throws")
+TEST_CASE("reflex::serde::bson: malformed input throws")
 {
   bson::serializer       serializer;
   std::vector<std::byte> out;

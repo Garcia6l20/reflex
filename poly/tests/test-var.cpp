@@ -11,7 +11,7 @@ using value  = var<bool, double, std::string>;
 using array  = value::arr_type;
 using object = value::obj_type;
 
-TEST_CASE("poly::var: constructs")
+TEST_CASE("reflex::poly::var: constructs")
 {
   SUBCASE("null")
   {
@@ -73,7 +73,7 @@ TEST_CASE("poly::var: constructs")
   }
 }
 
-TEST_CASE("poly::var: as<T> and get<T>")
+TEST_CASE("reflex::poly::var: as<T> and get<T>")
 {
   SUBCASE("as<T> const")
   {
@@ -104,7 +104,7 @@ TEST_CASE("poly::var: as<T> and get<T>")
   }
 }
 
-TEST_CASE("poly::var: array access")
+TEST_CASE("reflex::poly::var: array access")
 {
   value v = array{10, 20, 30};
 
@@ -132,7 +132,7 @@ TEST_CASE("poly::var: array access")
   }
 }
 
-TEST_CASE("poly::var: object access")
+TEST_CASE("reflex::poly::var: object access")
 {
   value v = {
       {"name",   "bob"s},
@@ -171,7 +171,7 @@ TEST_CASE("poly::var: object access")
   }
 }
 
-TEST_CASE("poly::var: dotted path access")
+TEST_CASE("reflex::poly::var: dotted path access")
 {
   value v = {
       {"user",
@@ -214,7 +214,7 @@ TEST_CASE("poly::var: dotted path access")
   }
 }
 
-TEST_CASE("poly::var: merge")
+TEST_CASE("reflex::poly::var: merge")
 {
   value v = {
       {"a", 1},
@@ -232,7 +232,7 @@ TEST_CASE("poly::var: merge")
   CHECK(v["c"] == 3);  // inserted
 }
 
-TEST_CASE("poly::var: visit")
+TEST_CASE("reflex::poly::var: visit")
 {
   SUBCASE("dispatches to correct type")
   {
@@ -260,7 +260,7 @@ TEST_CASE("poly::var: visit")
   }
 }
 
-TEST_CASE("poly::var: size and empty for null/scalar")
+TEST_CASE("reflex::poly::var: size and empty for null/scalar")
 {
   CHECK(value{null}.size() == 0);
   CHECK(value{null}.empty() == true);
@@ -269,7 +269,7 @@ TEST_CASE("poly::var: size and empty for null/scalar")
   CHECK(value{"ab"s}.size() == 2); // string char count
 }
 
-TEST_CASE("poly::var: formattable")
+TEST_CASE("reflex::poly::var: formattable")
 {
   value v = {
       {"user",
@@ -280,7 +280,7 @@ TEST_CASE("poly::var: formattable")
   std::println("value: {}", v);
 }
 
-TEST_CASE("poly::var: references")
+TEST_CASE("reflex::poly::var: references")
 {
   using value_with_refs  = var<bool, int, bool&, int&>;
   bool            a_bool = false;
@@ -320,7 +320,7 @@ struct aggregate1
   std::string b;
 };
 
-TEST_CASE("poly::var: ref to aggregates")
+TEST_CASE("reflex::poly::var: ref to aggregates")
 {
   using value_with_refs = var<bool, int, aggregate1&>;
   auto            a     = aggregate1{42, "the response to everything"};

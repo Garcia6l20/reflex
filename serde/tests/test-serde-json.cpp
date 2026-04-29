@@ -17,7 +17,7 @@ struct[[= serde::naming::camel_case]] S
   [[= serde::naming::kebab_case]] double double_member;
 };
 
-TEST_CASE("serde::json::serializer: base types")
+TEST_CASE("reflex::serde::json::serializer: base types")
 {
   std::ostringstream out;
   json::serializer   serializer;
@@ -52,7 +52,7 @@ TEST_CASE("serde::json::serializer: base types")
   }
 }
 
-TEST_CASE("serde::json::serializer: sequence and map")
+TEST_CASE("reflex::serde::json::serializer: sequence and map")
 {
   std::ostringstream out;
   json::serializer   serializer;
@@ -74,7 +74,7 @@ TEST_CASE("serde::json::serializer: sequence and map")
   }
 }
 
-TEST_CASE("serde::json::serializer: aggregate")
+TEST_CASE("reflex::serde::json::serializer: aggregate")
 {
   std::ostringstream out;
   json::serializer   serializer;
@@ -84,7 +84,7 @@ TEST_CASE("serde::json::serializer: aggregate")
   CHECK_EQ(out.str(), JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14}));
 }
 
-TEST_CASE("serde::json::serializer: nested aggregate")
+TEST_CASE("reflex::serde::json::serializer: nested aggregate")
 {
   std::ostringstream out;
   json::serializer   serializer;
@@ -105,7 +105,7 @@ TEST_CASE("serde::json::serializer: nested aggregate")
   CHECK_EQ(out.str(), JSON({"inner":{"intMember":42},"stringMember":"Hello, world!"}));
 }
 
-TEST_CASE("serde::json::deserializer: base types")
+TEST_CASE("reflex::serde::json::deserializer: base types")
 {
   std::istringstream in;
 
@@ -142,7 +142,7 @@ TEST_CASE("serde::json::deserializer: base types")
   }
 }
 
-TEST_CASE("serde::json::deserializer: sequence and map")
+TEST_CASE("reflex::serde::json::deserializer: sequence and map")
 {
   std::istringstream in;
 
@@ -176,7 +176,7 @@ TEST_CASE("serde::json::deserializer: sequence and map")
   }
 }
 
-TEST_CASE("serde::json::deserializer: aggregate")
+TEST_CASE("reflex::serde::json::deserializer: aggregate")
 {
   std::istringstream in;
 

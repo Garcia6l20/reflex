@@ -12,7 +12,7 @@ using value  = var<bool, std::int64_t, double, std::string>;
 using array  = value::arr_type; // arr<bool, std::int64_t, double, std::string>
 using object = value::obj_type; // obj<bool, std::int64_t, double, std::string>
 
-TEST_CASE("poly::var: README")
+TEST_CASE("reflex::poly::var: README")
 {
   value v1 = 42;       // integral — promoted to int64_t
   value v2 = 3.14;     // floating point

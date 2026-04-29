@@ -15,7 +15,7 @@ using value  = var<bool, double, std::string>;
 using array  = value::arr_type;
 using object = value::obj_type;
 
-TEST_CASE("serde::object_visit: var")
+TEST_CASE("reflex::serde::object_visit: var")
 {
   SUBCASE("simple")
   {
@@ -99,7 +99,7 @@ struct person
   address     addr;
 };
 
-TEST_CASE("serde::object_visit: aggregates")
+TEST_CASE("reflex::serde::object_visit: aggregates")
 {
   person alice{
       .name = "alice"s,
@@ -147,7 +147,7 @@ TEST_CASE("serde::object_visit: aggregates")
   }
 }
 
-TEST_CASE("serde::object_visit: var with aggregates")
+TEST_CASE("reflex::serde::object_visit: var with aggregates")
 {
   person alice{
       .name = "alice"s,
