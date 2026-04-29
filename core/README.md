@@ -92,6 +92,14 @@ template <constant<std::vector<int>> Seq> struct use_nttp_sequence {
 };
 
 using example_nttp_sequence = use_nttp_sequence<std::vector{1, 2, 3}>;
+
+// Constant wrapper:
+auto use_nttp_string = []<auto S>(constant_wrapper<S> c) {
+  static_assert(c.value == "hello");
+  static_assert(c->data()[0] == 'h');
+  static_assert(std::addressof(c.value) == std::addressof(S.value)); // points to the same object
+};
+use_nttp_string(cw<"hello"s>);
 ```
 
 ---

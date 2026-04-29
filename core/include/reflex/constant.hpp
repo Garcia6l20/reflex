@@ -18,6 +18,17 @@ REFLEX_EXPORT namespace reflex
 
     using constant_string = constant<std::string>;
 
+    template <constant V>
+    struct constant_wrapper {
+        static constexpr decltype(auto) value = *V;
+
+        constexpr decltype(auto) operator*() const { return value; }
+        constexpr decltype(auto) operator->() const { return std::addressof(value); }
+    };
+
+    template <constant V>
+    constexpr auto cw = constant_wrapper<V>{};
+
     namespace literals
     {
     consteval constant_string operator""_sc(const char* data, std::size_t N)

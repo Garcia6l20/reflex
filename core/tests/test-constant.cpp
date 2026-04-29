@@ -3,6 +3,7 @@
 #include <reflex/constant.hpp>
 
 using namespace reflex;
+using namespace std::literals;
 
 struct agg_of_structural_types
 {
@@ -22,7 +23,7 @@ struct agg_of_non_structural_types
   constexpr auto operator<=>(agg_of_non_structural_types const& other) const = default;
 };
 
-TEST_CASE("reflex::constant: basics")
+TEST_CASE("reflex::core::constant: basics")
 {
     SUBCASE("int")
     {
@@ -54,7 +55,7 @@ TEST_CASE("reflex::constant: basics")
 }
 
 
-TEST_CASE("reflex::constant: vector")
+TEST_CASE("reflex::core::constant: vector")
 {
   SUBCASE("vector of int")
   {
@@ -80,6 +81,35 @@ TEST_CASE("reflex::constant: vector")
     static_assert(c3->at(0).y == "hello");
     static_assert(c3->at(1).x == 2);
     static_assert(c3->at(1).y == "world");
+  }
+}
+
+TEST_CASE("reflex::core::constant: constant_wrapper")
+{
+  SUBCASE("with default std::cw")
+  {
+    constexpr auto c1 = constant{42};
+    auto use_it = []<auto C>(std::constant_wrapper<C> c) {
+      static_assert(c.value == 42);
+    };
+    use_it(std::cw<c1>);
+  }
+  SUBCASE("simple int")
+  {
+    constexpr auto c1 = constant{42};
+    auto use_it = []<auto C>(constant_wrapper<C> c) {
+      static_assert(c.value == 42);
+    };
+    use_it(cw<c1>);
+  }
+  SUBCASE("std::string")
+  {
+    auto use_it = []<auto S>(constant_wrapper<S> c) {
+      static_assert(c.value == "hello");
+      static_assert(c->data()[0] == 'h');
+      static_assert(std::addressof(c.value) == std::addressof(S.value));
+    };
+    use_it(cw<"hello"s>);
   }
 }
 
