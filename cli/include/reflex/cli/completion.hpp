@@ -217,8 +217,9 @@ REFLEX_EXPORT namespace reflex::cli::detail
               }
             });
           }
-          else if(state == cli::detail::parsing_state::invalid_option_value)
+          else if(state == cli::detail::parsing_state::option_value_check)
           {
+            // may be a partial completed option
             trackers.opts_track.unused([&]<auto opt> {
               constexpr auto [short_sw, long_sw] = opt.switches;
               if(view == *short_sw or view == *long_sw)
@@ -231,6 +232,10 @@ REFLEX_EXPORT namespace reflex::cli::detail
                       }));
               }
             });
+          }
+          else if(state == cli::detail::parsing_state::invalid_option_value)
+          {
+            // already completed with `cli::detail::parsing_state::option_value_check`
           }
           else if(state == cli::detail::parsing_state::completion_check)
           {
@@ -282,22 +287,6 @@ REFLEX_EXPORT namespace reflex::cli::detail
                   completion<config>{
                       .value       = static_cast<completion_value_type>(short_sw),
                       .description = static_cast<completion_description_type>(opt.help())});
-            });
-          }
-          else if(state == cli::detail::parsing_state::option_value_check)
-          {
-            // may be a partial completed option
-            trackers.opts_track.unused([&]<auto opt> {
-              constexpr auto [short_sw, long_sw] = opt.switches;
-              if(view == *short_sw or view == *long_sw)
-              {
-                completions.append_range(
-                    arg_completer<opt, config>::complete(cmd, value_view, terminated)
-                    | std::views::filter([value_view](auto const& c) {
-                        return (c.type != cli::completion_type::plain)
-                            or ((value_view != c.value) and c.value.starts_with(value_view));
-                      }));
-              }
             });
           }
           else if(state == cli::detail::parsing_state::unexpected_argument)

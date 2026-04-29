@@ -80,6 +80,18 @@ struct[[= cli::command{"Simple echo command."}]] dynamic_completion_cli
     [[= cli::argument{"File type."}, = cli::completers::enumeration<file_type>{}]] file_type type =
         file_type::text;
 
+    enum class compression_type
+    {
+      none,
+      gzip,
+      bzip2
+    };
+
+    [[
+      = cli::option{"-c/--compression", "Compression type."},
+      = cli::completers::enumeration<compression_type>{}
+    ]] compression_type compression = compression_type::none;
+
     auto file_name_completer([[maybe_unused]] std::string_view current) const
     {
       constexpr std::array patterns{
@@ -124,9 +136,23 @@ TEST_CASE("reflex::cli:dynamic completion")
     auto v = completion_values(complete<dynamic_completion_cli>("dynamic_completion_cli test ", 3))
            | std::views::transform(&cli::completion<>::value)
            | std::ranges::to<std::vector>();
-    CHECK(std::ranges::contains(v, "text"sv));
-    CHECK(std::ranges::contains(v, "binary"sv));
-    CHECK(std::ranges::contains(v, "archive"sv));
+    CHECK(std::ranges::count(v, "text"sv) == 1);
+    CHECK(std::ranges::count(v, "binary"sv) == 1);
+    CHECK(std::ranges::count(v, "archive"sv) == 1);
+  }
+  SUBCASE("partial enum completion")
+  {
+    auto v = completion_values(complete<dynamic_completion_cli>("dynamic_completion_cli test t", 3))
+           | std::views::transform(&cli::completion<>::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::count(v, "text"sv) == 1);
+  }
+  SUBCASE("partial enum completion2")
+  {
+    auto v = completion_values(complete<dynamic_completion_cli>("dynamic_completion_cli test -c b", 4))
+           | std::views::transform(&cli::completion<>::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::count(v, "bzip2"sv) == 1);
   }
   SUBCASE("text type")
   {

@@ -7,7 +7,7 @@ import std;
 // #include <print>
 // #include <reflex/core.hpp>
 
-TEST_CASE("caseconv: basics")
+TEST_CASE("reflex::core::caseconv: basics")
 {
   using namespace reflex;
   using namespace reflex::caseconv;
