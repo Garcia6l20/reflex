@@ -6,7 +6,7 @@
 
 #ifndef REFLEX_MODULE
 #include <reflex/caseconv.hpp>
-#include <reflex/constant_string.hpp>
+#include <reflex/constant.hpp>
 #endif
 
 REFLEX_EXPORT namespace reflex::serde
