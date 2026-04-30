@@ -17,6 +17,8 @@ struct[[= serde::naming::camel_case]] S
   [[= serde::naming::kebab_case]] double double_member;
 };
 
+enum class Color { Red, Green, Blue };
+
 TEST_CASE("reflex::serde::json::serializer: base types")
 {
   std::ostringstream out;
@@ -49,6 +51,12 @@ TEST_CASE("reflex::serde::json::serializer: base types")
     out.str("");
     serializer(out, false);
     CHECK_EQ(out.str(), "false");
+  }
+
+  SUBCASE("enum")
+  {
+    serializer(out, Color::Green);
+    CHECK_EQ(out.str(), "\"Green\"");
   }
 }
 
@@ -139,6 +147,13 @@ TEST_CASE("reflex::serde::json::deserializer: base types")
     in.str("false");
     value = json::deserializer::load<bool>(in);
     CHECK(value == false);
+  }
+
+  SUBCASE("enum")
+  {
+    in.str(JSON("Green"));
+    auto value = json::deserializer::load<Color>(in);
+    CHECK(value == Color::Green);
   }
 }
 

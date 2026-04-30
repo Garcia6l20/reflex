@@ -6,10 +6,22 @@
 
 #ifndef REFLEX_MODULE
 #include <reflex/serde/json_value.hpp>
+#include <reflex/parse.hpp>
 #endif
 
 REFLEX_EXPORT namespace reflex::serde::json
 {
+  template <typename T>
+  concept serializable_c = str_c<std::remove_cvref_t<T>>
+                        or number_c<std::remove_cvref_t<T>>
+                        or std::same_as<std::remove_cvref_t<T>, boolean>
+                        or std::same_as<std::remove_cvref_t<T>, null_t>
+                        or seq_c<std::remove_cvref_t<T>>
+                        or pair_c<std::remove_cvref_t<T>>
+                        or map_c<std::remove_cvref_t<T>>
+                        or aggregate_c<std::remove_cvref_t<T>>
+                        or visitable_c<std::remove_cvref_t<T>>;
+
   class serializer
   {
   public:
@@ -138,6 +150,15 @@ REFLEX_EXPORT namespace reflex::serde::json
     {
       reflex::visit([&](const auto& v) { (*this)(out, v); }, val);
       return out;
+    }
+
+    // Fallback for types that are formattable but not directly serializable
+    template <typename Out, std::formattable<typename Out::char_type> T>
+      requires(not serializable_c<T>)
+    constexpr Out& operator()(Out& out, T&& value) const
+    {
+      std::format_to(std::ostreambuf_iterator<typename Out::char_type>(out), "\"{}\"",
+      std::forward<T>(value)); return out;
     }
   };
 
@@ -405,6 +426,22 @@ REFLEX_EXPORT namespace reflex::serde::json
         throw std::runtime_error("Expected ',' or '}' in object");
       }
     }
+
+    // Fallback for types that are not directly deserializable but parsable
+    template <typename R, parsable_c T>
+      requires(not serializable_c<T>)
+    static void load_into(R& r, T& value)
+    {
+      std::string token;
+      load_into(r, token);
+      auto result = parse<std::remove_cvref_t<T>>(token);
+      if(!result)
+      {
+        throw std::runtime_error(std::format("Failed to parse value: {}", result.error().message()));
+      }
+      value = std::move(result).value();
+    }
+
 
   public:
     deserializer() = default;
