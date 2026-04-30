@@ -17,16 +17,20 @@ struct[[= serde::naming::camel_case]] S
   [[= serde::naming::kebab_case]] double double_member;
 };
 
-enum class Color { Red, Green, Blue };
+enum class Color
+{
+  Red,
+  Green,
+  Blue
+};
 
-enum class [[= reflex::enum_flags]] FilePermissions
+enum class[[= reflex::enum_flags]] FilePermissions
 {
   None    = 0,
   Read    = 1 << 0,
   Write   = 1 << 1,
   Execute = 1 << 2
 };
-
 
 TEST_CASE("reflex::serde::json::serializer: base types")
 {
@@ -105,7 +109,8 @@ TEST_CASE("reflex::serde::json::serializer: aggregate")
 
   S s{42, "Hello, world!", 3.14};
   serializer(out, s);
-  CHECK_EQ(out.str(), JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14}));
+  CHECK_EQ(out.str(), JSON({"intMember":42,"stringMember":"Hello,
+  world!","double-member":3.14}));
 }
 
 TEST_CASE("reflex::serde::json::serializer: nested aggregate")
@@ -231,5 +236,28 @@ TEST_CASE("reflex::serde::json::deserializer: aggregate")
     CHECK_EQ(value.int_member, 42);
     CHECK_EQ(value.string_member, "Hello, world!");
     CHECK_EQ(value.double_member, 3.14);
+  }
+}
+
+using custom_var1 = poly::var<json::string, json::number, json::boolean, S>;
+
+TEST_CASE("reflex::serde::json::deserializer: custom var")
+{
+  std::ostringstream out;
+  json::serializer   serializer;
+
+  // in.str(JSON({"test": {"intMember":42,"stringMember":"Hello, world!","double-member":3.14}}));
+
+  SUBCASE("custom var")
+  {
+    serializer(out, custom_var1{
+        {"test", S{42, "Hello, world!", 3.14}}
+    });
+    std::println("Serialized: {}", out.str());
+    auto value = json::deserializer::load<custom_var1>(out.str());
+    std::println("Deserialized: {}", value);
+    CHECK_EQ(value["test"].as<S>().int_member, 42);
+    CHECK_EQ(value["test"].as<S>().string_member, "Hello, world!");
+    CHECK_EQ(value["test"].as<S>().double_member, 3.14);
   }
 }

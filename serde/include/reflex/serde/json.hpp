@@ -5,8 +5,8 @@
 #endif
 
 #ifndef REFLEX_MODULE
-#include <reflex/serde/json_value.hpp>
 #include <reflex/parse.hpp>
+#include <reflex/serde/json_value.hpp>
 #endif
 
 REFLEX_EXPORT namespace reflex::serde::json
@@ -21,6 +21,28 @@ REFLEX_EXPORT namespace reflex::serde::json
                         or map_c<std::remove_cvref_t<T>>
                         or aggregate_c<std::remove_cvref_t<T>>
                         or visitable_c<std::remove_cvref_t<T>>;
+
+  namespace detail
+  {
+  template <typename var_type>
+    requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
+  constexpr auto aggregate_types_of_var()
+  {
+    static constexpr auto types = []() {
+      std::vector<std::meta::info> types;
+      template for(constexpr auto t : var_type::infos::base_types)
+      {
+        using T = [:t:];
+        if constexpr(aggregate_c<T> and dealias(t) != dealias(^^null_t))
+        {
+          types.push_back(t);
+        }
+      }
+      return define_static_array(types);
+    }();
+    return types;
+  }
+  } // namespace detail
 
   class serializer
   {
@@ -39,7 +61,7 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     template <typename Out> constexpr Out& operator()(Out& out, number_c auto num) const
     {
-      out << num;
+      std::format_to(std::ostreambuf_iterator<typename Out::char_type>(out), "{}", num);
       return out;
     }
 
@@ -102,25 +124,57 @@ REFLEX_EXPORT namespace reflex::serde::json
       {
         (*this)(out, key);
         out << ':';
-        reflex::visit([this, &out](const auto& value) { (*this)(out, value); }, val);
+        reflex::visit([this, &out]<typename T>(const T& value) {
+          using object_type = std::remove_cvref_t<decltype(obj)>;
+          using var_type    = typename object_type::mapped_type;
+          if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^T))
+          {
+            (*this).template operator()<Out, T, true>(out, value);
+          }
+          else
+          {
+            (*this)(out, value);
+          }
+        }, val);
         out << ',';
       }
 
       const auto& [last_key, last_val] = view.back();
       (*this)(out, last_key);
       out << ':';
-      reflex::visit([this, &out](const auto& value) { (*this)(out, value); }, last_val);
+      reflex::visit(
+          [this, &out]<typename T>(const T& value) {
+            using object_type = std::remove_cvref_t<decltype(obj)>;
+            using var_type    = typename object_type::mapped_type;
+            if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^T))
+            {
+              (*this).template operator()<Out, T, true>(out, value);
+            }
+            else
+            {
+              (*this)(out, value);
+            }
+          },
+          last_val);
       out << '}';
       return out;
     }
 
-    template <typename Out, aggregate_c T>
+    template <typename Out, aggregate_c T, bool tag = false>
       requires(not seq_c<T> and not pair_c<T> and not map_c<T>)
     constexpr Out& operator()(Out& out, T const& val) const
     {
       out << '{';
 
-      bool first = true;
+      bool first = not tag;
+
+      if constexpr(tag)
+      {
+        (*this)(out, "__type");
+        out << ':';
+        static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^T))));
+        (*this)(out, expected_id);
+      }
 
       static constexpr auto type = decay(type_of(^^val));
       template for(constexpr auto member : define_static_array(
@@ -157,8 +211,9 @@ REFLEX_EXPORT namespace reflex::serde::json
       requires(not serializable_c<T>)
     constexpr Out& operator()(Out& out, T&& value) const
     {
-      std::format_to(std::ostreambuf_iterator<typename Out::char_type>(out), "\"{}\"",
-      std::forward<T>(value)); return out;
+      std::format_to(
+          std::ostreambuf_iterator<typename Out::char_type>(out), "\"{}\"", std::forward<T>(value));
+      return out;
     }
   };
 
@@ -335,7 +390,7 @@ REFLEX_EXPORT namespace reflex::serde::json
 
       while(true)
       {
-        json::value elem;
+        typename std::remove_cvref_t<decltype(value)>::value_type elem;
         load_into(r, elem);
         value.push_back(std::move(elem));
 
@@ -354,39 +409,111 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
     }
 
-    template <typename R> static constexpr void load_into(R& r, json::value& value)
+    template <typename T, typename R> struct try_load_result
     {
-      ltrim(r);
-      switch(peek(r))
+      std::optional<T> value;
+      R                r;
+      std::string_view error_message;
+
+      explicit operator bool() const noexcept
       {
-        case 't':
-          expect(r, "true");
-          value = true;
-          return;
-        case 'f':
-          expect(r, "false");
-          value = false;
-          return;
-        case 'n':
-          expect(r, "null");
-          value = null;
-          return;
-        case '{':
-          load_into(r, value.template emplace<json::object>());
-          return;
-        case '[':
-          load_into(r, value.template emplace<json::array>());
-          return;
-        case '"':
-          load_into(r, value.template emplace<json::string>());
-          return;
-        default:
-          load_into(r, value.template emplace<json::number>());
-          return;
+        return value.has_value() and error_message.empty();
       }
+    };
+
+    template <aggregate_c Obj, typename R> static constexpr try_load_result<Obj, R> try_load(R r)
+    {
+      if(advance(r) != '{')
+      {
+        return {
+            .value = std::nullopt, .r = r, .error_message = "Expected '{' at start of JSON object"};
+      }
+
+      ltrim(r);
+      if(!at_end(r) and peek(r) == '}')
+      {
+        advance(r);
+        return {.value = std::nullopt, .r = r, .error_message = ""};
+      }
+
+      {
+        // lookup for __type tag
+        std::string key;
+        load_into(r, key);
+        ltrim(r);
+        if(advance(r) != ':')
+        {
+          return {.value = std::nullopt, .r = r, .error_message = "Expected ':' after object key"};
+        }
+        if(key == "__type")
+        {
+          std::size_t id;
+          load_into(r, id);
+          static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Obj))));
+          if(id != expected_id)
+          {
+            return {.value = std::nullopt, .r = r, .error_message = "Type tag mismatch"};
+          }
+
+          ltrim(r);
+          const char sep = advance(r);
+          if(sep != ',')
+          {
+            return {.value = std::nullopt, .r = r, .error_message = "Expected ',' after __type tag"};
+          }
+        }
+        else
+        {
+          return {.value = std::nullopt, .r = r, .error_message = "Missing __type tag"};
+        }
+      }
+
+      Obj obj{};
+      while(true)
+      {
+      __next:
+        ltrim(r);
+        std::string key;
+        load_into(r, key);
+
+        template for(constexpr auto member : define_static_array(
+                         nonstatic_data_members_of(^^Obj, std::meta::access_context::current())))
+        {
+          constexpr std::string_view name = reflex::serde::serialized_name(member);
+          if(name != key)
+          {
+            continue;
+          }
+          ltrim(r);
+          if(advance(r) != ':')
+          {
+            return {
+                .value = std::nullopt, .r = r, .error_message = "Expected ':' after object key"};
+          }
+
+          ltrim(r);
+          load_into(r, obj.[:member:]);
+
+          ltrim(r);
+          const char sep = advance(r);
+          if(sep == ',')
+          {
+            goto __next;
+          }
+          if(sep == '}')
+          {
+            return {.value = std::move(obj), .r = r, .error_message = ""};
+          }
+          return {.value = std::nullopt, .r = r, .error_message = "Expected ',' or '}' in object"};
+        }
+        return {.value = std::nullopt, .r = r, .error_message = "Unexpected key in object: " + key};
+      }
+      return {.value = std::nullopt, .r = r, .error_message = "Non-matching aggregate type"};
     }
 
-    template <typename R, object_visitable_c Map> static constexpr void load_into(R& r, Map& value)
+    template <typename R, object_visitable_c Map>
+      requires(not meta::is_template_instance_of(^^Map, ^^poly::var))
+    static constexpr void load_into(R& r, Map& value)
     {
       if(advance(r) != '{')
         throw std::runtime_error("Expected '{' at start of JSON object");
@@ -427,6 +554,58 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
     }
 
+    template <typename R, typename var_type>
+      requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
+    static constexpr void load_into(R& r, var_type& value)
+    {
+      ltrim(r);
+      switch(peek(r))
+      {
+        case 't':
+          expect(r, "true");
+          value = true;
+          return;
+        case 'f':
+          expect(r, "false");
+          value = false;
+          return;
+        case 'n':
+          expect(r, "null");
+          value = var_type(null);
+          return;
+        case '{':
+        {
+          template for(constexpr auto a : detail::aggregate_types_of_var<var_type>())
+          {
+            using T     = [:a:];
+            auto result = try_load<T>(r);
+            if(!result)
+            {
+              continue;
+            }
+            value = std::move(*result.value);
+            r     = std::move(result.r);
+            return;
+          }
+
+          // no aggregate type matched, load as generic object
+          auto& obj = value.template emplace<typename var_type::obj_type>();
+          load_into(r, obj);
+
+          return;
+        }
+        case '[':
+          load_into(r, value.template emplace<typename var_type::arr_type>());
+          return;
+        case '"':
+          load_into(r, value.template emplace<json::string>());
+          return;
+        default:
+          load_into(r, value.template emplace<json::number>());
+          return;
+      }
+    }
+
     // Fallback for types that are not directly deserializable but parsable
     template <typename R, parsable_c T>
       requires(not serializable_c<T>)
@@ -437,11 +616,11 @@ REFLEX_EXPORT namespace reflex::serde::json
       auto result = parse<std::remove_cvref_t<T>>(token);
       if(!result)
       {
-        throw std::runtime_error(std::format("Failed to parse value: {}", result.error().message()));
+        throw std::runtime_error(
+            std::format("Failed to parse value: {}", result.error().message()));
       }
       value = std::move(result).value();
     }
-
 
   public:
     deserializer() = default;
