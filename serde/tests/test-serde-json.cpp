@@ -19,6 +19,15 @@ struct[[= serde::naming::camel_case]] S
 
 enum class Color { Red, Green, Blue };
 
+enum class [[= reflex::enum_flags]] FilePermissions
+{
+  None    = 0,
+  Read    = 1 << 0,
+  Write   = 1 << 1,
+  Execute = 1 << 2
+};
+
+
 TEST_CASE("reflex::serde::json::serializer: base types")
 {
   std::ostringstream out;
@@ -57,6 +66,13 @@ TEST_CASE("reflex::serde::json::serializer: base types")
   {
     serializer(out, Color::Green);
     CHECK_EQ(out.str(), "\"Green\"");
+  }
+
+  SUBCASE("enum-flags")
+  {
+    constexpr auto perms = FilePermissions::Read | FilePermissions::Write;
+    serializer(out, perms);
+    CHECK_EQ(out.str(), "\"Read|Write\"");
   }
 }
 
@@ -154,6 +170,15 @@ TEST_CASE("reflex::serde::json::deserializer: base types")
     in.str(JSON("Green"));
     auto value = json::deserializer::load<Color>(in);
     CHECK(value == Color::Green);
+  }
+
+  SUBCASE("enum-flags")
+  {
+    in.str(JSON("Read|Write"));
+    auto value = json::deserializer::load<FilePermissions>(in);
+    CHECK((value & FilePermissions::Read) == FilePermissions::Read);
+    CHECK((value & FilePermissions::Write) == FilePermissions::Write);
+    CHECK((value & FilePermissions::Execute) == FilePermissions::None);
   }
 }
 

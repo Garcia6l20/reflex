@@ -164,11 +164,12 @@ REFLEX_EXPORT namespace reflex
 
 REFLEX_EXPORT namespace std
 {
-  template <reflex::enum_flags_c E>
-  struct formatter<E>
+  template <reflex::enum_flags_c E, typename CharT>
+  struct formatter<E, CharT>
   {
     std::size_t prefix_len = 0;
-    constexpr auto parse(format_parse_context& ctx)
+
+    constexpr auto parse(auto& ctx)
     {
       // Check for optional '-<N>' flag for prefix removal
       auto it = ctx.begin();
@@ -185,7 +186,8 @@ REFLEX_EXPORT namespace std
       }
       return it;
     }
-    auto format(E value, format_context& ctx) const
+
+    constexpr auto format(const E& value, auto& ctx) const
     {
       using reflex::bitwise_operations::operator&;
 
@@ -213,7 +215,9 @@ REFLEX_EXPORT namespace std
     }
   };
 
-  template <reflex::enum_c E, typename CharT> struct formatter<E, CharT>
+  template <reflex::enum_c E, typename CharT>
+    requires(not reflex::enum_flags_c<E>)
+  struct formatter<E, CharT>
   {
     constexpr auto parse(auto& ctx)
     {
