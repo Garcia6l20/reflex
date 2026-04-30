@@ -14,7 +14,7 @@ export import std;
 #include <reflex/ctp/ctp.hpp>
 #include <reflex/constant.hpp>
 #include <reflex/diags.hpp>
-#include <reflex/enum_flags.hpp>
+#include <reflex/enum.hpp>
 #include <reflex/exception.hpp>
 #include <reflex/formatters.hpp>
 #include <reflex/heapless/string.hpp>

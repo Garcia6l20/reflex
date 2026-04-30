@@ -28,7 +28,7 @@ reflex_add_cxx_module_library(reflex.core
   include/reflex/meta/reg.hpp
   include/reflex/match.hpp
   include/reflex/diags.hpp
-  include/reflex/enum_flags.hpp
+  include/reflex/enum.hpp
   include/reflex/scope_guard.hpp
 )
 target_link_libraries(reflex.core

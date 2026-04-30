@@ -3,13 +3,12 @@
 #ifndef REFLEX_MODULE
 #define REFLEX_EXPORT
 
-#include <reflex/ctp/ctp.hpp>
-
 #include <string>
 #include <vector>
 #include <format>
 #endif
 
+#include <reflex/ctp/ctp.hpp>
 
 REFLEX_EXPORT namespace reflex
 {

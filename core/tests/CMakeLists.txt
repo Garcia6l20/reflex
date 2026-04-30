@@ -31,4 +31,7 @@ if (REFLEX_CXX_MODULES_ENABLED)
   doctest_add_test(reflex-core-caseconv-test
     test-caseconv.cpp
   )
+  doctest_add_test(reflex-core-enum-flags-test
+    test-enum-flags.cpp
+  )
 endif()

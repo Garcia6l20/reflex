@@ -117,31 +117,6 @@ REFLEX_EXPORT namespace reflex
   template <typename Like, typename T>
   using const_like_t = typename detail::const_like_s<Like, T>::type;
 
-  template <enum_c E> constexpr std::string_view enum_value_name(E value)
-  {
-    template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
-    {
-      if(value == [:e:])
-      {
-        return identifier_of(e);
-      }
-    }
-    throw std::runtime_error("Invalid enum value");
-  }
-
-  template <enum_c E> constexpr std::optional<E> to_enum_value(std::string_view name)
-  {
-    template for(constexpr auto e : std::define_static_array(std::meta::enumerators_of(^^E)))
-    {
-      if(name == std::meta::identifier_of(e))
-      {
-        return [:e:];
-      }
-    }
-
-    return std::nullopt;
-  }
-
   constexpr std::string_view trim(std::string_view s) noexcept
   {
     while(!s.empty() and is_space(s.front()))
@@ -187,19 +162,6 @@ REFLEX_EXPORT namespace std
     constexpr auto format(const std::byte& b, auto& ctx) const
     {
       return format_to(ctx.out(), "{:02x}h", to_integer<std::uint8_t>(b));
-    }
-  };
-
-  template <reflex::enum_c E, typename CharT> struct formatter<E, CharT>
-  {
-    constexpr auto parse(auto& ctx)
-    {
-      return ctx.begin();
-    }
-
-    constexpr auto format(const E& e, auto& ctx) const
-    {
-      return format_to(ctx.out(), "{}", reflex::enum_value_name(e));
     }
   };
 }

@@ -5,6 +5,7 @@
 #endif
 
 #include <reflex/exception.hpp>
+#include <reflex/constant.hpp>
 #include <reflex/utils.hpp>
 
 #ifndef REFLEX_MODULE
@@ -120,30 +121,30 @@ REFLEX_EXPORT namespace reflex
     }
   };
 
-  template <enum_c E> struct parser<E>
-  {
-    constexpr parse_result<E> operator()(std::string_view s) const noexcept
-    {
-      template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
-      {
-        if(identifier_of(e) == s)
-        {
-          return extract<E>(e);
-        }
-      }
-      return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-    }
-  };
-
-  template <parsable_c T>
+  template <parsable_c T, constant_string spec = "">
   constexpr parse_result<T> parse(std::string_view s) noexcept(noexcept(parser<T>{}(s)))
   {
-    return parser<T>{}(s);
+    constexpr auto p = [] consteval {
+      parser<T> p{};
+      if constexpr (not spec->empty())
+      {
+        if constexpr (requires { p.parse(spec.get()); })
+        {
+          p.parse(spec.get());
+        }
+        else
+        {
+          static_assert(false, "parser does not take a format specifier");
+        }
+      }
+      return p;
+    }();
+    return p(s);
   }
 
-  template <parsable_c T> constexpr T parse_or(std::string_view s, T fallback)
+  template <parsable_c T, constant_string spec = ""> constexpr T parse_or(std::string_view s, T fallback)
   {
-    auto parsed = parse<T>(s);
+    auto parsed = parse<T, spec>(s);
     if(parsed)
     {
       return std::move(parsed).value();
@@ -151,10 +152,10 @@ REFLEX_EXPORT namespace reflex
     return fallback;
   }
 
-  template <parsable_c T, typename OnError>
+  template <parsable_c T, constant_string spec = "", typename OnError>
   constexpr T parse_or_else(std::string_view s, OnError && on_error)
   {
-    auto parsed = parse<T>(s);
+    auto parsed = parse<T, spec>(s);
     if(parsed)
     {
       return std::move(parsed).value();
@@ -162,9 +163,9 @@ REFLEX_EXPORT namespace reflex
     return std::forward<OnError>(on_error)(parsed.error());
   }
 
-  template <parsable_c T> T parse_or_throw(std::string_view s)
+  template <parsable_c T, constant_string spec = ""> T parse_or_throw(std::string_view s)
   {
-    auto parsed = parse<T>(s);
+    auto parsed = parse<T, spec>(s);
     if(parsed)
     {
       return std::move(parsed).value();

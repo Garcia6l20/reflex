@@ -8,7 +8,7 @@
 #include <format>
 #endif
 
-#include <reflex/enum_flags.hpp>
+#include <reflex/enum.hpp>
 
 REFLEX_EXPORT namespace reflex::diags
 {
