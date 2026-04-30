@@ -42,6 +42,13 @@ REFLEX_EXPORT namespace reflex::serde::json
     }();
     return types;
   }
+  template <typename var_type>
+    requires(not meta::is_template_instance_of(^^var_type, ^^poly::var))
+  constexpr auto aggregate_types_of_var()
+  {
+    static constexpr auto empty = std::array<std::meta::info, 0>{};
+    return empty;
+  }
   } // namespace detail
 
   class serializer
@@ -124,18 +131,20 @@ REFLEX_EXPORT namespace reflex::serde::json
       {
         (*this)(out, key);
         out << ':';
-        reflex::visit([this, &out]<typename T>(const T& value) {
-          using object_type = std::remove_cvref_t<decltype(obj)>;
-          using var_type    = typename object_type::mapped_type;
-          if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^T))
-          {
-            (*this).template operator()<Out, T, true>(out, value);
-          }
-          else
-          {
-            (*this)(out, value);
-          }
-        }, val);
+        reflex::visit(
+            [this, &out]<typename T>(const T& value) {
+              using object_type = std::remove_cvref_t<decltype(obj)>;
+              using var_type    = typename object_type::mapped_type;
+              if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^T))
+              {
+                (*this).template operator()<Out, T, true>(out, value);
+              }
+              else
+              {
+                (*this)(out, value);
+              }
+            },
+            val);
         out << ',';
       }
 
@@ -449,7 +458,8 @@ REFLEX_EXPORT namespace reflex::serde::json
         {
           std::size_t id;
           load_into(r, id);
-          static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Obj))));
+          static auto expected_id =
+              std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Obj))));
           if(id != expected_id)
           {
             return {.value = std::nullopt, .r = r, .error_message = "Type tag mismatch"};
@@ -459,7 +469,8 @@ REFLEX_EXPORT namespace reflex::serde::json
           const char sep = advance(r);
           if(sep != ',')
           {
-            return {.value = std::nullopt, .r = r, .error_message = "Expected ',' after __type tag"};
+            return {
+                .value = std::nullopt, .r = r, .error_message = "Expected ',' after __type tag"};
           }
         }
         else

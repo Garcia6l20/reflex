@@ -7,7 +7,7 @@
 #include <reflex/concepts.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/parse.hpp>
-#include <reflex/diags.hpp>
+#include <reflex/ignore.hpp>
 
 REFLEX_EXPORT namespace reflex
 {
@@ -100,7 +100,7 @@ REFLEX_EXPORT namespace reflex
   }
 
   template <enum_c E>
-    requires(not enum_flags_c<E>)
+    requires(not enum_flags_c<E> and not reflex::ignored_c<E>)
   struct parser<E>
   {
     constexpr parse_result<E> operator()(std::string_view s) const noexcept
@@ -116,7 +116,9 @@ REFLEX_EXPORT namespace reflex
     }
   };
 
-  template <enum_flags_c E> struct parser<E>
+  template <enum_flags_c E>
+    requires(not reflex::ignored_c<E>)
+  struct parser<E>
   {
     std::size_t prefix_len = 0;
 
@@ -165,6 +167,7 @@ REFLEX_EXPORT namespace reflex
 REFLEX_EXPORT namespace std
 {
   template <reflex::enum_flags_c E, typename CharT>
+    requires(not reflex::ignored_c<E>)
   struct formatter<E, CharT>
   {
     std::size_t prefix_len = 0;
@@ -216,7 +219,7 @@ REFLEX_EXPORT namespace std
   };
 
   template <reflex::enum_c E, typename CharT>
-    requires(not reflex::enum_flags_c<E>)
+    requires(not reflex::enum_flags_c<E> and not reflex::ignored_c<E>)
   struct formatter<E, CharT>
   {
     constexpr auto parse(auto& ctx)

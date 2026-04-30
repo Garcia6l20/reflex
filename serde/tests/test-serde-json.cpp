@@ -109,8 +109,7 @@ TEST_CASE("reflex::serde::json::serializer: aggregate")
 
   S s{42, "Hello, world!", 3.14};
   serializer(out, s);
-  CHECK_EQ(out.str(), JSON({"intMember":42,"stringMember":"Hello,
-  world!","double-member":3.14}));
+  CHECK_EQ(out.str(), JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14}));
 }
 
 TEST_CASE("reflex::serde::json::serializer: nested aggregate")
