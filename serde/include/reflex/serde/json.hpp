@@ -54,174 +54,146 @@ REFLEX_EXPORT namespace reflex::serde::json
   class serializer
   {
   public:
-    template <typename Out> constexpr Out& operator()(Out& out, null_t const&) const
+    template <typename Out, typename T, bool tag = false>
+    constexpr Out& operator()(Out& out, T const& value) const
     {
-      out << "null";
-      return out;
-    }
-
-    template <typename Out> constexpr Out& operator()(Out& out, str_c auto const& str) const
-    {
-      out << '"' << std::string_view(str) << '"';
-      return out;
-    }
-
-    template <typename Out> constexpr Out& operator()(Out& out, number_c auto num) const
-    {
-      std::format_to(std::ostreambuf_iterator<typename Out::char_type>(out), "{}", num);
-      return out;
-    }
-
-    template <typename Out> constexpr Out& operator()(Out& out, std::byte num) const
-    {
-      out << std::to_integer<unsigned int>(num);
-      return out;
-    }
-
-    template <typename Out> constexpr Out& operator()(Out& out, boolean b) const
-    {
-      out << (b ? "true" : "false");
-      return out;
-    }
-
-    template <typename Out> constexpr Out& operator()(Out& out, seq_c auto const& arr) const
-    {
-      out << '[';
-      if(arr.empty())
+      if constexpr(decays_to_c<T, null_t>)
       {
+        out << "null";
+      }
+      else if constexpr(decays_to_c<T, std::byte>)
+      {
+        out << std::to_integer<unsigned int>(value);
+      }
+      else if constexpr(str_c<T>)
+      {
+        out << '"' << std::string_view(value) << '"';
+      }
+      else if constexpr(number_c<T>)
+      {
+        std::format_to(std::ostreambuf_iterator<typename Out::char_type>(out), "{}", value);
+      }
+      else if constexpr(std::same_as<std::remove_cvref_t<T>, boolean>)
+      {
+        out << (value ? "true" : "false");
+      }
+      else if constexpr(seq_c<T>)
+      {
+        out << '[';
+        if(value.empty())
+        {
+          out << ']';
+          return out;
+        }
+
+        auto view = std::views::all(value);
+
+        for(const auto& elem : view | std::views::take(value.size() - 1))
+        {
+          (*this)(out, elem);
+          out << ',';
+        }
+        (*this)(out, view.back());
+
         out << ']';
         return out;
       }
-
-      auto view = std::views::all(arr);
-
-      for(const auto& elem : view | std::views::take(arr.size() - 1))
+      else if constexpr(pair_c<T>)
       {
-        (*this)(out, elem);
-        out << ',';
-      }
-      (*this)(out, view.back());
-
-      out << ']';
-      return out;
-    }
-
-    template <typename Out> constexpr Out& operator()(Out& out, pair_c auto const& p) const
-    {
-      out << '{';
-      (*this)(out, p.first);
-      out << ':';
-      reflex::visit([this, &out](const auto& val) { (*this)(out, val); }, p.second);
-      out << '}';
-      return out;
-    }
-
-    template <typename Out> constexpr Out& operator()(Out& out, map_c auto const& obj) const
-    {
-      out << '{';
-      if(obj.empty())
-      {
+        out << '{';
+        (*this)(out, value.first);
+        out << ':';
+        reflex::visit([this, &out](const auto& v) { (*this)(out, v); }, value.second);
         out << '}';
-        return out;
       }
-
-      auto view = std::views::all(obj);
-
-      for(const auto& [key, val] : view | std::views::take(obj.size() - 1))
+      else if constexpr(map_c<T>)
       {
-        (*this)(out, key);
-        out << ':';
-        reflex::visit(
-            [this, &out]<typename T>(const T& value) {
-              using object_type = std::remove_cvref_t<decltype(obj)>;
-              using var_type    = typename object_type::mapped_type;
-              if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^T))
-              {
-                (*this).template operator()<Out, T, true>(out, value);
-              }
-              else
-              {
-                (*this)(out, value);
-              }
-            },
-            val);
-        out << ',';
-      }
-
-      const auto& [last_key, last_val] = view.back();
-      (*this)(out, last_key);
-      out << ':';
-      reflex::visit(
-          [this, &out]<typename T>(const T& value) {
-            using object_type = std::remove_cvref_t<decltype(obj)>;
-            using var_type    = typename object_type::mapped_type;
-            if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^T))
-            {
-              (*this).template operator()<Out, T, true>(out, value);
-            }
-            else
-            {
-              (*this)(out, value);
-            }
-          },
-          last_val);
-      out << '}';
-      return out;
-    }
-
-    template <typename Out, aggregate_c T, bool tag = false>
-      requires(not seq_c<T> and not pair_c<T> and not map_c<T>)
-    constexpr Out& operator()(Out& out, T const& val) const
-    {
-      out << '{';
-
-      bool first = not tag;
-
-      if constexpr(tag)
-      {
-        (*this)(out, "__type");
-        out << ':';
-        static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^T))));
-        (*this)(out, expected_id);
-      }
-
-      static constexpr auto type = decay(type_of(^^val));
-      template for(constexpr auto member : define_static_array(
-                       nonstatic_data_members_of(type, std::meta::access_context::current())))
-      {
-        constexpr std::string_view name = reflex::serde::serialized_name(member);
-        if(not first)
+        out << '{';
+        if(value.empty())
         {
-          out << ',';
+          out << '}';
+          return out;
         }
-        else
+
+        bool first = true;
+
+        for(const auto& [key, val] : value)
         {
-          first = false;
+          if(not first)
+          {
+            out << ',';
+          }
+          else
+          {
+            first = false;
+          }
+          (*this)(out, key);
+          out << ':';
+          reflex::visit(
+              [this, &out]<typename U>(const U& v) {
+                using object_type = std::remove_cvref_t<T>;
+                using var_type    = typename object_type::mapped_type;
+                if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^U))
+                {
+                  (*this).template operator()<Out, U, true>(out, v);
+                }
+                else
+                {
+                  (*this)(out, v);
+                }
+              },
+              val);
         }
-        (*this)(out, name);
-        out << ':';
-        auto const& member_value = val.[:member:];
-        reflex::visit([this, &out](const auto& value) { (*this)(out, value); }, member_value);
+        out << '}';
       }
-      out << '}';
-      return out;
-    }
+      else if constexpr(aggregate_c<T>)
+      {
+        out << '{';
 
-    template <typename Out, visitable_c T>
-      requires(not seq_c<T> and not pair_c<T> and not map_c<T> and not aggregate_c<T>)
-    constexpr Out& operator()(Out& out, T const& val) const
-    {
-      reflex::visit([&](const auto& v) { (*this)(out, v); }, val);
-      return out;
-    }
+        bool first = not tag;
 
-    // Fallback for types that are formattable but not directly serializable
-    template <typename Out, std::formattable<typename Out::char_type> T>
-      requires(not serializable_c<T>)
-    constexpr Out& operator()(Out& out, T&& value) const
-    {
-      std::format_to(
-          std::ostreambuf_iterator<typename Out::char_type>(out), "\"{}\"", std::forward<T>(value));
+        if constexpr(tag)
+        {
+          (*this)(out, "__type");
+          out << ':';
+          static auto expected_id =
+              std::hash<std::string_view>{}(identifier_of(dealias(decay(^^T))));
+          (*this)(out, expected_id);
+        }
+
+        static constexpr auto type = decay(type_of(^^value));
+        template for(constexpr auto member : define_static_array(
+                         nonstatic_data_members_of(type, std::meta::access_context::current())))
+        {
+          constexpr std::string_view name = reflex::serde::serialized_name(member);
+          if(not first)
+          {
+            out << ',';
+          }
+          else
+          {
+            first = false;
+          }
+          (*this)(out, name);
+          out << ':';
+          auto const& member_value = value.[:member:];
+          reflex::visit([this, &out](const auto& v) { (*this)(out, v); }, member_value);
+        }
+        out << '}';
+      }
+      else if constexpr(visitable_c<T>)
+      {
+        reflex::visit([&](const auto& v) { (*this)(out, v); }, value);
+      }
+      else if constexpr(std::formattable<T, typename Out::char_type>)
+      {
+        // Fallback for types that are formattable but not directly serializable
+        std::format_to(std::ostreambuf_iterator<typename Out::char_type>(out), "\"{}\"", value);
+      }
+      else
+      {
+        static_assert(false, "Type is not serializable to JSON");
+      }
       return out;
     }
   };
