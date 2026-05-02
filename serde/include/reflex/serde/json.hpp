@@ -192,7 +192,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
       else
       {
-        static_assert(false, "Type is not serializable to JSON");
+        static_assert(false, std::string(display_string_of(^^T)) + " is not serializable to JSON");
       }
       return out;
     }

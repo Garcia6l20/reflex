@@ -17,14 +17,14 @@ struct[[= serde::naming::camel_case]] S
   [[= serde::naming::kebab_case]] double double_member;
 };
 
-enum class Color
+enum class[[= derive(Format, Parse)]] Color
 {
   Red,
   Green,
   Blue
 };
 
-enum class[[= reflex::enum_flags]] FilePermissions
+enum class[[= derive(EnumFlags, Format, Parse)]] FilePermissions
 {
   None    = 0,
   Read    = 1 << 0,

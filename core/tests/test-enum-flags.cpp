@@ -4,13 +4,17 @@ import reflex.core;
 
 using namespace reflex;
 
-enum class [[= reflex::enum_flags]] FilePermissions
+enum class [[= reflex::derive{EnumFlags, Parse, Format}]] FilePermissions
 {
   None    = 0,
   Read    = 1 << 0,
   Write   = 1 << 1,
   Execute = 1 << 2
 };
+
+static_assert(derives(^^FilePermissions, EnumFlags));
+static_assert(derives(^^FilePermissions, Parse));
+static_assert(derives(^^FilePermissions, Format));
 
 TEST_CASE("reflex::core::enum_flags: FilePermissions")
 {
@@ -35,10 +39,19 @@ extern "C" {
     } c_file_permissions;
 }
 
+// apply derive for external code
+
 namespace reflex {
     template <>
-    struct is_enum_flag<c_file_permissions> : std::true_type {};
+    inline constexpr bool derives_v<c_file_permissions, EnumFlags> = true;
+
+    template <>
+    inline constexpr bool derives_v<c_file_permissions, Parse> = true;
+
+    template <>
+    inline constexpr bool derives_v<c_file_permissions, Format> = true;
 }
+
 
 TEST_CASE("reflex::core::enum_flags: C enums")
 {

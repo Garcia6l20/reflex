@@ -41,6 +41,11 @@ REFLEX_EXPORT namespace reflex::serde::bson
               std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count())
     {}
 
+    static constexpr datetime now() noexcept
+    {
+      return datetime(std::chrono::system_clock::now());
+    }
+
     template <template <typename, typename> typename ClockT, typename Rep, typename Period>
       requires(std::chrono::is_clock_v<ClockT<Rep, Period>>)
     operator std::chrono::time_point<ClockT<Rep, Period>, std::chrono::duration<Rep, Period>>()
@@ -63,3 +68,33 @@ REFLEX_EXPORT namespace reflex::serde::bson
   using array  = value::arr_type;
 
 } // namespace reflex::serde::bson
+
+REFLEX_EXPORT namespace reflex
+{
+  template <>
+  struct parser<serde::bson::datetime>
+  {
+    constexpr parse_result<serde::bson::datetime> operator()(std::string_view s) const noexcept
+    {
+      std::uint64_t ms = 0;
+      auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), ms);
+      if(ec != std::errc())      {
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+      }
+      return serde::bson::datetime(ms);
+    }
+  };
+}
+
+REFLEX_EXPORT namespace std {
+  template <typename CharT>
+  struct formatter<reflex::serde::bson::datetime, CharT> : formatter<std::basic_string_view<CharT>, CharT>
+  {
+    template <typename FormatContext>
+    auto format(reflex::serde::bson::datetime const& dt, FormatContext& ctx) const
+    {
+      return format_to(ctx.out(), "{}", dt.millis_since_epoch);
+    }
+  };
+}
+

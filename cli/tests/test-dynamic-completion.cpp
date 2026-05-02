@@ -70,7 +70,7 @@ struct[[= cli::command{"Simple echo command."}]] dynamic_completion_cli
 {
   struct[[= cli::command{"Simple echo command."}]] test_command
   {
-    enum class file_type
+    enum class [[=derive(Format, Parse)]] file_type
     {
       text,
       binary,
@@ -80,7 +80,7 @@ struct[[= cli::command{"Simple echo command."}]] dynamic_completion_cli
     [[= cli::argument{"File type."}, = cli::completers::enumeration<file_type>{}]] file_type type =
         file_type::text;
 
-    enum class compression_type
+    enum class [[=derive(Format, Parse)]] compression_type
     {
       none,
       gzip,

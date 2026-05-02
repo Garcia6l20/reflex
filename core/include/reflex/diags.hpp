@@ -12,7 +12,7 @@
 
 REFLEX_EXPORT namespace reflex::diags
 {
-  enum class[[= reflex::enum_flags]] severity
+  enum class[[= reflex::derive{EnumFlags}]] severity
   {
     info            = 0b0'0000,
     warning         = 0b0'0001,

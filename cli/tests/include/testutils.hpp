@@ -6,6 +6,9 @@
 
 #include <sstream>
 
+template <>
+constexpr bool reflex::derives_v<reflex::cli::completion_type, reflex::Parse> = true;
+
 namespace reflex::testutils
 {
 bool set_env(const char* name, const char* value, int overwrite);

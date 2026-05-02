@@ -14,7 +14,7 @@
 
 REFLEX_EXPORT namespace reflex::cli
 {
-  enum class completion_type
+  enum class [[=derive(Format)]] completion_type
   {
     plain, // simple completion with no description
     dir,   // complete with directories

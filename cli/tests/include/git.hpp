@@ -160,7 +160,7 @@ struct[[= cli::command{"Git-like command with subcommands."}]] git
 
   struct[[= cli::command{"Set log level."}]]
   {
-    enum class level
+    enum class [[=derive(Format, Parse)]] level
     {
       verbose,
       debug,

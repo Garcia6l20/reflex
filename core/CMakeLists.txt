@@ -30,7 +30,8 @@ reflex_add_cxx_module_library(reflex.core
   include/reflex/diags.hpp
   include/reflex/enum.hpp
   include/reflex/scope_guard.hpp
-  include/reflex/ignore.hpp
+  include/reflex/format.hpp
+  include/reflex/derive.hpp
 )
 target_link_libraries(reflex.core
   PUBLIC

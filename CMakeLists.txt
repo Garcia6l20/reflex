@@ -131,4 +131,6 @@ if (REFLEX_INSTALL)
     NAMESPACE reflex::
     DESTINATION lib/cmake/reflex
   )
+
+  include(CPack)
 endif()

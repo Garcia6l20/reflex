@@ -34,4 +34,7 @@ if (REFLEX_CXX_MODULES_ENABLED)
   doctest_add_test(reflex-core-enum-flags-test
     test-enum-flags.cpp
   )
+  doctest_add_test(reflex-core-derive-test
+    test-derive.cpp
+  )
 endif()

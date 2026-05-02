@@ -6,6 +6,7 @@
 
 #ifndef REFLEX_MODULE
 #include <concepts>
+#include <meta>
 #endif
 
 #include <reflex/meta.hpp>
@@ -20,16 +21,21 @@ REFLEX_EXPORT namespace reflex
 
   static_assert(not aggregate_c<char[2]>);
 
+  consteval bool decays_to(std::meta::info t, std::meta::info u)
+  {
+    return decay(t) == u;
+  }
+
   template <typename T, typename U>
-  concept decays_to_c = std::same_as<std::decay_t<T>, U>;
+  concept decays_to_c = decays_to(^^T, ^^U);
 
   consteval auto is_int_number_type(std::meta::info t) -> bool
   {
     if(not is_integral_type(t)
        or (t == ^^bool)
        or (t == ^^char)
-      //  or (t == ^^signed char)
-      //  or (t == ^^unsigned char)
+       //  or (t == ^^signed char)
+       //  or (t == ^^unsigned char)
        or (t == ^^char8_t)
        or (t == ^^char16_t)
        or (t == ^^char32_t)

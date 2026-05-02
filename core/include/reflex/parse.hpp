@@ -23,6 +23,8 @@
 
 REFLEX_EXPORT namespace reflex
 {
+  inline constexpr struct __parse_tag{} Parse;
+
   template <typename T> struct parser;
 
   template <typename T> using parse_result = std::expected<T, std::error_code>;

@@ -6,8 +6,9 @@
 
 #include <reflex/concepts.hpp>
 #include <reflex/meta.hpp>
+#include <reflex/derive.hpp>
 #include <reflex/parse.hpp>
-#include <reflex/ignore.hpp>
+#include <reflex/format.hpp>
 
 REFLEX_EXPORT namespace reflex
 {
@@ -15,17 +16,13 @@ REFLEX_EXPORT namespace reflex
   /// as bit flags.
   constexpr struct __enum_flags
   {
-  } enum_flags;
+  } EnumFlags;
 
   template <typename E>
-  struct is_enum_flag : std::false_type {};
+  constexpr bool enum_flags_v = enum_c<E> and derives(^^E, EnumFlags);
 
   template <typename E>
-    requires (enum_c<E> and meta::has_annotation(^^E, ^^enum_flags))
-  struct is_enum_flag<E> : std::true_type {};
-
-  template <typename E>
-  concept enum_flags_c = is_enum_flag<std::remove_cvref_t<E>>::value;
+  concept enum_flags_c = enum_flags_v<std::remove_cvref_t<E>>;
 
   namespace bitwise_operations {
 
@@ -100,7 +97,7 @@ REFLEX_EXPORT namespace reflex
   }
 
   template <enum_c E>
-    requires(not enum_flags_c<E> and not reflex::ignored_c<E>)
+    requires(not enum_flags_c<E> and derives(^^E, Parse))
   struct parser<E>
   {
     constexpr parse_result<E> operator()(std::string_view s) const noexcept
@@ -117,7 +114,7 @@ REFLEX_EXPORT namespace reflex
   };
 
   template <enum_flags_c E>
-    requires(not reflex::ignored_c<E>)
+    requires(derives(^^E, Parse))
   struct parser<E>
   {
     std::size_t prefix_len = 0;
@@ -167,7 +164,7 @@ REFLEX_EXPORT namespace reflex
 REFLEX_EXPORT namespace std
 {
   template <reflex::enum_flags_c E, typename CharT>
-    requires(not reflex::ignored_c<E>)
+    requires(reflex::derives(^^E, reflex::Format))
   struct formatter<E, CharT>
   {
     std::size_t prefix_len = 0;
@@ -219,7 +216,7 @@ REFLEX_EXPORT namespace std
   };
 
   template <reflex::enum_c E, typename CharT>
-    requires(not reflex::enum_flags_c<E> and not reflex::ignored_c<E>)
+    requires(not reflex::enum_flags_c<E> and reflex::derives(^^E, reflex::Format))
   struct formatter<E, CharT>
   {
     constexpr auto parse(auto& ctx)
