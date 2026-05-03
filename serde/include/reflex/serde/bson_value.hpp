@@ -20,13 +20,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
   using string  = std::string;
   using number  = double;
   using boolean = bool;
-
-  struct decimal128
-  {
-    std::array<std::byte, 16> bytes{};
-
-    constexpr bool operator==(decimal128 const&) const = default;
-  };
+  using decimal128 = std::float128_t;
 
   struct datetime
   {

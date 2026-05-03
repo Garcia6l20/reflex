@@ -74,23 +74,27 @@ struct[[= cli::command("Convert file formats")]] convert_command
       output_format.remove_prefix(1);
     }
 
-    serde::with_deserializer(input_format, [&](auto&& de) {
-      serde::with_serializer(output_format, [&](auto&& ser) {
+    std::ifstream input_stream{input_file, std::ios::binary};
+    auto          in = std::ranges::subrange{
+        std::istreambuf_iterator<char>(input_stream), std::istreambuf_iterator<char>()};
+
+    serde::with_deserializer(input_format, in, [&]([[maybe_unused]] auto&& de) {
+      std::ofstream output_stream{output_file, std::ios::binary};
+      auto          out = std::ostreambuf_iterator<char>(output_stream);
+
+      serde::with_serializer(output_format, out, [&]([[maybe_unused]] auto&& ser) {
         if(verbose > 0)
           std::println("Using deserializer '{}'", display_string_of(decay(^^decltype(de))));
 
         if(verbose > 0)
           std::println("Using serializer '{}'", display_string_of(decay(^^decltype(ser))));
 
-        std::ifstream input_stream{input_file, std::ios::binary};
-        auto          value =
-            de(std::istreambuf_iterator<char>(input_stream), std::istreambuf_iterator<char>());
+        const auto value = serde::deserialize(de);
 
         if(verbose > 0)
           std::println("Deserialized value: {}", value);
 
-        std::ofstream output_stream{output_file, std::ios::binary};
-        ser(output_stream, std::move(value));
+        serde::serialize(ser, value);
       });
     });
 

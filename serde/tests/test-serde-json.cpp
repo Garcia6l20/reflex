@@ -15,6 +15,8 @@ struct[[= serde::naming::camel_case]] S
   int                                    int_member;
   std::string                            string_member;
   [[= serde::naming::kebab_case]] double double_member;
+
+  constexpr bool operator==(S const& other) const = default;
 };
 
 enum class[[= derive(Format, Parse)]] Color
@@ -200,7 +202,7 @@ TEST_CASE("reflex::serde::json::deserializer: sequence and map")
   SUBCASE("sequence")
   {
     const std::string_view in    = JSON([1,2,3]);
-    auto                   value = json::deserializer{in}.load<json::array>();
+    const auto             value = json::deserializer{in}.load<json::array>();
     CHECK_EQ(value.size(), 3);
     CHECK_EQ(value[0], 1);
     CHECK_EQ(value[1], 2);
@@ -212,7 +214,7 @@ TEST_CASE("reflex::serde::json::deserializer: sequence and map")
   SUBCASE("map")
   {
     const std::string_view in    = JSON({"a":1,"b":2});
-    auto                   value = json::deserializer{in}.load<json::object>();
+    const auto             value = json::deserializer{in}.load<json::object>();
     std::println("Parsed object: {}", value);
     CHECK_EQ(value.size(), 2);
     CHECK_EQ(value.at("a"), 1);
@@ -235,7 +237,7 @@ TEST_CASE("reflex::serde::json::deserializer: aggregate")
 
   SUBCASE("direct load")
   {
-    auto value = json::deserializer{in}.load<S>();
+    const auto value = json::deserializer{in}.load<S>();
     CHECK_EQ(value.int_member, 42);
     CHECK_EQ(value.string_member, "Hello, world!");
     CHECK_EQ(value.double_member, 3.14);
@@ -256,10 +258,29 @@ TEST_CASE("reflex::serde::json::deserializer: custom var")
                  {"test", S{42, "Hello, world!", 3.14}}
     });
     std::println("Serialized: {}", out);
-    auto value = json::deserializer{out}.load<custom_var1>();
+    const auto value = json::deserializer{out}.load<custom_var1>();
     std::println("Deserialized: {}", value);
-    CHECK_EQ(value["test"].as<S>().int_member, 42);
-    CHECK_EQ(value["test"].as<S>().string_member, "Hello, world!");
-    CHECK_EQ(value["test"].as<S>().double_member, 3.14);
+    CHECK_EQ(value.at("test")->as<S>().int_member, 42);
+    CHECK_EQ(value.at("test")->as<S>().string_member, "Hello, world!");
+    CHECK_EQ(value.at("test")->as<S>().double_member, 3.14);
   }
+}
+
+TEST_CASE("reflex::core::json file roundtrip")
+{
+  const std::filesystem::path json_path = "test.json";
+  const S                     expected  = {42, "Hello, world!", 3.14};
+  {
+    std::ofstream    out_file{json_path};
+    json::serializer ser{out_file};
+    ser.dump(expected);
+  }
+
+  {
+    std::ifstream in_file{json_path};
+    const auto    value = json::deserializer{in_file}.load<S>();
+    CHECK_EQ(value, expected);
+  }
+
+  std::filesystem::remove(json_path);
 }

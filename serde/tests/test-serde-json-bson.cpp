@@ -13,8 +13,8 @@ using namespace std::string_view_literals;
 
 namespace reflex::serde::json
 {
-template <typename It>
-OutputIt tag_invoke(tag_t<serde::serialize>, serializer<It>& ser, bson::datetime const& dt)
+template <typename OutputIt>
+OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, bson::datetime const& dt)
 {
   return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
 }
@@ -64,5 +64,19 @@ TEST_CASE("reflex::serde::json and bson: interoperability")
 
     auto bson_value = bson::deserializer{bson_out.begin(), bson_out.end()}.load<bson::datetime>();
     CHECK(bson_value == datetime);
+  }
+
+  SUBCASE("bson::value json serialized")
+  {
+    bson::value typed = bson::object{
+        {"i32",  7                                  },
+        {"i64",  bson::int64{1ll << 40}             },
+        {"d128", bson::decimal128{42.2}             },
+        {"dt",   bson::datetime{1'701'234'567'890ll}},
+    };
+    std::string      out;
+    json::serializer ser{out};
+    ser.dump(typed);
+    std::println("Serialized BSON value as JSON: {}", out);
   }
 }

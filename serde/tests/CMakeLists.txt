@@ -20,6 +20,7 @@ doctest_add_test(reflex-serde-json-test
   test-serde-json.cpp
 )
 target_link_libraries(reflex-serde-json-test PRIVATE reflex::serde::json)
+target_compile_options(reflex-serde-json-test PRIVATE -fconcepts-diagnostics-depth=5)
 
 doctest_add_test(reflex-serde-bson-test
   test-serde-bson.cpp

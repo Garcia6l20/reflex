@@ -274,18 +274,18 @@ REFLEX_EXPORT namespace reflex::serde::json
       return cursor_.begin();
     }
 
-    char peek() const
+    auto peek() const
     {
       if(at_end())
       {
         throw std::runtime_error("Unexpected end of JSON input");
       }
-      return static_cast<char>(*cursor_.begin());
+      return *cursor_.begin();
     }
 
-    char advance()
+    auto advance()
     {
-      const char c = peek();
+      const auto c = peek();
       cursor_.advance(1);
       return c;
     }
@@ -310,7 +310,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     {
       while(!at_end())
       {
-        const unsigned char ch = static_cast<unsigned char>(peek());
+        const auto ch = peek();
         if(reflex::is_space(ch))
         {
           advance();
@@ -338,7 +338,15 @@ REFLEX_EXPORT namespace reflex::serde::json
     deserializer(T const& v) : cursor_{v.begin(), v.end()}
     {}
 
-    template <typename T> T load()
+    template <typename T>
+      requires requires(T& v) {
+        InputIt{v};
+        InputIt{};
+      }
+    deserializer(T& v) : cursor_{InputIt{v}, InputIt{}}
+    {}
+
+    template <typename T = json::value> T load()
     {
       return deserialize(*this, std::type_identity<T>{});
     }
@@ -351,6 +359,17 @@ REFLEX_EXPORT namespace reflex::serde::json
   template <typename... TArgs>
   deserializer(std::basic_string_view<TArgs...> const& in)
       -> deserializer<typename std::basic_string_view<TArgs...>::const_iterator>;
+
+  template <typename CharT, typename CharTrait = std::char_traits<CharT>>
+  deserializer(std::basic_istream<CharT, CharTrait>)
+      -> deserializer<std::istreambuf_iterator<CharT>>;
+
+  template <typename It>
+  auto tag_invoke(
+      tag_t<serde::deserialize>, deserializer<It> & de)
+  {
+    return deserialize(de, std::type_identity<json::value>{});
+  }
 
   template <typename It>
   auto tag_invoke(
@@ -424,15 +443,43 @@ REFLEX_EXPORT namespace reflex::serde::json
   template <typename It, number_c Num>
   auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<Num>)
   {
-    Num        value;
-    const auto first = std::to_address(de.begin());
-    auto [ptr, ec]   = std::from_chars(first, std::to_address(de.end()), value);
-    if(ec != std::errc{})
+    Num value;
+    if constexpr(
+        std::contiguous_iterator<It>
+        and std::same_as<std::remove_cv_t<std::iter_value_t<It>>, char>)
     {
-      throw std::runtime_error("Failed to parse number");
+      const auto first = std::to_address(de.begin());
+      const auto last  = std::to_address(de.end());
+      auto [ptr, ec]   = std::from_chars(first, last, value);
+      if(ec != std::errc{})
+      {
+        throw std::runtime_error("Failed to parse number");
+      }
+      const auto offset = ptr - first;
+      de.advance_to(std::next(de.begin(), offset));
     }
-    const auto offset = ptr - first;
-    de.advance_to(de.begin() + offset);
+    else
+    {
+      heapless::string<64> token{};
+      while(not de.at_end())
+      {
+        const auto c = de.peek();
+        if((c == '-') or (c == '+') or (c == '.') or (c == 'e') or (c == 'E') or is_digit(c))
+        {
+          token.push_back(c);
+          de.advance();
+        }
+        else
+        {
+          break;
+        }
+      }
+      auto [result, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
+      if(ec != std::errc{})
+      {
+        throw std::runtime_error("Failed to parse number");
+      }
+    }
     return value;
   }
 
@@ -555,7 +602,7 @@ REFLEX_EXPORT namespace reflex::serde::json
                     }
                     [[maybe_unused]] auto object_value_it = std::ranges::find_if(
                         obj, [name](auto const& pair) { return pair.first == name; });
-                    auto & member_value = agg_value.[:member:];
+                    auto& member_value = agg_value.[:member:];
                     visit(
                         [&]<typename U>([[maybe_unused]] U&& v) {
                           if constexpr(requires { member_value = std::forward<U>(v); })
@@ -616,14 +663,14 @@ REFLEX_EXPORT namespace reflex::serde::json
         return de.template load<json::number>();
     }
   }
+} // namespace reflex::serde::json
+
+REFLEX_EXPORT namespace reflex::serde::ser
+{
+  constexpr auto json = ^^reflex::serde::json::serializer;
 }
 
-// REFLEX_EXPORT namespace reflex::serde::ser
-// {
-//   using json = reflex::serde::json::serializer;
-// }
-
-// REFLEX_EXPORT namespace reflex::serde::de
-// {
-//   using json = reflex::serde::json::deserializer;
-// }
+REFLEX_EXPORT namespace reflex::serde::de
+{
+  constexpr auto json = ^^reflex::serde::json::deserializer;
+}

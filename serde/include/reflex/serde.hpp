@@ -28,14 +28,16 @@ REFLEX_EXPORT namespace reflex::serde
     return members_of(^^reflex::serde::ser, ctx);
   }
 
-  constexpr auto with_serializer(std::string_view file_format, auto&& fn)
+  constexpr auto with_serializer(std::string_view file_format, auto out, auto&& fn)
   {
     template for(constexpr auto entry : define_static_array(serializers()))
     {
       if(identifier_of(entry) == file_format)
       {
-        using T = typename[:entry:];
-        fn(T{});
+        constexpr auto ser_template = extract<std::meta::info>(entry);
+        constexpr auto ser_type     = substitute(ser_template, {remove_cvref(type_of(^^out))});
+        typename[:ser_type:] ser{out};
+        fn(ser);
         return;
       }
       // std::println("Checked serializer: {}", identifier_of(entry));
@@ -49,14 +51,18 @@ REFLEX_EXPORT namespace reflex::serde
     return members_of(^^reflex::serde::de, ctx);
   }
 
-  constexpr auto with_deserializer(std::string_view file_format, auto&& fn)
+  constexpr auto with_deserializer(std::string_view file_format, auto rng, auto&& fn)
   {
     template for(constexpr auto entry : define_static_array(deserializers()))
     {
       if(identifier_of(entry) == file_format)
       {
-        using T = typename[:entry:];
-        fn(T{});
+        constexpr auto de_template = extract<std::meta::info>(entry);
+        auto           begin       = rng.begin();
+        auto           end         = rng.end();
+        constexpr auto de_type     = substitute(de_template, {remove_cvref(type_of(^^begin))});
+        typename[:de_type:] de{begin, end};
+        fn(de);
         return;
       }
       // std::println("Checked deserializer: {}", identifier_of(entry));
