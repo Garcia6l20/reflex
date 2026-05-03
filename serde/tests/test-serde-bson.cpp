@@ -16,65 +16,73 @@ struct[[= serde::naming::camel_case]] S
 
 TEST_CASE("reflex::serde::bson: base types round-trip")
 {
-  bson::serializer       serializer;
-  std::vector<std::byte> out;
-
   using bson::null;
 
   SUBCASE("null")
   {
-    serializer(out, null);
-    auto value = bson::deserializer::load<bson::null_t>(out);
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(null);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<bson::null_t>();
     CHECK(value == null);
   }
 
   SUBCASE("string")
   {
-    serializer(out, std::string{"Hello, world!"});
-    auto value = bson::deserializer::load<std::string>(out);
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(std::string{"Hello, world!"});
+    auto value = bson::deserializer{out.begin(), out.end()}.load<std::string>();
     CHECK_EQ(value, "Hello, world!");
   }
 
   SUBCASE("int32")
   {
-    serializer(out, 42);
-    auto value = bson::deserializer::load<int>(out);
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(42);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<int>();
     CHECK_EQ(value, 42);
   }
 
   SUBCASE("int64")
   {
-    serializer(out, (1ll << 40));
-    auto value = bson::deserializer::load<long long>(out);
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(1ll << 40);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<long long>();
     CHECK_EQ(value, (1ll << 40));
   }
 
   SUBCASE("double")
   {
-    serializer(out, 3.14);
-    auto value = bson::deserializer::load<double>(out);
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(3.14);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<double>();
     CHECK(value == doctest::Approx(3.14));
   }
 
   SUBCASE("boolean")
   {
-    serializer(out, true);
-    auto value = bson::deserializer::load<bool>(out);
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(true);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<bool>();
     CHECK(value);
   }
 }
 
 TEST_CASE("reflex::serde::bson: sequence and map")
 {
-  bson::serializer serializer;
-
   SUBCASE("sequence")
   {
     std::vector<std::byte> out;
+    bson::serializer       ser{out};
     std::vector<int>       arr = {1, 2, 3};
 
-    serializer(out, arr);
-    auto value = bson::deserializer::load<std::vector<int>>(out);
+    ser.dump(arr);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<std::vector<int>>();
 
     CHECK_EQ(value.size(), 3);
     CHECK_EQ(value[0], 1);
@@ -84,11 +92,12 @@ TEST_CASE("reflex::serde::bson: sequence and map")
 
   SUBCASE("map")
   {
-    std::vector<std::byte> out;
-    auto                   obj = std::map<std::string, int>{{"a", 1}, {"b", 2}};
+    std::vector<std::byte>          out;
+    bson::serializer                ser{out};
+    auto obj = std::map<std::string, int>{{"a", 1}, {"b", 2}};
 
-    serializer(out, obj);
-    auto value = bson::deserializer::load<std::map<std::string, int>>(out);
+    ser.dump(obj);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<std::map<std::string, int>>();
 
     CHECK_EQ(value.size(), 2);
     CHECK_EQ(value.at("a"), 1);
@@ -98,12 +107,12 @@ TEST_CASE("reflex::serde::bson: sequence and map")
 
 TEST_CASE("reflex::serde::bson: aggregate")
 {
-  bson::serializer       serializer;
   std::vector<std::byte> out;
+  bson::serializer       ser{out};
 
   S s{42, "Hello, world!", 3.14};
-  serializer(out, s);
-  auto value = bson::deserializer::load<S>(out);
+  ser.dump(s);
+  auto value = bson::deserializer{out.begin(), out.end()}.load<S>();
 
   CHECK_EQ(value.int_member, 42);
   CHECK_EQ(value.string_member, "Hello, world!");
@@ -112,27 +121,30 @@ TEST_CASE("reflex::serde::bson: aggregate")
 
 TEST_CASE("reflex::serde::bson: explicit bson scalar types")
 {
-  bson::serializer       serializer;
-  std::vector<std::byte> out;
-
   SUBCASE("bson::int32")
   {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
     auto input = bson::int32{42};
-    serializer(out, input);
-    auto value = bson::deserializer::load<bson::int32>(out);
+    ser.dump(input);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<bson::int32>();
     CHECK_EQ(value, input);
   }
 
   SUBCASE("bson::int64")
   {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
     auto input = bson::int64{1ll << 40};
-    serializer(out, input);
-    auto value = bson::deserializer::load<bson::int64>(out);
+    ser.dump(input);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<bson::int64>();
     CHECK_EQ(value, input);
   }
 
   SUBCASE("bson::decimal128")
   {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
     bson::decimal128 input{
         .bytes = {
                   std::byte{0x01},
@@ -153,32 +165,33 @@ TEST_CASE("reflex::serde::bson: explicit bson scalar types")
                   std::byte{0xFE},
                   }
     };
-
-    serializer(out, input);
-    auto value = bson::deserializer::load<bson::decimal128>(out);
+    ser.dump(input);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<bson::decimal128>();
     CHECK_EQ(value, input);
   }
 
   SUBCASE("bson::datetime")
   {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
     bson::datetime input{1'700'000'000'123ll};
-    serializer(out, input);
-    auto value = bson::deserializer::load<bson::datetime>(out);
+    ser.dump(input);
+    auto value = bson::deserializer{out.begin(), out.end()}.load<bson::datetime>();
     CHECK_EQ(value, input);
   }
 }
 
 TEST_CASE("reflex::serde::bson: value from map")
 {
-  bson::serializer       serializer;
   std::vector<std::byte> out;
+  bson::serializer       ser{out};
 
   auto obj = std::map<std::string, int>{{"a", 1}, {"b", 2}};
   std::println("Input: {}", obj);
-  serializer(out, obj);
+  ser.dump(obj);
   std::println("Serialized: {}", out);
 
-  auto value = bson::deserializer::load(out);
+  auto value = bson::deserializer{out.begin(), out.end()}.load();
   std::println("Deserialized: {}", value);
 
   CHECK(value.is_object());
@@ -189,8 +202,8 @@ TEST_CASE("reflex::serde::bson: value from map")
 
 TEST_CASE("reflex::serde::bson: value preserves bson scalar types")
 {
-  bson::serializer       serializer;
   std::vector<std::byte> out;
+  bson::serializer       ser{out};
 
   auto typed = std::map<std::string, bson::value>{
       {"i32",  bson::int32{7}                     },
@@ -219,8 +232,8 @@ TEST_CASE("reflex::serde::bson: value preserves bson scalar types")
       {"dt",   bson::datetime{1'701'234'567'890ll}},
   };
 
-  serializer(out, typed);
-  auto value = bson::deserializer::load(out);
+  ser.dump(typed);
+  auto value = bson::deserializer{out.begin(), out.end()}.load();
 
   CHECK(value.is_object());
   auto const& obj = value.as<bson::object>();
@@ -240,26 +253,31 @@ TEST_CASE("reflex::serde::bson: value preserves bson scalar types")
 
 TEST_CASE("reflex::serde::bson: malformed input throws")
 {
-  bson::serializer       serializer;
-  std::vector<std::byte> out;
-
   SUBCASE("empty input")
   {
     std::vector<std::byte> input;
-    CHECK_THROWS_AS((bson::deserializer::load<int>(input)), std::runtime_error);
+    CHECK_THROWS_AS(
+        (bson::deserializer{input.begin(), input.end()}.load<int>()), std::runtime_error);
   }
 
   SUBCASE("truncated document")
   {
-    serializer(out, std::map<std::string, int>{{"a", 1}});
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(std::map<std::string, int>{{"a", 1}});
     out.pop_back();
-    CHECK_THROWS_AS((bson::deserializer::load<std::map<std::string, int>>(out)), std::runtime_error);
+    CHECK_THROWS_AS(
+        (bson::deserializer{out.begin(), out.end()}.load<std::map<std::string, int>>()),
+        std::runtime_error);
   }
 
   SUBCASE("invalid type tag")
   {
-    serializer(out, 123);
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(123);
     out[4] = std::byte{0x7F};
-    CHECK_THROWS_AS((bson::deserializer::load<int>(out)), std::runtime_error);
+    CHECK_THROWS_AS(
+        (bson::deserializer{out.begin(), out.end()}.load<int>()), std::runtime_error);
   }
 }

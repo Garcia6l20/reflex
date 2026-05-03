@@ -13,8 +13,7 @@ namespace reflex::serde::bson::detail
 using bytes = std::vector<std::byte>;
 
 template <typename T>
-concept bson_scalar_c = std::same_as<std::decay_t<T>, bson::decimal128>
-                     or std::same_as<std::decay_t<T>, bson::datetime>;
+concept bson_scalar_c = decays_to_c<T, bson::decimal128> or decays_to_c<T, bson::datetime>;
 
 enum class bson_type : std::uint8_t
 {
@@ -269,48 +268,50 @@ template <typename T> constexpr bytes encode_root(T const& value)
 
 REFLEX_EXPORT namespace reflex::serde::bson
 {
-  class serializer
+  template <std::output_iterator<std::byte> OutputIt> class serializer
   {
+    OutputIt out_;
+
   public:
-    template <typename Out, typename T>
-    constexpr Out& operator()(Out& out, T const& value) const
-      requires requires(Out& o, std::byte b) { o.push_back(b); }
+    explicit serializer(OutputIt out) : out_(out)
+    {}
+
+    template <typename T>
+      requires std::constructible_from<OutputIt, T&>
+    serializer(T& out) : out_(OutputIt(out))
+    {}
+
+    constexpr OutputIt& out()
     {
-      auto encoded = detail::encode_root(value);
-      for(std::byte byte : encoded)
-      {
-        out.push_back(byte);
-      }
-      return out;
+      return out_;
     }
 
-    template <typename Out, typename T>
-    constexpr Out& operator()(Out& out, T const& value) const
-      requires requires(Out& o, std::byte b) {
-        typename Out::char_type;
-        sizeof(typename Out::char_type) == sizeof(std::byte);
-        o << typename Out::char_type(b);
-      }
+    template <typename T> constexpr void dump(T const& value)
     {
-      using char_type = typename Out::char_type;
-      auto encoded    = detail::encode_root(value);
-      for(std::byte byte : encoded)
+      if constexpr(requires { serialize(*this, value); })
       {
-        out << char_type(byte);
+        serialize(*this, value);
       }
-      return out;
+      else
+      {
+        static_assert(false, std::string(display_string_of(^^T)) + " is not serializable to BSON");
+      }
     }
   };
 
-  class deserializer
-  {
-  private:
-    template <std::input_iterator It, std::sentinel_for<It> End>
-    using range_cursor = std::ranges::subrange<It, End>;
+  template <typename... TArgs>
+  serializer(std::vector<TArgs...>&)
+      -> serializer<std::back_insert_iterator<std::vector<TArgs...>>>;
 
-    template <typename R> struct cursor
+  template <std::input_iterator It> class deserializer
+  {
+  public:
+    using range_type = std::ranges::subrange<It, It>;
+
+  private:
+    struct cursor_t
     {
-      R           range;
+      range_type  range;
       std::size_t position = 0;
 
       constexpr bool at_end() const
@@ -318,17 +319,26 @@ REFLEX_EXPORT namespace reflex::serde::bson
         return range.empty();
       }
 
-      constexpr std::byte read()
+      constexpr std::byte read_byte()
       {
         if(at_end())
         {
           throw std::runtime_error("Unexpected end of BSON input");
         }
-        // using item_t    = std::remove_cvref_t<std::ranges::range_reference_t<R>>;
-        const auto byte = std::bit_cast<std::byte>(*range.begin());
+        const auto b = std::bit_cast<std::byte>(*range.begin());
         range.advance(1);
         ++position;
-        return byte;
+        return b;
+      }
+
+      constexpr void advance(std::size_t n)
+      {
+        // if(n > std::ranges::distance(range))
+        // {
+        //   throw std::runtime_error("Unexpected end of BSON input");
+        // }
+        range.advance(n);
+        position += n;
       }
 
       template <std::integral T> constexpr T read()
@@ -337,7 +347,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         unsigned_t raw   = 0;
         for(std::size_t i = 0; i < sizeof(T); ++i)
         {
-          raw |= static_cast<unsigned_t>(std::to_integer<unsigned int>(read())) << (8 * i);
+          raw |= static_cast<unsigned_t>(std::to_integer<unsigned int>(read_byte())) << (8 * i);
         }
         return static_cast<T>(raw);
       }
@@ -347,9 +357,9 @@ REFLEX_EXPORT namespace reflex::serde::bson
         return std::bit_cast<T>(read<std::uint64_t>());
       }
 
-      template <std::same_as<std::string> T, bool has_size = false> constexpr T read()
+      template <std::same_as<std::string_view> T, bool has_size = false> constexpr T read()
       {
-        std::string out;
+        std::string_view out;
 
         if constexpr(has_size)
         {
@@ -358,27 +368,28 @@ REFLEX_EXPORT namespace reflex::serde::bson
           {
             throw std::runtime_error("Invalid BSON string length");
           }
-          out.reserve(static_cast<std::size_t>(size - 1));
-          for(std::int32_t i = 0; i < size - 1; ++i)
-          {
-            out.push_back(static_cast<char>(std::to_integer<unsigned char>(read())));
-          }
-          if(read() != std::byte{0x00})
+          out = std::string_view(
+              reinterpret_cast<const char*>(&*range.begin()), std::size_t(size - 1));
+          advance(size - 1);
+          if(read_byte() != std::byte{0x00})
           {
             throw std::runtime_error("BSON string payload must be null-terminated");
           }
         }
         else
         {
+          const auto  begin = range.begin();
+          std::size_t size  = 0;
           while(true)
           {
-            const std::byte b = read();
+            const std::byte b = read_byte();
             if(b == std::byte{0x00})
             {
               break;
             }
-            out.push_back(static_cast<char>(std::to_integer<unsigned char>(b)));
+            ++size;
           }
+          out = std::string_view(reinterpret_cast<const char*>(&*begin), size);
         }
         return out;
       }
@@ -388,41 +399,69 @@ REFLEX_EXPORT namespace reflex::serde::bson
         T out;
         for(std::size_t i = 0; i < out.bytes.size(); ++i)
         {
-          out.bytes[i] = read();
+          out.bytes[i] = read_byte();
         }
         return out;
       }
-    };
+    } cursor_;
 
-    template <typename Cur> static constexpr std::size_t begin_document(Cur& cur)
+  public:
+    deserializer(It begin, It end)
+        : cursor_{
+              {begin, end}
+    }
+    {}
+
+    bool at_end() const
     {
-      const auto start = cur.position;
-      const auto size  = cur.template read<std::int32_t>();
+      return cursor_.at_end();
+    }
+
+    std::size_t position() const
+    {
+      return cursor_.position;
+    }
+
+    std::byte read_byte()
+    {
+      return cursor_.read_byte();
+    }
+
+    template <typename T> T read()
+    {
+      return cursor_.template read<T>();
+    }
+
+    template <std::same_as<std::string_view> T, bool has_size = false> T read()
+    {
+      return cursor_.template read<T, has_size>();
+    }
+
+    template <typename Fn> void read_document(Fn&& fn)
+    {
+      const auto start = cursor_.position;
+      const auto size  = cursor_.template read<std::int32_t>();
       if(size < 5)
       {
         throw std::runtime_error("Invalid BSON document length");
       }
-      return start + static_cast<std::size_t>(size);
-    }
+      const std::size_t end_pos = start + static_cast<std::size_t>(size);
 
-    template <typename Cur, typename Fn> static constexpr void read_document(Cur& cur, Fn&& fn)
-    {
-      const std::size_t end_pos = begin_document(cur);
-      while(cur.position < end_pos)
+      while(cursor_.position < end_pos)
       {
-        const auto type = static_cast<detail::bson_type>(cur.read());
+        const auto type = static_cast<detail::bson_type>(cursor_.read_byte());
         if(type == detail::bson_type::eof)
         {
-          if(cur.position != end_pos)
+          if(cursor_.position != end_pos)
           {
             throw std::runtime_error("Unexpected BSON bytes after terminator");
           }
           return;
         }
 
-        auto key = cur.template read<std::string>();
+        auto key = cursor_.template read<std::string_view>();
         std::forward<Fn>(fn)(type, key);
-        if(cur.position > end_pos)
+        if(cursor_.position > end_pos)
         {
           throw std::runtime_error("BSON document element exceeds declared size");
         }
@@ -431,8 +470,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
       throw std::runtime_error("BSON document missing terminator");
     }
 
-    template <typename Cur, typename T>
-    static constexpr void read_payload(detail::bson_type type, Cur& cur, T& value)
+    template <typename T> void read_element(detail::bson_type type, T& value)
     {
       using value_t = std::decay_t<T>;
 
@@ -450,8 +488,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON boolean type");
         }
-        auto raw = cur.read();
-        value    = (raw != std::byte{0x00});
+        value = (cursor_.read_byte() != std::byte{0x00});
       }
       else if constexpr(str_c<value_t>)
       {
@@ -459,7 +496,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON string type");
         }
-        value = cur.template read<std::string, true>();
+        value = cursor_.template read<std::string_view, true>();
       }
       else if constexpr(std::same_as<value_t, bson::int32>)
       {
@@ -467,7 +504,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON int32 type");
         }
-        value = cur.template read<bson::int32>();
+        value = cursor_.template read<bson::int32>();
       }
       else if constexpr(std::same_as<value_t, bson::int64>)
       {
@@ -475,7 +512,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON int64 type");
         }
-        value = cur.template read<bson::int64>();
+        value = cursor_.template read<bson::int64>();
       }
       else if constexpr(std::same_as<value_t, bson::decimal128>)
       {
@@ -483,7 +520,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON decimal128 type");
         }
-        value = cur.template read<bson::decimal128>();
+        value = cursor_.template read<bson::decimal128>();
       }
       else if constexpr(std::same_as<value_t, bson::datetime>)
       {
@@ -491,20 +528,20 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON datetime type");
         }
-        value.millis_since_epoch = cur.template read<std::int64_t>();
+        value.millis_since_epoch = cursor_.template read<std::int64_t>();
       }
       else if constexpr(number_c<value_t>)
       {
         switch(type)
         {
           case detail::bson_type::int32:
-            value = static_cast<value_t>(cur.template read<std::int32_t>());
+            value = static_cast<value_t>(cursor_.template read<std::int32_t>());
             return;
           case detail::bson_type::int64:
-            value = static_cast<value_t>(cur.template read<std::int64_t>());
+            value = static_cast<value_t>(cursor_.template read<std::int64_t>());
             return;
           case detail::bson_type::double_:
-            value = static_cast<value_t>(cur.template read<double>());
+            value = static_cast<value_t>(cursor_.template read<double>());
             return;
           default:
             throw std::runtime_error("Expected BSON numeric type");
@@ -517,9 +554,9 @@ REFLEX_EXPORT namespace reflex::serde::bson
           throw std::runtime_error("Expected BSON array type");
         }
         value.clear();
-        read_document(cur, [&cur, &value](detail::bson_type elem_type, std::string const&) {
+        read_document([this, &value](detail::bson_type elem_type, std::string_view) {
           typename value_t::value_type elem{};
-          read_payload(elem_type, cur, elem);
+          read_element(elem_type, elem);
           value.push_back(std::move(elem));
         });
       }
@@ -530,9 +567,9 @@ REFLEX_EXPORT namespace reflex::serde::bson
           throw std::runtime_error("Expected BSON document type");
         }
         value.clear();
-        read_document(cur, [&cur, &value](detail::bson_type elem_type, std::string const& key) {
+        read_document([this, &value](detail::bson_type elem_type, std::string_view key) {
           typename value_t::mapped_type mapped{};
-          read_payload(elem_type, cur, mapped);
+          read_element(elem_type, mapped);
           value[typename value_t::key_type{key}] = std::move(mapped);
         });
       }
@@ -545,10 +582,9 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON document type");
         }
-        read_document(cur, [&cur, &value](detail::bson_type elem_type, std::string const& key) {
-          object_visit(key, value, [&cur, elem_type](auto& member) {
-            read_payload(elem_type, cur, member);
-          });
+        read_document([this, &value](detail::bson_type elem_type, std::string_view key) {
+          object_visit(
+              key, value, [this, elem_type](auto& member) { read_element(elem_type, member); });
         });
       }
       else if constexpr(std::same_as<value_t, bson::value>)
@@ -559,45 +595,44 @@ REFLEX_EXPORT namespace reflex::serde::bson
             value = null;
             return;
           case detail::bson_type::boolean:
-            value = (cur.read() != std::byte{0x00});
+            value = (cursor_.read_byte() != std::byte{0x00});
             return;
           case detail::bson_type::int32:
-            value = cur.template read<bson::int32>();
+            value = cursor_.template read<bson::int32>();
             return;
           case detail::bson_type::int64:
-            value = cur.template read<bson::int64>();
+            value = cursor_.template read<bson::int64>();
             return;
           case detail::bson_type::double_:
-            value = cur.template read<double>();
+            value = cursor_.template read<double>();
             return;
           case detail::bson_type::string:
-            value = cur.template read<std::string, true>();
+            value = std::string{cursor_.template read<std::string_view, true>()};
             return;
           case detail::bson_type::decimal128:
-            value = cur.template read<bson::decimal128>();
+            value = cursor_.template read<bson::decimal128>();
             return;
           case detail::bson_type::datetime:
-            value = bson::datetime{cur.template read<std::int64_t>()};
+            value = bson::datetime{cursor_.template read<std::int64_t>()};
             return;
           case detail::bson_type::document:
           {
             auto& object = value.template emplace<bson::object>();
             object.clear();
-            read_document(
-                cur, [&cur, &object](detail::bson_type elem_type, std::string const& key) {
-                  bson::value nested;
-                  read_payload(elem_type, cur, nested);
-                  object[key] = std::move(nested);
-                });
+            read_document([this, &object](detail::bson_type elem_type, std::string_view key) {
+              bson::value nested;
+              read_element(elem_type, nested);
+              object[std::string{key}] = std::move(nested);
+            });
             return;
           }
           case detail::bson_type::array:
           {
             auto& array = value.template emplace<bson::array>();
             array.clear();
-            read_document(cur, [&cur, &array](detail::bson_type elem_type, std::string const&) {
+            read_document([this, &array](detail::bson_type elem_type, std::string_view) {
               bson::value nested;
-              read_payload(elem_type, cur, nested);
+              read_element(elem_type, nested);
               array.push_back(std::move(nested));
             });
             return;
@@ -608,7 +643,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
       }
       else if constexpr(requires(value_t& v) { reflex::visit([](auto const&) {}, v); })
       {
-        read_payload(type, cur, value.template emplace<bson::value>());
+        read_element(type, value.template emplace<bson::value>());
       }
       else
       {
@@ -616,132 +651,105 @@ REFLEX_EXPORT namespace reflex::serde::bson
       }
     }
 
-    template <typename Cur, typename T> static constexpr void read_root(Cur& cur, T& value)
+    // Deserialize the next complete BSON document from the stream as T.
+    // Calls the deserialize() CPO which dispatches to tag_invoke overloads.
+    template <typename T = bson::value> T load()
     {
-      if constexpr(std::same_as<std::decay_t<T>, bson::value>)
-      {
-        bson::object root;
-        read_document(cur, [&cur, &root](detail::bson_type type, std::string const& key) {
-          bson::value member_value;
-          read_payload(type, cur, member_value);
-          root[key] = std::move(member_value);
-        });
-
-        // Scalars are wrapped as {"value": <scalar>} at the BSON root.
-        if(root.size() == 1)
-        {
-          auto it = root.find("value");
-          if(it != root.end())
-          {
-            value = std::move(it->second);
-            return;
-          }
-        }
-
-        value = std::move(root);
-        return;
-      }
-
-      if constexpr(
-          map_c<T>
-          or (object_visitable_c<T>
-              and !std::same_as<std::decay_t<T>, bson::value>
-              and !detail::bson_scalar_c<T>))
-      {
-        read_document(cur, [&cur, &value](detail::bson_type type, std::string const& key) {
-          if constexpr(map_c<T>)
-          {
-            typename std::decay_t<T>::mapped_type mapped{};
-            read_payload(type, cur, mapped);
-            value[typename std::decay_t<T>::key_type{key}] = std::move(mapped);
-          }
-          else
-          {
-            object_visit(
-                key, value, [&cur, type](auto& member) { read_payload(type, cur, member); });
-          }
-        });
-        return;
-      }
-
-      bool has_value = false;
-      read_document(
-          cur, [&cur, &value, &has_value](detail::bson_type type, std::string const& key) {
-            if(key != "value")
-            {
-              throw std::runtime_error("Expected wrapped BSON scalar key 'value'");
-            }
-            if(has_value)
-            {
-              throw std::runtime_error("Duplicate wrapped BSON scalar key");
-            }
-            has_value = true;
-            read_payload(type, cur, value);
-          });
-
-      if(!has_value)
-      {
-        throw std::runtime_error("Missing wrapped BSON scalar key");
-      }
-    }
-
-  public:
-    deserializer() = default;
-
-    template <typename T = bson::value, std::ranges::input_range R> static T load(R&& input)
-    {
-      auto sub = std::ranges::subrange(std::ranges::begin(input), std::ranges::end(input));
-      cursor<decltype(sub)> cur{std::move(sub)};
-      T                     value{};
-      read_root(cur, value);
-      if(!cur.at_end())
-      {
-        throw std::runtime_error("Unexpected trailing BSON input");
-      }
-      return value;
-    }
-
-    template <typename T = bson::value, std::input_iterator It, std::sentinel_for<It> End>
-    static T load(It first, End last)
-    {
-      return load<T>(range_cursor<It, End>{first, last});
-    }
-
-    template <typename T = bson::value> static T load(std::span<const std::byte> in)
-    {
-      return load<T>(in.begin(), in.end());
-    }
-
-    template <typename T = bson::value, std::ranges::contiguous_range Buffer>
-    static T load(Buffer const& in)
-      requires std::ranges::sized_range<Buffer>
-    {
-      using element_t = std::remove_cv_t<std::ranges::range_value_t<Buffer>>;
-      auto bytes =
-          std::as_bytes(std::span<element_t const>(std::ranges::data(in), std::ranges::size(in)));
-      return load<T>(bytes.begin(), bytes.end());
-    }
-
-    template <typename T = bson::value, std::input_iterator It, std::sentinel_for<It> End>
-    static T operator()(It first, End last)
-    {
-      return load<T>(first, last);
-    }
-
-    template <typename T = bson::value> static T operator()(auto&& in)
-    {
-      return load<T>(std::forward<decltype(in)>(in));
+      return deserialize(*this, std::type_identity<T>{});
     }
   };
 
+  template <std::input_iterator It> deserializer(It, It) -> deserializer<It>;
+}
+
+namespace reflex::serde::bson
+{
+
+template <std::output_iterator<std::byte> OutputIt, typename T>
+OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+{
+  auto encoded = detail::encode_root(value);
+  std::ranges::copy(encoded, ser.out());
+  return ser.out();
+}
+
+template <std::input_iterator It, typename T>
+T tag_invoke(tag_t<serde::deserialize>, deserializer<It>& de, std::type_identity<T>)
+{
+  using U = std::decay_t<T>;
+  T value{};
+
+  if constexpr(std::same_as<U, bson::value>)
+  {
+    bson::object root;
+    de.read_document([&](detail::bson_type type, std::string_view key) {
+      bson::value member_value;
+      de.read_element(type, member_value);
+      root[std::string{key}] = std::move(member_value);
+    });
+
+    // Scalars are wrapped as {"value": <scalar>} at the BSON root.
+    if(root.size() == 1)
+    {
+      auto it = root.find("value");
+      if(it != root.end())
+      {
+        value = std::move(it->second);
+        return value;
+      }
+    }
+
+    value = std::move(root);
+  }
+  else if constexpr(
+      map_c<U>
+      or (object_visitable_c<U> and !std::same_as<U, bson::value> and !detail::bson_scalar_c<U>))
+  {
+    de.read_document([&](detail::bson_type type, std::string_view key) {
+      if constexpr(map_c<U>)
+      {
+        typename U::mapped_type mapped{};
+        de.read_element(type, mapped);
+        value[typename U::key_type{key}] = std::move(mapped);
+      }
+      else
+      {
+        object_visit(key, value, [&](auto& member) { de.read_element(type, member); });
+      }
+    });
+  }
+  else
+  {
+    bool has_value = false;
+    de.read_document([&](detail::bson_type type, std::string_view key) {
+      if(key != "value")
+      {
+        throw std::runtime_error("Expected wrapped BSON scalar key 'value'");
+      }
+      if(has_value)
+      {
+        throw std::runtime_error("Duplicate wrapped BSON scalar key");
+      }
+      has_value = true;
+      de.read_element(type, value);
+    });
+
+    if(not has_value)
+    {
+      throw std::runtime_error("Missing wrapped BSON scalar key");
+    }
+  }
+
+  return value;
+}
 } // namespace reflex::serde::bson
 
 REFLEX_EXPORT namespace reflex::serde::ser
 {
-  using bson = reflex::serde::bson::serializer;
+  using bson = reflex::serde::bson::serializer<std::back_insert_iterator<std::vector<std::byte>>>;
 }
 
 REFLEX_EXPORT namespace reflex::serde::de
 {
-  using bson = reflex::serde::bson::deserializer;
+  using bson = reflex::serde::bson::deserializer<std::vector<std::byte>::const_iterator>;
 }
