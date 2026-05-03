@@ -64,4 +64,11 @@ REFLEX_EXPORT namespace reflex::serde
     throw runtime_error("No deserializer found for file format '{}'", file_format);
   }
 
+  inline constexpr struct serialize_cpo : customization_point_object
+  {
+  } serialize;
+  inline constexpr struct deserialize_cpo : customization_point_object
+  {
+  } deserialize;
+
 } // namespace reflex::serde

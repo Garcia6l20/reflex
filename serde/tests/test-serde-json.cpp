@@ -6,7 +6,7 @@ import std;
 
 using namespace reflex;
 using namespace reflex::serde;
-using namespace std::string_view_literals;
+using namespace std::literals;
 
 #define JSON(...) #__VA_ARGS__
 
@@ -32,63 +32,65 @@ enum class[[= derive(EnumFlags, Format, Parse)]] FilePermissions
   Execute = 1 << 2
 };
 
+using namespace std::string_view_literals;
+
 TEST_CASE("reflex::serde::json::serializer: base types")
 {
   std::ostringstream out;
-  json::serializer   serializer;
+  json::serializer   ser{out};
 
   using json::null;
 
   SUBCASE("null")
   {
-    serializer(out, null);
-    CHECK_EQ(out.str(), "null");
+    ser.dump(null);
+    CHECK_EQ(out.str(), "null"sv);
   }
 
   SUBCASE("string")
   {
-    serializer(out, "Hello, world!");
+    ser.dump("Hello, world!");
     CHECK_EQ(out.str(), "\"Hello, world!\"");
   }
 
   SUBCASE("number")
   {
-    serializer(out, 42);
+    ser.dump(42);
     CHECK_EQ(out.str(), "42");
   }
 
   SUBCASE("boolean")
   {
-    serializer(out, true);
+    ser.dump(true);
     CHECK_EQ(out.str(), "true");
     out.str("");
-    serializer(out, false);
+    ser.dump(false);
     CHECK_EQ(out.str(), "false");
   }
 
   SUBCASE("enum")
   {
-    serializer(out, Color::Green);
+    ser.dump(Color::Green);
     CHECK_EQ(out.str(), "\"Green\"");
   }
 
   SUBCASE("enum-flags")
   {
     constexpr auto perms = FilePermissions::Read | FilePermissions::Write;
-    serializer(out, perms);
+    ser.dump(perms);
     CHECK_EQ(out.str(), "\"Read|Write\"");
   }
 }
 
 TEST_CASE("reflex::serde::json::serializer: sequence and map")
 {
-  std::ostringstream out;
-  json::serializer   serializer;
+  std::string      out;
+  json::serializer ser{out};
   SUBCASE("sequence")
   {
     std::vector<int> arr = {1, 2, 3};
-    serializer(out, arr);
-    CHECK_EQ(out.str(), JSON([1,2,3]));
+    ser.dump(arr);
+    CHECK_EQ(out, JSON([1,2,3]));
   }
 
   SUBCASE("map")
@@ -97,25 +99,27 @@ TEST_CASE("reflex::serde::json::serializer: sequence and map")
         {"a", 1},
         {"b", 2}
     };
-    serializer(out, obj);
-    CHECK_EQ(out.str(), JSON({"a":1,"b":2}));
+    ser.dump(obj);
+    CHECK_EQ(out, JSON({"a":1,"b":2}));
   }
 }
 
 TEST_CASE("reflex::serde::json::serializer: aggregate")
 {
-  std::ostringstream out;
-  json::serializer   serializer;
+  std::string out;
+  out.reserve(128); // avoid reallocations during serialization
+  json::serializer ser{out};
 
   S s{42, "Hello, world!", 3.14};
-  serializer(out, s);
-  CHECK_EQ(out.str(), JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14}));
+  ser.dump(s);
+  CHECK_EQ(out, JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14}));
 }
 
 TEST_CASE("reflex::serde::json::serializer: nested aggregate")
 {
-  std::ostringstream out;
-  json::serializer   serializer;
+  std::string out;
+  out.reserve(128); // avoid reallocations during serialization
+  json::serializer ser{out};
 
   struct[[= serde::naming::camel_case]] Inner
   {
@@ -129,57 +133,62 @@ TEST_CASE("reflex::serde::json::serializer: nested aggregate")
   };
 
   Outer o{{42}, "Hello, world!"};
-  serializer(out, o);
-  CHECK_EQ(out.str(), JSON({"inner":{"intMember":42},"stringMember":"Hello, world!"}));
+  ser.dump(o);
+  CHECK_EQ(out, JSON({"inner":{"intMember":42},"stringMember":"Hello, world!"}));
 }
 
 TEST_CASE("reflex::serde::json::deserializer: base types")
 {
-  std::istringstream in;
-
   using json::null;
   SUBCASE("null")
   {
-    in.str("null");
-    auto value = json::deserializer::load<json::null_t>(in);
+    const auto in    = "null"s;
+    auto       value = json::deserializer{in}.load<json::null_t>();
     CHECK(value == null);
+    CHECK(json::deserializer{in}.load<json::value>().is_null());
   }
 
   SUBCASE("string")
   {
-    in.str(JSON("Hello, world!"));
-    auto value = json::deserializer::load<std::string>(in);
+    const std::string_view in    = JSON("Hello, world!");
+    auto                   value = json::deserializer{in}.load<std::string>();
     CHECK(value == "Hello, world!");
+    auto var = json::deserializer{in}.load<json::value>();
+    CHECK(var.is<json::string>());
+    CHECK(var == "Hello, world!");
   }
 
   SUBCASE("number")
   {
-    in.str("42");
-    auto value = json::deserializer::load<int>(in);
+    const std::string_view in    = JSON(42);
+    auto                   value = json::deserializer{in}.load<int>();
     CHECK(value == 42);
+    auto var = json::deserializer{in}.load<json::value>();
+    CHECK(var.is<json::number>());
+    CHECK(var == 42);
   }
 
   SUBCASE("boolean")
   {
-    in.str("true");
-    auto value = json::deserializer::load<bool>(in);
+    const std::string_view in    = JSON(true);
+    auto                   value = json::deserializer{in}.load<bool>();
     CHECK(value == true);
-    in.str("false");
-    value = json::deserializer::load<bool>(in);
+    const std::string_view in_false = JSON(false);
+    value                           = json::deserializer{in_false}.load<bool>();
     CHECK(value == false);
   }
 
   SUBCASE("enum")
   {
-    in.str(JSON("Green"));
-    auto value = json::deserializer::load<Color>(in);
+    const std::string_view in    = JSON("Green");
+    auto                   value = json::deserializer{in}.load<Color>();
     CHECK(value == Color::Green);
   }
 
   SUBCASE("enum-flags")
   {
-    in.str(JSON("Read|Write"));
-    auto value = json::deserializer::load<FilePermissions>(in);
+    const std::string_view in    = JSON("Read|Write");
+    auto                   value = json::deserializer{in}.load<FilePermissions>();
     CHECK((value & FilePermissions::Read) == FilePermissions::Read);
     CHECK((value & FilePermissions::Write) == FilePermissions::Write);
     CHECK((value & FilePermissions::Execute) == FilePermissions::None);
@@ -188,50 +197,45 @@ TEST_CASE("reflex::serde::json::deserializer: base types")
 
 TEST_CASE("reflex::serde::json::deserializer: sequence and map")
 {
-  std::istringstream in;
-
   SUBCASE("sequence")
   {
-    in.str(JSON([1,2,3]));
-    auto value = json::deserializer::load(in);
-    CHECK(value.is_array());
-    CHECK_EQ(value.as<json::array>().size(), 3);
-    CHECK_EQ(value.as<json::array>()[0], 1);
-    CHECK_EQ(value.as<json::array>()[1], 2);
-    CHECK_EQ(value.as<json::array>()[2], 3);
+    const std::string_view in    = JSON([1,2,3]);
+    auto                   value = json::deserializer{in}.load<json::array>();
+    CHECK_EQ(value.size(), 3);
+    CHECK_EQ(value[0], 1);
+    CHECK_EQ(value[1], 2);
+    CHECK_EQ(value[2], 3);
     const auto expected = json::array{1, 2, 3};
-    CHECK_EQ(value.as<json::array>(), expected);
+    CHECK_EQ(value, expected);
   }
 
   SUBCASE("map")
   {
-    in.str(JSON({"a":1,"b":2}));
-    auto value = json::deserializer::load(in);
-    CHECK(value.is_object());
-    std::println("Parsed object: {}", value.as<json::object>());
-    CHECK_EQ(value.as<json::object>().size(), 2);
-    CHECK_EQ(value.as<json::object>().at("a"), 1);
-    CHECK_EQ(value.as<json::object>().at("b"), 2);
+    const std::string_view in    = JSON({"a":1,"b":2});
+    auto                   value = json::deserializer{in}.load<json::object>();
+    std::println("Parsed object: {}", value);
+    CHECK_EQ(value.size(), 2);
+    CHECK_EQ(value.at("a"), 1);
+    CHECK_EQ(value.at("b"), 2);
     const auto expected = json::object{
         {"a", 1},
         {"b", 2}
     };
-    CHECK_EQ(value.as<json::object>(), expected);
+    CHECK_EQ(value, expected);
   }
 }
 
 TEST_CASE("reflex::serde::json::deserializer: aggregate")
 {
-  std::istringstream in;
-
-  in.str(JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14}));
+  const std::string_view in =
+      JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14});
 
   static_assert(serde::object_visitable_c<S>);
   static_assert(serde::object_visitable_c<S&>);
 
   SUBCASE("direct load")
   {
-    auto value = json::deserializer::load<S>(in);
+    auto value = json::deserializer{in}.load<S>();
     CHECK_EQ(value.int_member, 42);
     CHECK_EQ(value.string_member, "Hello, world!");
     CHECK_EQ(value.double_member, 3.14);
@@ -242,18 +246,17 @@ using custom_var1 = poly::var<json::string, json::number, json::boolean, S>;
 
 TEST_CASE("reflex::serde::json::deserializer: custom var")
 {
-  std::ostringstream out;
-  json::serializer   serializer;
-
-  // in.str(JSON({"test": {"intMember":42,"stringMember":"Hello, world!","double-member":3.14}}));
+  std::string      out;
+  json::serializer ser{out};
 
   SUBCASE("custom var")
   {
-    serializer(out, custom_var1{
-        {"test", S{42, "Hello, world!", 3.14}}
+    serialize(
+        ser, custom_var1{
+                 {"test", S{42, "Hello, world!", 3.14}}
     });
-    std::println("Serialized: {}", out.str());
-    auto value = json::deserializer::load<custom_var1>(out.str());
+    std::println("Serialized: {}", out);
+    auto value = json::deserializer{out}.load<custom_var1>();
     std::println("Deserialized: {}", value);
     CHECK_EQ(value["test"].as<S>().int_member, 42);
     CHECK_EQ(value["test"].as<S>().string_member, "Hello, world!");

@@ -51,197 +51,269 @@ REFLEX_EXPORT namespace reflex::serde::json
   }
   } // namespace detail
 
-  class serializer
+  template <typename OutputIt> class serializer
   {
+    OutputIt out_;
+
   public:
-    template <typename Out, typename T, bool tag = false>
-    constexpr Out& operator()(Out& out, T const& value) const
+    serializer(OutputIt out) : out_(out)
+    {}
+
+    template <typename T>
+      requires std::constructible_from<OutputIt, T&>
+    serializer(T& out) : out_(OutputIt(out))
+    {}
+
+    constexpr OutputIt& out()
     {
-      if constexpr(decays_to_c<T, null_t>)
-      {
-        out << "null";
-      }
-      else if constexpr(decays_to_c<T, std::byte>)
-      {
-        out << std::to_integer<unsigned int>(value);
-      }
-      else if constexpr(str_c<T>)
-      {
-        out << '"' << std::string_view(value) << '"';
-      }
-      else if constexpr(number_c<T>)
-      {
-        std::format_to(std::ostreambuf_iterator<typename Out::char_type>(out), "{}", value);
-      }
-      else if constexpr(std::same_as<std::remove_cvref_t<T>, boolean>)
-      {
-        out << (value ? "true" : "false");
-      }
-      else if constexpr(seq_c<T>)
-      {
-        out << '[';
-        if(value.empty())
-        {
-          out << ']';
-          return out;
-        }
+      return out_;
+    }
 
-        auto view = std::views::all(value);
-
-        for(const auto& elem : view | std::views::take(value.size() - 1))
-        {
-          (*this)(out, elem);
-          out << ',';
-        }
-        (*this)(out, view.back());
-
-        out << ']';
-        return out;
-      }
-      else if constexpr(pair_c<T>)
+    template <typename T, bool tag = false> constexpr void dump(T const& value)
+    {
+      if constexpr(requires { serialize(*this, value); })
       {
-        out << '{';
-        (*this)(out, value.first);
-        out << ':';
-        reflex::visit([this, &out](const auto& v) { (*this)(out, v); }, value.second);
-        out << '}';
-      }
-      else if constexpr(map_c<T>)
-      {
-        out << '{';
-        if(value.empty())
-        {
-          out << '}';
-          return out;
-        }
-
-        bool first = true;
-
-        for(const auto& [key, val] : value)
-        {
-          if(not first)
-          {
-            out << ',';
-          }
-          else
-          {
-            first = false;
-          }
-          (*this)(out, key);
-          out << ':';
-          reflex::visit(
-              [this, &out]<typename U>(const U& v) {
-                using object_type = std::remove_cvref_t<T>;
-                using var_type    = typename object_type::mapped_type;
-                if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^U))
-                {
-                  (*this).template operator()<Out, U, true>(out, v);
-                }
-                else
-                {
-                  (*this)(out, v);
-                }
-              },
-              val);
-        }
-        out << '}';
-      }
-      else if constexpr(aggregate_c<T>)
-      {
-        out << '{';
-
-        bool first = not tag;
-
-        if constexpr(tag)
-        {
-          (*this)(out, "__type");
-          out << ':';
-          static auto expected_id =
-              std::hash<std::string_view>{}(identifier_of(dealias(decay(^^T))));
-          (*this)(out, expected_id);
-        }
-
-        static constexpr auto type = decay(type_of(^^value));
-        template for(constexpr auto member : define_static_array(
-                         nonstatic_data_members_of(type, std::meta::access_context::current())))
-        {
-          constexpr std::string_view name = reflex::serde::serialized_name(member);
-          if(not first)
-          {
-            out << ',';
-          }
-          else
-          {
-            first = false;
-          }
-          (*this)(out, name);
-          out << ':';
-          auto const& member_value = value.[:member:];
-          reflex::visit([this, &out](const auto& v) { (*this)(out, v); }, member_value);
-        }
-        out << '}';
-      }
-      else if constexpr(visitable_c<T>)
-      {
-        reflex::visit([&](const auto& v) { (*this)(out, v); }, value);
-      }
-      else if constexpr(std::formattable<T, typename Out::char_type>)
-      {
-        // Fallback for types that are formattable but not directly serializable
-        std::format_to(std::ostreambuf_iterator<typename Out::char_type>(out), "\"{}\"", value);
+        serialize(*this, value);
       }
       else
       {
         static_assert(false, std::string(display_string_of(^^T)) + " is not serializable to JSON");
       }
-      return out;
     }
   };
 
-  class deserializer
+  template <typename... TArgs>
+  serializer(std::basic_string<TArgs...> & out)
+      -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
+  serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+  serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+
+  template <typename OutputIt>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, null_t const&)
   {
+    std::ranges::copy(std::string_view{"null"}, ser.out());
+    return ser.out();
+  }
+
+  template <typename OutputIt, str_c Str>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Str const& value)
+  {
+    return std::format_to(ser.out(), "\"{}\"", value);
+  }
+
+  template <typename OutputIt, number_c Num>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Num const& value)
+  {
+    return std::format_to(ser.out(), "{}", value);
+  }
+
+  template <typename OutputIt>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, boolean const& value)
+  {
+    std::ranges::copy(std::string_view{value ? "true" : "false"}, ser.out());
+    return ser.out();
+  }
+
+  template <typename OutputIt, derives_c<derive_t<Format>> T>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
+  {
+    return std::format_to(ser.out(), "\"{}\"", value);
+  }
+
+  template <typename OutputIt, seq_c Seq>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Seq const& value)
+  {
+    auto& out = ser.out();
+    out++     = '[';
+    if(value.empty())
+    {
+      out++ = ']';
+      return out;
+    }
+
+    auto view = std::views::all(value);
+
+    for(const auto& elem : view | std::views::take(value.size() - 1))
+    {
+      serialize(ser, elem);
+      out++ = ',';
+    }
+    serialize(ser, view.back());
+
+    out++ = ']';
+    return out;
+  }
+
+  template <typename OutputIt, pair_c Pair>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Pair const& value)
+  {
+    auto& out = ser.out();
+    out++     = '{';
+    serialize(ser, value.first);
+    out++ = ':';
+    reflex::visit([&ser](const auto& v) { serialize(ser, v); }, value.second);
+    out++ = '}';
+    return out;
+  }
+
+  template <typename OutputIt, map_c Map>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Map const& value)
+  {
+    auto& out = ser.out();
+    out++     = '{';
+
+    bool first = true;
+
+    for(const auto& [key, val] : value)
+    {
+      if(not first)
+      {
+        out++ = ',';
+      }
+      else
+      {
+        first = false;
+      }
+      serialize(ser, key);
+      out++ = ':';
+      reflex::visit(
+          [&ser]<typename U>(const U& v) {
+            using var_type = typename Map::mapped_type;
+            if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^U))
+            {
+              serialize(ser, v, std::cw<true>);
+            }
+            else
+            {
+              serialize(ser, v);
+            }
+          },
+          val);
+    }
+    out++ = '}';
+    return out;
+  }
+
+  template <typename OutputIt, aggregate_c Agg, typename TagT = std::false_type>
+  OutputIt tag_invoke(
+      tag_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
+  {
+    auto& out = ser.out();
+    out++     = '{';
+
+    constexpr bool tag = TagT::value;
+
+    bool first = not tag;
+
+    if constexpr(tag)
+    {
+      serialize(ser, "__type");
+      out++                   = ':';
+      static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Agg))));
+      serialize(ser, expected_id);
+    }
+
+    static constexpr auto type = decay(type_of(^^value));
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(type, std::meta::access_context::current())))
+    {
+      constexpr std::string_view name = serialized_name(member);
+      if(not first)
+      {
+        out++ = ',';
+      }
+      else
+      {
+        first = false;
+      }
+      serialize(ser, name);
+      out++                    = ':';
+      auto const& member_value = value.[:member:];
+      reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
+    }
+    out++ = '}';
+    return out;
+  }
+
+  template <typename OutputIt, visitable_c T>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
+  {
+    return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
+  }
+
+  template <std::input_iterator InputIt> class deserializer
+  {
+  public:
+    using range_cursor = std::ranges::subrange<InputIt, InputIt>;
+
   private:
-    template <std::input_iterator It, std::sentinel_for<It> End>
-    using range_cursor = std::ranges::subrange<It, End>;
+    range_cursor cursor_;
 
-    template <typename R> static bool at_end(R const& r)
+  public:
+    bool at_end() const
     {
-      return r.empty();
+      return cursor_.empty();
     }
 
-    template <typename R> static char peek(R const& r)
+    InputIt begin() const
     {
-      if(at_end(r))
+      return cursor_.begin();
+    }
+
+    InputIt end() const
+    {
+      return cursor_.end();
+    }
+
+    InputIt advance_while(auto pred)
+    {
+      while(not at_end() and pred(peek()))
+      {
+        advance();
+      }
+      return cursor_.begin();
+    }
+
+    char peek() const
+    {
+      if(at_end())
+      {
         throw std::runtime_error("Unexpected end of JSON input");
-      return static_cast<char>(*r.begin());
+      }
+      return static_cast<char>(*cursor_.begin());
     }
 
-    template <typename R> static char advance(R& r)
+    char advance()
     {
-      const char c = peek(r);
-      r.advance(1);
+      const char c = peek();
+      cursor_.advance(1);
       return c;
     }
 
-    template <typename R> static void expect(R& r, std::string_view token)
+    void advance_to(InputIt pos)
+    {
+      cursor_ = {pos, cursor_.end()};
+    }
+
+    void expect(std::string_view token)
     {
       for(char expected : token)
       {
-        if(advance(r) != expected)
+        if(advance() != expected)
         {
           throw std::runtime_error(std::format("Expected '{}'", token));
         }
       }
     }
 
-    template <typename R> static void ltrim(R& r)
+    void ltrim()
     {
-      while(!at_end(r))
+      while(!at_end())
       {
-        const unsigned char ch = static_cast<unsigned char>(peek(r));
-        if(std::isspace(ch))
+        const unsigned char ch = static_cast<unsigned char>(peek());
+        if(reflex::is_space(ch))
         {
-          advance(r);
+          advance();
         }
         else
         {
@@ -250,412 +322,308 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
     }
 
-    template <typename R> static constexpr void load_into(R& r, str_c auto& value)
+    deserializer(InputIt begin, InputIt end) : cursor_{begin, end}
+    {}
+
+    template <typename T>
+      requires requires(T const& v) { v.view(); }
+    deserializer(T const& v) : cursor_{v.view().begin(), v.view().end()}
+    {}
+
+    template <typename T>
+      requires requires(T const& v) {
+        v.begin();
+        v.end();
+      }
+    deserializer(T const& v) : cursor_{v.begin(), v.end()}
+    {}
+
+    template <typename T> T load()
     {
-      if(advance(r) != '"')
-      {
-        throw std::runtime_error("Expected '\"' at start of JSON string");
-      }
+      return deserialize(*this, std::type_identity<T>{});
+    }
+  };
 
-      while(!at_end(r))
-      {
-        const char c = advance(r);
-        if(c == '"')
-          return;
+  template <typename... TArgs>
+  deserializer(std::basic_string<TArgs...> const& in)
+      -> deserializer<typename std::basic_string<TArgs...>::const_iterator>;
 
-        if(c == '\\')
-        {
-          const char esc = advance(r);
-          switch(esc)
-          {
-            case '"':
-              value.push_back('"');
-              break;
-            case '\\':
-              value.push_back('\\');
-              break;
-            case '/':
-              value.push_back('/');
-              break;
-            case 'b':
-              value.push_back('\b');
-              break;
-            case 'f':
-              value.push_back('\f');
-              break;
-            case 'n':
-              value.push_back('\n');
-              break;
-            case 'r':
-              value.push_back('\r');
-              break;
-            case 't':
-              value.push_back('\t');
-              break;
-            case 'u':
-              throw std::runtime_error("\\uXXXX escapes not implemented");
-            default:
-              throw std::runtime_error(std::format("Unknown escape: \\{}", esc));
-          }
-        }
-        else
-        {
-          value.push_back(c);
-        }
-      }
-      throw std::runtime_error("Unterminated JSON string");
+  template <typename... TArgs>
+  deserializer(std::basic_string_view<TArgs...> const& in)
+      -> deserializer<typename std::basic_string_view<TArgs...>::const_iterator>;
+
+  template <typename It>
+  auto tag_invoke(
+      tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<json::null_t>)
+  {
+    de.expect("null");
+    return null;
+  }
+
+  template <typename It, str_c Str>
+  auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<Str>)
+  {
+    if(de.advance() != '"')
+    {
+      throw std::runtime_error("Expected '\"' at start of JSON string");
     }
 
-    template <typename R> static constexpr void load_into(R& r, bool& value)
+    Str value;
+
+    while(not de.at_end())
     {
-      if(peek(r) == 't')
+      const char c = de.advance();
+      if(c == '"')
       {
-        expect(r, "true");
-        value = true;
-        return;
-      }
-      if(peek(r) == 'f')
-      {
-        expect(r, "false");
-        value = false;
-        return;
-      }
-      throw std::runtime_error("Expected 'true' or 'false'");
-    }
-
-    template <typename R> static constexpr void load_into(R& r, json::null_t&)
-    {
-      expect(r, "null");
-    }
-
-    template <typename R> static constexpr void load_into(R& r, number_c auto& value)
-    {
-      static const auto is_num_char = [](char ch) {
-        return std::isdigit(static_cast<unsigned char>(ch))
-            or (ch == '+')
-            or (ch == '-')
-            or (ch == '.')
-            or (ch == 'e')
-            or (ch == 'E');
-      };
-
-      std::inplace_vector<char, 64> token;
-      while(!at_end(r) and is_num_char(peek(r)))
-      {
-        token.push_back(advance(r));
+        return value;
       }
 
-      if(token.empty())
+      if(c == '\\')
       {
-        throw std::runtime_error("Failed to parse number");
-      }
-
-      auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
-      if(ec != std::errc{} or ptr != token.data() + token.size())
-      {
-        throw std::runtime_error("Failed to parse number");
-      }
-    }
-
-    template <typename R> static constexpr void load_into(R& r, seq_c auto& value)
-    {
-      if(advance(r) != '[')
-        throw std::runtime_error("Expected '[' at start of JSON array");
-
-      ltrim(r);
-      if(!at_end(r) and peek(r) == ']')
-      {
-        advance(r);
-        return;
-      }
-
-      while(true)
-      {
-        typename std::remove_cvref_t<decltype(value)>::value_type elem;
-        load_into(r, elem);
-        value.push_back(std::move(elem));
-
-        ltrim(r);
-        const char sep = advance(r);
-        if(sep == ',')
+        const char esc = de.advance();
+        switch(esc)
         {
-          ltrim(r);
-          continue;
+          case '"':
+            value.push_back('"');
+            break;
+          case '\\':
+            value.push_back('\\');
+            break;
+          case '/':
+            value.push_back('/');
+            break;
+          case 'b':
+            value.push_back('\b');
+            break;
+          case 'f':
+            value.push_back('\f');
+            break;
+          case 'n':
+            value.push_back('\n');
+            break;
+          case 'r':
+            value.push_back('\r');
+            break;
+          case 't':
+            value.push_back('\t');
+            break;
+          case 'u':
+            throw std::runtime_error("\\uXXXX escapes not implemented");
+          default:
+            throw std::runtime_error(std::format("Unknown escape: \\{}", esc));
         }
-        if(sep == ']')
-        {
-          break;
-        }
-        throw std::runtime_error("Expected ',' or ']' in array");
+      }
+      else
+      {
+        value.push_back(c);
       }
     }
+    throw std::runtime_error("Unterminated JSON string");
+  }
 
-    template <typename T, typename R> struct try_load_result
+  template <typename It, number_c Num>
+  auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<Num>)
+  {
+    Num        value;
+    const auto first = std::to_address(de.begin());
+    auto [ptr, ec]   = std::from_chars(first, std::to_address(de.end()), value);
+    if(ec != std::errc{})
     {
-      std::optional<T> value;
-      R                r;
-      std::string_view error_message;
-
-      explicit operator bool() const noexcept
-      {
-        return value.has_value() and error_message.empty();
-      }
-    };
-
-    template <aggregate_c Obj, typename R> static constexpr try_load_result<Obj, R> try_load(R r)
-    {
-      if(advance(r) != '{')
-      {
-        return {
-            .value = std::nullopt, .r = r, .error_message = "Expected '{' at start of JSON object"};
-      }
-
-      ltrim(r);
-      if(!at_end(r) and peek(r) == '}')
-      {
-        advance(r);
-        return {.value = std::nullopt, .r = r, .error_message = ""};
-      }
-
-      {
-        // lookup for __type tag
-        std::string key;
-        load_into(r, key);
-        ltrim(r);
-        if(advance(r) != ':')
-        {
-          return {.value = std::nullopt, .r = r, .error_message = "Expected ':' after object key"};
-        }
-        if(key == "__type")
-        {
-          std::size_t id;
-          load_into(r, id);
-          static auto expected_id =
-              std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Obj))));
-          if(id != expected_id)
-          {
-            return {.value = std::nullopt, .r = r, .error_message = "Type tag mismatch"};
-          }
-
-          ltrim(r);
-          const char sep = advance(r);
-          if(sep != ',')
-          {
-            return {
-                .value = std::nullopt, .r = r, .error_message = "Expected ',' after __type tag"};
-          }
-        }
-        else
-        {
-          return {.value = std::nullopt, .r = r, .error_message = "Missing __type tag"};
-        }
-      }
-
-      Obj obj{};
-      while(true)
-      {
-      __next:
-        ltrim(r);
-        std::string key;
-        load_into(r, key);
-
-        template for(constexpr auto member : define_static_array(
-                         nonstatic_data_members_of(^^Obj, std::meta::access_context::current())))
-        {
-          constexpr std::string_view name = reflex::serde::serialized_name(member);
-          if(name != key)
-          {
-            continue;
-          }
-          ltrim(r);
-          if(advance(r) != ':')
-          {
-            return {
-                .value = std::nullopt, .r = r, .error_message = "Expected ':' after object key"};
-          }
-
-          ltrim(r);
-          load_into(r, obj.[:member:]);
-
-          ltrim(r);
-          const char sep = advance(r);
-          if(sep == ',')
-          {
-            goto __next;
-          }
-          if(sep == '}')
-          {
-            return {.value = std::move(obj), .r = r, .error_message = ""};
-          }
-          return {.value = std::nullopt, .r = r, .error_message = "Expected ',' or '}' in object"};
-        }
-        return {.value = std::nullopt, .r = r, .error_message = "Unexpected key in object: " + key};
-      }
-      return {.value = std::nullopt, .r = r, .error_message = "Non-matching aggregate type"};
+      throw std::runtime_error("Failed to parse number");
     }
+    const auto offset = ptr - first;
+    de.advance_to(de.begin() + offset);
+    return value;
+  }
 
-    template <typename R, object_visitable_c Map>
-      requires(not meta::is_template_instance_of(^^Map, ^^poly::var))
-    static constexpr void load_into(R& r, Map& value)
+  template <typename It>
+  auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<boolean>)
+  {
+    if(de.peek() == 't')
     {
-      if(advance(r) != '{')
-        throw std::runtime_error("Expected '{' at start of JSON object");
-
-      ltrim(r);
-      if(!at_end(r) and peek(r) == '}')
-      {
-        advance(r);
-        return;
-      }
-
-      while(true)
-      {
-        ltrim(r);
-        std::string key;
-        load_into(r, key);
-
-        ltrim(r);
-        if(advance(r) != ':')
-        {
-          throw std::runtime_error("Expected ':' after object key");
-        }
-
-        ltrim(r);
-        serde::object_visit(key, value, [&](auto&& v) { load_into(r, v); });
-
-        ltrim(r);
-        const char sep = advance(r);
-        if(sep == ',')
-        {
-          continue;
-        }
-        if(sep == '}')
-        {
-          break;
-        }
-        throw std::runtime_error("Expected ',' or '}' in object");
-      }
+      de.expect("true");
+      return true;
     }
-
-    template <typename R, typename var_type>
-      requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
-    static constexpr void load_into(R& r, var_type& value)
+    if(de.peek() == 'f')
     {
-      ltrim(r);
-      switch(peek(r))
-      {
-        case 't':
-          expect(r, "true");
-          value = true;
-          return;
-        case 'f':
-          expect(r, "false");
-          value = false;
-          return;
-        case 'n':
-          expect(r, "null");
-          value = var_type(null);
-          return;
-        case '{':
-        {
-          template for(constexpr auto a : detail::aggregate_types_of_var<var_type>())
-          {
-            using T     = [:a:];
-            auto result = try_load<T>(r);
-            if(!result)
-            {
-              continue;
-            }
-            value = std::move(*result.value);
-            r     = std::move(result.r);
-            return;
-          }
-
-          // no aggregate type matched, load as generic object
-          auto& obj = value.template emplace<typename var_type::obj_type>();
-          load_into(r, obj);
-
-          return;
-        }
-        case '[':
-          load_into(r, value.template emplace<typename var_type::arr_type>());
-          return;
-        case '"':
-          load_into(r, value.template emplace<json::string>());
-          return;
-        default:
-          load_into(r, value.template emplace<json::number>());
-          return;
-      }
+      de.expect("false");
+      return false;
     }
+    throw std::runtime_error("Expected 'true' or 'false'");
+  }
 
-    // Fallback for types that are not directly deserializable but parsable
-    template <typename R, parsable_c T>
-      requires(not serializable_c<T>)
-    static void load_into(R& r, T& value)
+  template <typename It, derives_c<derive_t<Parse>> T>
+  auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<T>)
+  {
+    auto token  = de.template load<heapless::string<64>>();
+    auto result = parse<std::remove_cvref_t<T>>(token);
+    if(!result)
     {
-      std::string token;
-      load_into(r, token);
-      auto result = parse<std::remove_cvref_t<T>>(token);
-      if(!result)
-      {
-        throw std::runtime_error(
-            std::format("Failed to parse value: {}", result.error().message()));
-      }
-      value = std::move(result).value();
+      throw std::runtime_error(std::format("Failed to parse value: {}", result.error().message()));
     }
+    return std::move(result).value();
+  }
 
-  public:
-    deserializer() = default;
+  template <typename It, seq_c Seq>
+  auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<Seq>)
+  {
+    if(de.advance() != '[')
+      throw std::runtime_error("Expected '[' at start of JSON array");
 
-    template <typename T = json::value, std::input_iterator It, std::sentinel_for<It> End>
-    static T load(It first, End last)
+    Seq value;
+
+    de.ltrim();
+    if(not de.at_end() and de.peek() == ']')
     {
-      range_cursor<It, End> input{first, last};
-      T                     value{};
-      ltrim(input);
-      load_into(input, value);
-      ltrim(input);
-      if(!at_end(input))
-      {
-        throw std::runtime_error("Unexpected trailing JSON input");
-      }
+      de.advance();
       return value;
     }
 
-    template <typename T = json::value> static T load(str_c auto&& in)
+    while(true)
     {
-      std::string_view view{in};
-      return load<T>(view.begin(), view.end());
+      using elem_type = typename std::remove_cvref_t<decltype(value)>::value_type;
+      value.push_back(de.template load<elem_type>());
+
+      de.ltrim();
+      const char sep = de.advance();
+      if(sep == ',')
+      {
+        de.ltrim();
+        continue;
+      }
+      if(sep == ']')
+      {
+        break;
+      }
+      throw std::runtime_error("Expected ',' or ']' in array");
+    }
+    return value;
+  }
+
+  template <typename It, object_visitable_c Map>
+    requires(not meta::is_template_instance_of(^^Map, ^^poly::var))
+  auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<Map>)
+  {
+    if(de.advance() != '{')
+      throw std::runtime_error("Expected '{' at start of JSON object");
+
+    de.ltrim();
+    if(!de.at_end() and de.peek() == '}')
+    {
+      de.advance();
+      return Map{};
     }
 
-    template <typename T = json::value>
-    static T load(auto&& in)
-      requires requires() { in.view(); }
+    Map value{};
+    while(true)
     {
-      auto view = in.view();
-      return load<T>(view.begin(), view.end());
-    }
+      de.ltrim();
+      auto key = de.template load<std::string>();
+      de.ltrim();
+      if(de.advance() != ':')
+      {
+        throw std::runtime_error("Expected ':' after object key");
+      }
+      de.ltrim();
 
-    template <typename T = json::value, std::input_iterator It, std::sentinel_for<It> End>
-    static T operator()(It first, End last)
+      serde::object_visit(std::move(key), value, [&]<typename V>(V& v) {
+        v = de.template load<std::remove_cvref_t<V>>();
+        if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
+        {
+          if(v.is_object())
+          {
+            auto& obj = v.as_object();
+            auto  type_key =
+                std::ranges::find_if(obj, [](auto const& pair) { return pair.first == "__type"; });
+            if(type_key != obj.end())
+            {
+              template for(constexpr auto a : detail::aggregate_types_of_var<V>())
+              {
+                if(type_key->second
+                   == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
+                {
+                  using Agg = [:a:];
+                  Agg agg_value{};
+                  template for(constexpr auto member :
+                               define_static_array(nonstatic_data_members_of(
+                                   a, std::meta::access_context::current())))
+                  {
+                    constexpr std::string_view name = serialized_name(member);
+                    if(name == "__type")
+                    {
+                      continue;
+                    }
+                    [[maybe_unused]] auto object_value_it = std::ranges::find_if(
+                        obj, [name](auto const& pair) { return pair.first == name; });
+                    auto & member_value = agg_value.[:member:];
+                    visit(
+                        [&]<typename U>([[maybe_unused]] U&& v) {
+                          if constexpr(requires { member_value = std::forward<U>(v); })
+                          {
+                            member_value = std::forward<U>(v);
+                          }
+                          else
+                          {
+                            throw std::runtime_error("Cannot assign value to member");
+                          }
+                        },
+                        std::move(object_value_it->second));
+                  }
+                  v = std::move(agg_value);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      });
+
+      de.ltrim();
+      const char sep = de.advance();
+      if(sep == ',')
+      {
+        continue;
+      }
+      if(sep == '}')
+      {
+        break;
+      }
+      throw std::runtime_error("Expected ',' or '}' in object");
+    }
+    return value;
+  }
+
+  template <typename It, typename var_type>
+    requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
+  auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<var_type>)
+      -> var_type
+  {
+    de.ltrim();
+    switch(de.peek())
     {
-      return load<T>(first, last);
+      case 't':
+      case 'f':
+        return de.template load<boolean>();
+      case 'n':
+        return de.template load<null_t>();
+      case '{':
+        return de.template load<typename var_type::obj_type>();
+      case '[':
+        return de.template load<typename var_type::arr_type>();
+      case '"':
+        return de.template load<json::string>();
+      default:
+        return de.template load<json::number>();
     }
-
-    static auto operator()(auto&& in)
-    {
-      return load(in);
-    }
-  };
-} // namespace reflex::serde::json
-
-REFLEX_EXPORT namespace reflex::serde::ser
-{
-  using json = reflex::serde::json::serializer;
+  }
 }
 
-REFLEX_EXPORT namespace reflex::serde::de
-{
-  using json = reflex::serde::json::deserializer;
-}
+// REFLEX_EXPORT namespace reflex::serde::ser
+// {
+//   using json = reflex::serde::json::serializer;
+// }
+
+// REFLEX_EXPORT namespace reflex::serde::de
+// {
+//   using json = reflex::serde::json::deserializer;
+// }

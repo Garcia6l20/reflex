@@ -52,6 +52,9 @@ REFLEX_EXPORT namespace reflex
         }
     }
 
+    template <auto Tag>
+    using derive_t = std::remove_cvref_t<decltype(Tag)>;
+
     template <typename T, auto Tag>
     constexpr bool derives_v = _derive_detail::has_derive_annotation_for(^^T, Tag);
 

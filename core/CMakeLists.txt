@@ -32,6 +32,7 @@ reflex_add_cxx_module_library(reflex.core
   include/reflex/scope_guard.hpp
   include/reflex/format.hpp
   include/reflex/derive.hpp
+  include/reflex/tag_invoke.hpp
 )
 target_link_libraries(reflex.core
   PUBLIC
