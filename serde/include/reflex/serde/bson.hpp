@@ -55,6 +55,12 @@ constexpr void append(bytes& out, double value)
   append(out, std::bit_cast<std::uint64_t>(value));
 }
 
+constexpr void append(bytes& out, decimal128 value)
+{
+  const auto raw = std::bit_cast<std::array<std::byte, 16>>(value);
+  out.append_range(raw);
+}
+
 constexpr void append(bytes& out, std::string_view value, bool include_size = false)
 {
   if(include_size)
@@ -159,9 +165,18 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   }
   else if constexpr(std::floating_point<value_t>)
   {
-    append(out, detail::bson_type::double_);
-    append(out, key);
-    append(out, static_cast<double>(value));
+    if constexpr(std::same_as<value_t, decimal128>)
+    {
+      append(out, detail::bson_type::decimal128);
+      append(out, key);
+      append(out, value);
+    }
+    else
+    {
+      append(out, detail::bson_type::double_);
+      append(out, key);
+      append(out, static_cast<double>(value));
+    }
   }
   else if constexpr(std::integral<value_t> and !std::same_as<value_t, bool>)
   {
