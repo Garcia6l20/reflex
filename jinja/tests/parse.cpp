@@ -259,7 +259,7 @@ TEST_CASE("reflex::jinja: for decomposition")
 
   SUBCASE("single var over array (existing behaviour)")
   {
-    auto tmpl = parse("{% for item in items %}{{ item }} {% endfor %}");
+    auto tmpl = jinja::parse("{% for item in items %}{{ item }} {% endfor %}");
     ctx.set(
         "items", value{
                      array{"a"s, "b"s, "c"s}
@@ -270,7 +270,7 @@ TEST_CASE("reflex::jinja: for decomposition")
 
   SUBCASE("k, v decomposition over object")
   {
-    auto tmpl = parse("{% for k, v in obj %}{{ k }}={{ v }}\n{% endfor %}");
+    auto tmpl = jinja::parse("{% for k, v in obj %}{{ k }}={{ v }}\n{% endfor %}");
     ctx.set(
         "obj", value{
                    {"a", 1},
@@ -284,7 +284,7 @@ TEST_CASE("reflex::jinja: for decomposition")
 
   SUBCASE("decomposition inside nested template")
   {
-    auto tmpl = parse(
+    auto tmpl = jinja::parse(
         "{% for k, v in data %}"
         "{% if v %}"
         "{{ k }}: {{ v }}\n"
@@ -304,7 +304,7 @@ TEST_CASE("reflex::jinja: for decomposition")
 
   SUBCASE("single-var over object gives keys")
   {
-    auto          tmpl = parse("{% for v in obj %}{{ v }} {% endfor %}");
+    auto          tmpl = jinja::parse("{% for v in obj %}{{ v }} {% endfor %}");
     basic_context ctx;
     ctx.set(
         "obj", value{
@@ -321,7 +321,7 @@ TEST_CASE("reflex::jinja: aggregate support")
     aggregate1 agg{42, "hello"s};
     auto       ctx = expr::context{"agg"_na = agg};
 
-    auto tmpl   = parse("a={{ agg.a }}, b={{ agg.b }}");
+    auto tmpl   = jinja::parse("a={{ agg.a }}, b={{ agg.b }}");
     auto result = render(tmpl, ctx);
     CHECK(result == "a=42, b=hello");
   }
@@ -333,7 +333,7 @@ TEST_CASE("reflex::jinja: aggregate support")
     };
     auto ctx = expr::context{"agg"_na = agg};
 
-    auto tmpl   = parse("x={{ agg.x }}, a={{ agg.nested.a }}, b={{ agg.nested.b }}");
+    auto tmpl   = jinja::parse("x={{ agg.x }}, a={{ agg.nested.a }}, b={{ agg.nested.b }}");
     auto result = render(tmpl, ctx);
     std::println("{}", result);
     CHECK(result == "x=3.14, a=42, b=world");
@@ -345,7 +345,7 @@ TEST_CASE("reflex::jinja: aggregate support")
     };
     auto ctx = expr::context{"agg"_na = agg};
 
-    auto tmpl = parse(
+    auto tmpl = jinja::parse(
         "x={{ agg.x }}\n"
         "{% for item in agg.nested_list %}a={{ item.a }}, b={{ item.b }}\n"
         "{% endfor %}");
@@ -362,7 +362,7 @@ TEST_CASE("reflex::jinja: aggregate support")
     };
     auto ctx = expr::context{"agg"_na = agg};
 
-    auto tmpl = parse(
+    auto tmpl = jinja::parse(
         "{% for item in agg.nested_list[0].nested_list %}a={{ item.a }}, b={{ item.b }}\n"
         "{% endfor %}");
     auto result = render(tmpl, ctx);

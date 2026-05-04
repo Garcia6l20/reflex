@@ -14,7 +14,7 @@
 
 REFLEX_EXPORT namespace reflex::cli
 {
-  enum class [[=derive(Format)]] completion_type
+  enum class[[= derive(Format)]] completion_type
   {
     plain, // simple completion with no description
     dir,   // complete with directories
@@ -526,7 +526,7 @@ REFLEX_EXPORT namespace reflex::cli
     {
       std::string_view view;
       std::string_view value_view;
-      std::error_code  parse_error;
+      std::errc        parse_error = {};
 
       bool is_option() const
       {
@@ -539,7 +539,7 @@ REFLEX_EXPORT namespace reflex::cli
     {
       current.view       = v;
       current.value_view = {};
-      current.parse_error.clear();
+      current.parse_error = {};
     }
 
     std::string_view program{};
@@ -624,7 +624,8 @@ REFLEX_EXPORT namespace reflex::cli
                     {
                       target.emplace();
                     }
-                    target.value() += std::ranges::count(trackers.current.view, short_switch->at(1));
+                    target.value() +=
+                        std::ranges::count(trackers.current.view, short_switch->at(1));
                   }
                   else
                   {

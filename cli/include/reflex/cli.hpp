@@ -43,14 +43,14 @@ REFLEX_EXPORT namespace reflex::cli
           {
             std::println(
                 std::cerr, "invalid value for option {}: {} ({})", view,
-                trackers.current.value_view, trackers.current.parse_error.message());
+                trackers.current.value_view, std::generic_category().message(int(trackers.current.parse_error)));
             std::println(std::cerr);
           }
           else if(state == parsing_state::invalid_argument_value)
           {
             std::println(
                 std::cerr, "invalid argument value: {} ({})", view,
-                trackers.current.parse_error.message());
+                std::generic_category().message(int(trackers.current.parse_error)));
             std::println(std::cerr);
           }
           else if(state == detail::parsing_state::missing_command)

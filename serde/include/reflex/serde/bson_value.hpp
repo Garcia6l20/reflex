@@ -17,9 +17,9 @@ REFLEX_EXPORT namespace reflex::serde::bson
   using int32 = std::int32_t;
   using int64 = std::int64_t;
 
-  using string  = std::string;
-  using number  = double;
-  using boolean = bool;
+  using string     = std::string;
+  using number     = double;
+  using boolean    = bool;
   using decimal128 = std::float128_t;
 
   struct datetime
@@ -61,28 +61,24 @@ REFLEX_EXPORT namespace reflex::serde::bson
   using object = value::obj_type;
   using array  = value::arr_type;
 
+  constexpr parse_result<datetime> tag_invoke(
+      tag_t<Parse>, std::string_view s, std::type_identity<datetime>) noexcept
+  {
+    std::uint64_t ms = 0;
+    auto [ptr, ec]   = std::from_chars(s.data(), s.data() + s.size(), ms);
+    if(ec != std::errc())
+    {
+      return std::unexpected(std::errc::invalid_argument);
+    }
+    return {datetime(ms), ptr};
+  }
 } // namespace reflex::serde::bson
 
-REFLEX_EXPORT namespace reflex
+REFLEX_EXPORT namespace std
 {
-  template <>
-  struct parser<serde::bson::datetime>
-  {
-    constexpr parse_result<serde::bson::datetime> operator()(std::string_view s) const noexcept
-    {
-      std::uint64_t ms = 0;
-      auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), ms);
-      if(ec != std::errc())      {
-        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-      }
-      return serde::bson::datetime(ms);
-    }
-  };
-}
-
-REFLEX_EXPORT namespace std {
   template <typename CharT>
-  struct formatter<reflex::serde::bson::datetime, CharT> : formatter<std::basic_string_view<CharT>, CharT>
+  struct formatter<reflex::serde::bson::datetime, CharT>
+      : formatter<std::basic_string_view<CharT>, CharT>
   {
     template <typename FormatContext>
     auto format(reflex::serde::bson::datetime const& dt, FormatContext& ctx) const
@@ -91,4 +87,3 @@ REFLEX_EXPORT namespace std {
     }
   };
 }
-

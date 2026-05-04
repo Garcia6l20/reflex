@@ -506,7 +506,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     auto result = parse<std::remove_cvref_t<T>>(token);
     if(!result)
     {
-      throw std::runtime_error(std::format("Failed to parse value: {}", result.error().message()));
+      throw std::runtime_error(std::format("Failed to parse value: {}", std::generic_category().message(int(result.error()))));
     }
     return std::move(result).value();
   }

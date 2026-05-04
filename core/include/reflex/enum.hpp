@@ -5,10 +5,10 @@
 #endif
 
 #include <reflex/concepts.hpp>
-#include <reflex/meta.hpp>
 #include <reflex/derive.hpp>
-#include <reflex/parse.hpp>
 #include <reflex/format.hpp>
+#include <reflex/meta.hpp>
+#include <reflex/parse.hpp>
 
 REFLEX_EXPORT namespace reflex
 {
@@ -18,55 +18,55 @@ REFLEX_EXPORT namespace reflex
   {
   } EnumFlags;
 
-  template <typename E>
-  constexpr bool enum_flags_v = enum_c<E> and derives(^^E, EnumFlags);
+  template <typename E> constexpr bool enum_flags_v = enum_c<E> and derives(^^E, EnumFlags);
 
   template <typename E>
   concept enum_flags_c = enum_flags_v<std::remove_cvref_t<E>>;
 
-  namespace bitwise_operations {
+  namespace bitwise_operations
+  {
 
-    template <enum_flags_c EF> constexpr auto operator|(EF lhs, EF rhs) noexcept -> EF
-    {
-      using underlying = std::underlying_type_t<EF>;
-      return static_cast<EF>(static_cast<underlying>(lhs) | static_cast<underlying>(rhs));
-    }
+  template <enum_flags_c EF> constexpr auto operator|(EF lhs, EF rhs) noexcept -> EF
+  {
+    using underlying = std::underlying_type_t<EF>;
+    return static_cast<EF>(static_cast<underlying>(lhs) | static_cast<underlying>(rhs));
+  }
 
-    template <enum_flags_c EF> constexpr auto operator&(EF lhs, EF rhs) noexcept -> EF
-    {
-      using underlying = std::underlying_type_t<EF>;
-      return static_cast<EF>(static_cast<underlying>(lhs) & static_cast<underlying>(rhs));
-    }
+  template <enum_flags_c EF> constexpr auto operator&(EF lhs, EF rhs) noexcept -> EF
+  {
+    using underlying = std::underlying_type_t<EF>;
+    return static_cast<EF>(static_cast<underlying>(lhs) & static_cast<underlying>(rhs));
+  }
 
-    template <enum_flags_c EF> constexpr auto operator^(EF lhs, EF rhs) noexcept -> EF
-    {
-      using underlying = std::underlying_type_t<EF>;
-      return static_cast<EF>(static_cast<underlying>(lhs) ^ static_cast<underlying>(rhs));
-    }
+  template <enum_flags_c EF> constexpr auto operator^(EF lhs, EF rhs) noexcept -> EF
+  {
+    using underlying = std::underlying_type_t<EF>;
+    return static_cast<EF>(static_cast<underlying>(lhs) ^ static_cast<underlying>(rhs));
+  }
 
-    template <enum_flags_c EF> constexpr auto operator~(EF value) noexcept -> EF
-    {
-      using underlying = std::underlying_type_t<EF>;
-      return static_cast<EF>(~static_cast<underlying>(value));
-    }
+  template <enum_flags_c EF> constexpr auto operator~(EF value) noexcept -> EF
+  {
+    using underlying = std::underlying_type_t<EF>;
+    return static_cast<EF>(~static_cast<underlying>(value));
+  }
 
-    template <enum_flags_c EF> constexpr auto operator|=(EF& lhs, EF rhs) noexcept -> EF&
-    {
-      lhs = lhs | rhs;
-      return lhs;
-    }
+  template <enum_flags_c EF> constexpr auto operator|=(EF& lhs, EF rhs) noexcept -> EF&
+  {
+    lhs = lhs | rhs;
+    return lhs;
+  }
 
-    template <enum_flags_c EF> constexpr auto operator&=(EF& lhs, EF rhs) noexcept -> EF&
-    {
-      lhs = lhs & rhs;
-      return lhs;
-    }
+  template <enum_flags_c EF> constexpr auto operator&=(EF& lhs, EF rhs) noexcept -> EF&
+  {
+    lhs = lhs & rhs;
+    return lhs;
+  }
 
-    template <enum_flags_c EF> constexpr auto operator^=(EF& lhs, EF rhs) noexcept -> EF&
-    {
-      lhs = lhs ^ rhs;
-      return lhs;
-    }
+  template <enum_flags_c EF> constexpr auto operator^=(EF& lhs, EF rhs) noexcept -> EF&
+  {
+    lhs = lhs ^ rhs;
+    return lhs;
+  }
   } // namespace bitwise_operations
 
   using namespace bitwise_operations;
@@ -98,67 +98,62 @@ REFLEX_EXPORT namespace reflex
 
   template <enum_c E>
     requires(not enum_flags_c<E> and derives(^^E, Parse))
-  struct parser<E>
+  constexpr parse_result<E> tag_invoke(
+      tag_t<Parse>, std::string_view s, std::type_identity<E>) noexcept
   {
-    constexpr parse_result<E> operator()(std::string_view s) const noexcept
+    template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
     {
-      template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
+      constexpr auto identifier = identifier_of(e);
+      if(identifier == s)
       {
-        if(identifier_of(e) == s)
-        {
-          return extract<E>(e);
-        }
+        return {extract<E>(e), s.data() + identifier.size()};
       }
-      return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
-  };
+    return std::unexpected(std::errc::invalid_argument);
+  }
 
-  template <enum_flags_c E>
+  template <enum_flags_c E, constant_string Spec>
     requires(derives(^^E, Parse))
-  struct parser<E>
+  constexpr parse_result<E> tag_invoke(
+      tag_t<Parse>, std::string_view s, std::type_identity<E>, constant_wrapper<Spec>) noexcept
   {
-    std::size_t prefix_len = 0;
-
-    constexpr void parse(std::string_view spec)
-    {
-      if(!spec.empty() && spec[0] == '-')
+    constexpr std::size_t prefix_len = [] consteval {
+      std::size_t prefix_len = 0;
+      if(!Spec->empty() && Spec->at(0) == '-')
       {
-        auto [ptr, ec] = std::from_chars(spec.data() + 1, spec.data() + spec.size(), prefix_len);
+        auto [ptr, ec] = std::from_chars(Spec->data() + 1, Spec->data() + Spec->size(), prefix_len);
         if(ec != std::errc())
         {
           throw std::format_error("Invalid format specifier for enum flags parser");
         }
       }
-    }
+      return prefix_len;
+    }();
 
-    constexpr parse_result<E> operator()(std::string_view s) const noexcept
+    E result{};
+
+    while(!s.empty())
     {
-      E result{};
+      auto token = s.substr(0, s.find('|'));
+      s.remove_prefix(std::min(s.size(), token.size() + 1));
 
-      while(!s.empty())
+      bool found = false;
+      template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
       {
-        auto token = s.substr(0, s.find('|'));
-        s.remove_prefix(std::min(s.size(), token.size() + 1));
-
-        bool found = false;
-        template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
+        if(identifier_of(e).substr(prefix_len) == token)
         {
-          if(identifier_of(e).substr(prefix_len) == token)
-          {
-            result |= [:e:];
-            found = true;
-            break;
-          }
-        }
-        if(!found)
-        {
-          return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+          result |= [:e:];
+          found = true;
+          break;
         }
       }
-      return result;
+      if(!found)
+      {
+        return std::unexpected(std::errc::invalid_argument);
+      }
     }
-  };
-
+    return {result, s.data()};
+  }
 } // namespace reflex
 
 REFLEX_EXPORT namespace std
@@ -172,7 +167,7 @@ REFLEX_EXPORT namespace std
     constexpr auto parse(auto& ctx)
     {
       // Check for optional '-<N>' flag for prefix removal
-      auto it = ctx.begin();
+      auto       it  = ctx.begin();
       const auto end = ctx.end();
       if(it != end && *it == '-')
       {
@@ -191,14 +186,14 @@ REFLEX_EXPORT namespace std
     {
       using reflex::bitwise_operations::operator&;
 
-      using underlying = std::underlying_type_t<E>;
+      using underlying          = std::underlying_type_t<E>;
       using unsigned_underlying = std::make_unsigned_t<underlying>;
 
       std::string result;
 
       template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
       {
-        if constexpr (has_single_bit(unsigned_underlying([:e:])))
+        if constexpr(has_single_bit(unsigned_underlying([:e:])))
         {
           if((value & [:e:]) == [:e:])
           {
