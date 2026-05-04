@@ -9,6 +9,12 @@ set(CMAKE_CXX_MODULE_BMI_DIRECTORY "${CMAKE_BINARY_DIR}/bmi")
 set(CMAKE_CXX_SCAN_FOR_MODULES ${REFLEX_CXX_MODULES_ENABLED})
 set(CMAKE_CXX_MODULE_STD ${REFLEX_CXX_MODULES_ENABLED})
 
+
+# see: https://gcc.gnu.org/onlinedocs/gcc/C_002b_002b-Dialect-Options.html#index-fabi-version
+# summary:
+#   - fixes unnecessary captures in noexcept lambdas (c++/119764)
+#   - layout of a base class with all explicitly defaulted constructors (c++/120012)
+#   - and mangling of class and array objects with implicitly zero-initialized non-trailing subobjects (c++/121231)
 set(REFLEX_CXX_ABI_VERSION 21)
 set(REFLEX_REQUIRED_FLAGS
     -fimplicit-constexpr

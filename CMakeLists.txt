@@ -16,25 +16,11 @@ option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 option(REFLEX_CXX_MODULES_ENABLED "Enable Reflex CXX Modules" ON)
 option(REFLEX_INSTALL "Install Reflex targets" ON)
 
+add_compile_options(-Wall -Wextra -Werror)
 
 add_library(reflex.common_flags INTERFACE)
 add_library(reflex::common_flags ALIAS reflex.common_flags)
-
-# see: https://gcc.gnu.org/onlinedocs/gcc/C_002b_002b-Dialect-Options.html#index-fabi-version
-# summary:
-#   - fixes unnecessary captures in noexcept lambdas (c++/119764)
-#   - layout of a base class with all explicitly defaulted constructors (c++/120012)
-#   - and mangling of class and array objects with implicitly zero-initialized non-trailing subobjects (c++/121231)
-set(ABI_VERSION 21)
-
-target_compile_options(reflex.common_flags INTERFACE
-    -Wall -Wextra -Werror
-
-    -fimplicit-constexpr
-    -freflection
-    -Wabi=${ABI_VERSION}
-    -fabi-version=${ABI_VERSION}
-)
+target_compile_options(reflex.common_flags INTERFACE ${REFLEX_REQUIRED_FLAGS})
 
 if (REFLEX_CXX_MODULES_ENABLED)
   message(STATUS "C++ modules enabled")
