@@ -6,6 +6,7 @@
 
 #ifndef REFLEX_MODULE
 #include <reflex/parse.hpp>
+#include <reflex/serde.hpp>
 #include <reflex/serde/json_value.hpp>
 #endif
 

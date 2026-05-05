@@ -30,8 +30,6 @@ REFLEX_EXPORT namespace reflex
   {
   } Parse;
 
-  template <typename T> struct parser;
-
   template <typename T>
   concept basic_parsable_c = tag_invocable_c<tag_t<Parse>, std::string_view, std::type_identity<T>>;
 
