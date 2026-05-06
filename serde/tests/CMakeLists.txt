@@ -37,3 +37,24 @@ doctest_add_test(reflex-serde-test-object-visit
   test-object-visit.cpp
 )
 target_link_libraries(reflex-serde-test-object-visit PRIVATE reflex::poly)
+
+find_package(LibXml2 REQUIRED)
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBXMLPP REQUIRED libxml++-3.0)
+
+reflex_add_cxx_importable_header_module(libxmlpp-header-unit
+  HEADERS
+    <libxml++/libxml++.h>
+  INCLUDE_DIRECTORIES
+    ${LIBXMLPP_INCLUDE_DIRS}
+  LIBRARIES
+    LibXml2::LibXml2
+    ${LIBXMLPP_LIBRARIES}
+)
+
+doctest_add_test(reflex-serde-xml
+  test-xml.cpp
+)
+
+target_link_libraries(reflex-serde-xml PRIVATE reflex::serde libxmlpp-header-unit)
