@@ -608,7 +608,12 @@ REFLEX_EXPORT namespace reflex::serde::json
                         [&]<typename U>([[maybe_unused]] U&& v) {
                           if constexpr(requires { member_value = std::forward<U>(v); })
                           {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wfloat-conversion"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
                             member_value = std::forward<U>(v);
+#pragma GCC diagnostic pop
                           }
                           else
                           {
