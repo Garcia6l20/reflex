@@ -406,7 +406,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       throw std::runtime_error("Expected '\"' at start of JSON string");
     }
 
-    Str value;
+    Str value{};
 
     auto push = [&value] {
       if constexpr(requires { value.push_back(char{}); })
@@ -555,7 +555,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     if(de.advance() != '[')
       throw std::runtime_error("Expected '[' at start of JSON array");
 
-    Seq value;
+    Seq value{};
 
     de.ltrim();
     if(not de.at_end() and de.peek() == ']')
