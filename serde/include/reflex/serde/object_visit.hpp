@@ -27,8 +27,7 @@ REFLEX_EXPORT namespace reflex::serde
           return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
         }
       }
-      throw std::runtime_error(
-          std::format("Key '{}' does not match any member of {}", key, identifier_of(decay(^^T))));
+      throw std::runtime_error("Key not found in object");
     }
   };
 
