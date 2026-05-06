@@ -19,6 +19,15 @@ struct[[= serde::naming::camel_case]] S
   constexpr bool operator==(S const& other) const = default;
 };
 
+struct[[= serde::naming::camel_case]] S2
+{
+  int                         i;
+  std::array<char, 5>         chars;
+  std::array<std::uint8_t, 5> nums;
+
+  constexpr bool operator==(S2 const& other) const = default;
+};
+
 enum class[[= derive(Format, Parse)]] Color
 {
   Red,
@@ -82,6 +91,22 @@ TEST_CASE("reflex::serde::json::serializer: base types")
     ser.dump(perms);
     CHECK_EQ(out.str(), "\"Read|Write\"");
   }
+
+  SUBCASE("char array")
+  {
+    std::array<char, 5> arr = {'H', 'e', 'l', 'l', 'o'};
+    ser.dump(arr);
+    std::println("Serialized char array: {}", out.str());
+    CHECK_EQ(out.str(), "\"Hello\"");
+  }
+
+  SUBCASE("num array")
+  {
+    std::array<std::uint8_t, 5> arr = {0x01, 0x02, 0x03, 0x04, 0x05};
+    ser.dump(arr);
+    std::println("Serialized num array: {}", out.str());
+    CHECK_EQ(out.str(), "[1,2,3,4,5]");
+  }
 }
 
 TEST_CASE("reflex::serde::json::serializer: sequence and map")
@@ -112,9 +137,22 @@ TEST_CASE("reflex::serde::json::serializer: aggregate")
   out.reserve(128); // avoid reallocations during serialization
   json::serializer ser{out};
 
-  S s{42, "Hello, world!", 3.14};
-  ser.dump(s);
-  CHECK_EQ(out, JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14}));
+  SUBCASE("simple aggregate")
+  {
+    S s{42, "Hello, world!", 3.14};
+    ser.dump(s);
+    CHECK_EQ(out, JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14}));
+  }
+
+  SUBCASE("complex aggregate")
+  {
+    S2 s2{
+        42, {'H', 'e', 'l', 'l', 'o'},
+         {1,   2,   3,   4,   5  }
+    };
+    ser.dump(s2);
+    CHECK_EQ(out, JSON({"i":42,"chars":"Hello","nums":[1,2,3,4,5]}));
+  }
 }
 
 TEST_CASE("reflex::serde::json::serializer: nested aggregate")
@@ -195,6 +233,20 @@ TEST_CASE("reflex::serde::json::deserializer: base types")
     CHECK((value & FilePermissions::Write) == FilePermissions::Write);
     CHECK((value & FilePermissions::Execute) == FilePermissions::None);
   }
+
+  SUBCASE("char array")
+  {
+    const std::string_view in    = JSON("Hello");
+    auto                   value = json::deserializer{in}.load<std::array<char, 5>>();
+    CHECK(value == std::array<char, 5>{'H', 'e', 'l', 'l', 'o'});
+  }
+
+  SUBCASE("num array")
+  {
+    const std::string_view in    = JSON([1,2,3,4,5]);
+    auto                   value = json::deserializer{in}.load<std::array<std::uint8_t, 5>>();
+    CHECK(value == std::array<std::uint8_t, 5>{1, 2, 3, 4, 5});
+  }
 }
 
 TEST_CASE("reflex::serde::json::deserializer: sequence and map")
@@ -229,18 +281,26 @@ TEST_CASE("reflex::serde::json::deserializer: sequence and map")
 
 TEST_CASE("reflex::serde::json::deserializer: aggregate")
 {
-  const std::string_view in =
-      JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14});
-
   static_assert(serde::object_visitable_c<S>);
   static_assert(serde::object_visitable_c<S&>);
 
   SUBCASE("direct load")
   {
+    const std::string_view in =
+        JSON({"intMember":42,"stringMember":"Hello, world!","double-member":3.14});
     const auto value = json::deserializer{in}.load<S>();
     CHECK_EQ(value.int_member, 42);
     CHECK_EQ(value.string_member, "Hello, world!");
     CHECK_EQ(value.double_member, 3.14);
+  }
+  SUBCASE("complex aggregate")
+  {
+    const std::string_view in    = JSON({"i":42,"chars":"Hello","nums":[1,2,3,4,5]});
+    const auto             value = json::deserializer{in}.load<S2>();
+    std::println("Parsed S2: {}", debug(value));
+    CHECK_EQ(value.i, 42);
+    CHECK_EQ(value.chars, std::array<char, 5>{'H', 'e', 'l', 'l', 'o'});
+    CHECK_EQ(value.nums, std::array<std::uint8_t, 5>{1, 2, 3, 4, 5});
   }
 }
 

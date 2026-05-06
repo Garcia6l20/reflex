@@ -33,7 +33,8 @@ REFLEX_EXPORT namespace reflex::serde
   };
 
   template <typename T>
-  concept object_visitable_c = is_complete_type(^^object_visitor<std::decay_t<T>>);
+  concept object_visitable_c = not meta::is_template_instance_of(decay(^^T), ^^std::array)
+                           and is_complete_type(^^object_visitor<std::decay_t<T>>);
 
   template <object_visitable_c T, typename Fn>
   constexpr decltype(auto) object_visit(std::span<std::string_view> keys, T && value, Fn && fn)

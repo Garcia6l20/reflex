@@ -56,6 +56,12 @@ REFLEX_EXPORT namespace reflex
                or requires(T s) { std::string_view(s); };
 
   template <typename T>
+  concept carray_of_c = std::meta::is_array_type(^^T);
+
+  template <typename T>
+  concept array_of_c = meta::is_template_instance_of(decay(^^T), ^^std::array);
+
+  template <typename T>
   concept map_c = requires(T t) {
     { t.begin() } -> std::input_iterator;
     { t.end() } -> std::sentinel_for<decltype(t.begin())>;

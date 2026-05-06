@@ -99,13 +99,23 @@ REFLEX_EXPORT namespace reflex::serde::json
   template <typename OutputIt, str_c Str>
   OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Str const& value)
   {
-    return std::format_to(ser.out(), "\"{}\"", value);
+    return std::format_to(ser.out(), "\"{}\"", std::string_view{value});
   }
 
   template <typename OutputIt, number_c Num>
   OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Num const& value)
   {
     return std::format_to(ser.out(), "{}", value);
+  }
+
+  template <typename OutputIt>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, char value)
+  {
+    auto& out = ser.out();
+    out++     = '"';
+    out++     = value;
+    out++     = '"';
+    return out;
   }
 
   template <typename OutputIt>
@@ -196,6 +206,7 @@ REFLEX_EXPORT namespace reflex::serde::json
   }
 
   template <typename OutputIt, aggregate_c Agg, typename TagT = std::false_type>
+    requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char> may be considered as an aggregate
   OutputIt tag_invoke(
       tag_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
   {
@@ -365,9 +376,7 @@ REFLEX_EXPORT namespace reflex::serde::json
   deserializer(std::basic_istream<CharT, CharTrait>)
       -> deserializer<std::istreambuf_iterator<CharT>>;
 
-  template <typename It>
-  auto tag_invoke(
-      tag_t<serde::deserialize>, deserializer<It> & de)
+  template <typename It> auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de)
   {
     return deserialize(de, std::type_identity<json::value>{});
   }
@@ -390,6 +399,23 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     Str value;
 
+    auto push = [&value] {
+      if constexpr(requires { value.push_back(char{}); })
+      {
+        return [&value](char c) { value.push_back(c); };
+      }
+      else
+      {
+        return [it = std::begin(value), end = std::end(value)](char c) mutable {
+          if(it == end)
+          {
+            throw std::out_of_range("String too long to fit in target type");
+          }
+          *it++ = c;
+        };
+      }
+    }();
+
     while(not de.at_end())
     {
       const char c = de.advance();
@@ -404,28 +430,28 @@ REFLEX_EXPORT namespace reflex::serde::json
         switch(esc)
         {
           case '"':
-            value.push_back('"');
+            push('"');
             break;
           case '\\':
-            value.push_back('\\');
+            push('\\');
             break;
           case '/':
-            value.push_back('/');
+            push('/');
             break;
           case 'b':
-            value.push_back('\b');
+            push('\b');
             break;
           case 'f':
-            value.push_back('\f');
+            push('\f');
             break;
           case 'n':
-            value.push_back('\n');
+            push('\n');
             break;
           case 'r':
-            value.push_back('\r');
+            push('\r');
             break;
           case 't':
-            value.push_back('\t');
+            push('\t');
             break;
           case 'u':
             throw std::runtime_error("\\uXXXX escapes not implemented");
@@ -435,7 +461,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
       else
       {
-        value.push_back(c);
+        push(c);
       }
     }
     throw std::runtime_error("Unterminated JSON string");
@@ -507,7 +533,9 @@ REFLEX_EXPORT namespace reflex::serde::json
     auto result = parse<std::remove_cvref_t<T>>(token);
     if(!result)
     {
-      throw std::runtime_error(std::format("Failed to parse value: {}", std::generic_category().message(int(result.error()))));
+      throw std::runtime_error(
+          std::format(
+              "Failed to parse value: {}", std::generic_category().message(int(result.error()))));
     }
     return std::move(result).value();
   }
@@ -527,10 +555,28 @@ REFLEX_EXPORT namespace reflex::serde::json
       return value;
     }
 
+    using elem_type = typename std::remove_cvref_t<decltype(value)>::value_type;
+
+    auto push = [&value] {
+      if constexpr(requires { value.push_back(elem_type{}); })
+      {
+        return [&value](elem_type&& elem) { value.push_back(std::forward<elem_type>(elem)); };
+      }
+      else
+      {
+        return [it = std::begin(value), end = std::end(value)](elem_type&& elem) mutable {
+          if(it == end)
+          {
+            throw std::out_of_range("Array has more elements than target type can hold");
+          }
+          *it++ = std::forward<elem_type>(elem);
+        };
+      }
+    }();
+
     while(true)
     {
-      using elem_type = typename std::remove_cvref_t<decltype(value)>::value_type;
-      value.push_back(de.template load<elem_type>());
+      push(de.template load<elem_type>());
 
       de.ltrim();
       const char sep = de.advance();
@@ -549,7 +595,11 @@ REFLEX_EXPORT namespace reflex::serde::json
   }
 
   template <typename It, object_visitable_c Map>
-    requires(not meta::is_template_instance_of(^^Map, ^^poly::var))
+    requires(
+        not(meta::is_template_instance_of(^^Map, ^^poly::var)
+            // std::array<char> may be considered as a visitable object
+            or str_c<Map>
+            or seq_c<Map>))
   auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<Map>)
   {
     if(de.advance() != '{')

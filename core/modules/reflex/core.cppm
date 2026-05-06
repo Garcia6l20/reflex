@@ -32,3 +32,4 @@ export import std;
 #include <reflex/derive.hpp>
 #include <reflex/format.hpp>
 #include <reflex/tag_invoke.hpp>
+#include <reflex/debug.hpp>
