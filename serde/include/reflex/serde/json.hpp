@@ -99,7 +99,16 @@ REFLEX_EXPORT namespace reflex::serde::json
   template <typename OutputIt, str_c Str>
   OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Str const& value)
   {
-    return std::format_to(ser.out(), "\"{}\"", std::string_view{value});
+    if constexpr(meta::is_template_instance_of(^^Str, ^^std::array))
+    {
+      return std::format_to(
+          ser.out(), "\"{}\"",
+          std::string_view{value.data(), ::strnlen(value.data(), value.size())});
+    }
+    else
+    {
+      return std::format_to(ser.out(), "\"{}\"", value);
+    }
   }
 
   template <typename OutputIt, number_c Num>
