@@ -1,3 +1,7 @@
+module;
+
+#include <cstring>
+
 export module reflex.serde.json;
 
 import std;

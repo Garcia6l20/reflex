@@ -7,6 +7,24 @@ import reflex.serde.bson;
 
 using namespace reflex;
 
+// JSON <-> BSON interop overloads for types not in json.hpp
+namespace reflex::serde::json
+{
+template <typename OutputIt>
+OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, bson::datetime const& dt)
+{
+  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
+}
+
+template <typename It>
+bson::datetime
+    tag_invoke(tag_t<serde::deserialize>, deserializer<It>& de, std::type_identity<bson::datetime>)
+{
+  const auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
+  return reflex::parse_or_throw<bson::datetime>(s);
+}
+} // namespace reflex::serde::json
+
 auto input_format_completer(std::string_view current)
 {
   using namespace std::string_view_literals;

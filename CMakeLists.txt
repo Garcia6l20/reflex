@@ -16,7 +16,9 @@ option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 option(REFLEX_CXX_MODULES_ENABLED "Enable Reflex CXX Modules" ON)
 option(REFLEX_INSTALL "Install Reflex targets" ON)
 
-add_compile_options(-Wall -Wextra -Werror)
+add_compile_options(-Wall -Wextra -Werror
+  -fconcepts-diagnostics-depth=5 -fmax-errors=10
+)
 
 add_library(reflex.common_flags INTERFACE)
 add_library(reflex::common_flags ALIAS reflex.common_flags)

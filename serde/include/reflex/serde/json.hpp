@@ -117,8 +117,8 @@ REFLEX_EXPORT namespace reflex::serde::json
     return std::format_to(ser.out(), "{}", value);
   }
 
-  template <typename OutputIt>
-  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, char value)
+  template <typename OutputIt, std::same_as<char> Char>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Char value)
   {
     auto& out = ser.out();
     out++     = '"';
@@ -127,8 +127,8 @@ REFLEX_EXPORT namespace reflex::serde::json
     return out;
   }
 
-  template <typename OutputIt>
-  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, boolean const& value)
+  template <typename OutputIt, std::same_as<boolean> Boolean>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Boolean value)
   {
     std::ranges::copy(std::string_view{value ? "true" : "false"}, ser.out());
     return ser.out();

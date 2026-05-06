@@ -17,7 +17,10 @@ REFLEX_EXPORT namespace reflex::serde
     static constexpr auto __access_context = std::meta::access_context::current();
 
     template <typename Fn, decays_to_c<T> Agg>
-    static inline constexpr decltype(auto) operator()(Fn&& fn, std::string_view key, Agg&& agg)
+    static inline constexpr decltype(auto) operator()(
+        [[maybe_unused]] Fn&&             fn,
+        [[maybe_unused]] std::string_view key,
+        [[maybe_unused]] Agg&&            agg)
     {
       template for(constexpr auto& member : define_static_array(
                        nonstatic_data_members_of(remove_reference(^^T), __access_context)))
