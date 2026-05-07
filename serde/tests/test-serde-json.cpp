@@ -10,7 +10,7 @@ using namespace std::literals;
 
 #define JSON(...) #__VA_ARGS__
 
-struct[[= serde::naming::camel_case]] S
+struct[[= serde::naming::camel_case, = derive(Debug)]] S
 {
   int                                    int_member;
   std::string                            string_member;
@@ -19,13 +19,20 @@ struct[[= serde::naming::camel_case]] S
   constexpr bool operator==(S const& other) const = default;
 };
 
-struct[[= serde::naming::camel_case]] S2
+struct[[= serde::naming::camel_case, = derive(Debug)]] S2
 {
   int                         i;
   std::array<char, 5>         chars;
   std::array<std::uint8_t, 5> nums;
 
   constexpr bool operator==(S2 const& other) const = default;
+};
+
+struct[[= serde::naming::camel_case, = derive(Debug)]] S3
+{
+  std::optional<S>  s;
+  std::optional<S2> s2;
+  constexpr bool    operator==(S3 const& other) const = default;
 };
 
 enum class[[= derive(Format, Parse)]] Color
@@ -107,6 +114,17 @@ TEST_CASE("reflex::serde::json::serializer: base types")
     std::println("Serialized num array: {}", out.str());
     CHECK_EQ(out.str(), "[1,2,3,4,5]");
   }
+
+  SUBCASE("optional")
+  {
+    std::optional<int> opt = 42;
+    ser.dump(opt);
+    CHECK_EQ(out.str(), "42");
+    out.str("");
+    opt = std::nullopt;
+    ser.dump(opt);
+    CHECK_EQ(out.str(), "null");
+  }
 }
 
 TEST_CASE("reflex::serde::json::serializer: sequence and map")
@@ -152,6 +170,22 @@ TEST_CASE("reflex::serde::json::serializer: aggregate")
     };
     ser.dump(s2);
     CHECK_EQ(out, JSON({"i":42,"chars":"Hello","nums":[1,2,3,4,5]}));
+  }
+
+  SUBCASE("optional aggregate")
+  {
+    S3 s3{
+        S{42, "Hello, world!",           3.14           },
+        S2{42, {'H', 'e', 'l', 'l', 'o'}, {1, 2, 3, 4, 5}}
+    };
+    ser.dump(s3);
+    CHECK_EQ(
+        out, JSON({"s":{"intMember":42,"stringMember":"Hello, world!","double-member":3.14},"s2":{"i":42,"chars":"Hello","nums":[1,2,3,4,5]}}));
+    out.clear();
+    s3.s  = std::nullopt;
+    s3.s2 = std::nullopt;
+    ser.dump(s3);
+    CHECK_EQ(out, JSON({"s":null,"s2":null}));
   }
 }
 
@@ -247,6 +281,18 @@ TEST_CASE("reflex::serde::json::deserializer: base types")
     auto                   value = json::deserializer{in}.load<std::array<std::uint8_t, 5>>();
     CHECK(value == std::array<std::uint8_t, 5>{1, 2, 3, 4, 5});
   }
+
+  SUBCASE("optional")
+  {
+    const std::string_view in    = JSON(42);
+    auto                   value = json::deserializer{in}.load<std::optional<int>>();
+    CHECK(value.has_value());
+    CHECK(value.value() == 42);
+
+    const std::string_view in_null = JSON(null);
+    value                          = json::deserializer{in_null}.load<std::optional<int>>();
+    CHECK(!value.has_value());
+  }
 }
 
 TEST_CASE("reflex::serde::json::deserializer: sequence and map")
@@ -297,10 +343,40 @@ TEST_CASE("reflex::serde::json::deserializer: aggregate")
   {
     const std::string_view in    = JSON({"i":42,"chars":"Hello","nums":[1,2,3,4,5]});
     const auto             value = json::deserializer{in}.load<S2>();
-    std::println("Parsed S2: {}", debug(value));
+    std::println("Parsed S2: {}", value);
     CHECK_EQ(value.i, 42);
     CHECK_EQ(value.chars, std::array<char, 5>{'H', 'e', 'l', 'l', 'o'});
     CHECK_EQ(value.nums, std::array<std::uint8_t, 5>{1, 2, 3, 4, 5});
+  }
+  SUBCASE("optional aggregate - present")
+  {
+    const std::string_view in    = JSON({"s":{"intMember":42,"stringMember":"Hello, world!","double-member":3.14},"s2":{"i":42,"chars":"Hello","nums":[1,2,3,4,5]}});
+    const auto             value = json::deserializer{in}.load<S3>();
+    std::println("Parsed S3: {}", value);
+    CHECK(value.s.has_value());
+    CHECK(value.s2.has_value());
+    CHECK_EQ(value.s->int_member, 42);
+    CHECK_EQ(value.s->string_member, "Hello, world!");
+    CHECK_EQ(value.s->double_member, 3.14);
+    CHECK_EQ(value.s2->i, 42);
+    CHECK_EQ(value.s2->chars, std::array<char, 5>{'H', 'e', 'l', 'l', 'o'});
+    CHECK_EQ(value.s2->nums, std::array<std::uint8_t, 5>{1, 2, 3, 4, 5});
+  }
+  SUBCASE("optional aggregate - absent")
+  {
+    const std::string_view in    = JSON({"s":null,"s2":null});
+    const auto             value = json::deserializer{in}.load<S3>();
+    std::println("Parsed S3: {}", value);
+    CHECK(!value.s.has_value());
+    CHECK(!value.s2.has_value());
+  }
+  SUBCASE("optional aggregate - absent 2")
+  {
+    const std::string_view in    = JSON({});
+    const auto             value = json::deserializer{in}.load<S3>();
+    std::println("Parsed S3: {}", value);
+    CHECK(!value.s.has_value());
+    CHECK(!value.s2.has_value());
   }
 }
 
