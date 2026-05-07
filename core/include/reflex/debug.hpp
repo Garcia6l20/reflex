@@ -15,6 +15,10 @@
 
 REFLEX_EXPORT namespace reflex
 {
+  constexpr struct __debug_tag
+  {
+  } Debug;
+
   namespace detail
   {
   template <typename T> struct debug_wrapper
@@ -69,6 +73,15 @@ REFLEX_EXPORT namespace std
       }
       out++ = '}';
       return out;
+    }
+  };
+
+  template <reflex::derives_c<reflex::derive_t<reflex::Debug>> T, typename CharT>
+  struct formatter<T, CharT> : formatter<reflex::detail::debug_wrapper<T>, CharT>
+  {
+    template <typename FormatContext> auto format(T const& value, FormatContext& ctx) const
+    {
+      return formatter<reflex::detail::debug_wrapper<T>, CharT>{}.format(reflex::debug(value), ctx);
     }
   };
 }
