@@ -12,17 +12,6 @@
 
 REFLEX_EXPORT namespace reflex::serde::json
 {
-  template <typename T>
-  concept serializable_c = str_c<std::remove_cvref_t<T>>
-                        or number_c<std::remove_cvref_t<T>>
-                        or std::same_as<std::remove_cvref_t<T>, boolean>
-                        or std::same_as<std::remove_cvref_t<T>, null_t>
-                        or seq_c<std::remove_cvref_t<T>>
-                        or pair_c<std::remove_cvref_t<T>>
-                        or map_c<std::remove_cvref_t<T>>
-                        or aggregate_c<std::remove_cvref_t<T>>
-                        or visitable_c<std::remove_cvref_t<T>>;
-
   namespace detail
   {
   template <typename var_type>
@@ -224,49 +213,6 @@ REFLEX_EXPORT namespace reflex::serde::json
       return out;
     }
 
-    template <aggregate_c Agg, typename TagT = std::false_type>
-      requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char> may be considered as an aggregate
-    friend OutputIt
-        tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Agg const& value, TagT = {})
-    {
-      auto& out = ser.out();
-      out++     = '{';
-
-      constexpr bool tag = TagT::value;
-
-      bool first = not tag;
-
-      if constexpr(tag)
-      {
-        serialize(ser, "__type");
-        out++ = ':';
-        static auto expected_id =
-            std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Agg))));
-        serialize(ser, expected_id);
-      }
-
-      static constexpr auto type = decay(type_of(^^value));
-      template for(constexpr auto member : define_static_array(
-                       nonstatic_data_members_of(type, std::meta::access_context::current())))
-      {
-        constexpr std::string_view name = serialized_name(member);
-        if(not first)
-        {
-          out++ = ',';
-        }
-        else
-        {
-          first = false;
-        }
-        serialize(ser, name);
-        out++                    = ':';
-        auto const& member_value = value.[:member:];
-        reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
-      }
-      out++ = '}';
-      return out;
-    }
-
     template <visitable_c T>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
     {
@@ -279,6 +225,48 @@ REFLEX_EXPORT namespace reflex::serde::json
       -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+
+  template <typename OutputIt, aggregate_c Agg, typename TagT = std::false_type>
+    requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char> may be considered as an aggregate
+  OutputIt tag_invoke(
+      tag_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
+  {
+    auto& out = ser.out();
+    out++     = '{';
+
+    constexpr bool tag = TagT::value;
+
+    bool first = not tag;
+
+    if constexpr(tag)
+    {
+      serialize(ser, "__type");
+      out++                   = ':';
+      static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Agg))));
+      serialize(ser, expected_id);
+    }
+
+    static constexpr auto type = decay(type_of(^^value));
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(type, std::meta::access_context::current())))
+    {
+      constexpr std::string_view name = serialized_name(member);
+      if(not first)
+      {
+        out++ = ',';
+      }
+      else
+      {
+        first = false;
+      }
+      serialize(ser, name);
+      out++                    = ':';
+      auto const& member_value = value.[:member:];
+      reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
+    }
+    out++ = '}';
+    return out;
+  }
 
   template <std::input_iterator InputIt> class deserializer
   {
@@ -632,109 +620,6 @@ REFLEX_EXPORT namespace reflex::serde::json
       return value;
     }
 
-    template <object_visitable_c Map>
-      requires(
-          not(meta::is_template_instance_of(^^Map, ^^poly::var)
-              // std::array<char> may be considered as a visitable object
-              or str_c<Map>
-              or seq_c<Map>))
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Map>)
-    {
-      if(de.advance() != '{')
-        throw std::runtime_error("Expected '{' at start of JSON object");
-
-      de.ltrim();
-      if(!de.at_end() and de.peek() == '}')
-      {
-        de.advance();
-        return Map{};
-      }
-
-      Map value{};
-      while(true)
-      {
-        de.ltrim();
-        auto key = de.template load<std::string>();
-        de.ltrim();
-        if(de.advance() != ':')
-        {
-          throw std::runtime_error("Expected ':' after object key");
-        }
-        de.ltrim();
-
-        serde::object_visit(std::move(key), value, [&]<typename V>(V& v) {
-          v = de.template load<std::remove_cvref_t<V>>();
-          if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
-          {
-            if(v.is_object())
-            {
-              auto& obj      = v.as_object();
-              auto  type_key = std::ranges::find_if(
-                  obj, [](auto const& pair) { return pair.first == "__type"; });
-              if(type_key != obj.end())
-              {
-                template for(constexpr auto a : detail::aggregate_types_of_var<V>())
-                {
-                  if(type_key->second
-                     == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
-                  {
-                    using Agg = [:a:];
-                    Agg agg_value{};
-                    template for(constexpr auto member :
-                                 define_static_array(nonstatic_data_members_of(
-                                     a, std::meta::access_context::current())))
-                    {
-                      constexpr std::string_view name = serialized_name(member);
-                      if(name == "__type")
-                      {
-                        continue;
-                      }
-                      [[maybe_unused]] auto object_value_it = std::ranges::find_if(
-                          obj, [name](auto const& pair) { return pair.first == name; });
-                      auto& member_value = agg_value.[:member:];
-                      visit(
-                          [&]<typename U>([[maybe_unused]] U&& v) {
-                            if constexpr(requires { member_value = std::forward<U>(v); })
-                            {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wfloat-conversion"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-                              member_value = std::forward<U>(v);
-#pragma GCC diagnostic pop
-                            }
-                            else
-                            {
-                              throw std::runtime_error("Cannot assign value to member");
-                            }
-                          },
-                          std::move(object_value_it->second));
-                    }
-                    v = std::move(agg_value);
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        });
-
-        de.ltrim();
-        const char sep = de.advance();
-        if(sep == ',')
-        {
-          continue;
-        }
-        if(sep == '}')
-        {
-          break;
-        }
-        throw std::runtime_error("Expected ',' or '}' in object");
-      }
-      return value;
-    }
-
     template <typename var_type>
       requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
     friend auto tag_invoke(
@@ -773,6 +658,108 @@ REFLEX_EXPORT namespace reflex::serde::json
   template <typename CharT, typename CharTrait = std::char_traits<CharT>>
   deserializer(std::basic_istream<CharT, CharTrait>)
       -> deserializer<std::istreambuf_iterator<CharT>>;
+
+  template <typename InputIt, object_visitable_c Map>
+    requires(
+        not(meta::is_template_instance_of(^^Map, ^^poly::var)
+            // std::array<char> may be considered as a visitable object
+            or str_c<Map>
+            or seq_c<Map>))
+  auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+  {
+    if(de.advance() != '{')
+      throw std::runtime_error("Expected '{' at start of JSON object");
+
+    de.ltrim();
+    if(!de.at_end() and de.peek() == '}')
+    {
+      de.advance();
+      return Map{};
+    }
+
+    Map value{};
+    while(true)
+    {
+      de.ltrim();
+      auto key = de.template load<std::string>();
+      de.ltrim();
+      if(de.advance() != ':')
+      {
+        throw std::runtime_error("Expected ':' after object key");
+      }
+      de.ltrim();
+
+      serde::object_visit(std::move(key), value, [&]<typename V>(V& v) {
+        v = de.template load<std::remove_cvref_t<V>>();
+        if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
+        {
+          if(v.is_object())
+          {
+            auto& obj = v.as_object();
+            auto  type_key =
+                std::ranges::find_if(obj, [](auto const& pair) { return pair.first == "__type"; });
+            if(type_key != obj.end())
+            {
+              template for(constexpr auto a : detail::aggregate_types_of_var<V>())
+              {
+                if(type_key->second
+                   == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
+                {
+                  using Agg = [:a:];
+                  Agg agg_value{};
+                  template for(constexpr auto member :
+                               define_static_array(nonstatic_data_members_of(
+                                   a, std::meta::access_context::current())))
+                  {
+                    constexpr std::string_view name = serialized_name(member);
+                    if(name == "__type")
+                    {
+                      continue;
+                    }
+                    [[maybe_unused]] auto object_value_it = std::ranges::find_if(
+                        obj, [name](auto const& pair) { return pair.first == name; });
+                    auto& member_value = agg_value.[:member:];
+                    visit(
+                        [&]<typename U>([[maybe_unused]] U&& v) {
+                          if constexpr(requires { member_value = std::forward<U>(v); })
+                          {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wfloat-conversion"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+                            member_value = std::forward<U>(v);
+#pragma GCC diagnostic pop
+                          }
+                          else
+                          {
+                            throw std::runtime_error("Cannot assign value to member");
+                          }
+                        },
+                        std::move(object_value_it->second));
+                  }
+                  v = std::move(agg_value);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      });
+
+      de.ltrim();
+      const char sep = de.advance();
+      if(sep == ',')
+      {
+        continue;
+      }
+      if(sep == '}')
+      {
+        break;
+      }
+      throw std::runtime_error("Expected ',' or '}' in object");
+    }
+    return value;
+  }
 
 } // namespace reflex::serde::json
 
