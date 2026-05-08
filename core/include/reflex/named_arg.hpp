@@ -8,31 +8,38 @@
 #include <string_view>
 #endif
 
+#include <reflex/constant.hpp>
+
 REFLEX_EXPORT namespace reflex
 {
-  template <typename T> struct named_arg
+  template <constant_string Name, typename T> struct named_type
   {
-    std::string_view name;
-    T                value;
+    using type                 = T;
+    static constexpr auto name = Name;
   };
 
-  struct arg_name
+  template <constant_string Name, typename T> struct named_arg
   {
-    std::string_view name;
+    using type                 = named_type<Name, T>;
+    using value_type           = T;
+    static constexpr auto name = Name;
+    value_type            value;
+  };
 
-    template <typename T> named_arg<T> operator=(T&& value) const
+  template <constant_string Name> struct arg_name
+  {
+    static constexpr auto                              name = Name;
+    template <typename T> constexpr named_arg<Name, T> operator=(T&& value) const
     {
-      return {name, std::forward<T>(value)};
+      return {std::forward<T>(value)};
     }
   };
 
   namespace literals
   {
-  consteval arg_name operator""_na(const char* data, std::size_t N)
+  template <constant_string Name> consteval auto operator""_na()
   {
-    return arg_name{
-        std::string_view{data, N}
-    };
+    return arg_name<Name>{};
   }
   } // namespace literals
 } // namespace reflex

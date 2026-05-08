@@ -37,4 +37,7 @@ if (REFLEX_CXX_MODULES_ENABLED)
   doctest_add_test(reflex-core-derive-test
     test-derive.cpp
   )
+  doctest_add_test(reflex-core-named-tuple-test
+    test-named-tuple.cpp
+  )
 endif()

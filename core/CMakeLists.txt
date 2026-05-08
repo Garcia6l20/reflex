@@ -34,6 +34,7 @@ reflex_add_cxx_module_library(reflex.core
   include/reflex/derive.hpp
   include/reflex/tag_invoke.hpp
   include/reflex/debug.hpp
+  include/reflex/named_tuple.hpp
 )
 target_link_libraries(reflex.core
   PUBLIC
