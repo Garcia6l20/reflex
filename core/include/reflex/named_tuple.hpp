@@ -9,6 +9,7 @@
 #endif
 
 #include <reflex/named_arg.hpp>
+#include <reflex/overload_set.hpp>
 
 REFLEX_EXPORT namespace reflex
 {
@@ -71,6 +72,12 @@ REFLEX_EXPORT namespace reflex
     for(auto p : parameters_of(func))
     {
       auto a_type = remove_cvref(type_of(p));
+      if(has_default_argument(p))
+      {
+        a_type = substitute(
+            ^^std::optional, {
+                                 a_type});
+      }
       auto a_name = identifier_of(p);
       specs.push_back(substitute(
           ^^named_type, {
@@ -82,9 +89,83 @@ REFLEX_EXPORT namespace reflex
   template <std::meta::info Fn>
   using named_tuple_from_function_parameters_t = [:make_named_tuple_from_function_parameters(Fn):];
 
-  decltype(auto) apply(auto&& func, named_tuple_c auto&& tuple)
+  template <std::meta::info Fn> constexpr decltype(auto) apply_impl(auto&&... args)
   {
-    return std::apply(
-        std::forward<decltype(func)>(func), to_tuple(std::forward<decltype(tuple)>(tuple)));
+    // constexpr auto os = overload_set_of(Fn);
+    // static_assert(os.is_invocable_with(args...));
+    return [:Fn:](std::forward<decltype(args)>(args)...);
+  }
+
+  template <std::size_t N> constexpr auto drop_back(auto&&... args)
+  {
+    constexpr std::size_t size = sizeof...(args);
+    return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+      return std::forward_as_tuple(args...[Is]...);
+    }(std::make_index_sequence<size - N>{});
+  }
+
+  template <std::meta::info Fn, std::size_t N> decltype(auto) apply_drop_impl(auto&&... args)
+  {
+    auto&& [... values] = drop_back<N>(std::forward<decltype(args)>(args)...);
+    return apply_impl<Fn>(std::forward<decltype(values)>(values)...);
+  }
+
+  constexpr auto drop_optionals(auto&&... args)
+  {
+    const auto drop_one = [](auto&& arg) -> decltype(auto) {
+      if constexpr(is_optional(remove_cvref(type_of(^^arg))))
+      {
+        using T = std::remove_cvref_t<decltype(arg.value())>;
+        if(arg.has_value())
+        {
+          return T{std::forward<decltype(arg)>(arg).value()};
+        }
+        else
+        {
+          return T{};
+        }
+      }
+      else
+      {
+        return std::forward<decltype(arg)>(arg);
+      }
+    };
+    return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+      return std::forward_as_tuple(drop_one(args...[Is])...);
+    }(std::make_index_sequence<sizeof...(args)>{});
+  }
+
+  constexpr auto drop_optionals(named_tuple_c auto&& tup)
+  {
+    auto&& [... values] = std::forward<decltype(tup)>(tup);
+    return drop_optionals(values...);
+  }
+
+  template <std::meta::info Fn> constexpr decltype(auto) apply(named_tuple_c auto&& tuple)
+  {
+    auto&& [... values] = std::forward<decltype(tuple)>(tuple);
+    template for(constexpr auto ii : std::views::iota(0uz, sizeof...(values)))
+    {
+      auto&&         v        = std::forward<decltype(values...[ii])>(values...[ii]);
+      constexpr auto arg_type = decay(type_of(^^v));
+      if constexpr(is_optional(arg_type))
+      {
+        if(not v.has_value())
+        {
+          constexpr auto N     = sizeof...(values) - ii;
+          auto&& [... dropped] = drop_optionals(std::forward<decltype(tuple)>(tuple));
+          return apply_drop_impl<Fn, N>(std::forward<decltype(dropped)>(dropped)...);
+        }
+      }
+    }
+    auto&& [... dropped] = drop_optionals(std::forward<decltype(tuple)>(tuple));
+    if constexpr(requires { apply_impl<Fn>(std::forward<decltype(dropped)>(dropped)...); })
+    {
+      return apply_impl<Fn>(std::forward<decltype(dropped)>(dropped)...);
+    }
+    else
+    {
+      static_assert(false, "cannot apply function with given named tuple");
+    }
   }
 }

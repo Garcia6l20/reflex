@@ -87,4 +87,12 @@ REFLEX_EXPORT namespace reflex
   template <typename T>
   concept number_c = int_number_c<T> or std::floating_point<T>;
 
+  consteval bool is_optional(std::meta::info t)
+  {
+    return meta::is_template_instance_of(t, ^^std::optional);
+  }
+
+  template <typename T>
+  concept optional_c = is_optional(^^T);
+
 } // namespace reflex

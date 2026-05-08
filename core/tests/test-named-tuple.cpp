@@ -31,15 +31,3 @@ TEST_CASE("reflex::core::named_tuple: basics")
   CHECK(get<1>(t) == 2.0);
   CHECK(get<2>(t) == "three");
 }
-
-double foo(int a, double b, std::string_view c)
-{
-  return a + b + c.size();
-}
-
-TEST_CASE("reflex::core::named_tuple: from function parameters")
-{
-  auto tup = named_tuple_from_function_parameters_t<^^foo>{.a = 42, .b = 3.14, .c = "hello"sv};
-  std::println("{}", display_string_of(dealias(^^tup)));
-  CHECK(apply(foo, tup) == 42 + 3.14 + 5);
-}

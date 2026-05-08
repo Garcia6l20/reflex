@@ -40,4 +40,10 @@ if (REFLEX_CXX_MODULES_ENABLED)
   doctest_add_test(reflex-core-named-tuple-test
     test-named-tuple.cpp
   )
+  doctest_add_test(reflex-core-overload-set-test
+    test-overload-set.cpp
+  )
+  doctest_add_test(reflex-core-named-apply-test
+    test-named-apply.cpp
+  )
 endif()
