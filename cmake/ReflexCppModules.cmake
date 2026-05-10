@@ -156,7 +156,7 @@ function(reflex_add_cxx_module_library target)
       LIBRARY DESTINATION lib
       ARCHIVE DESTINATION lib
       FILE_SET public_headers DESTINATION include
-      FILE_SET cxx_modules DESTINATION share/cxxmodules
+      FILE_SET cxx_modules DESTINATION lib/cxx
     )
   endif()
 
