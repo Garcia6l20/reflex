@@ -1,4 +1,5 @@
-from pcons import add_subdirectory, static_library, get_target, get_var
+from pcons import add_subdirectory, static_library, get_target
+from reflex_build.testing import build_testing
 
 cli = static_library(
     "reflex.cli",
@@ -10,5 +11,6 @@ cli = static_library(
 cli.public.include_dirs.append("include")
 cli.public.link_libs.append(get_target("reflex.core"))
 
-if get_var("REFLEX_BUILD_TESTS"):
+
+if build_testing:
     add_subdirectory("tests")
