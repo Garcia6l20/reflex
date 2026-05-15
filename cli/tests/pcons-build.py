@@ -1,4 +1,4 @@
-from pcons import program, get_target, static_library
+from pcons import Project, program, get_target, static_library
 from reflex_build.testing import add_test
 
 cli = get_target("reflex.cli")
@@ -14,4 +14,9 @@ testutils = static_library(name="reflex-testutils", sources=["src/testutils.cpp"
 testutils.public.include_dirs.append("include")
 testutils.public.link_libs.append(cli)
 
-add_test("git", ["test-git.cpp"], [cli, testutils])
+current_dir = Project.current().current_dir
+for src in current_dir.glob("test-*.cpp"):
+    test_name = src.stem.removeprefix("test-")
+    test = add_test(test_name, [src.name], [cli, testutils])
+    print(f"-- Test added: {test.name}")
+

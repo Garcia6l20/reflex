@@ -1,4 +1,5 @@
-from pcons import program, static_library
+from pathlib import Path
+from pcons import Project, program, static_library
 
 from reflex_build.config import build_dir, build_testing
 from reflex_build.requirements import packages
@@ -26,6 +27,18 @@ if build_testing:
     doctest_with_main.public.link_libs.append(doctest_pkg)
     doctest_with_main.private.defines.append("DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN")
 
+    project = Project.current()
+    env = project.get_default_environment()
+
+    import sys
+
+    python = sys.executable.replace("\\", "/")
+    runner_script = Path(__file__).parent / "_test_runner.py"
+    test_command = env.Command(
+        target="test",
+        source=[runner_script],
+        command=f"{python} $SOURCE",
+    )
 
     def add_test(name: str, sources: list[str], libs: list) -> None:
         test = program(
@@ -34,4 +47,6 @@ if build_testing:
         )
         test.private.include_dirs.append(".")
         test.private.link_libs.extend([*libs, doctest_with_main])
+        project.Alias("tests", test)
+        test_command.add_source(test)
         return test
