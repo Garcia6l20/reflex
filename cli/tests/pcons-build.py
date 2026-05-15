@@ -1,6 +1,7 @@
-from pcons import Project, program, get_targets, static_library
+from pcons import program, get_target, static_library
+from reflex_build.testing import add_test
 
-cli, doctest_with_main = get_targets("reflex.cli", "doctest-with-main")
+cli = get_target("reflex.cli")
 
 fake_git = program(
     "reflex-fake-git",
@@ -9,18 +10,8 @@ fake_git = program(
 fake_git.private.include_dirs.append("include")
 fake_git.private.link_libs.append(cli)
 
-env = Project.current().get_default_environment()
-
 testutils = static_library(name="reflex-testutils", sources=["src/testutils.cpp"])
 testutils.public.include_dirs.append("include")
 testutils.public.link_libs.append(cli)
 
-def add_test(name, sources):
-    test = program(
-        f"reflex-test-{name}",
-        sources=sources,
-    )
-    test.private.include_dirs.append("include")
-    test.private.link_libs.extend([cli, testutils, doctest_with_main])
-
-add_test("git", ["test-git.cpp"])
+add_test("git", ["test-git.cpp"], [cli, testutils])
