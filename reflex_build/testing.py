@@ -34,19 +34,37 @@ if build_testing:
 
     python = sys.executable.replace("\\", "/")
     runner_script = Path(__file__).parent / "_test_runner.py"
-    test_command = env.Command(
-        target="test",
-        source=[runner_script],
-        command=f"{python} $SOURCE",
-    )
 
-    def add_test(name: str, sources: list[str], libs: list) -> None:
+    def add_test_command(name: str):
+        return env.Command(
+            target=name,
+            source=[runner_script],
+            command=f"{python} $SOURCE",
+        )
+
+    test_command = add_test_command("test")
+    group_commands = dict()
+
+    def add_test(
+        name: str, sources: list[str], libs: list, group: str | None = None
+    ) -> None:
+        test_prefix = "reflex-test-"
+        if group:
+            test_prefix += f"{group}-"
+
         test = program(
-            f"reflex-test-{name}",
+            f"{test_prefix}{name}",
             sources=sources,
         )
         test.private.include_dirs.append(".")
         test.private.link_libs.extend([*libs, doctest_with_main])
         project.Alias("tests", test)
         test_command.add_source(test)
+
+        if group:
+            if group not in group_commands:
+                group_commands[group] = add_test_command(f"test-{group}")
+
+            group_commands[group].add_source(test)
+
         return test

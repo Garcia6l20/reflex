@@ -17,6 +17,6 @@ testutils.public.link_libs.append(cli)
 current_dir = Project.current().current_dir
 for src in current_dir.glob("test-*.cpp"):
     test_name = src.stem.removeprefix("test-")
-    test = add_test(test_name, [src.name], [cli, testutils])
+    test = add_test(test_name, [src.name], [cli, testutils], group="cli")
     print(f"-- Test added: {test.name}")
 
