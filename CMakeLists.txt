@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
+option(REFLEX_BUILD_PROGRAMS "Build reflex programs" ON)
+option(REFLEX_BUILD_EXAMPLES "Build reflex examples" OFF)
+option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
+
+option(REFLEX_CXX_MODULES_ENABLED "Enable Reflex CXX Modules" ON)
+option(REFLEX_INSTALL "Install Reflex targets" ON)
+
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 include(ReflexCppModules)
@@ -9,12 +16,6 @@ project(reflex LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
-option(REFLEX_BUILD_PROGRAMS "Build reflex programs" ON)
-option(REFLEX_BUILD_EXAMPLES "Build reflex examples" OFF)
-option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
-
-option(REFLEX_CXX_MODULES_ENABLED "Enable Reflex CXX Modules" ON)
-option(REFLEX_INSTALL "Install Reflex targets" ON)
 
 add_compile_options(-Wall -Wextra -Werror
   -fconcepts-diagnostics-depth=5 -fmax-errors=10
