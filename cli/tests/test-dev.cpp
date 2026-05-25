@@ -29,14 +29,20 @@ TEST_CASE("reflex::cli: dev test")
     [[maybe_unused]] static constexpr constant<std::vector<command_info>> cmds =
         command_info::from_info_range(std::get<2>(_raw)) | std::ranges::to<std::vector>();
 
-    static_assert(opts->size() == 2); // help added automatically, so we should have 2 options: help and all
+    static_assert(opts->size() == 4); // help, install-completion and show-completion are added automatically
     static_assert(opts->at(0) == ^^help_option);
-    static_assert(opts->at(1) == ^^cli1::all);
-    static_assert(opts->at(1).switches.s == "-a");
-    static_assert(opts->at(1).switches.l == "--all");
-    static_assert(opts->at(1).help() == "All the things!");
+    static_assert(opts->at(1) == ^^install_completion_option);
+    static_assert(opts->at(1).switches.s == "");
+    static_assert(opts->at(1).switches.l == "--install-completion");
+    static_assert(opts->at(1).help() == "Install shell completion.");
     static_assert(opts->at(1).is_flag() == true);
     static_assert(opts->at(1).is_counter() == false);
+    static_assert(opts->at(2) == ^^show_completion_option);
+    static_assert(opts->at(2).switches.s == "");
+    static_assert(opts->at(2).switches.l == "--show-completion");
+    static_assert(opts->at(2).help() == "Show shell completion.");
+    static_assert(opts->at(2).is_flag() == true);
+    static_assert(opts->at(2).is_counter() == false);
 
     item_tracker<opts> tracker{};
 
