@@ -50,7 +50,7 @@ TEST_CASE("reflex::cli: git")
 
 TEST_CASE("reflex::cli: git completion")
 {
-  SUBCASE("top-level: empty word lists all subcommands + options")
+  SUBCASE("top-level: empty word lists all subcommands")
   {
     auto c = complete<git>("git ", 1);
     CHECK(std::ranges::contains(c, "commit"sv));
@@ -60,6 +60,17 @@ TEST_CASE("reflex::cli: git completion")
     CHECK_FALSE(std::ranges::contains(c, "--help"sv));
     CHECK_FALSE(std::ranges::contains(c, "-r"sv));
     CHECK_FALSE(std::ranges::contains(c, "--remote"sv));
+    CHECK_FALSE(std::ranges::contains(c, "--install-completion"sv));
+  }
+
+  SUBCASE("top-level: starting with dash lists options")
+  {
+    auto c = complete<git>("git -", 1);
+    CHECK(std::ranges::contains(c, "--help"sv));
+    CHECK(std::ranges::contains(c, "--install-completion"sv));
+    // no subcommands when starting with dash
+    CHECK_FALSE(std::ranges::contains(c, "commit"sv));
+    CHECK_FALSE(std::ranges::contains(c, "push"sv));
   }
 
   SUBCASE("top-level: partial 'p' completes to 'push'")
@@ -96,13 +107,21 @@ TEST_CASE("reflex::cli: git completion")
     CHECK_FALSE(std::ranges::contains(c, "commit"sv));
   }
 
+  SUBCASE("subcommand push: starting with dash lists options")
+  {
+    auto c = complete<git>("git push -", 2);
+    CHECK(std::ranges::contains(c, "--help"sv));
+
+    // no install completions on subcommands
+    CHECK_FALSE(std::ranges::contains(c, "--install-completion"sv));
+  }
+
   SUBCASE("subcommand push: a complete completion returns the completion")
   {
     auto c = complete<git>("git push", 2);
     CHECK_FALSE(std::ranges::contains(c, "push"sv));
     CHECK(std::ranges::contains(c, "--help"sv));
     CHECK(std::ranges::contains(c, "-r"sv));
-    CHECK(std::ranges::contains(c, "-h"sv));
   }
 
   SUBCASE("subcommand push: empty word lists its options")
@@ -111,9 +130,9 @@ TEST_CASE("reflex::cli: git completion")
     CHECK(std::ranges::contains(c, "--remote"sv));
     CHECK(std::ranges::contains(c, "--help"sv));
     CHECK(std::ranges::contains(c, "-r"sv));
-    CHECK(std::ranges::contains(c, "-h"sv));
     // subcommand names of the parent must NOT appear
     CHECK_FALSE(std::ranges::contains(c, "commit"sv));
+    CHECK_FALSE(std::ranges::contains(c, "--install-completion"sv));
   }
 
   SUBCASE("subcommand push: complete '-r' completes to '-r'")
@@ -138,7 +157,6 @@ TEST_CASE("reflex::cli: git completion")
   SUBCASE("subcommand push: already present option --remote must not be offered again")
   {
     auto c = complete<git>("git push --remote origin -", 4);
-    CHECK(std::ranges::contains(c, "-h"sv));
     CHECK(std::ranges::contains(c, "--help"sv));
     CHECK_FALSE(std::ranges::contains(c, "-r"sv));
     CHECK_FALSE(std::ranges::contains(c, "--remote"sv));
@@ -147,7 +165,6 @@ TEST_CASE("reflex::cli: git completion")
   SUBCASE("subcommand commit: empty word lists its options (no sub-options, only --help)")
   {
     auto c = complete<git>("git commit -", 2);
-    CHECK(std::ranges::contains(c, "-h"sv));
     CHECK(std::ranges::contains(c, "--help"sv));
     CHECK_FALSE(std::ranges::contains(c, "push"sv));
   }

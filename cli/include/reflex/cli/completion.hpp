@@ -122,7 +122,8 @@ REFLEX_EXPORT namespace reflex::cli::detail
     using completion_value_type       = typename completion<config>::value_type;
     using completion_description_type = typename completion<config>::description_type;
     cli::detail::process_cmdline<false>(
-        cli, identifier_of(decay(^^Cli)), words.begin(), words.end(), [&](auto const& trackers) {
+        cli, identifier_of(decay(^^Cli)), identifier_of(decay(^^Cli)), words.begin(), words.end(),
+        [&](auto const& trackers) {
           const auto  state      = trackers.state;
           const auto  view       = trackers.current.view;
           const auto  value_view = trackers.current.value_view;
@@ -147,14 +148,14 @@ REFLEX_EXPORT namespace reflex::cli::detail
             // offer unused options
             trackers.opts_track.unused([&]<auto opt> {
               constexpr auto [short_sw, long_sw] = opt.switches;
-              if(short_sw->starts_with(view))
+              if(not short_sw->empty() and short_sw->starts_with(view))
               {
                 completions.push_back(
                     completion<config>{
                         .value       = static_cast<completion_value_type>(short_sw),
                         .description = static_cast<completion_description_type>(opt.help())});
               }
-              if(long_sw->starts_with(view))
+              if(not long_sw->empty() and long_sw->starts_with(view))
               {
                 completions.push_back(
                     completion<config>{
@@ -186,18 +187,19 @@ REFLEX_EXPORT namespace reflex::cli::detail
           {
             trackers.opts_track.all([&]<auto opt> {
               constexpr auto [short_sw, long_sw] = opt.switches;
-              if(view == *short_sw or view == *long_sw)
+              if((not short_sw->empty() and view == *short_sw)
+                 or (not long_sw->empty() and view == *long_sw))
               {
                 if(index >= comp_point)
                 {
-                  if(view == *short_sw)
+                  if(not short_sw->empty() and view == *short_sw)
                   {
                     completions.push_back(
                         completion<config>{
                             .value       = static_cast<completion_value_type>(short_sw),
                             .description = static_cast<completion_description_type>(opt.help())});
                   }
-                  else if(view == *long_sw)
+                  else if(not long_sw->empty() and view == *long_sw)
                   {
                     completions.push_back(
                         completion<config>{
@@ -222,7 +224,8 @@ REFLEX_EXPORT namespace reflex::cli::detail
             // may be a partial completed option
             trackers.opts_track.unused([&]<auto opt> {
               constexpr auto [short_sw, long_sw] = opt.switches;
-              if(view == *short_sw or view == *long_sw)
+              if((not short_sw->empty() and view == *short_sw)
+                 or (not long_sw->empty() and view == *long_sw))
               {
                 completions.append_range(
                     arg_completer<opt, config>::complete(cmd, value_view, terminated)
@@ -279,14 +282,20 @@ REFLEX_EXPORT namespace reflex::cli::detail
 
             trackers.opts_track.unused([&]<auto opt> {
               constexpr auto [short_sw, long_sw] = opt.switches;
-              completions.push_back(
-                  completion<config>{
-                      .value       = static_cast<completion_value_type>(long_sw),
-                      .description = static_cast<completion_description_type>(opt.help())});
-              completions.push_back(
-                  completion<config>{
-                      .value       = static_cast<completion_value_type>(short_sw),
-                      .description = static_cast<completion_description_type>(opt.help())});
+              if(not long_sw->empty())
+              {
+                completions.push_back(
+                    completion<config>{
+                        .value       = static_cast<completion_value_type>(long_sw),
+                        .description = static_cast<completion_description_type>(opt.help())});
+              }
+              if(not short_sw->empty())
+              {
+                completions.push_back(
+                    completion<config>{
+                        .value       = static_cast<completion_value_type>(short_sw),
+                        .description = static_cast<completion_description_type>(opt.help())});
+              }
             });
           }
           else if(state == cli::detail::parsing_state::unexpected_argument)
@@ -401,9 +410,6 @@ REFLEX_EXPORT namespace reflex::cli::detail
 
     return do_complete<Config>(cmd, comp_line, comp_point);
   }
-
-  extern "C++" void emit_zsh_source(std::string_view executable);
-  extern "C++" void emit_bash_source(std::string_view executable);
 } // namespace reflex::cli::detail
 
 REFLEX_EXPORT namespace reflex::cli::completers

@@ -15,10 +15,11 @@ REFLEX_EXPORT namespace reflex::cli
 {
   namespace detail
   {
-  template <typename Cli> int process(Cli&& cli, std::string_view program, auto it, auto end)
+  template <typename Cli> int process(Cli&& cli, std::string_view executable, auto it, auto end)
   {
+    auto command = std::filesystem::path{executable}.filename().string();
     return detail::process_cmdline(
-        std::forward<Cli>(cli), program, it, end, [](auto const& trackers) {
+        std::forward<Cli>(cli), command, executable, it, end, [](auto const& trackers) {
           const auto state = trackers.state;
           const auto view  = trackers.current.view;
 
@@ -106,51 +107,11 @@ REFLEX_EXPORT namespace reflex::cli
           {
             return detail::do_complete<config>(cli);
           }
-          else if(complete == "bash_source")
-          {
-            detail::emit_bash_source(executable);
-            return 0;
-          }
-          else if(complete == "zsh_source")
-          {
-            detail::emit_zsh_source(executable);
-            return 0;
-          }
-          else
-          {
-            const auto shell_env = std::getenv("SHELL");
-            if(shell_env != nullptr)
-            {
-              std::string_view shell{shell_env};
-              if(shell.ends_with("bash"))
-              {
-                detail::emit_bash_source(executable);
-                return 0;
-              }
-              else if(shell.ends_with("zsh"))
-              {
-                detail::emit_zsh_source(executable);
-                return 0;
-              }
-              else
-              {
-                std::println(std::cerr, "unsupported shell for auto completion: {}", shell);
-                return 1;
-              }
-            }
-            else
-            {
-              std::println(
-                  std::cerr, "cannot detect shell for auto completion (SHELL env var not set)");
-              return 1;
-            }
-          }
         }
       }
     }
 
-    auto program = std::filesystem::path{executable}.filename().string();
-    return detail::process(cli, program, it, end);
+    return detail::process(cli, executable, it, end);
   }
 
   template <typename Cli, configuration config = {}>

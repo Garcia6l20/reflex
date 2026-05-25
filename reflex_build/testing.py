@@ -1,8 +1,5 @@
-import sys
-
-from pathlib import Path
-from distro import name
 from pcons import context
+from pcons.core.target import Target
 from pcons.util.source_location import get_caller_location
 
 from reflex_build.config import build_dir, build_testing
@@ -38,7 +35,7 @@ if build_testing:
 
     def add_test(
         name: str, sources: list[str], libs: list, group: str | None = None
-    ) -> None:
+    ) -> Target:
         test_prefix = "reflex-test-"
         if group:
             test_prefix += f"{group}-"

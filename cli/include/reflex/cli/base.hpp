@@ -119,11 +119,20 @@ REFLEX_EXPORT namespace reflex::cli
   {
     reflex::constant_string help = "";
   };
+
   namespace detail
   {
 
-  [[= option{"-h/--help", "Print this message and exit."}.flag()]] constexpr bool help_option{
-      false};
+  extern "C++" int install_completion(std::string_view executable, std::string_view shell);
+  extern "C++" int emit_completion(std::string_view executable, std::string_view shell);
+
+  [[= option{"--help", "Print this message and exit."}.flag()]] constexpr bool help_option{false};
+
+  [[= option{"--install-completion", "Install shell completion."}
+          .flag()]] constexpr bool install_completion_option{false};
+
+  [[= option{"--show-completion", "Show shell completion."}
+          .flag()]] constexpr bool show_completion_option{false};
 
   template <typename Self, typename AnnotationT> struct base_info
   {
@@ -227,13 +236,18 @@ REFLEX_EXPORT namespace reflex::cli
     {}
   };
 
-  template <std::meta::info I> constexpr auto raw_parse()
+  template <std::meta::info I, bool include_install_completion = true> constexpr auto raw_parse()
   {
     std::vector<std::meta::info> arguments;
     std::vector<std::meta::info> options;
     std::vector<std::meta::info> sub_commands;
 
     options.push_back(^^help_option);
+    if constexpr(include_install_completion)
+    {
+      options.push_back(^^install_completion_option);
+      options.push_back(^^show_completion_option);
+    }
 
     template for(constexpr auto mem :
                  define_static_array(nonstatic_data_members_of(I, meta::access_context::current())))
@@ -281,9 +295,10 @@ REFLEX_EXPORT namespace reflex::cli
         define_static_array(sub_commands)};
   }
 
-  template <std::meta::info I> constexpr auto parse()
+  template <std::meta::info I, bool include_install_completion = true> constexpr auto parse()
   {
-    static constexpr auto [arguments, options, sub_commands] = raw_parse<I>();
+    static constexpr auto [arguments, options, sub_commands] =
+        raw_parse<I, include_install_completion>();
     static constexpr auto args   = argument_info::from_info_range(arguments);
     static constexpr auto opts   = option_info::from_info_range(options);
     static constexpr auto s_cmds = command_info::from_info_range(sub_commands);
@@ -295,10 +310,11 @@ REFLEX_EXPORT namespace reflex::cli
     return constant_string{caseconv::to_kebab_case(identifier_of(mem))};
   }
 
-  template <std::meta::info I> void usage_of(std::string_view program)
+  template <std::meta::info I, bool include_install_completion = true>
+  void usage_of(std::string_view program)
   {
     static constexpr auto command              = command_info{I};
-    static constexpr auto [args, opts, s_cmds] = parse<I>();
+    static constexpr auto [args, opts, s_cmds] = parse<I, include_install_completion>();
 
     static constexpr std::size_t min_id_size = 16;
 
@@ -322,13 +338,33 @@ REFLEX_EXPORT namespace reflex::cli
       std::size_t max_id_size = min_id_size;
       template for(constexpr auto opt : opts)
       {
-        constexpr auto sz = opt.switches.s->size() + opt.switches.l->size() + 1;
-        max_id_size       = std::max(max_id_size, sz);
+        constexpr auto sz = [&]() consteval {
+          if(opt.switches.s->empty())
+          {
+            return opt.switches.l->size();
+          }
+          if(opt.switches.l->empty())
+          {
+            return opt.switches.s->size();
+          }
+          return opt.switches.s->size() + opt.switches.l->size() + 1;
+        }();
+        max_id_size = std::max(max_id_size, sz);
       }
       template for(constexpr auto opt : opts)
       {
         constexpr auto [s, l] = opt.switches;
-        auto switches_str     = std::format("{}/{}", *s, *l);
+        auto switches_str     = [&]() {
+          if(s->empty())
+          {
+            return std::string{*l};
+          }
+          if(l->empty())
+          {
+            return std::string{*s};
+          }
+          return std::format("{}/{}", *s, *l);
+        }();
         std::println("  {:{}} {}", switches_str, max_id_size, *opt.help());
       }
 
@@ -503,11 +539,11 @@ REFLEX_EXPORT namespace reflex::cli
     return item_tracker<items>{};
   }
 
-  template <typename Cmd> struct parse_trackers
+  template <typename Cmd, bool include_install_completion = true> struct parse_trackers
   {
     static constexpr auto cmd_type = remove_cvref(^^Cmd);
 
-    static constexpr auto _raw = raw_parse<cmd_type>();
+    static constexpr auto _raw = raw_parse<cmd_type, include_install_completion>();
 
     static constexpr constant<std::vector<argument_info>> args =
         argument_info::from_info_range(std::get<0>(_raw)) | std::ranges::to<std::vector>();
@@ -537,33 +573,36 @@ REFLEX_EXPORT namespace reflex::cli
 
     void init_current(std::string_view v)
     {
-      current.view       = v;
-      current.value_view = {};
+      current.view        = v;
+      current.value_view  = {};
       current.parse_error = {};
     }
 
+    std::string_view command{};
     std::string_view program{};
     parsing_state    state = parsing_state::completed;
     std::size_t      index = 1;
 
     void usage() const
     {
-      usage_of<cmd_type>(program);
+      usage_of<cmd_type, include_install_completion>(command);
     }
   };
 
-  template <bool show_help = true, typename Cli>
+  template <bool show_help = true, bool include_install_completion = true, typename Cli>
   int process_cmdline(
       Cli&&            cli,
-      std::string_view program,
+      std::string_view command,
+      std::string_view executable,
       auto             it,
       auto             end,
       auto             state_handler,
       std::size_t      index = 1)
   {
-    static constexpr auto cli_type = remove_cvref(^^Cli);
-    parse_trackers<Cli>   trackers{cli};
-    trackers.program = program;
+    static constexpr auto                           cli_type = remove_cvref(^^Cli);
+    parse_trackers<Cli, include_install_completion> trackers{cli};
+    trackers.command = command;
+    trackers.program = executable.empty() ? command : executable;
     trackers.index   = index;
 
     bool        treat_as_argument = false;
@@ -592,6 +631,7 @@ REFLEX_EXPORT namespace reflex::cli
              or
              // counters accepts repeated short switch (ie.: -vvv => counter = 3)
              (o.is_counter()
+              and not short_switch->empty()
               and trackers.current.view.starts_with(short_switch)
               and (std::ranges::all_of(trackers.current.view | std::views::drop(2), [&](auto c) {
                     return c == short_switch->at(1);
@@ -601,9 +641,39 @@ REFLEX_EXPORT namespace reflex::cli
             {
               if(show_help)
               {
-                usage_of<cli_type>(program);
+                usage_of<cli_type, include_install_completion>(trackers.program);
               }
               return 0;
+            }
+            else if constexpr(o == ^^install_completion_option)
+            {
+              std::string_view shell{};
+              if(it != end)
+              {
+                auto next = std::string_view{*it};
+                if(not next.empty() and next[0] != '-')
+                {
+                  shell = next;
+                  ++it;
+                  ++trackers.index;
+                }
+              }
+              return install_completion(trackers.program, shell);
+            }
+            else if constexpr(o == ^^show_completion_option)
+            {
+              std::string_view shell{};
+              if(it != end)
+              {
+                auto next = std::string_view{*it};
+                if(not next.empty() and next[0] != '-')
+                {
+                  shell = next;
+                  ++it;
+                  ++trackers.index;
+                }
+              }
+              return emit_completion(trackers.program, shell);
             }
             else
             {
@@ -741,9 +811,9 @@ REFLEX_EXPORT namespace reflex::cli
               return 1;
             }
             ++trackers.index;
-            return process_cmdline<show_help>(
-                cli.[:cmd.member:], std::format("{} {}", program, trackers.current.view), it, end,
-                                  state_handler, trackers.index);
+            return process_cmdline<show_help, false>(
+                cli.[:cmd.member:], std::format("{} {}", trackers.program, trackers.current.view),
+                                  trackers.program, it, end, state_handler, trackers.index);
           }
         }
 

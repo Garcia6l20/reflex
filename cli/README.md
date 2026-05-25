@@ -51,9 +51,11 @@ USAGE: echo [OPTIONS...] ARGUMENTS...
 Simple echo command.
 
 OPTIONS:
-  -h/--help        Print this message and exit.
-  -p/--prefix      Prefix.
-  -r/--repeat      Repeat count.
+  --help                Print this message and exit.
+  --install-completion  Install shell completion.
+  --show-completion     Show shell completion.
+  -p/--prefix           Prefix.
+  -r/--repeat           Repeat count.
 
 ARGUMENTS:
   message          Message to print.
@@ -159,28 +161,26 @@ struct [[= cli::command{"Manage branches."}]] branch_cmd
 
 ## Shell completion
 
-### One-time script generation
+### Installation
 
 ```bash
 # zsh
-_REFLEX_COMPLETE=zsh_source my-tool > ~/.zsh/completions/_my-tool
-source ~/.zsh/completions/_my-tool
+my-tool --install-completion zsh
 
 # bash
-_REFLEX_COMPLETE=bash_source my-tool > ~/.bash_completion.d/my-tool
-source ~/.bash_completion.d/my-tool
+my-tool --install-completion bash
 
-# auto detect and source on each run
-_REFLEX_COMPLETE=auto my-tool > ~/.$SHELL_completion.d/my-tool
-source ~/.$SHELL_completion.d/my-tool
+# auto detect (uses $SHELL environment variable)
+my-tool --install-completion
 ```
 
 ### Inline sourcing
 
 ```zsh
-source <(_REFLEX_COMPLETE=zsh_source my-tool)   # zsh
-source <(_REFLEX_COMPLETE=bash_source my-tool)  # bash
-source <(_REFLEX_COMPLETE=auto my-tool)         # auto
+source <(./path/to/my-tool --show-completion zsh)
+source <(./path/to/my-tool --show-completion bash)
+source <(./path/to/my-tool --show-completion) # auto detect, uses $SHELL environment variable
+# NOTE: this also updates your path to the binary if needed
 ```
 
 ### Example (from [/package/hello-cli](../package/hello-cli))
@@ -189,7 +189,7 @@ source <(_REFLEX_COMPLETE=auto my-tool)         # auto
 $ cd package/hello-cli
 $ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 $ cmake --build build -j
-$ source <(_REFLEX_COMPLETE=auto build/hello-cli) # note: also updates your path to the binary if needed
+$ source <(build/hello-cli --show-completion) # note: also updates your path to the binary
 $ hello-cli -[TAB]
 --help  -h  -- Print this message and exit.
 --name  -n  -- Your name.
@@ -199,8 +199,8 @@ $ hello-cli -[TAB]
 
 | Variable | Description |
 |---|---|
-| `_REFLEX_COMPLETE` | `zsh_complete`, `bash_complete`, `zsh_source`, `bash_source` |
-| `_REFLEX_COMP_LINE` | Full command line typed so far |
+| `_REFLEX_COMPLETE`   | Mark a completion request |
+| `_REFLEX_COMP_LINE`  | Full command line typed so far |
 | `_REFLEX_COMP_POINT` | Word index of the token being completed |
 
 ---
