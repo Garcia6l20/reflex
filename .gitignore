@@ -5,3 +5,5 @@ build/
 .qmlls.ini
 compile_commands.json
 __pycache__/
+.venv/
+uv.lock

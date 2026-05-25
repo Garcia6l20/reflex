@@ -1,0 +1,52 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'  # Also run CI on version tags
+  pull_request:
+    branches: [main, devel]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "latest"
+
+      - name: Install gcc-16
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+
+          sudo apt-get update
+          sudo apt-get install -y gcc-16 g++-16
+
+          sudo update-alternatives --install /usr/bin/gcc gcc \
+            /usr/bin/gcc-16 100
+          sudo update-alternatives --install /usr/bin/g++ g++ \
+            /usr/bin/g++-16 100
+
+          gcc --version -v
+    
+      - name: Install UV dependencies
+        run: uv sync
+
+      - name: Configure Conan settings for GCC 16
+        run: |
+          mkdir -p ~/.conan2
+          printf 'compiler:\n  gcc:\n    version: ["16"]\n' > ~/.conan2/settings_user.yml
+
+      - name: Build and test
+        run: |
+            uv run pcons generate REFLEX_BUILD_TESTS=ON
+            uv run pcons build
+            uv run pcons test

@@ -1,0 +1,9 @@
+[project]
+name = "reflex-build"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["pcons", "conan"]
+
+# TODO: use upstream pcons when the next release is out
+[tool.uv.sources]
+pcons = { git = "https://github.com/Garcia6l20/pcons", branch = "devel" }
