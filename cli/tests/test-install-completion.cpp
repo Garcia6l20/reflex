@@ -107,3 +107,30 @@ TEST_CASE("reflex::cli: install completion for zsh")
   unset_env("HOME");
   cleanup_home(home);
 }
+
+TEST_CASE("reflex::cli: install completion for fish")
+{
+  auto const home = temp_home();
+  auto const home_str = home.string();
+  set_env("HOME", home_str.c_str(), true);
+  set_env("SHELL", "fish", true);
+
+  int rc = -1;
+  const char* argv[] = {"/tmp/install-cli", "--install-completion", "fish"};
+  auto [out, err] = capture_out_err([&] { rc = cli::run(install_completion_cli{}, 3, argv); });
+
+  CHECK_EQ(rc, 0);
+  CHECK(err.empty());
+  CHECK(out.find("fish completion installed in") != std::string::npos);
+  CHECK(out.find("Completion will take effect once you restart the terminal") != std::string::npos);
+
+  auto const completion_path = home / ".config/fish/completions/install-cli.fish";
+  CHECK(fs::is_regular_file(completion_path));
+
+  auto const script_text = read_text(completion_path);
+  CHECK(script_text.find("complete --no-files --command \"install-cli\"") != std::string::npos);
+
+  unset_env("SHELL");
+  unset_env("HOME");
+  cleanup_home(home);
+}

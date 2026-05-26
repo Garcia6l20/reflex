@@ -80,8 +80,8 @@ std::string shell_name(std::string_view shell)
 bool is_supported_shell(std::string_view shell)
 {
   auto name = shell_name(shell);
-  // TODO support for fish and powershell
-  return name == "bash" or name == "zsh";
+  // TODO support for powershell
+  return name == "bash" or name == "zsh" or name == "fish";
 }
 
 struct path_info
@@ -174,7 +174,32 @@ std::string completion_script(path_info const& info, std::string_view shell)
     return std::format(__source_template, info.program, info.id, info.executable_full(), info.dir);
   }
 
+  if(name == "fish")
+  {
+    static constexpr char __source_template[] = {
+#embed "_fish_source.fish"
+        , 0};
+
+    return std::format(__source_template, info.program, info.id, info.executable_full(), info.dir);
+  }
+
   return {};
+}
+
+fs::path install_fish(std::string_view executable)
+{
+  auto const info = resolve_path(executable);
+  auto const home = home_path();
+  auto const completion_path =
+      home / ".config" / "fish" / "completions" / (std::string{info.program} + ".fish");
+
+  std::filesystem::create_directories(completion_path.parent_path());
+  {
+    std::ofstream out{completion_path};
+    auto          script = completion_script(info, "fish");
+    out.write(script.data(), static_cast<std::streamsize>(script.size()));
+  }
+  return completion_path;
 }
 
 fs::path install_bash(std::string_view executable)
@@ -279,9 +304,15 @@ void emit_bash_source(std::string_view executable)
   std::println("{}", completion_script(info, "bash"));
 }
 
+void emit_fish_source(std::string_view executable)
+{
+  auto const info = resolve_path(executable);
+  std::println("{}", completion_script(info, "fish"));
+}
+
 int emit_completion(std::string_view executable, std::string_view shell)
 {
-  auto name = shell_name(shell);
+  auto name = shell_name(shell.empty() ? std::getenv("SHELL") : shell);
   if(name == "bash")
   {
     emit_bash_source(executable);
@@ -289,6 +320,10 @@ int emit_completion(std::string_view executable, std::string_view shell)
   else if(name == "zsh")
   {
     emit_zsh_source(executable);
+  }
+  else if(name == "fish")
+  {
+    emit_fish_source(executable);
   }
   return 0;
 }
@@ -327,6 +362,10 @@ int install_completion(std::string_view executable, std::string_view shell)
   else if(shell_name_value == "zsh")
   {
     installed_path = install_zsh(executable);
+  }
+  else if(shell_name_value == "fish")
+  {
+    installed_path = install_fish(executable);
   }
 
   std::println("{} completion installed in {}.", shell_name_value, installed_path.generic_string());
