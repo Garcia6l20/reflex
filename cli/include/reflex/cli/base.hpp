@@ -648,8 +648,9 @@ REFLEX_EXPORT namespace reflex::cli
             else if constexpr(o == ^^install_completion_option)
             {
               std::string_view shell{};
-              if(it != end)
+              if(it != end and ++it != end)
               {
+                ++trackers.index;
                 auto next = std::string_view{*it};
                 if(not next.empty() and next[0] != '-')
                 {
@@ -663,8 +664,9 @@ REFLEX_EXPORT namespace reflex::cli
             else if constexpr(o == ^^show_completion_option)
             {
               std::string_view shell{};
-              if(it != end)
+              if(it != end and ++it != end)
               {
+                ++trackers.index;
                 auto next = std::string_view{*it};
                 if(not next.empty() and next[0] != '-')
                 {
