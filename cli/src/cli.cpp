@@ -18,17 +18,6 @@ namespace fs = std::filesystem;
 
 constexpr std::string_view completion_var = "_REFLEX_COMPLETE";
 
-std::string replace_all(std::string text, std::string_view from, std::string_view to)
-{
-  std::size_t pos = 0;
-  while((pos = text.find(from, pos)) != std::string::npos)
-  {
-    text.replace(pos, from.size(), to);
-    pos += to.size();
-  }
-  return text;
-}
-
 std::string sanitize_identifier(std::string_view text)
 {
   std::string result;
