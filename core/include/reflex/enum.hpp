@@ -138,13 +138,14 @@ REFLEX_EXPORT namespace reflex
       s.remove_prefix(std::min(s.size(), token.size() + 1));
 
       bool found = false;
+      // GCC bug workaround: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=125601
+      // Guard with `found` instead of breaking until GCC is fixed.
       template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
       {
-        if(identifier_of(e).substr(prefix_len) == token)
+        if(not found and identifier_of(e).substr(prefix_len) == token)
         {
           result |= [:e:];
           found = true;
-          break;
         }
       }
       if(!found)

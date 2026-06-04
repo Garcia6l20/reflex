@@ -119,8 +119,6 @@ TEST_CASE("reflex::core::parse: enum")
   CHECK(*parse<Color>("Blue") == Color::Blue);
 }
 
-// FIXME: this test is broken !!!
-#if 0
 enum class [[=derive(Parse, EnumFlags)]] Permission
 {
   Read    = 1 << 0,
@@ -134,4 +132,3 @@ TEST_CASE("reflex::core::parse: enum flags")
   CHECK(*parse<Permission>("Write") == Permission::Write);
   CHECK(*parse<Permission>("Read|Execute") == (Permission::Read | Permission::Execute));
 }
-#endif
