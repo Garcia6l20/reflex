@@ -31,7 +31,21 @@ function _{1}_completion
         if test "$type" = dir
             __fish_complete_directories $value
         else if test "$type" = file
-            __fish_complete_path $value
+            if test "$value" = "*"
+                # Wildcard: complete all paths (files + directories)
+                __fish_complete_path
+            else
+                # Pattern: filter path completions to matching files and directories
+                set -l cur (commandline -ct)
+                for completion in (__fish_complete_path $cur)
+                    set -l name (string split \t -- $completion)[1]
+                    if string match -qr '/$' -- $name
+                        echo $completion
+                    else if string match -q -- $value (string replace -r '^.*/' '' -- $name)
+                        echo $completion
+                    end
+                end
+            end
         else if test "$type" = plain
             if test -n "$descr"
                 printf '%s\t%s\n' $value $descr

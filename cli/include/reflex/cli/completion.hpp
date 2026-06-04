@@ -418,6 +418,36 @@ REFLEX_EXPORT namespace reflex::cli::completers
   {
     constant_string pattern{"*"};
 
+    struct[[= complete{}]] dirs
+    {
+      auto operator()(std::string_view /* current */) const
+      {
+        return std::make_tuple(
+            true, std::array{
+                      cli::completion<config>{
+                                              .type        = cli::completion_type::dir,
+                                              .value       = static_cast<cli::completion<config>::value_type>(""),
+                                              .description = static_cast<cli::completion<config>::description_type>(
+                              "Directory")}
+        });
+      }
+    };
+
+    struct[[= complete{}]] files
+    {
+      auto operator()(std::string_view /* current */) const
+      {
+        return std::make_tuple(
+            true, std::array{
+                      cli::completion<config>{
+                                              .type        = cli::completion_type::file,
+                                              .value       = static_cast<cli::completion<config>::value_type>("*"),
+                                              .description = static_cast<cli::completion<config>::description_type>(
+                              "File system path")}
+        });
+      }
+    };
+
     auto operator()(std::string_view /* current */) const
     {
       return std::make_tuple(
