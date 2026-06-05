@@ -119,7 +119,7 @@ path_info resolve_path(std::string_view executable)
       auto root_name = input.root_name().generic_string();
       if(root_name.size() == 2 and root_name[1] == ':')
       {
-        const char drive_letter = to_lower(root_name[0]);
+        const char drive_letter = char(reflex::to_lower(root_name[0]));
         input                   = fs::relative(input, input.root_path());
         input = fs::path{std::format("/{}", drive_letter)} / input.lexically_normal();
       }
