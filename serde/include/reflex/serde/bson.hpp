@@ -5,6 +5,7 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <reflex/serde.hpp>
 #include <reflex/serde/bson_value.hpp>
 #endif
 
