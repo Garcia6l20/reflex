@@ -11,6 +11,7 @@
 #endif
 
 #include <reflex/constant.hpp>
+#include <reflex/meta.hpp>
 
 REFLEX_EXPORT namespace reflex
 {

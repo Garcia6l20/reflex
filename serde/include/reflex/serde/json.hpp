@@ -5,6 +5,8 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <cstring>
+
 #include <reflex/format.hpp>
 #include <reflex/heapless/string.hpp>
 #include <reflex/parse.hpp>
