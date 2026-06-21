@@ -51,19 +51,8 @@ REFLEX_EXPORT namespace reflex::serde::json
   {
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
-    using serde::detail::serializer_base<OutputIt>::out;
 
-    template <typename T, bool tag = false> constexpr void dump(T const& value)
-    {
-      if constexpr(requires { serialize(*this, value); })
-      {
-        serialize(*this, value);
-      }
-      else
-      {
-        static_assert(false, std::string(display_string_of(^^T)) + " is not serializable to JSON");
-      }
-    }
+    static constexpr std::string_view format_name = "JSON";
 
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, null_t const&)
     {

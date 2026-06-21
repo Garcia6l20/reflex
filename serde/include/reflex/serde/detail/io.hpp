@@ -8,12 +8,15 @@
 #include <concepts>
 #include <iterator>
 #include <ranges>
+#include <string>
+#include <type_traits>
 #endif
 
 REFLEX_EXPORT namespace reflex::serde::detail
 {
-  // Shared serializer state: the output iterator and its accessor. Each backend
-  // serializer derives from this and adds its own dump() and tag_invoke overloads.
+  // Shared serializer state and entry point. A backend serializer derives from
+  // this, declares a `format_name` (and an optional `format_hint`) static member
+  // for diagnostics, and adds its own tag_invoke overloads.
   template <typename OutputIt> class serializer_base
   {
     OutputIt out_;
@@ -30,6 +33,31 @@ REFLEX_EXPORT namespace reflex::serde::detail
     constexpr OutputIt& out()
     {
       return out_;
+    }
+
+    // The explicit object parameter makes `self` the derived serializer, so the
+    // backend's tag_invoke overloads are found by ADL on `serialize(self, ...)`.
+    template <typename Self, typename T> constexpr void dump(this Self&& self, T const& value)
+    {
+      using backend = std::remove_cvref_t<Self>;
+      if constexpr(requires { serialize(self, value); })
+      {
+        serialize(self, value);
+      }
+      else if constexpr(requires { backend::format_hint; })
+      {
+        static_assert(
+            false,
+            std::string(display_string_of(^^T)) + " is not serializable to "
+                + std::string(backend::format_name) + " " + std::string(backend::format_hint));
+      }
+      else
+      {
+        static_assert(
+            false,
+            std::string(display_string_of(^^T)) + " is not serializable to "
+                + std::string(backend::format_name));
+      }
     }
   };
 

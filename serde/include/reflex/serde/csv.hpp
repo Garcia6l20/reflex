@@ -250,23 +250,10 @@ REFLEX_EXPORT namespace reflex::serde::csv
   {
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
-    using serde::detail::serializer_base<OutputIt>::out;
 
-    template <typename T> constexpr void dump(T const& value)
-    {
-      if constexpr(requires { serialize(*this, value); })
-      {
-        serialize(*this, value);
-      }
-      else
-      {
-        static_assert(
-            false,
-            std::string(display_string_of(^^T))
-                + " is not serializable to CSV (expected a flat aggregate or a sequence of flat "
-                  "aggregates)");
-      }
-    }
+    static constexpr std::string_view format_name = "CSV";
+    static constexpr std::string_view format_hint =
+        "(expected a flat aggregate or a sequence of flat aggregates)";
   };
 
   template <typename... TArgs>

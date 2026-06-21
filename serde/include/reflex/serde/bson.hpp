@@ -294,19 +294,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
   {
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
-    using serde::detail::serializer_base<OutputIt>::out;
 
-    template <typename T> constexpr void dump(T const& value)
-    {
-      if constexpr(requires { serialize(*this, value); })
-      {
-        serialize(*this, value);
-      }
-      else
-      {
-        static_assert(false, std::string(display_string_of(^^T)) + " is not serializable to BSON");
-      }
-    }
+    static constexpr std::string_view format_name = "BSON";
   };
 
   template <typename... TArgs>
