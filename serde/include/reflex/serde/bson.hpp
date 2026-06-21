@@ -9,6 +9,8 @@
 #include <reflex/serde/bson_value.hpp>
 #endif
 
+#include <reflex/serde/detail/io.hpp>
+
 namespace reflex::serde::bson::detail
 {
 using bytes = std::vector<std::byte>;
@@ -287,23 +289,12 @@ REFLEX_EXPORT namespace reflex::serde::bson
                                 or std::output_iterator<OutputIt, char>
                                 or std::output_iterator<OutputIt, unsigned char>;
 
-  template <bson_output_iterator_c OutputIt> class serializer
+  template <bson_output_iterator_c OutputIt>
+  class serializer : public serde::detail::serializer_base<OutputIt>
   {
-    OutputIt out_;
-
   public:
-    explicit serializer(OutputIt out) : out_(out)
-    {}
-
-    template <typename T>
-      requires std::constructible_from<OutputIt, T&>
-    serializer(T& out) : out_(OutputIt(out))
-    {}
-
-    constexpr OutputIt& out()
-    {
-      return out_;
-    }
+    using serde::detail::serializer_base<OutputIt>::serializer_base;
+    using serde::detail::serializer_base<OutputIt>::out;
 
     template <typename T> constexpr void dump(T const& value)
     {

@@ -14,6 +14,8 @@
 #include <reflex/serde/json_value.hpp>
 #endif
 
+#include <reflex/serde/detail/io.hpp>
+
 REFLEX_EXPORT namespace reflex::serde::json
 {
   namespace detail
@@ -45,23 +47,11 @@ REFLEX_EXPORT namespace reflex::serde::json
   }
   } // namespace detail
 
-  template <typename OutputIt> class serializer
+  template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
   {
-    OutputIt out_;
-
   public:
-    serializer(OutputIt out) : out_(out)
-    {}
-
-    template <typename T>
-      requires std::constructible_from<OutputIt, T&>
-    serializer(T& out) : out_(OutputIt(out))
-    {}
-
-    constexpr OutputIt& out()
-    {
-      return out_;
-    }
+    using serde::detail::serializer_base<OutputIt>::serializer_base;
+    using serde::detail::serializer_base<OutputIt>::out;
 
     template <typename T, bool tag = false> constexpr void dump(T const& value)
     {
@@ -272,19 +262,15 @@ REFLEX_EXPORT namespace reflex::serde::json
     return out;
   }
 
-  template <std::input_iterator InputIt> class deserializer
+  template <std::input_iterator InputIt>
+  class deserializer : public serde::detail::subrange_deserializer<InputIt>
   {
-  public:
-    using range_cursor = std::ranges::subrange<InputIt, InputIt>;
-
-  private:
-    range_cursor cursor_;
+    using base = serde::detail::subrange_deserializer<InputIt>;
+    using base::cursor_;
 
   public:
-    bool at_end() const
-    {
-      return cursor_.empty();
-    }
+    using base::base;
+    using base::at_end;
 
     InputIt begin() const
     {
@@ -352,30 +338,6 @@ REFLEX_EXPORT namespace reflex::serde::json
         }
       }
     }
-
-    deserializer(InputIt begin, InputIt end) : cursor_{begin, end}
-    {}
-
-    template <typename T>
-      requires requires(T const& v) { v.view(); }
-    deserializer(T const& v) : cursor_{v.view().begin(), v.view().end()}
-    {}
-
-    template <typename T>
-      requires requires(T const& v) {
-        v.begin();
-        v.end();
-      }
-    deserializer(T const& v) : cursor_{v.begin(), v.end()}
-    {}
-
-    template <typename T>
-      requires requires(T& v) {
-        InputIt{v};
-        InputIt{};
-      }
-    deserializer(T& v) : cursor_{InputIt{v}, InputIt{}}
-    {}
 
     template <typename T = json::value> T load()
     {
