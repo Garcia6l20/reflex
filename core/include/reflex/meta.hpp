@@ -367,23 +367,6 @@ REFLEX_EXPORT namespace reflex::meta
     return result;
   }
 
-  consteval std::string_view qualified_display_string_of(meta::info R)
-  {
-    const auto ds     = display_string_of(R);
-    auto       parent = parent_of(R);
-    if(parent == ^^::)
-    {
-      return ds;
-    }
-    else
-    {
-      std::string name{qualified_display_string_of(parent)};
-      name += "::";
-      name += ds;
-      return define_static_string(name);
-    }
-  }
-
   consteval bool is_alias_type(std::meta::info R)
   {
     return is_type(R) and (dealias(R) != R);
