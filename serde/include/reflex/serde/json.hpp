@@ -18,9 +18,6 @@
 
 REFLEX_EXPORT namespace reflex::serde::json
 {
-  template <typename T> constexpr bool user_defined_serialize   = false;
-  template <typename T> constexpr bool user_defined_deserialize = false;
-
   namespace detail
   {
   template <typename var_type>
@@ -213,12 +210,9 @@ REFLEX_EXPORT namespace reflex::serde::json
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
 
   template <typename OutputIt, aggregate_c Agg, typename TagT = std::false_type>
-    requires(
-        not(str_c<Agg>
-            or seq_c<Agg>
-            or user_defined_serialize<Agg>)) // std::array<char> may be considered as an aggregate
+    requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char> may be considered as an aggregate
   OutputIt tag_invoke(
-      tag_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
+      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
   {
     auto& out = ser.out();
     out++     = '{';
@@ -625,9 +619,9 @@ REFLEX_EXPORT namespace reflex::serde::json
         not(meta::is_template_instance_of(^^Map, ^^poly::var)
             // std::array<char> may be considered as a visitable object
             or str_c<Map>
-            or seq_c<Map>
-            or user_defined_deserialize<Map>))
-  auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+            or seq_c<Map>))
+  auto tag_invoke(
+      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
   {
     if(de.advance() != '{')
       throw std::runtime_error("Expected '{' at start of JSON object");
