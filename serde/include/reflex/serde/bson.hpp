@@ -742,7 +742,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
       -> deserializer<std::istreambuf_iterator<CharT>>;
 
   template <bson_output_iterator_c OutputIt, typename T>
-  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
+  OutputIt tag_invoke(tag_default_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
   {
     auto& out     = ser.out();
     auto  encoded = detail::encode_root(value);
@@ -769,13 +769,13 @@ REFLEX_EXPORT namespace reflex::serde::bson
     return out;
   }
 
-  template <typename It> auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de)
+  template <typename It> auto tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de)
   {
     return deserialize(de, std::type_identity<bson::value>{});
   }
 
   template <std::input_iterator It, typename T>
-  T tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<T>)
+  T tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de, std::type_identity<T>)
   {
     using U = std::decay_t<T>;
     T value{};

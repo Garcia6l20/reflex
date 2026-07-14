@@ -104,7 +104,7 @@ std::println("{}", cfg);// → {host:localhost,port:5432}
 
 ## Requirements
 
-- **GCC ≥ 16.0.1** (with C++26 `std::meta` / P2996 support)
+- **GCC ≥ 16.1.0** (with C++26 `std::meta` / P2996 support). GCC 16.0.1, as shipped by Ubuntu 26.04, miscompiles the reflection code and is not supported.
 - **CMake ≥ 4.2**
 
 ---
