@@ -17,6 +17,7 @@ export import std;
 #include <reflex/enum.hpp>
 #include <reflex/exception.hpp>
 #include <reflex/formatters.hpp>
+#include <reflex/hash.hpp>
 #include <reflex/heapless/string.hpp>
 #include <reflex/heapless/vector.hpp>
 #include <reflex/match.hpp>

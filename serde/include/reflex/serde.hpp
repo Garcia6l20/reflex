@@ -4,6 +4,10 @@
 #define REFLEX_EXPORT
 #endif
 
+#ifndef REFLEX_MODULE
+#include <reflex/tag_invoke.hpp>
+#endif
+
 #include <reflex/serde/annotations.hpp>
 #include <reflex/serde/object_visit.hpp>
 #include <reflex/serde/poly.hpp>

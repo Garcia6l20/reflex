@@ -84,7 +84,7 @@ TEST_CASE("reflex::parse: base types")
 
 TEST_CASE("reflex::parse: failures return error codes")
 {
-  auto invalid_int = parse<int>("42x");
+  auto invalid_int = parse<int>("z42x");
   REQUIRE_FALSE(invalid_int.has_value());
   CHECK_EQ(invalid_int.error(), std::errc::invalid_argument);
 
@@ -97,11 +97,11 @@ TEST_CASE("reflex::parse_result::value_or_throw")
 {
   CHECK_EQ(parse_or_throw<int>("7"), 7);
 
-  CHECK_THROWS_AS(parse_or_throw<int>("7x"), parse_error);
+  CHECK_THROWS_AS(parse_or_throw<int>("z7z"), parse_error);
 
   try
   {
-    (void)parse_or_throw<int>("7x");
+    (void)parse_or_throw<int>("z7z");
     FAIL("expected parse_or_throw to throw");
   }
   catch(parse_error const& e)

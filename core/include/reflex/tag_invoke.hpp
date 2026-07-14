@@ -52,8 +52,30 @@ REFLEX_EXPORT namespace reflex
     { tag_invoke(cpo, std::forward<Args>(args)...) } noexcept;
   };
 
+  /// Default-layer tag: library-provided implementations of a CPO register
+  /// against cpo_default<Cpo> instead of Cpo, so user overloads always win.
+  template <typename Cpo> struct cpo_default
+  {
+  };
+
+  /// Mirrors tag_t: tag_default_t<reflex::hash> names the default-layer tag type.
+  template <auto const& Cpo>
+  using tag_default_t = cpo_default<std::remove_cvref_t<decltype(Cpo)>>;
+
+  template <typename Cpo, typename... Args>
+  concept tag_default_invocable_c = tag_invocable_c<cpo_default<Cpo>, Args...>;
+
+  template <typename Cpo, typename... Args>
+  concept nothrow_tag_default_invocable_c = nothrow_tag_invocable_c<cpo_default<Cpo>, Args...>;
+
+  /// Either layer viable.
+  template <typename Cpo, typename... Args>
+  concept customizable_c =
+      tag_invocable_c<Cpo, Args...> or tag_default_invocable_c<Cpo, Args...>;
+
   struct customization_point_object
   {
+    // user layer: any user tag_invoke overload, exact-type or concept-based
     template <typename Self, typename... Args>
       requires(tag_invocable_c<Self, Args && ...>)
     [[gnu::always_inline]] inline constexpr decltype(auto) operator()(
@@ -61,6 +83,17 @@ REFLEX_EXPORT namespace reflex
         Args&&... args) noexcept(nothrow_tag_invocable_c<Self, Args&&...>)
     {
       return tag_invoke(self, std::forward<Args>(args)...);
+    }
+
+    // default layer: consulted only when no user overload is viable
+    template <typename Self, typename... Args>
+      requires(not tag_invocable_c<Self, Args && ...>)
+              and tag_default_invocable_c<Self, Args&&...>
+    [[gnu::always_inline]] inline constexpr decltype(auto) operator()(
+        this Self const&,
+        Args&&... args) noexcept(nothrow_tag_default_invocable_c<Self, Args&&...>)
+    {
+      return tag_invoke(cpo_default<Self>{}, std::forward<Args>(args)...);
     }
   };
 } // namespace reflex

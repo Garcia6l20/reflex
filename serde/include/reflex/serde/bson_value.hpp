@@ -5,7 +5,11 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <reflex/parse.hpp>
 #include <reflex/serde/poly.hpp>
+
+#include <chrono>
+#include <stdfloat>
 #endif
 
 REFLEX_EXPORT namespace reflex::serde::bson

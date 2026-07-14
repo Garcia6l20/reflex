@@ -10,21 +10,25 @@ from reflex_build.config import project_dir, build_dir, toolchain, VARIANT
 # =============================================================================
 
 project = Project("reflex", root_dir=project_dir, build_dir=build_dir)
-env = project.Environment(toolchain=toolchain)
+if project.is_top_level:
+    env = project.Environment(toolchain=toolchain)
 
-abi_version = 21
+    abi_version = 21
 
-env.cxx.flags.extend(
-    [
-        "-std=gnu++26",
-        "-fmodules",
-        "-fimplicit-constexpr",
-        "-freflection",
-        f"-Wabi={abi_version}",
-        f"-fabi-version={abi_version}",
-        "-fmax-errors=5",
-    ]
-)
+    env.cxx.flags.extend(
+        [
+            "-std=gnu++26",
+            "-fmodules",
+            "-fimplicit-constexpr",
+            "-freflection",
+            f"-Wabi={abi_version}",
+            f"-fabi-version={abi_version}",
+            "-fmax-errors=5",
+        ]
+    )
+else:
+    env = project.top_level().default_environment
+    project._environments.append(env)
 
 if VARIANT == "debug":
     env.cxx.flags.extend(["-g", "-O0"])

@@ -5,10 +5,16 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <cstring>
+
+#include <reflex/format.hpp>
+#include <reflex/heapless/string.hpp>
 #include <reflex/parse.hpp>
 #include <reflex/serde.hpp>
 #include <reflex/serde/json_value.hpp>
 #endif
+
+#include <reflex/serde/detail/io.hpp>
 
 REFLEX_EXPORT namespace reflex::serde::json
 {
@@ -41,35 +47,12 @@ REFLEX_EXPORT namespace reflex::serde::json
   }
   } // namespace detail
 
-  template <typename OutputIt> class serializer
+  template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
   {
-    OutputIt out_;
-
   public:
-    serializer(OutputIt out) : out_(out)
-    {}
+    using serde::detail::serializer_base<OutputIt>::serializer_base;
 
-    template <typename T>
-      requires std::constructible_from<OutputIt, T&>
-    serializer(T& out) : out_(OutputIt(out))
-    {}
-
-    constexpr OutputIt& out()
-    {
-      return out_;
-    }
-
-    template <typename T, bool tag = false> constexpr void dump(T const& value)
-    {
-      if constexpr(requires { serialize(*this, value); })
-      {
-        serialize(*this, value);
-      }
-      else
-      {
-        static_assert(false, std::string(display_string_of(^^T)) + " is not serializable to JSON");
-      }
-    }
+    static constexpr std::string_view format_name = "JSON";
 
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, null_t const&)
     {
@@ -229,7 +212,7 @@ REFLEX_EXPORT namespace reflex::serde::json
   template <typename OutputIt, aggregate_c Agg, typename TagT = std::false_type>
     requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char> may be considered as an aggregate
   OutputIt tag_invoke(
-      tag_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
+      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
   {
     auto& out = ser.out();
     out++     = '{';
@@ -268,19 +251,15 @@ REFLEX_EXPORT namespace reflex::serde::json
     return out;
   }
 
-  template <std::input_iterator InputIt> class deserializer
+  template <std::input_iterator InputIt>
+  class deserializer : public serde::detail::subrange_deserializer<InputIt>
   {
-  public:
-    using range_cursor = std::ranges::subrange<InputIt, InputIt>;
-
-  private:
-    range_cursor cursor_;
+    using base = serde::detail::subrange_deserializer<InputIt>;
+    using base::cursor_;
 
   public:
-    bool at_end() const
-    {
-      return cursor_.empty();
-    }
+    using base::at_end;
+    using base::base;
 
     InputIt begin() const
     {
@@ -348,30 +327,6 @@ REFLEX_EXPORT namespace reflex::serde::json
         }
       }
     }
-
-    deserializer(InputIt begin, InputIt end) : cursor_{begin, end}
-    {}
-
-    template <typename T>
-      requires requires(T const& v) { v.view(); }
-    deserializer(T const& v) : cursor_{v.view().begin(), v.view().end()}
-    {}
-
-    template <typename T>
-      requires requires(T const& v) {
-        v.begin();
-        v.end();
-      }
-    deserializer(T const& v) : cursor_{v.begin(), v.end()}
-    {}
-
-    template <typename T>
-      requires requires(T& v) {
-        InputIt{v};
-        InputIt{};
-      }
-    deserializer(T& v) : cursor_{InputIt{v}, InputIt{}}
-    {}
 
     template <typename T = json::value> T load()
     {
@@ -665,7 +620,8 @@ REFLEX_EXPORT namespace reflex::serde::json
             // std::array<char> may be considered as a visitable object
             or str_c<Map>
             or seq_c<Map>))
-  auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+  auto tag_invoke(
+      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
   {
     if(de.advance() != '{')
       throw std::runtime_error("Expected '{' at start of JSON object");

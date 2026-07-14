@@ -3,14 +3,14 @@ from reflex_build.testing import add_test
 
 project = context.current_project
 
-serde, serde_json, serde_bson = project.get_targets(
-    "reflex.serde", "reflex.serde.json", "reflex.serde.bson"
+serde, serde_json, serde_bson, serde_csv = project.get_targets(
+    "reflex.serde", "reflex.serde.json", "reflex.serde.bson", "reflex.serde.csv"
 )
 
 current_dir = project.current_dir
 for src in current_dir.glob("test-*.cpp"):
     test_name = src.stem.removeprefix("test-")
     test = add_test(
-        test_name, [src.name], [serde, serde_json, serde_bson], group="serde"
+        test_name, [src.name], [serde, serde_json, serde_bson, serde_csv], group="serde"
     )
     print(f"-- Test added: {test.name}")

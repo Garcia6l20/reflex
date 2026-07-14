@@ -9,7 +9,7 @@ from pcons import get_variant, get_var, find_c_toolchain, Configure
 
 VARIANT = get_variant("release")
 
-project_dir = Path(os.environ.get("PCONS_SOURCE_DIR", Path(__file__).parent.parent))
+project_dir = Path(__file__).parent.parent
 build_dir = Path(os.environ.get("PCONS_BUILD_DIR", project_dir / "build"))
 
 config = Configure(build_dir=build_dir)

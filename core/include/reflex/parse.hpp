@@ -160,10 +160,6 @@ REFLEX_EXPORT namespace reflex
     {
       return std::unexpected(ec);
     }
-    if(ptr != s.data() + s.size())
-    {
-      return std::unexpected(std::errc::invalid_argument);
-    }
     return {value, ptr};
   }
 

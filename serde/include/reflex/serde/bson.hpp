@@ -5,8 +5,11 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <reflex/serde.hpp>
 #include <reflex/serde/bson_value.hpp>
 #endif
+
+#include <reflex/serde/detail/io.hpp>
 
 namespace reflex::serde::bson::detail
 {
@@ -286,35 +289,13 @@ REFLEX_EXPORT namespace reflex::serde::bson
                                 or std::output_iterator<OutputIt, char>
                                 or std::output_iterator<OutputIt, unsigned char>;
 
-  template <bson_output_iterator_c OutputIt> class serializer
+  template <bson_output_iterator_c OutputIt>
+  class serializer : public serde::detail::serializer_base<OutputIt>
   {
-    OutputIt out_;
-
   public:
-    explicit serializer(OutputIt out) : out_(out)
-    {}
+    using serde::detail::serializer_base<OutputIt>::serializer_base;
 
-    template <typename T>
-      requires std::constructible_from<OutputIt, T&>
-    serializer(T& out) : out_(OutputIt(out))
-    {}
-
-    constexpr OutputIt& out()
-    {
-      return out_;
-    }
-
-    template <typename T> constexpr void dump(T const& value)
-    {
-      if constexpr(requires { serialize(*this, value); })
-      {
-        serialize(*this, value);
-      }
-      else
-      {
-        static_assert(false, std::string(display_string_of(^^T)) + " is not serializable to BSON");
-      }
-    }
+    static constexpr std::string_view format_name = "BSON";
   };
 
   template <typename... TArgs>
@@ -761,7 +742,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
       -> deserializer<std::istreambuf_iterator<CharT>>;
 
   template <bson_output_iterator_c OutputIt, typename T>
-  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
+  OutputIt tag_invoke(tag_default_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
   {
     auto& out     = ser.out();
     auto  encoded = detail::encode_root(value);
@@ -788,13 +769,13 @@ REFLEX_EXPORT namespace reflex::serde::bson
     return out;
   }
 
-  template <typename It> auto tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de)
+  template <typename It> auto tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de)
   {
     return deserialize(de, std::type_identity<bson::value>{});
   }
 
   template <std::input_iterator It, typename T>
-  T tag_invoke(tag_t<serde::deserialize>, deserializer<It> & de, std::type_identity<T>)
+  T tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de, std::type_identity<T>)
   {
     using U = std::decay_t<T>;
     T value{};

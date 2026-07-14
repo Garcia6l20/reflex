@@ -420,3 +420,138 @@ TEST_CASE("reflex::core::json file roundtrip")
 
   std::filesystem::remove(json_path);
 }
+
+struct test_userdefined_type
+{
+  int         a;
+  double      b;
+  std::string c;
+
+  constexpr bool operator==(test_userdefined_type const& other) const = default;
+};
+
+template <typename OutputIt>
+auto tag_invoke(
+    tag_t<serde::serialize>,
+    serde::json::serializer<OutputIt>&                         ser,
+    [[maybe_unused]] test_userdefined_type const& value) -> OutputIt
+{
+  return std::format_to(ser.out(), "user-defined");
+}
+
+template <typename InputIt>
+auto tag_invoke(
+    tag_t<serde::deserialize>,
+    serde::json::deserializer<InputIt>& de,
+    std::type_identity<test_userdefined_type>)
+{
+  return test_userdefined_type{42, 3.14, "Hello, world!"};
+}
+
+TEST_CASE("reflex::serde::json: user-defined type roundtrip")
+{
+  const test_userdefined_type expected = {42, 3.14, "Hello, world!"};
+  std::string                 out;
+  {
+    json::serializer ser{out};
+    ser.dump(expected);
+  }
+  std::println("Serialized: {}", out);
+  CHECK_EQ(out, "user-defined"sv);
+  const auto value = json::deserializer{out}.load<test_userdefined_type>();
+  CHECK_EQ(value, expected);
+}
+
+
+struct test_userdefined_type2
+{
+  int         a;
+  double      b;
+  std::string c;
+
+  constexpr bool operator==(test_userdefined_type2 const& other) const = default;
+};
+
+template <typename T>
+concept user_defined2 = std::same_as<T, test_userdefined_type2>;
+
+template <typename OutputIt, user_defined2 T>
+auto tag_invoke(
+    tag_t<serde::serialize>,
+    serde::json::serializer<OutputIt>&                         ser,
+    [[maybe_unused]] T const& value) -> OutputIt
+{
+  return std::format_to(ser.out(), "user-defined2");
+}
+
+  
+
+template <typename InputIt, user_defined2 T>
+auto tag_invoke(
+    tag_t<serde::deserialize>,
+    serde::json::deserializer<InputIt>& de,
+    std::type_identity<T>)
+{
+  return T{42, 3.14, "Hello, world2!"};
+}
+
+TEST_CASE("reflex::serde::json: user-defined type roundtrip 2")
+{
+  const test_userdefined_type2 expected = {42, 3.14, "Hello, world2!"};
+  std::string                  out;
+  {
+    json::serializer ser{out};
+    ser.dump(expected);
+  }
+  std::println("Serialized: {}", out);
+  CHECK_EQ(out, "user-defined2"sv);
+  const auto value = json::deserializer{out}.load<test_userdefined_type2>();
+  CHECK_EQ(value, expected);
+}
+
+// User-defined type roundtrippable as a JSON number, nested inside a plain
+// aggregate to verify the override applies through the generic aggregate path.
+struct nested_custom
+{
+  int            v;
+  constexpr bool operator==(nested_custom const& other) const = default;
+};
+
+template <typename OutputIt>
+auto tag_invoke(
+    tag_t<serde::serialize>,
+    serde::json::serializer<OutputIt>& ser,
+    nested_custom const&               value) -> OutputIt
+{
+  return std::format_to(ser.out(), "{}", value.v * 2);
+}
+
+template <typename InputIt>
+auto tag_invoke(
+    tag_t<serde::deserialize>,
+    serde::json::deserializer<InputIt>& de,
+    std::type_identity<nested_custom>)
+{
+  return nested_custom{de.template load<int>() / 2};
+}
+
+struct[[= serde::naming::camel_case]] custom_holder
+{
+  nested_custom  inner;
+  int            other;
+  constexpr bool operator==(custom_holder const& o) const = default;
+};
+
+TEST_CASE("reflex::serde::json: user-defined type nested in aggregate")
+{
+  const custom_holder expected = {nested_custom{21}, 7};
+  std::string         out;
+  {
+    json::serializer ser{out};
+    ser.dump(expected);
+  }
+  std::println("Serialized: {}", out);
+  CHECK_EQ(out, JSON({"inner":42,"other":7}));
+  const auto value = json::deserializer{out}.load<custom_holder>();
+  CHECK_EQ(value, expected);
+}
