@@ -41,5 +41,14 @@ serde_csv = project.StaticLibrary(
 )
 serde_csv.public.link_libs.append(serde)
 
+serde_xml = project.StaticLibrary(
+    "reflex.serde.xml",
+    env,
+    sources=[
+        "modules/reflex/serde_xml.cppm",
+    ],
+)
+serde_xml.public.link_libs.append(serde)
+
 if build_testing:
     add_subdirectory("tests")

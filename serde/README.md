@@ -7,8 +7,8 @@ containers, and `reflex::poly::var` values without writing any boilerplate -
 field names, nesting, and type dispatch are all derived automatically via
 C++26 static reflection.
 
-Ships with **JSON** (`reflex.serde.json`) and **BSON** (`reflex.serde.bson`)
-backends.
+Ships with **JSON** (`reflex.serde.json`), **BSON** (`reflex.serde.bson`),
+**CSV** (`reflex.serde.csv`), and **XML** (`reflex.serde.xml`) backends.
 
 ---
 
@@ -19,6 +19,8 @@ backends.
 | `reflex.serde` | Core concepts, annotations, `object_visit` |
 | `reflex.serde.json` | JSON serializer + deserializer |
 | `reflex.serde.bson` | BSON serializer + deserializer |
+| `reflex.serde.csv` | CSV serializer + deserializer (flat aggregates) |
+| `reflex.serde.xml` | XML serializer + deserializer |
 
 ---
 
