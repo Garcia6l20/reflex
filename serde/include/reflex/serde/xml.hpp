@@ -17,10 +17,16 @@
 
 REFLEX_EXPORT namespace reflex::serde::xml
 {
-  // User tag_invoke overrides on serde::serialize / serde::deserialize apply at
-  // the document root only. An XML element's name comes from the enclosing
-  // member, not the value's type, so a value cannot serialize itself into an
-  // arbitrary member tag.
+  // Members recurse through serde::serialize / serde::deserialize, so a
+  // user-defined tag_invoke override on a member type wins at any depth. An XML
+  // element's name comes from the enclosing member, not the value's type, so the
+  // name is passed out of band: the serializer holds a pending-name slot, the
+  // deserializer stashes the already-consumed open tag.
+  //
+  // Override contract: a serialize override emits exactly one element and should
+  // name it with ser.element_name("default") to be correct when nested, a
+  // deserialize override consumes its whole element (open tag via read_open_tag,
+  // body, close tag unless self-closing).
 
   // A std::array<char, N> is treated as a fixed-capacity string (NUL-trimmed),
   // like csv/json. Other std::array instantiations are not text.
@@ -188,18 +194,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
     out++ = '>';
   }
 
-  template <typename Ser, typename F> void write_content(Ser& ser, F const& value);
-
-  template <typename Ser, typename F>
-  void write_element(Ser& ser, std::string_view name, F const& value)
-  {
-    auto& out = ser.out();
-    write_tag(out, name, false);
-    write_content(ser, value);
-    write_tag(out, name, true);
-  }
-
-  // A single member -> zero (empty optional), one, or many (sequence) elements.
+  // A member -> zero (empty optional), one, or many (sequence) child elements.
+  // The element name reaches the value's serialize overload through the
+  // serializer's pending-name slot.
   template <typename Ser, typename F>
   void write_field(Ser& ser, std::string_view name, F const& value)
   {
@@ -215,36 +212,15 @@ REFLEX_EXPORT namespace reflex::serde::xml
     {
       for(auto const& elem : value)
       {
-        write_element(ser, name, elem);
+        ser.set_element_name(name);
+        serialize(ser, elem);
       }
       // an empty sequence emits no element
     }
     else
     {
-      write_element(ser, name, value);
-    }
-  }
-
-  // The inner content of an element: text for scalars, child elements for
-  // aggregates. Nested aggregates take the *member* name, not their type name.
-  template <typename Ser, typename F> void write_content(Ser& ser, F const& value)
-  {
-    if constexpr(xml_text_c<F>)
-    {
-      write_text_escaped(ser.out(), field_text(value));
-    }
-    else if constexpr(aggregate_element_c<F>)
-    {
-      template for(constexpr auto member : define_static_array(
-                       nonstatic_data_members_of(^^F, std::meta::access_context::current())))
-      {
-        constexpr std::string_view name = serialized_name(member);
-        write_field(ser, name, value.[:member:]);
-      }
-    }
-    else
-    {
-      static_assert(false, std::string(display_string_of(^^F)) + " is not serializable to XML");
+      ser.set_element_name(name);
+      serialize(ser, value);
     }
   }
 
@@ -304,6 +280,11 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
   template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
   {
+    // The element name for the *next* serialize call, set by the enclosing
+    // aggregate before it recurses into a member. Consumed at the entry of that
+    // call, before any deeper recursion.
+    std::string_view pending_name_{};
+
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
 
@@ -311,6 +292,20 @@ REFLEX_EXPORT namespace reflex::serde::xml
     static constexpr std::string_view format_hint =
         "(expected an aggregate whose members are scalars, sequences, optionals, "
         "or nested aggregates)";
+
+    void set_element_name(std::string_view name)
+    {
+      pending_name_ = name;
+    }
+
+    // Fetch-and-clear the pending name, falling back to the type name at the
+    // document root (where nothing set a pending name).
+    std::string_view element_name(std::string_view type_default)
+    {
+      const auto name = pending_name_.empty() ? type_default : pending_name_;
+      pending_name_   = {};
+      return name;
+    }
   };
 
   template <typename... TArgs>
@@ -319,13 +314,37 @@ REFLEX_EXPORT namespace reflex::serde::xml
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
 
+  // Leaf: a scalar maps to <name>text</name>. Only reached with an explicit
+  // element name except at the document root, where a bare scalar falls back to
+  // its type spelling (display_string_of, since scalars have no identifier).
+  template <typename OutputIt, xml_text_c T>
+  OutputIt tag_invoke(tag_default_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
+  {
+    const std::string_view name = ser.element_name(display_string_of(dealias(decay(^^T))));
+    auto&                  out  = ser.out();
+    detail::write_tag(out, name, false);
+    detail::write_text_escaped(out, detail::field_text(value));
+    detail::write_tag(out, name, true);
+    return out;
+  }
+
+  // Aggregate: <name> + one child element per member + </name>. Members recurse
+  // through serialize, so nested user overrides win at any depth.
   template <typename OutputIt, xml_element_c Agg>
   OutputIt tag_invoke(
       tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value)
   {
-    static constexpr std::string_view name = identifier_of(dealias(decay(^^Agg)));
-    detail::write_element(ser, name, value);
-    return ser.out();
+    const std::string_view name = ser.element_name(identifier_of(dealias(decay(^^Agg))));
+    auto&                  out  = ser.out();
+    detail::write_tag(out, name, false);
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+    {
+      constexpr std::string_view member_name = serialized_name(member);
+      detail::write_field(ser, member_name, value.[:member:]);
+    }
+    detail::write_tag(out, name, true);
+    return out;
   }
 
   template <std::input_iterator InputIt>
@@ -333,6 +352,15 @@ REFLEX_EXPORT namespace reflex::serde::xml
   {
     using base = serde::detail::subrange_deserializer<InputIt>;
     using base::cursor_;
+
+    // An element open tag already consumed by read_children, stashed so the
+    // matched member's deserialize overload can re-read it via read_open_tag.
+    struct open_tag_t
+    {
+      std::string name;
+      bool        self_closing;
+    };
+    std::optional<open_tag_t> pending_tag_{};
 
   public:
     using base::at_end;
@@ -452,9 +480,15 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
 
     // Reads the next element open tag, skipping leading whitespace, the XML
-    // declaration, comments, and DOCTYPE. Returns {name, self_closing}.
+    // declaration, comments, and DOCTYPE. Returns {name, self_closing}. If a
+    // parent stashed an already-consumed open tag, that is returned first.
     std::pair<std::string, bool> read_open_tag()
     {
+      if(pending_tag_)
+      {
+        auto tag = *std::exchange(pending_tag_, std::nullopt);
+        return {std::move(tag.name), tag.self_closing};
+      }
       while(true)
       {
         skip_ws();
@@ -554,48 +588,31 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     }
 
-    // Read one element's value into T. The open tag has been consumed and
-    // self_closing tells whether it had a body. Consumes the close tag.
-    template <typename T> T read_value(bool self_closing)
+    // Read one element's value into T. The open tag (name, self_closing) has
+    // been consumed by read_children; stash it and re-enter deserialize so
+    // T's own overload (including any user override) handles the element.
+    template <typename T> T read_child(std::string name, bool self_closing)
     {
-      if constexpr(detail::is_optional<T>::value)
+      pending_tag_ = open_tag_t{std::move(name), self_closing};
+      return deserialize(*this, std::type_identity<T>{});
+    }
+
+    // Optional member: an empty or self-closing element is nullopt. A scalar
+    // body is read inline; an aggregate/user body routes back through the CPO.
+    template <typename U>
+    std::optional<U> read_optional(std::string name, bool self_closing)
+    {
+      if(self_closing) return std::nullopt;
+      if constexpr(xml_text_c<U>)
       {
-        using U = typename detail::field_value<T>::type;
-        if constexpr(detail::aggregate_element_c<U>)
-        {
-          if(self_closing) return std::nullopt;
-          U value{};
-          read_children(value);
-          return value;
-        }
-        else
-        {
-          // an empty or self-closing element is an absent optional
-          if(self_closing) return std::nullopt;
-          std::string text = read_text();
-          read_close_tag();
-          if(detail::trim(text).empty()) return std::nullopt;
-          return detail::parse_field<U>(text);
-        }
-      }
-      else if constexpr(detail::aggregate_element_c<T>)
-      {
-        T value{};
-        if(not self_closing)
-        {
-          read_children(value);
-        }
-        return value;
+        std::string text = read_text();
+        read_close_tag();
+        if(detail::trim(text).empty()) return std::nullopt;
+        return detail::parse_field<U>(text);
       }
       else
       {
-        if(self_closing)
-        {
-          return detail::parse_field<T>("");
-        }
-        std::string text = read_text();
-        read_close_tag();
-        return detail::parse_field<T>(text);
+        return read_child<U>(std::move(name), false);
       }
     }
 
@@ -648,11 +665,16 @@ REFLEX_EXPORT namespace reflex::serde::xml
             if constexpr(seq_c<F> and not array_of_c<F>)
             {
               using E = typename F::value_type;
-              value.[:member:].push_back(read_value<E>(self_closing));
+              value.[:member:].push_back(read_child<E>(name, self_closing));
+            }
+            else if constexpr(detail::is_optional<F>::value)
+            {
+              using U = typename detail::field_value<F>::type;
+              value.[:member:] = read_optional<U>(name, self_closing);
             }
             else
             {
-              value.[:member:] = read_value<F>(self_closing);
+              value.[:member:] = read_child<F>(name, self_closing);
             }
           }
         }
@@ -780,6 +802,21 @@ REFLEX_EXPORT namespace reflex::serde::xml
   template <typename CharT, typename CharTrait = std::char_traits<CharT>>
   deserializer(std::basic_istream<CharT, CharTrait>)
       -> deserializer<std::istreambuf_iterator<CharT>>;
+
+  // Leaf: read <name>text</name> (or a self-closing empty element) into a scalar.
+  template <typename InputIt, xml_text_c T>
+  T tag_invoke(
+      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<T>)
+  {
+    auto [name, self_closing] = de.read_open_tag();
+    if(self_closing)
+    {
+      return detail::parse_field<T>("");
+    }
+    std::string text = de.read_text();
+    de.read_close_tag();
+    return detail::parse_field<T>(text);
+  }
 
   template <typename InputIt, xml_element_c Agg>
   Agg tag_invoke(

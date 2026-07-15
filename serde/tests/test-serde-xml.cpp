@@ -304,7 +304,8 @@ auto tag_invoke(
     serde::xml::serializer<OutputIt>& ser,
     [[maybe_unused]] user_type const& value) -> OutputIt
 {
-  return std::format_to(ser.out(), "<user/>");
+  // Name-aware: honor the pending member name so it roundtrips at any depth.
+  return std::format_to(ser.out(), "<{}/>", ser.element_name("user"));
 }
 
 template <typename InputIt>
@@ -333,18 +334,70 @@ TEST_CASE("reflex::serde::xml: user-defined override")
 struct Wrapper
 {
   user_type u;
+
+  constexpr bool operator==(Wrapper const& other) const = default;
 };
 
-TEST_CASE("reflex::serde::xml: nested user-defined override ignored below root")
+TEST_CASE("reflex::serde::xml: user-defined override honored below root")
 {
-  // User tag_invoke overrides apply only at the document root, not to nested
-  // members: XML tag naming is member-driven.
+  // Routing members through the CPO honors the override at any depth; being
+  // name-aware, it emits the member tag <u/> and roundtrips.
   std::string out;
   {
     xml::serializer ser{out};
     ser.dump(Wrapper{{1, "x"}});
   }
-  CHECK_EQ(out, "<Wrapper><u><a>1</a><b>x</b></u></Wrapper>");
+  CHECK_EQ(out, "<Wrapper><u/></Wrapper>");
+  const auto value = xml::deserializer{out}.load<Wrapper>();
+  CHECK_EQ(value, Wrapper{{42, "Hello, world!"}});
+}
+
+// A user override that names its element via ser.element_name stays correct
+// under a member name too, and roundtrips through the stashed open tag.
+struct Named
+{
+  int v;
+
+  constexpr bool operator==(Named const& other) const = default;
+};
+
+template <typename OutputIt>
+auto tag_invoke(tag_t<serde::serialize>, serde::xml::serializer<OutputIt>& ser, Named const& value)
+    -> OutputIt
+{
+  const auto name = ser.element_name("Named");
+  return std::format_to(ser.out(), "<{0}>{1}</{0}>", name, value.v);
+}
+
+template <typename InputIt>
+auto tag_invoke(
+    tag_t<serde::deserialize>,
+    serde::xml::deserializer<InputIt>& de,
+    std::type_identity<Named>)
+{
+  auto [name, self_closing] = de.read_open_tag();
+  const int v               = std::stoi(de.read_text());
+  de.read_close_tag();
+  return Named{v};
+}
+
+struct HasNamed
+{
+  [[= serde::rename{"item"}]] Named n;
+
+  constexpr bool operator==(HasNamed const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml: name-aware override uses member tag")
+{
+  std::string out;
+  {
+    xml::serializer ser{out};
+    ser.dump(HasNamed{{7}});
+  }
+  CHECK_EQ(out, "<HasNamed><item>7</item></HasNamed>");
+  const auto value = xml::deserializer{out}.load<HasNamed>();
+  CHECK_EQ(value, HasNamed{{7}});
 }
 
 struct Nested
