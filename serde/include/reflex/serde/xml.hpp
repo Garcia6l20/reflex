@@ -53,9 +53,49 @@ REFLEX_EXPORT namespace reflex::serde::xml
   {
   } attribute;
 
+  // Marks the member holding the element's text content (attributes + text, no
+  // child elements):
+  //   struct Price { [[= xml::attribute]] std::string currency;
+  //                  [[= xml::text]] double amount; };  -> <Price currency="USD">42.5</Price>
+  constexpr struct text_t
+  {
+  } text;
+
+  // Marks a member capturing the element's inner XML verbatim (escape hatch for
+  // mixed content). Read/written unparsed; caller owns well-formedness.
+  constexpr struct raw_content_t
+  {
+  } raw_content;
+
   consteval bool is_attribute(meta::info member)
   {
     return meta::has_annotation(member, ^^attribute_t);
+  }
+
+  consteval bool is_text(meta::info member)
+  {
+    return meta::has_annotation(member, ^^text_t);
+  }
+
+  consteval bool is_raw_content(meta::info member)
+  {
+    return meta::has_annotation(member, ^^raw_content_t);
+  }
+
+  // A type using xml::text or xml::raw_content carries its content in one member
+  // instead of child elements.
+  template <typename T> consteval bool has_content_member()
+  {
+    bool found = false;
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^T, std::meta::access_context::current())))
+    {
+      if(is_text(member) or is_raw_content(member))
+      {
+        found = true;
+      }
+    }
+    return found;
   }
 
   namespace detail
@@ -103,7 +143,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
   {
   template <typename T> consteval bool element_fields_ok()
   {
-    bool ok = true;
+    bool ok       = true;
+    int  texts    = 0;
+    int  raws     = 0;
+    int  children = 0;
     template for(constexpr auto member : define_static_array(
                      nonstatic_data_members_of(^^T, std::meta::access_context::current())))
     {
@@ -116,10 +159,40 @@ REFLEX_EXPORT namespace reflex::serde::xml
           ok = false;
         }
       }
+      else if constexpr(is_text(member))
+      {
+        ++texts;
+        if constexpr(not xml_attr_c<F>) // text is a scalar or optional scalar
+        {
+          ok = false;
+        }
+      }
+      else if constexpr(is_raw_content(member))
+      {
+        ++raws;
+        if constexpr(not str_c<F>)
+        {
+          ok = false;
+        }
+      }
       else if constexpr(not xml_field_c<F>)
       {
+        ++children;
         ok = false;
       }
+      else
+      {
+        ++children;
+      }
+    }
+    // at most one content member, and content is exclusive with child elements
+    if(texts > 1 or raws > 1 or (texts > 0 and raws > 0))
+    {
+      ok = false;
+    }
+    if((texts + raws) > 0 and children > 0)
+    {
+      ok = false;
     }
     return ok;
   }
@@ -407,18 +480,60 @@ REFLEX_EXPORT namespace reflex::serde::xml
         detail::write_attribute(out, serialized_name(member), value.[:member:]);
       }
     }
-    out++ = '>';
 
-    // non-attribute members as child elements
-    template for(constexpr auto member : define_static_array(
-                     nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+    if constexpr(has_content_member<Agg>())
     {
-      if constexpr(not is_attribute(member))
+      // element body is a single text/raw member, not child elements
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
       {
-        detail::write_field(ser, serialized_name(member), value.[:member:]);
+        if constexpr(is_text(member))
+        {
+          using F = std::remove_cvref_t<decltype(value.[:member:])>;
+          if constexpr(optional_c<F>)
+          {
+            if(value.[:member:].has_value())
+            {
+              out++ = '>';
+              detail::write_text_escaped(out, detail::field_text(*value.[:member:]));
+              detail::write_tag(out, name, true);
+            }
+            else
+            {
+              // absent text -> self-closing <name .../>
+              out++ = '/';
+              out++ = '>';
+            }
+          }
+          else
+          {
+            out++ = '>';
+            detail::write_text_escaped(out, detail::field_text(value.[:member:]));
+            detail::write_tag(out, name, true);
+          }
+        }
+        else if constexpr(is_raw_content(member))
+        {
+          out++ = '>';
+          for(char c : value.[:member:]) out++ = c; // inner XML verbatim
+          detail::write_tag(out, name, true);
+        }
       }
     }
-    detail::write_tag(out, name, true);
+    else
+    {
+      out++ = '>';
+      // non-attribute members as child elements
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+      {
+        if constexpr(not is_attribute(member))
+        {
+          detail::write_field(ser, serialized_name(member), value.[:member:]);
+        }
+      }
+      detail::write_tag(out, name, true);
+    }
     return out;
   }
 
@@ -716,6 +831,97 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     }
 
+    // Capture inner XML verbatim up to the matching close tag (which is consumed
+    // but not returned). Entities left undecoded, byte-exact for the common case.
+    // Note: a comment or CDATA payload containing '>' can mis-track.
+    std::string read_raw_content()
+    {
+      std::string raw;
+      int         depth = 1;
+      while(not at_end())
+      {
+        while(not at_end() and peek() != '<') raw.push_back(advance());
+        if(at_end()) break;
+
+        std::string tag;
+        tag.push_back(advance()); // '<'
+        const char kind = at_end() ? char{0} : peek();
+        char       last = 0;
+        while(not at_end())
+        {
+          const char c = advance();
+          tag.push_back(c);
+          if(c == '"' or c == '\'')
+          {
+            const char quote = c;
+            while(not at_end() and peek() != quote) tag.push_back(advance());
+            if(not at_end()) tag.push_back(advance());
+          }
+          else if(c == '>')
+          {
+            break;
+          }
+          else if(not reflex::is_space(c))
+          {
+            last = c;
+          }
+        }
+
+        if(kind == '/')
+        {
+          if(--depth == 0) break; // matching close tag, dropped from output
+          raw += tag;
+        }
+        else if(kind == '?' or kind == '!')
+        {
+          raw += tag; // PI/comment/CDATA/doctype -- no depth change
+        }
+        else
+        {
+          raw += tag;
+          if(last != '/') ++depth; // not self-closing
+        }
+      }
+      return raw;
+    }
+
+    // Read the single text/raw content member of an aggregate, then its close
+    // tag. Called instead of read_children for a has_content_member type.
+    template <detail::aggregate_element_c Agg> void read_content_member(Agg & value)
+    {
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+      {
+        if constexpr(is_text(member))
+        {
+          using F          = std::remove_cvref_t<decltype(value.[:member:])>;
+          std::string text = read_text();
+          read_close_tag();
+          if constexpr(optional_c<F>)
+          {
+            using U = typename detail::field_value<F>::type;
+            if(detail::trim(text).empty())
+            {
+              value.[:member:] = std::nullopt;
+            }
+            else
+            {
+              value.[:member:] = detail::parse_field<U>(text);
+            }
+          }
+          else
+          {
+            value.[:member:] = detail::parse_field<F>(text);
+          }
+        }
+        else if constexpr(is_raw_content(member))
+        {
+          using F          = std::remove_cvref_t<decltype(value.[:member:])>;
+          value.[:member:] = F{read_raw_content()};
+        }
+      }
+    }
+
     // Read one element's value into T. The open tag (name, self_closing, attrs)
     // has been consumed by read_children; stash it and re-enter deserialize so
     // T's own overload (including any user override) handles the element.
@@ -959,10 +1165,17 @@ REFLEX_EXPORT namespace reflex::serde::xml
   {
     auto [name, self_closing] = de.read_open_tag();
     Agg value{};
-    de.assign_attributes(value); // consume open-tag attributes before children
+    de.assign_attributes(value); // consume open-tag attributes before content
     if(not self_closing)
     {
-      de.read_children(value);
+      if constexpr(has_content_member<Agg>())
+      {
+        de.read_content_member(value);
+      }
+      else
+      {
+        de.read_children(value);
+      }
     }
     return value;
   }

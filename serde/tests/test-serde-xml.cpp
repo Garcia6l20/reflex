@@ -477,6 +477,102 @@ TEST_CASE("reflex::serde::xml: attribute read tolerance")
   CHECK_EQ(value, Price{"m&m", 2.0});
 }
 
+struct[[= derive(Debug)]] Measure
+{
+  [[= xml::attribute]] std::string unit;
+  [[= xml::text]] double           value;
+
+  constexpr bool operator==(Measure const& other) const = default;
+};
+
+struct[[= derive(Debug)]] OptText
+{
+  [[= xml::attribute]] std::string  id;
+  [[= xml::text]] std::optional<int> value;
+
+  constexpr bool operator==(OptText const& other) const = default;
+};
+
+struct[[= derive(Debug)]] Doc
+{
+  [[= xml::attribute]] std::string lang;
+  [[= xml::raw_content]] std::string body;
+
+  constexpr bool operator==(Doc const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml: text member roundtrip")
+{
+  std::string out;
+  {
+    xml::serializer ser{out};
+    ser.dump(Measure{"kg", 42.5});
+  }
+  CHECK_EQ(out, "<Measure unit=\"kg\">42.5</Measure>");
+  const auto value = xml::deserializer{out}.load<Measure>();
+  CHECK_EQ(value, Measure{"kg", 42.5});
+}
+
+TEST_CASE("reflex::serde::xml: optional text member absent -> self-closing")
+{
+  SUBCASE("present")
+  {
+    std::string out;
+    {
+      xml::serializer ser{out};
+      ser.dump(OptText{"a", 7});
+    }
+    CHECK_EQ(out, "<OptText id=\"a\">7</OptText>");
+    const auto value = xml::deserializer{out}.load<OptText>();
+    CHECK_EQ(value, OptText{"a", 7});
+  }
+  SUBCASE("absent")
+  {
+    std::string out;
+    {
+      xml::serializer ser{out};
+      ser.dump(OptText{"a", std::nullopt});
+    }
+    CHECK_EQ(out, "<OptText id=\"a\"/>");
+    const auto value = xml::deserializer{out}.load<OptText>();
+    CHECK_EQ(value, OptText{"a", std::nullopt});
+  }
+}
+
+TEST_CASE("reflex::serde::xml: text member escaping")
+{
+  const Measure value{"a & b", 1.0};
+  std::string   out;
+  {
+    xml::serializer ser{out};
+    ser.dump(value);
+  }
+  // 1.0 -> "1", unit escaped in attribute
+  CHECK(out.find("unit=\"a &amp; b\"") != std::string::npos);
+}
+
+TEST_CASE("reflex::serde::xml: raw_content roundtrip byte-exact")
+{
+  const Doc value{"en", "<p>hi</p>text<b/><![CDATA[keep]]>"};
+  std::string out;
+  {
+    xml::serializer ser{out};
+    ser.dump(value);
+  }
+  CHECK_EQ(out, "<Doc lang=\"en\"><p>hi</p>text<b/><![CDATA[keep]]></Doc>");
+  const auto back = xml::deserializer{out}.load<Doc>();
+  CHECK_EQ(back, value);
+}
+
+TEST_CASE("reflex::serde::xml: raw_content nested depth")
+{
+  const std::string_view in =
+      "<Doc lang=\"x\"><a><a>deep</a></a>tail</Doc>";
+  const auto value = xml::deserializer{in}.load<Doc>();
+  CHECK_EQ(value.lang, "x");
+  CHECK_EQ(value.body, "<a><a>deep</a></a>tail");
+}
+
 struct Nested
 {
   std::vector<std::vector<int>> matrix;
@@ -506,3 +602,24 @@ static_assert(xml::xml_element_c<WithSeq>);
 static_assert(xml::xml_element_c<Price>);
 static_assert(not xml::xml_element_c<AggAttr>); // attribute must be scalar
 static_assert(not xml::xml_element_c<SeqAttr>);
+
+struct TwoText
+{
+  [[= xml::text]] int a;
+  [[= xml::text]] int b;
+};
+struct TextPlusChild
+{
+  [[= xml::text]] int  a;
+  std::string          child;
+};
+struct RawPlusText
+{
+  [[= xml::text]] int         a;
+  [[= xml::raw_content]] std::string body;
+};
+static_assert(xml::xml_element_c<Measure>);
+static_assert(xml::xml_element_c<Doc>);
+static_assert(not xml::xml_element_c<TwoText>);       // at most one text member
+static_assert(not xml::xml_element_c<TextPlusChild>); // text excludes child elements
+static_assert(not xml::xml_element_c<RawPlusText>);   // text and raw are exclusive
