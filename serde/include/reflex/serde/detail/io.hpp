@@ -7,6 +7,7 @@
 #ifndef REFLEX_MODULE
 #include <concepts>
 #include <iterator>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <type_traits>
@@ -14,6 +15,15 @@
 
 REFLEX_EXPORT namespace reflex::serde::detail
 {
+  template <typename T> struct field_value
+  {
+    using type = T;
+  };
+  template <typename T> struct field_value<std::optional<T>>
+  {
+    using type = T;
+  };
+
   // Shared serializer state and entry point. A backend serializer derives from
   // this, declares a `format_name` (and an optional `format_hint`) static member
   // for diagnostics, and adds its own tag_invoke overloads.

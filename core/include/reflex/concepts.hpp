@@ -87,4 +87,11 @@ REFLEX_EXPORT namespace reflex
   template <typename T>
   concept number_c = int_number_c<T> or std::floating_point<T>;
 
+  template <typename T> struct is_optional : std::false_type
+  {};
+  template <typename T> struct is_optional<std::optional<T>> : std::true_type
+  {};
+  template <typename T>
+  concept optional_c = is_optional<T>::value;
+
 } // namespace reflex

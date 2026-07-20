@@ -7,6 +7,7 @@
 #ifndef REFLEX_MODULE
 #include <cstring>
 
+#include <reflex/concepts.hpp>
 #include <reflex/format.hpp>
 #include <reflex/heapless/string.hpp>
 #include <reflex/parse.hpp>
@@ -47,19 +48,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
   namespace detail
   {
-  template <typename T> struct is_optional : std::false_type
-  {};
-  template <typename T> struct is_optional<std::optional<T>> : std::true_type
-  {};
-
-  template <typename T> struct field_value
-  {
-    using type = T;
-  };
-  template <typename T> struct field_value<std::optional<T>>
-  {
-    using type = T;
-  };
+  using serde::detail::field_value;
 
   template <typename T>
   concept aggregate_element_c =
@@ -75,7 +64,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
   template <typename T> consteval bool is_field()
   {
     using F = std::remove_cvref_t<T>;
-    if constexpr(is_optional<F>::value)
+    if constexpr(optional_c<F>)
     {
       return xml_leaf_c<typename field_value<F>::type>;
     }
@@ -200,7 +189,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
   template <typename Ser, typename F>
   void write_field(Ser& ser, std::string_view name, F const& value)
   {
-    if constexpr(is_optional<F>::value)
+    if constexpr(optional_c<F>)
     {
       if(value.has_value())
       {
@@ -226,7 +215,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
   template <typename F> F parse_field(std::string_view text)
   {
-    if constexpr(is_optional<F>::value)
+    if constexpr(optional_c<F>)
     {
       using U = typename field_value<F>::type;
       return parse_field<U>(text);
@@ -382,14 +371,6 @@ REFLEX_EXPORT namespace reflex::serde::xml
       return c;
     }
 
-    void skip_ws()
-    {
-      while(not at_end() and reflex::is_space(peek()))
-      {
-        advance();
-      }
-    }
-
     // Consume input until the terminator sequence has been fully matched.
     // KMP so overlapping prefixes (e.g. "--->" against "-->") match correctly.
     void skip_until(std::string_view term)
@@ -479,23 +460,29 @@ REFLEX_EXPORT namespace reflex::serde::xml
       throw std::runtime_error("Unterminated XML tag");
     }
 
-    // Reads the next element open tag, skipping leading whitespace, the XML
-    // declaration, comments, and DOCTYPE. Returns {name, self_closing}. If a
-    // parent stashed an already-consumed open tag, that is returned first.
-    std::pair<std::string, bool> read_open_tag()
+    enum class tag_kind
     {
-      if(pending_tag_)
-      {
-        auto tag = *std::exchange(pending_tag_, std::nullopt);
-        return {std::move(tag.name), tag.self_closing};
-      }
+      open,
+      close,
+      end // end of input
+    };
+    struct tag_head
+    {
+      tag_kind    kind;
+      std::string name;
+      bool        self_closing;
+    };
+
+    // The one tag reader every loop is built on. Skips text, whitespace, XML
+    // declarations, comments, CDATA sections, and DOCTYPE, then classifies the
+    // next markup as an open tag, a close tag, or end of input.
+    tag_head read_tag_head()
+    {
       while(true)
       {
-        skip_ws();
-        if(advance() != '<')
-        {
-          throw std::runtime_error("Expected '<' at start of XML element");
-        }
+        while(not at_end() and peek() != '<') advance();
+        if(at_end()) return {tag_kind::end, {}, false};
+        advance(); // '<'
         const char d = peek();
         if(d == '?')
         {
@@ -511,26 +498,39 @@ REFLEX_EXPORT namespace reflex::serde::xml
         }
         if(d == '/')
         {
-          throw std::runtime_error("Unexpected close tag");
+          advance();
+          std::string name = read_name();
+          skip_until(">");
+          return {tag_kind::close, std::move(name), false};
         }
         std::string name = read_name();
-        return {std::move(name), read_attributes()};
+        return {tag_kind::open, std::move(name), read_attributes()};
       }
+    }
+
+    // Reads the next element open tag. If a parent stashed an already-consumed
+    // open tag, that is returned first. Returns {name, self_closing}.
+    std::pair<std::string, bool> read_open_tag()
+    {
+      if(pending_tag_)
+      {
+        auto tag = *std::exchange(pending_tag_, std::nullopt);
+        return {std::move(tag.name), tag.self_closing};
+      }
+      tag_head head = read_tag_head();
+      if(head.kind != tag_kind::open)
+      {
+        throw std::runtime_error("Expected an XML element");
+      }
+      return {std::move(head.name), head.self_closing};
     }
 
     void read_close_tag()
     {
-      skip_ws();
-      if(advance() != '<')
+      if(read_tag_head().kind != tag_kind::close)
       {
-        throw std::runtime_error("Expected close tag");
+        throw std::runtime_error("Expected an XML close tag");
       }
-      if(advance() != '/')
-      {
-        throw std::runtime_error("Expected '/' in close tag");
-      }
-      read_name();
-      skip_until(">");
     }
 
     // Text content up to the next '<', with entity references unescaped.
@@ -557,33 +557,17 @@ REFLEX_EXPORT namespace reflex::serde::xml
     {
       if(self_closing) return;
       int depth = 1;
-      while(depth > 0 and not at_end())
+      while(depth > 0)
       {
-        while(not at_end() and peek() != '<') advance();
-        if(at_end()) return;
-        advance(); // '<'
-        const char d = peek();
-        if(d == '/')
+        const tag_head head = read_tag_head();
+        if(head.kind == tag_kind::end) return;
+        if(head.kind == tag_kind::open)
         {
-          advance();
-          read_name();
-          skip_until(">");
-          --depth;
-        }
-        else if(d == '?')
-        {
-          advance();
-          skip_until("?>");
-        }
-        else if(d == '!')
-        {
-          advance();
-          skip_bang();
+          if(not head.self_closing) ++depth;
         }
         else
         {
-          read_name();
-          if(not read_attributes()) ++depth;
+          --depth;
         }
       }
     }
@@ -622,59 +606,35 @@ REFLEX_EXPORT namespace reflex::serde::xml
     {
       while(true)
       {
-        skip_ws();
-        if(at_end()) return; // tolerate a truncated document
-        if(advance() != '<')
-        {
-          throw std::runtime_error("Expected '<' in element body");
-        }
-        const char d = peek();
-        if(d == '/')
-        {
-          advance();
-          read_name();
-          skip_until(">");
-          return;
-        }
-        if(d == '?')
-        {
-          advance();
-          skip_until("?>");
-          continue;
-        }
-        if(d == '!')
-        {
-          advance();
-          skip_bang();
-          continue;
-        }
+        const tag_head head = read_tag_head();
+        // a close tag ends this element; end of input tolerates truncation
+        if(head.kind != tag_kind::open) return;
 
-        std::string name         = read_name();
-        const bool  self_closing = read_attributes();
-        bool        matched      = false;
+        const std::string_view name         = head.name;
+        const bool             self_closing = head.self_closing;
+        bool                   matched      = false;
 
         template for(constexpr auto member : define_static_array(
                          nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
         {
           if(not matched
-             and (serialized_name(member) == std::string_view{name}
-                  or identifier_of(member) == std::string_view{name}))
+             and (serialized_name(member) == name or identifier_of(member) == name))
           {
             matched     = true;
             using F     = std::remove_cvref_t<decltype(value.[:member:])>;
             if constexpr(seq_c<F> and not array_of_c<F>)
             {
               using E = typename F::value_type;
-              value.[:member:].push_back(read_child<E>(name, self_closing));
+              value.[:member:].push_back(read_child<E>(head.name, self_closing));
             }
-            else if constexpr(detail::is_optional<F>::value)
+            else if constexpr(optional_c<F>)
             {
               using U = typename detail::field_value<F>::type;
-              value.[:member:] = read_optional<U>(name, self_closing);
+              value.[:member:] = read_optional<U>(head.name, self_closing);
             }
             else
             {
-              value.[:member:] = read_child<F>(name, self_closing);
+              value.[:member:] = read_child<F>(head.name, self_closing);
             }
           }
         }

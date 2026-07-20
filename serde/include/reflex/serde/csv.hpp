@@ -7,6 +7,7 @@
 #ifndef REFLEX_MODULE
 #include <cstring>
 
+#include <reflex/concepts.hpp>
 #include <reflex/format.hpp>
 #include <reflex/parse.hpp>
 #include <reflex/serde.hpp>
@@ -28,19 +29,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
 
   namespace detail
   {
-  template <typename T> struct is_optional : std::false_type
-  {};
-  template <typename T> struct is_optional<std::optional<T>> : std::true_type
-  {};
-
-  template <typename T> struct field_value
-  {
-    using type = T;
-  };
-  template <typename T> struct field_value<std::optional<T>>
-  {
-    using type = T;
-  };
+  using serde::detail::field_value;
   } // namespace detail
 
   // A field is a scalar or an optional scalar.
@@ -129,7 +118,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
 
   template <typename OutputIt, typename F> void write_field(OutputIt& out, F const& value)
   {
-    if constexpr(is_optional<F>::value)
+    if constexpr(optional_c<F>)
     {
       if(value.has_value()) write_escaped(out, field_text(*value));
       // an empty optional is an empty cell
@@ -171,7 +160,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
 
   template <typename F> F parse_field(std::string_view cell)
   {
-    if constexpr(is_optional<F>::value)
+    if constexpr(optional_c<F>)
     {
       using U = typename field_value<F>::type;
       if(cell.empty()) return std::nullopt;
