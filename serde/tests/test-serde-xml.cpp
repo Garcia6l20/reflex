@@ -400,6 +400,83 @@ TEST_CASE("reflex::serde::xml: name-aware override uses member tag")
   CHECK_EQ(value, HasNamed{{7}});
 }
 
+struct[[= derive(Debug)]] Price
+{
+  [[= xml::attribute]] std::string currency;
+  double                           amount;
+
+  constexpr bool operator==(Price const& other) const = default;
+};
+
+struct[[= serde::naming::camel_case, = derive(Debug)]] AttrOpt
+{
+  [[= xml::attribute]] std::optional<std::string> lang;
+  [[= xml::attribute, = serde::rename{"ver"}]] int version;
+  std::string                                     body;
+
+  constexpr bool operator==(AttrOpt const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml: attribute member roundtrip")
+{
+  std::string out;
+  {
+    xml::serializer ser{out};
+    ser.dump(Price{"USD", 42.5});
+  }
+  CHECK_EQ(out, "<Price currency=\"USD\"><amount>42.5</amount></Price>");
+  const auto value = xml::deserializer{out}.load<Price>();
+  CHECK_EQ(value, Price{"USD", 42.5});
+}
+
+TEST_CASE("reflex::serde::xml: attribute escaping and entities")
+{
+  const Price value{"a & \"b\" < c", 1.0};
+  std::string out;
+  {
+    xml::serializer ser{out};
+    ser.dump(value);
+  }
+  CHECK(out.find("currency=\"a &amp; &quot;b&quot; &lt; c\"") != std::string::npos);
+  const auto back = xml::deserializer{out}.load<Price>();
+  CHECK_EQ(back, value);
+}
+
+TEST_CASE("reflex::serde::xml: optional attribute + rename")
+{
+  SUBCASE("present")
+  {
+    std::string out;
+    {
+      xml::serializer ser{out};
+      ser.dump(AttrOpt{"en", 3, "hi"});
+    }
+    CHECK_EQ(out, "<AttrOpt lang=\"en\" ver=\"3\"><body>hi</body></AttrOpt>");
+    const auto value = xml::deserializer{out}.load<AttrOpt>();
+    CHECK_EQ(value, AttrOpt{"en", 3, "hi"});
+  }
+  SUBCASE("absent optional attribute omitted")
+  {
+    std::string out;
+    {
+      xml::serializer ser{out};
+      ser.dump(AttrOpt{std::nullopt, 3, "hi"});
+    }
+    CHECK_EQ(out, "<AttrOpt ver=\"3\"><body>hi</body></AttrOpt>");
+    const auto value = xml::deserializer{out}.load<AttrOpt>();
+    CHECK_EQ(value, AttrOpt{std::nullopt, 3, "hi"});
+  }
+}
+
+TEST_CASE("reflex::serde::xml: attribute read tolerance")
+{
+  // single quotes, unknown attribute, reordered, entity in value
+  const std::string_view in =
+      "<Price unknown='x' currency='m&amp;m'><amount>2</amount></Price>";
+  const auto value = xml::deserializer{in}.load<Price>();
+  CHECK_EQ(value, Price{"m&m", 2.0});
+}
+
 struct Nested
 {
   std::vector<std::vector<int>> matrix;
@@ -412,9 +489,20 @@ struct CharArray
 {
   std::array<char, 8> tag;
 };
+struct AggAttr
+{
+  [[= xml::attribute]] Inner bad; // aggregate attribute is invalid
+};
+struct SeqAttr
+{
+  [[= xml::attribute]] std::vector<int> bad; // sequence attribute is invalid
+};
 static_assert(not xml::xml_element_c<Nested>);
 static_assert(not xml::xml_element_c<NonCharArray>); // only char arrays are text
 static_assert(xml::xml_element_c<CharArray>);
 static_assert(xml::xml_element_c<Basic>);
 static_assert(xml::xml_element_c<Outer>);
 static_assert(xml::xml_element_c<WithSeq>);
+static_assert(xml::xml_element_c<Price>);
+static_assert(not xml::xml_element_c<AggAttr>); // attribute must be scalar
+static_assert(not xml::xml_element_c<SeqAttr>);

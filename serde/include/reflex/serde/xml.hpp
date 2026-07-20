@@ -46,9 +46,26 @@ REFLEX_EXPORT namespace reflex::serde::xml
                     or char_array_c<T>
                     or derives_c<T, derive_t<Format>>;
 
+  // Marks a member as an XML attribute rather than a child element:
+  //   struct Price { [[= xml::attribute]] std::string currency; double amount; };
+  //   -> <Price currency="USD"><amount>42.5</amount></Price>
+  constexpr struct attribute_t
+  {
+  } attribute;
+
+  consteval bool is_attribute(meta::info member)
+  {
+    return meta::has_annotation(member, ^^attribute_t);
+  }
+
   namespace detail
   {
   using serde::detail::field_value;
+
+  // An attribute value is a scalar text, or an optional of one. Sequences and
+  // aggregates have no attribute representation.
+  template <typename T>
+  concept xml_attr_c = xml_text_c<T> or (optional_c<T> and xml_text_c<typename field_value<T>::type>);
 
   template <typename T>
   concept aggregate_element_c =
@@ -91,7 +108,15 @@ REFLEX_EXPORT namespace reflex::serde::xml
                      nonstatic_data_members_of(^^T, std::meta::access_context::current())))
     {
       using F = std::remove_cvref_t<typename[:type_of(member):]>;
-      if constexpr(not xml_field_c<F>)
+      if constexpr(is_attribute(member))
+      {
+        // an attribute member must carry a scalar value, not a subtree
+        if constexpr(not xml_attr_c<F>)
+        {
+          ok = false;
+        }
+      }
+      else if constexpr(not xml_field_c<F>)
       {
         ok = false;
       }
@@ -181,6 +206,51 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
     for(char c : name) out++ = c;
     out++ = '>';
+  }
+
+  // Attribute-value escaping: '&', '<', and the delimiting '"'.
+  template <typename OutputIt> void write_attr_escaped(OutputIt& out, std::string_view text)
+  {
+    for(char c : text)
+    {
+      switch(c)
+      {
+        case '&':
+          std::ranges::copy(std::string_view{"&amp;"}, out);
+          break;
+        case '<':
+          std::ranges::copy(std::string_view{"&lt;"}, out);
+          break;
+        case '"':
+          std::ranges::copy(std::string_view{"&quot;"}, out);
+          break;
+        default:
+          out++ = c;
+      }
+    }
+  }
+
+  // A member -> zero (empty optional) or one ` name="value"` pair in the open tag.
+  template <typename OutputIt, typename F>
+  void write_attribute(OutputIt& out, std::string_view name, F const& value)
+  {
+    if constexpr(optional_c<F>)
+    {
+      if(value.has_value())
+      {
+        write_attribute(out, name, *value);
+      }
+      // an empty optional attribute is omitted
+    }
+    else
+    {
+      out++ = ' ';
+      for(char c : name) out++ = c;
+      out++ = '=';
+      out++ = '"';
+      write_attr_escaped(out, field_text(value));
+      out++ = '"';
+    }
   }
 
   // A member -> zero (empty optional), one, or many (sequence) child elements.
@@ -325,12 +395,28 @@ REFLEX_EXPORT namespace reflex::serde::xml
   {
     const std::string_view name = ser.element_name(identifier_of(dealias(decay(^^Agg))));
     auto&                  out  = ser.out();
-    detail::write_tag(out, name, false);
+
+    // open tag with attribute members folded in: <name attr="v"...>
+    out++ = '<';
+    for(char c : name) out++ = c;
     template for(constexpr auto member : define_static_array(
                      nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
     {
-      constexpr std::string_view member_name = serialized_name(member);
-      detail::write_field(ser, member_name, value.[:member:]);
+      if constexpr(is_attribute(member))
+      {
+        detail::write_attribute(out, serialized_name(member), value.[:member:]);
+      }
+    }
+    out++ = '>';
+
+    // non-attribute members as child elements
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+    {
+      if constexpr(not is_attribute(member))
+      {
+        detail::write_field(ser, serialized_name(member), value.[:member:]);
+      }
     }
     detail::write_tag(out, name, true);
     return out;
@@ -342,14 +428,22 @@ REFLEX_EXPORT namespace reflex::serde::xml
     using base = serde::detail::subrange_deserializer<InputIt>;
     using base::cursor_;
 
+  public:
+    using attr_list = std::vector<std::pair<std::string, std::string>>;
+
+  private:
     // An element open tag already consumed by read_children, stashed so the
     // matched member's deserialize overload can re-read it via read_open_tag.
     struct open_tag_t
     {
       std::string name;
       bool        self_closing;
+      attr_list   attributes;
     };
     std::optional<open_tag_t> pending_tag_{};
+    // Attributes of the element last returned by read_open_tag, consumed by the
+    // aggregate deserialize overload before it reads child elements.
+    attr_list current_attributes_{};
 
   public:
     using base::at_end;
@@ -429,35 +523,74 @@ REFLEX_EXPORT namespace reflex::serde::xml
       return name;
     }
 
-    // The tag name has been consumed; skip attributes up to '>'. Returns true
-    // for a self-closing tag ("<name .../>").
-    bool read_attributes()
+    // The tag name has been consumed; parse `name="value"` pairs up to '>'.
+    // Returns {self_closing, attributes}. Values accept single or double quotes
+    // and have their entity references unescaped.
+    std::pair<bool, attr_list> read_attributes()
     {
-      bool prev_slash = false;
-      while(not at_end())
+      attr_list attrs;
+      while(true)
       {
-        const char c = advance();
-        if(c == '"' or c == '\'')
+        while(not at_end() and reflex::is_space(peek())) advance();
+        if(at_end())
         {
-          const char quote = c;
-          while(not at_end() and peek() != quote) advance();
-          if(not at_end()) advance();
-          prev_slash = false;
+          throw std::runtime_error("Unterminated XML tag");
         }
-        else if(c == '>')
+        const char c = peek();
+        if(c == '>')
         {
-          return prev_slash;
+          advance();
+          return {false, std::move(attrs)};
         }
-        else if(reflex::is_space(c))
+        if(c == '/')
         {
-          // whitespace does not reset the self-closing marker
+          advance();
+          skip_until(">");
+          return {true, std::move(attrs)};
         }
-        else
+
+        std::string aname;
+        while(not at_end())
         {
-          prev_slash = (c == '/');
+          const char d = peek();
+          if(reflex::is_space(d) or d == '=' or d == '>' or d == '/')
+          {
+            break;
+          }
+          aname.push_back(d);
+          advance();
+        }
+
+        while(not at_end() and reflex::is_space(peek())) advance();
+        std::string avalue;
+        if(not at_end() and peek() == '=')
+        {
+          advance();
+          while(not at_end() and reflex::is_space(peek())) advance();
+          if(not at_end() and (peek() == '"' or peek() == '\''))
+          {
+            const char quote = advance();
+            while(not at_end() and peek() != quote)
+            {
+              const char e = advance();
+              if(e == '&')
+              {
+                read_entity(avalue);
+              }
+              else
+              {
+                avalue.push_back(e);
+              }
+            }
+            if(not at_end()) advance(); // closing quote
+          }
+        }
+
+        if(not aname.empty())
+        {
+          attrs.emplace_back(std::move(aname), std::move(avalue));
         }
       }
-      throw std::runtime_error("Unterminated XML tag");
     }
 
     enum class tag_kind
@@ -471,6 +604,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
       tag_kind    kind;
       std::string name;
       bool        self_closing;
+      attr_list   attributes; // open tags only
     };
 
     // The one tag reader every loop is built on. Skips text, whitespace, XML
@@ -481,7 +615,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
       while(true)
       {
         while(not at_end() and peek() != '<') advance();
-        if(at_end()) return {tag_kind::end, {}, false};
+        if(at_end()) return {tag_kind::end, {}, false, {}};
         advance(); // '<'
         const char d = peek();
         if(d == '?')
@@ -501,20 +635,23 @@ REFLEX_EXPORT namespace reflex::serde::xml
           advance();
           std::string name = read_name();
           skip_until(">");
-          return {tag_kind::close, std::move(name), false};
+          return {tag_kind::close, std::move(name), false, {}};
         }
-        std::string name = read_name();
-        return {tag_kind::open, std::move(name), read_attributes()};
+        std::string name          = read_name();
+        auto [self_closing, attrs] = read_attributes();
+        return {tag_kind::open, std::move(name), self_closing, std::move(attrs)};
       }
     }
 
     // Reads the next element open tag. If a parent stashed an already-consumed
-    // open tag, that is returned first. Returns {name, self_closing}.
+    // open tag, that is returned first. Returns {name, self_closing}; the open
+    // tag's attributes are available via attributes() until the next open tag.
     std::pair<std::string, bool> read_open_tag()
     {
       if(pending_tag_)
       {
-        auto tag = *std::exchange(pending_tag_, std::nullopt);
+        auto tag            = *std::exchange(pending_tag_, std::nullopt);
+        current_attributes_ = std::move(tag.attributes);
         return {std::move(tag.name), tag.self_closing};
       }
       tag_head head = read_tag_head();
@@ -522,7 +659,14 @@ REFLEX_EXPORT namespace reflex::serde::xml
       {
         throw std::runtime_error("Expected an XML element");
       }
+      current_attributes_ = std::move(head.attributes);
       return {std::move(head.name), head.self_closing};
+    }
+
+    // Attributes of the element whose open tag read_open_tag last returned.
+    const attr_list& attributes() const
+    {
+      return current_attributes_;
     }
 
     void read_close_tag()
@@ -572,19 +716,19 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     }
 
-    // Read one element's value into T. The open tag (name, self_closing) has
-    // been consumed by read_children; stash it and re-enter deserialize so
+    // Read one element's value into T. The open tag (name, self_closing, attrs)
+    // has been consumed by read_children; stash it and re-enter deserialize so
     // T's own overload (including any user override) handles the element.
-    template <typename T> T read_child(std::string name, bool self_closing)
+    template <typename T> T read_child(std::string name, bool self_closing, attr_list attrs)
     {
-      pending_tag_ = open_tag_t{std::move(name), self_closing};
+      pending_tag_ = open_tag_t{std::move(name), self_closing, std::move(attrs)};
       return deserialize(*this, std::type_identity<T>{});
     }
 
     // Optional member: an empty or self-closing element is nullopt. A scalar
     // body is read inline; an aggregate/user body routes back through the CPO.
     template <typename U>
-    std::optional<U> read_optional(std::string name, bool self_closing)
+    std::optional<U> read_optional(std::string name, bool self_closing, attr_list attrs)
     {
       if(self_closing) return std::nullopt;
       if constexpr(xml_text_c<U>)
@@ -596,7 +740,32 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
       else
       {
-        return read_child<U>(std::move(name), false);
+        return read_child<U>(std::move(name), false, std::move(attrs));
+      }
+    }
+
+    // Assign an element's attributes to the aggregate's attribute members,
+    // matched by serialized name. Unknown attributes are ignored.
+    template <detail::aggregate_element_c Agg> void assign_attributes(Agg & value)
+    {
+      for(auto const& [aname, avalue] : current_attributes_)
+      {
+        bool matched = false;
+        template for(constexpr auto member : define_static_array(
+                         nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+        {
+          if constexpr(is_attribute(member))
+          {
+            if(not matched
+               and (serialized_name(member) == std::string_view{aname}
+                    or identifier_of(member) == std::string_view{aname}))
+            {
+              using F        = std::remove_cvref_t<decltype(value.[:member:])>;
+              value.[:member:] = detail::parse_field<F>(avalue);
+              matched        = true;
+            }
+          }
+        }
       }
     }
 
@@ -606,7 +775,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     {
       while(true)
       {
-        const tag_head head = read_tag_head();
+        tag_head head = read_tag_head();
         // a close tag ends this element; end of input tolerates truncation
         if(head.kind != tag_kind::open) return;
 
@@ -617,24 +786,30 @@ REFLEX_EXPORT namespace reflex::serde::xml
         template for(constexpr auto member : define_static_array(
                          nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
         {
-          if(not matched
-             and (serialized_name(member) == name or identifier_of(member) == name))
+          // attribute members are filled from the open tag, never child elements
+          if constexpr(not is_attribute(member))
           {
-            matched     = true;
-            using F     = std::remove_cvref_t<decltype(value.[:member:])>;
-            if constexpr(seq_c<F> and not array_of_c<F>)
+            if(not matched
+               and (serialized_name(member) == name or identifier_of(member) == name))
             {
-              using E = typename F::value_type;
-              value.[:member:].push_back(read_child<E>(head.name, self_closing));
-            }
-            else if constexpr(optional_c<F>)
-            {
-              using U = typename detail::field_value<F>::type;
-              value.[:member:] = read_optional<U>(head.name, self_closing);
-            }
-            else
-            {
-              value.[:member:] = read_child<F>(head.name, self_closing);
+              matched     = true;
+              using F     = std::remove_cvref_t<decltype(value.[:member:])>;
+              if constexpr(seq_c<F> and not array_of_c<F>)
+              {
+                using E = typename F::value_type;
+                value.[:member:].push_back(read_child<E>(head.name, self_closing, head.attributes));
+              }
+              else if constexpr(optional_c<F>)
+              {
+                using U = typename detail::field_value<F>::type;
+                value.[:member:] =
+                    read_optional<U>(head.name, self_closing, std::move(head.attributes));
+              }
+              else
+              {
+                value.[:member:] =
+                    read_child<F>(head.name, self_closing, std::move(head.attributes));
+              }
             }
           }
         }
@@ -784,6 +959,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
   {
     auto [name, self_closing] = de.read_open_tag();
     Agg value{};
+    de.assign_attributes(value); // consume open-tag attributes before children
     if(not self_closing)
     {
       de.read_children(value);

@@ -196,6 +196,29 @@ struct [[= serde::naming::camel_case]] api_response
 
 ---
 
+## XML attributes
+
+Annotate a member with `xml::attribute` to serialize it as an attribute on the
+element's open tag instead of a child element. Attribute members must be scalar
+(a text type or an optional of one), `serde::rename` and naming annotations
+apply, and an empty optional attribute is omitted:
+
+```cpp
+import reflex.serde.xml;
+
+struct Price
+{
+  [[= xml::attribute]] std::string currency;
+  double                           amount;
+};
+// XML: <Price currency="USD"><amount>42.5</amount></Price>
+```
+
+On read, attributes match members by serialized name; unknown attributes are
+ignored.
+
+---
+
 ## `poly` serde
 
 `reflex.serde` provides direct support for `reflex::poly::var`:
