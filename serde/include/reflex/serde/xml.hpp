@@ -85,6 +85,36 @@ REFLEX_EXPORT namespace reflex::serde::xml
     return meta::has_annotation(member, ^^cdata_t);
   }
 
+  // Prefix-based XML namespace. Annotate an aggregate type to prefix its element
+  // and its child-element tags and emit an xmlns declaration on its open tag; a
+  // member-level annotation overrides the prefix for that element/attribute:
+  //   struct[[= xml::ns{"x", "http://e"}]] Env { ... };
+  //   -> <x:Env xmlns:x="http://e"><x:child>...</x:child></x:Env>
+  struct ns
+  {
+    constant_string prefix;
+    constant_string uri;
+  };
+
+  // The namespace prefix declared on a type or member, or "" if none.
+  consteval std::string_view ns_prefix_of(meta::info r)
+  {
+    if(meta::has_annotation(r, ^^ns))
+    {
+      return std::string_view{meta::annotation_value_of_with<ns>(r).prefix};
+    }
+    return {};
+  }
+
+  consteval std::string_view ns_uri_of(meta::info r)
+  {
+    if(meta::has_annotation(r, ^^ns))
+    {
+      return std::string_view{meta::annotation_value_of_with<ns>(r).uri};
+    }
+    return {};
+  }
+
   consteval bool is_text(meta::info member)
   {
     return meta::has_annotation(member, ^^text_t);
@@ -228,6 +258,31 @@ REFLEX_EXPORT namespace reflex::serde::xml
     while(not s.empty() and reflex::is_space(s.front())) s.remove_prefix(1);
     while(not s.empty() and reflex::is_space(s.back())) s.remove_suffix(1);
     return s;
+  }
+
+  // The local part of a qualified name: "prefix:local" -> "local".
+  constexpr std::string_view local_name(std::string_view qname)
+  {
+    const auto colon = qname.find(':');
+    return colon == std::string_view::npos ? qname : qname.substr(colon + 1);
+  }
+
+  // "prefix:local", or just "local" when prefix is empty.
+  inline std::string qualify(std::string_view prefix, std::string_view local)
+  {
+    if(prefix.empty()) return std::string{local};
+    std::string s;
+    s.reserve(prefix.size() + 1 + local.size());
+    s += prefix;
+    s += ':';
+    s += local;
+    return s;
+  }
+
+  // An xmlns / xmlns:* declaration is namespace machinery, never a field.
+  constexpr bool is_xmlns(std::string_view name)
+  {
+    return name == "xmlns" or name.starts_with("xmlns:");
   }
 
   template <typename F> std::string field_text(F const& value)
@@ -528,18 +583,34 @@ REFLEX_EXPORT namespace reflex::serde::xml
   OutputIt tag_invoke(
       tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value)
   {
-    const std::string_view name = ser.element_name(identifier_of(dealias(decay(^^Agg))));
+    constexpr std::string_view type_prefix = ns_prefix_of(^^Agg);
+    constexpr std::string_view type_uri    = ns_uri_of(^^Agg);
+    // at the document root a namespaced type prefixes its own type name
+    const std::string type_default = detail::qualify(type_prefix, identifier_of(dealias(decay(^^Agg))));
+    const std::string_view name = ser.element_name(type_default);
     auto&                  out  = ser.out();
 
-    // open tag with attribute members folded in: <name attr="v"...>
+    // open tag, with an xmlns declaration and attribute members folded in
     out++ = '<';
     for(char c : name) out++ = c;
+    if constexpr(not type_prefix.empty())
+    {
+      std::ranges::copy(std::string_view{" xmlns:"}, out);
+      std::ranges::copy(type_prefix, out);
+      out++ = '=';
+      out++ = '"';
+      detail::write_attr_escaped(out, type_uri);
+      out++ = '"';
+    }
     template for(constexpr auto member : define_static_array(
                      nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
     {
       if constexpr(is_attribute(member))
       {
-        detail::write_attribute(out, serialized_name(member), value.[:member:]);
+        // attributes take a prefix only from a member-level ns annotation
+        constexpr std::string_view apfx = ns_prefix_of(member);
+        const std::string          aqn  = detail::qualify(apfx, serialized_name(member));
+        detail::write_attribute(out, aqn, value.[:member:]);
       }
     }
 
@@ -594,14 +665,20 @@ REFLEX_EXPORT namespace reflex::serde::xml
         {
           // already folded into the open tag
         }
-        else if constexpr(is_cdata(member))
-        {
-          detail::write_cdata_element(
-              out, serialized_name(member), std::string_view{value.[:member:]});
-        }
         else
         {
-          detail::write_field(ser, serialized_name(member), value.[:member:]);
+          // a child element takes a member-level prefix, else the type prefix
+          constexpr std::string_view mpfx = ns_prefix_of(member);
+          constexpr std::string_view cpfx = mpfx.empty() ? type_prefix : mpfx;
+          const std::string          cqn  = detail::qualify(cpfx, serialized_name(member));
+          if constexpr(is_cdata(member))
+          {
+            detail::write_cdata_element(out, cqn, std::string_view{value.[:member:]});
+          }
+          else
+          {
+            detail::write_field(ser, cqn, value.[:member:]);
+          }
         }
       }
       detail::write_tag(out, name, true);
@@ -1100,15 +1177,30 @@ REFLEX_EXPORT namespace reflex::serde::xml
     {
       for(auto const& [aname, avalue] : current_attributes_)
       {
+        const std::string_view an = aname;
+        if(detail::is_xmlns(an)) continue; // namespace declarations are not fields
+
+        const std::string_view local = detail::local_name(an);
+        bool                   any_exact = false;
+        template for(constexpr auto member : define_static_array(
+                         nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+        {
+          if constexpr(is_attribute(member))
+          {
+            if(serialized_name(member) == an or identifier_of(member) == an) any_exact = true;
+          }
+        }
+
         bool matched = false;
         template for(constexpr auto member : define_static_array(
                          nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
         {
           if constexpr(is_attribute(member))
           {
-            if(not matched
-               and (serialized_name(member) == std::string_view{aname}
-                    or identifier_of(member) == std::string_view{aname}))
+            const bool exact = serialized_name(member) == an or identifier_of(member) == an;
+            const bool loc   = not any_exact
+                           and (serialized_name(member) == local or identifier_of(member) == local);
+            if(not matched and (exact or loc))
             {
               using F        = std::remove_cvref_t<decltype(value.[:member:])>;
               value.[:member:] = detail::parse_field<F>(avalue);
@@ -1130,8 +1222,21 @@ REFLEX_EXPORT namespace reflex::serde::xml
         if(head.kind != tag_kind::open) return;
 
         const std::string_view name         = head.name;
+        const std::string_view local        = detail::local_name(name);
         const bool             self_closing = head.self_closing;
         bool                   matched      = false;
+
+        // Prefer an exact (possibly qualified) match; only fall back to the
+        // local name when no member matches the qualified name.
+        bool any_exact = false;
+        template for(constexpr auto member : define_static_array(
+                         nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+        {
+          if constexpr(not is_attribute(member))
+          {
+            if(serialized_name(member) == name or identifier_of(member) == name) any_exact = true;
+          }
+        }
 
         template for(constexpr auto member : define_static_array(
                          nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
@@ -1139,8 +1244,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
           // attribute members are filled from the open tag, never child elements
           if constexpr(not is_attribute(member))
           {
-            if(not matched
-               and (serialized_name(member) == name or identifier_of(member) == name))
+            const bool exact = serialized_name(member) == name or identifier_of(member) == name;
+            const bool loc   = not any_exact
+                           and (serialized_name(member) == local or identifier_of(member) == local);
+            if(not matched and (exact or loc))
             {
               matched     = true;
               using F     = std::remove_cvref_t<decltype(value.[:member:])>;

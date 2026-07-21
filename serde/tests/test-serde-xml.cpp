@@ -643,6 +643,55 @@ TEST_CASE("reflex::serde::xml: CDATA in skipped unknown subtree")
   CHECK_EQ(value, Basic{1, "x", 2.0});
 }
 
+struct[[= xml::ns{"x", "urn:example:e"}, = derive(Debug)]] NsRoot
+{
+  int         a;
+  std::string b;
+
+  constexpr bool operator==(NsRoot const& other) const = default;
+};
+
+struct[[= derive(Debug)]] Coll
+{
+  [[= serde::rename{"x:val"}]] int qualified;
+  int                              val;
+
+  constexpr bool operator==(Coll const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml: namespace write + roundtrip")
+{
+  const NsRoot value{1, "hi"};
+  std::string  out;
+  {
+    xml::serializer ser{out};
+    ser.dump(value);
+  }
+  CHECK_EQ(
+      out,
+      "<x:NsRoot xmlns:x=\"urn:example:e\">"
+      "<x:a>1</x:a><x:b>hi</x:b></x:NsRoot>");
+  const auto back = xml::deserializer{out}.load<NsRoot>();
+  CHECK_EQ(back, value);
+}
+
+TEST_CASE("reflex::serde::xml: prefixed document loads into plain type")
+{
+  const std::string_view in =
+      "<n:Basic xmlns:n=\"urn:x\"><n:intMember>42</n:intMember>"
+      "<n:stringMember>x</n:stringMember><n:double-member>3.14</n:double-member></n:Basic>";
+  const auto value = xml::deserializer{in}.load<Basic>();
+  CHECK_EQ(value, Basic{42, "x", 3.14});
+}
+
+TEST_CASE("reflex::serde::xml: qualified match wins over local")
+{
+  // <x:val> exactly matches the renamed member; the plain 'val' stays default
+  const std::string_view in = "<Coll><x:val>7</x:val></Coll>";
+  const auto             value = xml::deserializer{in}.load<Coll>();
+  CHECK_EQ(value, Coll{7, 0});
+}
+
 struct Nested
 {
   std::vector<std::vector<int>> matrix;

@@ -261,6 +261,24 @@ struct Script
 On read, any element's text content accepts CDATA sections, plain text, and
 entity references interchangeably (they concatenate).
 
+## XML namespaces
+
+Prefix-based, no URI resolution. Reading is tolerant by default: a prefixed name
+(`<x:name>`) matches a member by its local name when no exact qualified match
+exists (an exact match wins), and `xmlns` / `xmlns:*` declarations are ignored.
+
+Writing is opt-in. Annotate an aggregate with `xml::ns{prefix, uri}`: its element
+and child-element tags get the prefix and the open tag gets an `xmlns:prefix`
+declaration. A member-level `xml::ns` overrides the prefix for that field:
+
+```cpp
+struct[[= xml::ns{"x", "urn:example:e"}]] Env
+{
+  int a;
+};
+// XML: <x:Env xmlns:x="urn:example:e"><x:a>1</x:a></x:Env>
+```
+
 ---
 
 ## `poly` serde
