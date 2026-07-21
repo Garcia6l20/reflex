@@ -573,6 +573,76 @@ TEST_CASE("reflex::serde::xml: raw_content nested depth")
   CHECK_EQ(value.body, "<a><a>deep</a></a>tail");
 }
 
+struct[[= derive(Debug)]] Script
+{
+  std::string             name;
+  [[= xml::cdata]] std::string code;
+
+  constexpr bool operator==(Script const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml: cdata child element write + read")
+{
+  const Script value{"s", "if (a < b && c > d) x;"};
+  std::string  out;
+  {
+    xml::serializer ser{out};
+    ser.dump(value);
+  }
+  CHECK_EQ(
+      out,
+      "<Script><name>s</name>"
+      "<code><![CDATA[if (a < b && c > d) x;]]></code></Script>");
+  const auto back = xml::deserializer{out}.load<Script>();
+  CHECK_EQ(back, value);
+}
+
+TEST_CASE("reflex::serde::xml: cdata payload containing ]]> is split")
+{
+  const Script value{"s", "a]]>b"};
+  std::string  out;
+  {
+    xml::serializer ser{out};
+    ser.dump(value);
+  }
+  CHECK_EQ(
+      out,
+      "<Script><name>s</name>"
+      "<code><![CDATA[a]]]]><![CDATA[>b]]></code></Script>");
+  const auto back = xml::deserializer{out}.load<Script>();
+  CHECK_EQ(back, value); // two CDATA sections concatenate back to "a]]>b"
+}
+
+TEST_CASE("reflex::serde::xml: read CDATA in text content")
+{
+  SUBCASE("cdata only")
+  {
+    const std::string_view in = "<Basic><intMember>1</intMember>"
+                                "<stringMember><![CDATA[a>b&c<d]]></stringMember>"
+                                "<double-member>2</double-member></Basic>";
+    const auto value = xml::deserializer{in}.load<Basic>();
+    CHECK_EQ(value.string_member, "a>b&c<d");
+  }
+  SUBCASE("text + cdata + text concatenate")
+  {
+    const std::string_view in = "<Basic><intMember>1</intMember>"
+                                "<stringMember>x<![CDATA[ & ]]>y</stringMember>"
+                                "<double-member>2</double-member></Basic>";
+    const auto value = xml::deserializer{in}.load<Basic>();
+    CHECK_EQ(value.string_member, "x & y");
+  }
+}
+
+TEST_CASE("reflex::serde::xml: CDATA in skipped unknown subtree")
+{
+  const std::string_view in =
+      "<Basic><intMember>1</intMember>"
+      "<extra><![CDATA[a > b ]]></extra>"
+      "<stringMember>x</stringMember><double-member>2</double-member></Basic>";
+  const auto value = xml::deserializer{in}.load<Basic>();
+  CHECK_EQ(value, Basic{1, "x", 2.0});
+}
+
 struct Nested
 {
   std::vector<std::vector<int>> matrix;

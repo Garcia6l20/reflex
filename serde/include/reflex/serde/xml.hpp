@@ -67,9 +67,22 @@ REFLEX_EXPORT namespace reflex::serde::xml
   {
   } raw_content;
 
+  // Marks a str_c member to be written inside a CDATA section instead of being
+  // entity-escaped:  [[= xml::cdata]] std::string script;
+  //   -> <script><![CDATA[...]]></script>. CDATA is read transparently, so this
+  // annotation only affects serialization.
+  constexpr struct cdata_t
+  {
+  } cdata;
+
   consteval bool is_attribute(meta::info member)
   {
     return meta::has_annotation(member, ^^attribute_t);
+  }
+
+  consteval bool is_cdata(meta::info member)
+  {
+    return meta::has_annotation(member, ^^cdata_t);
   }
 
   consteval bool is_text(meta::info member)
@@ -151,6 +164,11 @@ REFLEX_EXPORT namespace reflex::serde::xml
                      nonstatic_data_members_of(^^T, std::meta::access_context::current())))
     {
       using F = std::remove_cvref_t<typename[:type_of(member):]>;
+      // cdata is a string-only serialization hint, orthogonal to placement
+      if constexpr(is_cdata(member) and not str_c<F>)
+      {
+        ok = false;
+      }
       if constexpr(is_attribute(member))
       {
         // an attribute member must carry a scalar value, not a subtree
@@ -279,6 +297,50 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
     for(char c : name) out++ = c;
     out++ = '>';
+  }
+
+  // Emit CDATA content, splitting any "]]>" across two sections (the only
+  // sequence a CDATA section cannot contain): "]]" + reopen + ">".
+  template <typename OutputIt> void write_cdata_content(OutputIt& out, std::string_view text)
+  {
+    for(std::size_t i = 0; i < text.size(); ++i)
+    {
+      if(text[i] == '>' and i >= 2 and text[i - 1] == ']' and text[i - 2] == ']')
+      {
+        std::ranges::copy(std::string_view{"]]><![CDATA[>"}, out);
+      }
+      else
+      {
+        out++ = text[i];
+      }
+    }
+  }
+
+  // Element text content: a CDATA section when AsCdata, else entity-escaped.
+  template <bool AsCdata, typename OutputIt, typename F>
+  void write_text_body(OutputIt& out, F const& value)
+  {
+    if constexpr(AsCdata)
+    {
+      std::ranges::copy(std::string_view{"<![CDATA["}, out);
+      write_cdata_content(out, std::string_view{value});
+      std::ranges::copy(std::string_view{"]]>"}, out);
+    }
+    else
+    {
+      write_text_escaped(out, field_text(value));
+    }
+  }
+
+  // <name><![CDATA[...]]></name>
+  template <typename OutputIt>
+  void write_cdata_element(OutputIt& out, std::string_view name, std::string_view text)
+  {
+    write_tag(out, name, false);
+    std::ranges::copy(std::string_view{"<![CDATA["}, out);
+    write_cdata_content(out, text);
+    std::ranges::copy(std::string_view{"]]>"}, out);
+    write_tag(out, name, true);
   }
 
   // Attribute-value escaping: '&', '<', and the delimiting '"'.
@@ -489,13 +551,14 @@ REFLEX_EXPORT namespace reflex::serde::xml
       {
         if constexpr(is_text(member))
         {
-          using F = std::remove_cvref_t<decltype(value.[:member:])>;
+          using F                = std::remove_cvref_t<decltype(value.[:member:])>;
+          constexpr bool as_cdata = is_cdata(member);
           if constexpr(optional_c<F>)
           {
             if(value.[:member:].has_value())
             {
               out++ = '>';
-              detail::write_text_escaped(out, detail::field_text(*value.[:member:]));
+              detail::write_text_body<as_cdata>(out, value.[:member:].value());
               detail::write_tag(out, name, true);
             }
             else
@@ -508,7 +571,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
           else
           {
             out++ = '>';
-            detail::write_text_escaped(out, detail::field_text(value.[:member:]));
+            detail::write_text_body<as_cdata>(out, value.[:member:]);
             detail::write_tag(out, name, true);
           }
         }
@@ -527,7 +590,16 @@ REFLEX_EXPORT namespace reflex::serde::xml
       template for(constexpr auto member : define_static_array(
                        nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
       {
-        if constexpr(not is_attribute(member))
+        if constexpr(is_attribute(member))
+        {
+          // already folded into the open tag
+        }
+        else if constexpr(is_cdata(member))
+        {
+          detail::write_cdata_element(
+              out, serialized_name(member), std::string_view{value.[:member:]});
+        }
+        else
         {
           detail::write_field(ser, serialized_name(member), value.[:member:]);
         }
@@ -559,6 +631,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // Attributes of the element last returned by read_open_tag, consumed by the
     // aggregate deserialize overload before it reads child elements.
     attr_list current_attributes_{};
+    // read_text consumes the '<' of a following tag when it must peek past it;
+    // the next tag reader honors this instead of expecting to consume '<' again.
+    bool lt_consumed_{false};
 
   public:
     using base::at_end;
@@ -729,9 +804,16 @@ REFLEX_EXPORT namespace reflex::serde::xml
     {
       while(true)
       {
-        while(not at_end() and peek() != '<') advance();
-        if(at_end()) return {tag_kind::end, {}, false, {}};
-        advance(); // '<'
+        if(lt_consumed_)
+        {
+          lt_consumed_ = false; // read_text already consumed this tag's '<'
+        }
+        else
+        {
+          while(not at_end() and peek() != '<') advance();
+          if(at_end()) return {tag_kind::end, {}, false, {}};
+          advance(); // '<'
+        }
         const char d = peek();
         if(d == '?')
         {
@@ -792,21 +874,83 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     }
 
-    // Text content up to the next '<', with entity references unescaped.
+    void expect(std::string_view token)
+    {
+      for(char e : token)
+      {
+        if(at_end() or advance() != e)
+        {
+          throw std::runtime_error(std::format("Expected \"{}\"", token));
+        }
+      }
+    }
+
+    // "<![CDATA[" has been consumed; append raw content up to "]]>" (dropped).
+    void read_cdata(std::string& out)
+    {
+      const std::size_t start = out.size();
+      while(not at_end())
+      {
+        out.push_back(advance());
+        const std::size_t n = out.size();
+        if(n - start >= 3 and out[n - 3] == ']' and out[n - 2] == ']' and out[n - 1] == '>')
+        {
+          out.resize(n - 3); // drop the "]]>" terminator
+          return;
+        }
+      }
+    }
+
+    // Element text content up to the terminating tag, with entity references
+    // unescaped and CDATA sections taken verbatim. Plain text and any number of
+    // CDATA sections concatenate. Stops at the first non-CDATA tag ('<' already
+    // consumed, flagged via lt_consumed_ for the next tag reader).
     std::string read_text()
     {
       std::string text;
-      while(not at_end() and peek() != '<')
+      while(not at_end())
       {
-        const char c = advance();
-        if(c == '&')
+        if(peek() != '<')
         {
-          read_entity(text);
+          const char c = advance();
+          if(c == '&')
+          {
+            read_entity(text);
+          }
+          else
+          {
+            text.push_back(c);
+          }
+          continue;
         }
-        else
+
+        // a '<': CDATA and comments are part of the text run; a real tag ends it
+        advance(); // '<'
+        if(not at_end() and peek() == '!')
         {
-          text.push_back(c);
+          advance(); // '!'
+          if(not at_end() and peek() == '[')
+          {
+            expect("[CDATA[");
+            read_cdata(text);
+          }
+          else if(not at_end() and peek() == '-')
+          {
+            advance();
+            if(not at_end() and peek() == '-') advance();
+            skip_until("-->"); // comments are not content
+          }
+          else
+          {
+            skip_until(">"); // other declaration, ignored
+          }
+          continue;
         }
+
+        // a genuine tag (close tag, in a text context): stop, leave it for the
+        // next reader, remembering that its '<' is already gone
+        lt_consumed_ = true;
+        break;
       }
       return text;
     }

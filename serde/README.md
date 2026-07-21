@@ -245,6 +245,22 @@ struct Doc
 `xml::text` and `xml::raw_content` are each limited to one member, are mutually
 exclusive, and cannot coexist with child-element members.
 
+`xml::cdata` writes a `str_c` member inside a CDATA section instead of
+entity-escaping it (a `]]>` in the payload is split across two sections). CDATA
+is read transparently, so the annotation only affects serialization:
+
+```cpp
+struct Script
+{
+  std::string             name;
+  [[= xml::cdata]] std::string code;
+};
+// XML: <Script><name>s</name><code><![CDATA[if (a < b) x;]]></code></Script>
+```
+
+On read, any element's text content accepts CDATA sections, plain text, and
+entity references interchangeably (they concatenate).
+
 ---
 
 ## `poly` serde
