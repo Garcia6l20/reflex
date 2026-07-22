@@ -692,6 +692,66 @@ TEST_CASE("reflex::serde::xml: qualified match wins over local")
   CHECK_EQ(value, Coll{7, 0});
 }
 
+struct[[= derive(Debug)]] Range
+{
+  [[= xml::attribute]] double min;
+  [[= xml::attribute]] double max;
+
+  constexpr bool operator==(Range const& other) const = default;
+};
+
+struct[[= derive(Debug)]] Limits
+{
+  std::string          name;
+  std::optional<Range> voltage;
+
+  constexpr bool operator==(Limits const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml: optional aggregate carried by a self-closing element")
+{
+  // A self-closing element has no body but its attributes still hold the value,
+  // so an optional aggregate must not be discarded as absent.
+  SUBCASE("self-closing with attributes")
+  {
+    const std::string_view in =
+        "<Limits><name>u5</name><voltage min=\"1.71\" max=\"3.6\"/></Limits>";
+    const auto value = xml::deserializer{in}.load<Limits>();
+    REQUIRE(value.voltage.has_value());
+    CHECK_EQ(value.voltage->min, doctest::Approx(1.71));
+    CHECK_EQ(value.voltage->max, doctest::Approx(3.6));
+  }
+  SUBCASE("element absent -> nullopt")
+  {
+    const std::string_view in    = "<Limits><name>u5</name></Limits>";
+    const auto             value = xml::deserializer{in}.load<Limits>();
+    CHECK_FALSE(value.voltage.has_value());
+  }
+  SUBCASE("roundtrip")
+  {
+    const Limits expected{"u5", Range{1.71, 3.6}};
+    std::string  out;
+    {
+      xml::serializer ser{out};
+      ser.dump(expected);
+    }
+    CHECK_EQ(
+        out,
+        "<Limits><name>u5</name>"
+        "<voltage min=\"1.71\" max=\"3.6\"></voltage></Limits>");
+    const auto back = xml::deserializer{out}.load<Limits>();
+    CHECK_EQ(back, expected);
+  }
+}
+
+TEST_CASE("reflex::serde::xml: self-closing optional text member stays nullopt")
+{
+  // the text counterpart: no body means no text, so still absent
+  const std::string_view in    = "<Opt><name>a</name><count/></Opt>";
+  const auto             value = xml::deserializer{in}.load<Opt>();
+  CHECK_EQ(value, Opt{"a", std::nullopt});
+}
+
 struct Nested
 {
   std::vector<std::vector<int>> matrix;

@@ -1152,14 +1152,16 @@ REFLEX_EXPORT namespace reflex::serde::xml
       return deserialize(*this, std::type_identity<T>{});
     }
 
-    // Optional member: an empty or self-closing element is nullopt. A scalar
-    // body is read inline; an aggregate/user body routes back through the CPO.
+    // Optional member: an empty or self-closing element holding text is
+    // nullopt. A scalar body is read inline; an aggregate/user body routes back
+    // through the CPO, self-closing included -- <Range Min="1" Max="2"/> has no
+    // body but still carries a value in its attributes.
     template <typename U>
     std::optional<U> read_optional(std::string name, bool self_closing, attr_list attrs)
     {
-      if(self_closing) return std::nullopt;
       if constexpr(xml_text_c<U>)
       {
+        if(self_closing) return std::nullopt;
         std::string text = read_text();
         read_close_tag();
         if(detail::trim(text).empty()) return std::nullopt;
@@ -1167,7 +1169,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
       else
       {
-        return read_child<U>(std::move(name), false, std::move(attrs));
+        return read_child<U>(std::move(name), self_closing, std::move(attrs));
       }
     }
 
