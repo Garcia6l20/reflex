@@ -41,16 +41,14 @@ REFLEX_EXPORT namespace std
     template <typename FormatContext>
     auto format(reflex::detail::debug_wrapper<T> const& wrapper, FormatContext& ctx) const
     {
-      decltype(auto) out = ctx.out();
-      out++              = '{';
-      bool first         = true;
+      decltype(auto) out   = std::format_to(ctx.out(), "{{");
+      bool           first = true;
       template for(constexpr auto& member : define_static_array(
                        nonstatic_data_members_of(^^T, std::meta::access_context::current())))
       {
         if(not first)
         {
-          out++ = ',';
-          out++ = ' ';
+          out = std::format_to(out, ", ");
         }
         else
         {
@@ -71,8 +69,7 @@ REFLEX_EXPORT namespace std
           out = std::format_to(out, "{}: <unformattable type>", identifier_of(member));
         }
       }
-      out++ = '}';
-      return out;
+      return std::format_to(out, "}}");
     }
   };
 
