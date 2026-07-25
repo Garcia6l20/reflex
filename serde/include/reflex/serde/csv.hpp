@@ -61,36 +61,79 @@ REFLEX_EXPORT namespace reflex::serde::csv
 
   namespace detail
   {
+  // Only a Format-deriving type materializes a string: its formatter is the only
+  // thing that can render it, and there is no way to aim that at the sink
+  // without a buffer.
   template <typename F> std::string field_text(F const& value)
   {
-    if constexpr(array_of_c<F>) // std::array<char, N>, trimmed at the first NUL
+    return std::format("{}", value);
+  }
+
+  // RFC 4180 quoting: quote the cell only when it contains a delimiter, quote, or
+  // line ending, and double any embedded quote.
+  template <typename Ser> void write_escaped(Ser& ser, std::string_view cell)
+  {
+    if(cell.find_first_of(",\"\r\n") == std::string_view::npos)
     {
-      return std::string{
-          std::string_view{value.data(), ::strnlen(value.data(), value.size())}};
+      ser.write_raw(cell);
+      return;
+    }
+    ser.write_char('"');
+    // One needle over the remainder of the cell, and the bound is cell.size(), so
+    // the doubling loop cannot restart the search from the front and go quadratic.
+    std::size_t pos = 0;
+    while(pos < cell.size())
+    {
+      const std::size_t n = cell.find('"', pos);
+      if(n == std::string_view::npos)
+      {
+        ser.write_raw(cell.substr(pos));
+        break;
+      }
+      ser.write_raw(cell.substr(pos, n - pos + 1)); // the run, quote included
+      ser.write_char('"');                          // the doubling
+      pos = n + 1;
+    }
+    ser.write_char('"');
+  }
+
+  // Branch order is load-bearing and must stay as written. number_c, then
+  // derives_c<Format>, then enum_c: a Format-deriving enum has to render through
+  // its own formatter, not as its underlying integer, or it does not read back.
+  template <typename Ser, typename F> void write_field(Ser& ser, F const& value)
+  {
+    if constexpr(optional_c<F>)
+    {
+      if(value.has_value()) write_field(ser, *value);
+      // an empty optional is an empty cell
+    }
+    else if constexpr(array_of_c<F>) // std::array<char, N>, trimmed at the first NUL
+    {
+      write_escaped(ser, std::string_view{value.data(), ::strnlen(value.data(), value.size())});
     }
     else if constexpr(str_c<F>)
     {
-      return std::string{std::string_view{value}};
+      write_escaped(ser, std::string_view{value});
     }
     else if constexpr(std::same_as<F, bool>)
     {
-      return value ? "true" : "false";
+      ser.write_raw(value ? "true" : "false"); // never needs quoting
     }
     else if constexpr(std::same_as<F, char>)
     {
-      return std::string(1, value);
+      write_escaped(ser, std::string_view{&value, 1});
     }
     else if constexpr(number_c<F>)
     {
-      return std::format("{}", value);
+      serde::detail::write_digits(ser, value); // never needs quoting
     }
     else if constexpr(derives_c<F, derive_t<Format>>)
     {
-      return std::format("{}", value);
+      write_escaped(ser, field_text(value));
     }
     else if constexpr(enum_c<F>)
     {
-      return std::format("{}", std::to_underlying(value));
+      serde::detail::write_digits(ser, std::to_underlying(value));
     }
     else
     {
@@ -98,65 +141,33 @@ REFLEX_EXPORT namespace reflex::serde::csv
     }
   }
 
-  // RFC 4180 quoting: quote the cell only when it contains a delimiter, quote, or
-  // line ending, and double any embedded quote.
-  template <typename OutputIt> void write_escaped(OutputIt& out, std::string_view cell)
-  {
-    if(cell.find_first_of(",\"\r\n") == std::string_view::npos)
-    {
-      for(char c : cell) out++ = c;
-      return;
-    }
-    out++ = '"';
-    for(char c : cell)
-    {
-      if(c == '"') out++ = '"';
-      out++ = c;
-    }
-    out++ = '"';
-  }
-
-  template <typename OutputIt, typename F> void write_field(OutputIt& out, F const& value)
-  {
-    if constexpr(optional_c<F>)
-    {
-      if(value.has_value()) write_escaped(out, field_text(*value));
-      // an empty optional is an empty cell
-    }
-    else
-    {
-      write_escaped(out, field_text(value));
-    }
-  }
-
-  // Writes one CRLF-terminated record: `write_cell<member>(out)` emits each cell, this handles
+  // Writes one CRLF-terminated record: `write_cell<member>(ser)` emits each cell, this handles
   // the comma separator and the line ending.
-  template <csv_row_c Row, typename OutputIt, typename WriteCell>
-  void write_record(OutputIt& out, WriteCell write_cell)
+  template <csv_row_c Row, typename Ser, typename WriteCell>
+  void write_record(Ser& ser, WriteCell write_cell)
   {
     bool first = true;
     template for(constexpr auto member : define_static_array(
                      nonstatic_data_members_of(^^Row, std::meta::access_context::current())))
     {
-      if(not first) out++ = ',';
+      if(not first) ser.write_char(',');
       else first = false;
-      write_cell.template operator()<member>(out);
+      write_cell.template operator()<member>(ser);
     }
-    out++ = '\r';
-    out++ = '\n';
+    ser.write_raw("\r\n");
   }
 
-  template <csv_row_c Row, typename OutputIt> void write_header(OutputIt& out)
+  template <csv_row_c Row, typename Ser> void write_header(Ser& ser)
   {
-    write_record<Row>(out, []<auto member>(OutputIt& o) {
+    write_record<Row>(ser, []<auto member>(Ser& s) {
       constexpr std::string_view name = serialized_name(member);
-      write_escaped(o, name);
+      write_escaped(s, name);
     });
   }
 
-  template <typename OutputIt, csv_row_c Row> void write_row(OutputIt& out, Row const& row)
+  template <typename Ser, csv_row_c Row> void write_row(Ser& ser, Row const& row)
   {
-    write_record<Row>(out, [&row]<auto member>(OutputIt& o) { write_field(o, row.[:member:]); });
+    write_record<Row>(ser, [&row]<auto member>(Ser& s) { write_field(s, row.[:member:]); });
   }
 
   template <typename F> F parse_field(std::string_view cell)
@@ -260,19 +271,17 @@ REFLEX_EXPORT namespace reflex::serde::csv
     requires csv_row_c<std::ranges::range_value_t<Seq>>
   OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Seq const& value)
   {
-    auto& out = ser.out();
-    detail::write_header<std::ranges::range_value_t<Seq>>(out);
-    for(auto const& row : value) detail::write_row(out, row);
-    return out;
+    detail::write_header<std::ranges::range_value_t<Seq>>(ser);
+    for(auto const& row : value) detail::write_row(ser, row);
+    return ser.out();
   }
 
   template <typename OutputIt, csv_row_c Row>
   OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt> & ser, Row const& value)
   {
-    auto& out = ser.out();
-    detail::write_header<Row>(out);
-    detail::write_row(out, value);
-    return out;
+    detail::write_header<Row>(ser);
+    detail::write_row(ser, value);
+    return ser.out();
   }
 
   template <std::input_iterator InputIt>
