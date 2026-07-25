@@ -5,6 +5,7 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <array>
 #include <cstring>
 
 #include <reflex/concepts.hpp>
@@ -325,12 +326,24 @@ REFLEX_EXPORT namespace reflex::serde::csv
     // Index of the first byte that can end a run of ordinary field content: a
     // delimiter, either line ending, or a quote. Everything before it is literal
     // and can be copied in one go.
+    //
+    // serde::detail::find_any cannot stop early here, the boundary is what it
+    // scans for, so every pass runs to the end of the buffer and the parse turns
+    // quadratic. The same call inside write_escaped is fine, its argument is one
+    // cell.
     static std::size_t field_end(std::string_view sv)
     {
+      static constexpr std::array<bool, 256> stops = [] {
+        std::array<bool, 256> t{};
+        t[static_cast<unsigned char>(',')]  = true;
+        t[static_cast<unsigned char>('\r')] = true;
+        t[static_cast<unsigned char>('\n')] = true;
+        t[static_cast<unsigned char>('"')]  = true;
+        return t;
+      }();
       for(std::size_t i = 0; i < sv.size(); ++i)
       {
-        const char c = sv[i];
-        if(c == ',' or c == '\r' or c == '\n' or c == '"') return i;
+        if(stops[static_cast<unsigned char>(sv[i])]) return i;
       }
       return std::string_view::npos;
     }
