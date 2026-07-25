@@ -6,6 +6,7 @@
 
 #ifndef REFLEX_MODULE
 #include <algorithm>
+#include <charconv>
 #include <concepts>
 #include <iterator>
 #include <optional>
@@ -121,6 +122,42 @@ REFLEX_EXPORT namespace reflex::serde::detail
       }
     }
   };
+
+  // Offset of the first byte of `set` at or after `pos`, npos if there is none.
+  // A min over per-character find() calls, not find_first_of: libstdc++ spells
+  // find_first_of as a loop over the input that rescans the needle set for every
+  // input byte, while find(char) is memchr.
+  //
+  // It is a min over N full memchr passes, so it only pays when the span is long
+  // and the needle set is small. Callers must pass a bounded `s`, a text node or
+  // an attribute value, never the whole remaining input: scanning to EOF for a
+  // byte that is not there turns a linear parse quadratic.
+  inline std::size_t find_any(std::string_view s, std::size_t pos, std::string_view set)
+  {
+    std::size_t best = std::string_view::npos;
+    for(char c : set)
+    {
+      const std::size_t n = s.find(c, pos);
+      if(n < best)
+      {
+        best = n;
+      }
+    }
+    return best;
+  }
+
+  // A scalar straight into the sink, no intermediate std::string. Two-argument
+  // to_chars is shortest-round-trip, which is what "{}" is specified to produce,
+  // so the bytes are the same.
+  //
+  // 64 bytes covers the shortest round-trip form of every type to_chars accepts
+  // here, so the result is never truncated.
+  template <typename Ser, typename N> void write_digits(Ser& ser, N value)
+  {
+    char       buf[64];
+    const auto r = std::to_chars(buf, buf + sizeof(buf), value);
+    ser.write_raw(std::string_view{buf, static_cast<std::size_t>(r.ptr - buf)});
+  }
 
   // What load<T>() reads: T, or the backend's default_load_type when T is omitted.
   template <typename Backend, typename T> struct loaded_type

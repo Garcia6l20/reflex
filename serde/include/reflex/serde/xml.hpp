@@ -331,30 +331,18 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
   }
 
-  // Offset of the first byte of `set` at or after `pos`, npos if there is none.
-  // `s` must be a bounded value, a text node or an attribute value, never the
-  // remaining input: scanning to EOF for a byte that is not there turns a linear
-  // parse quadratic.
-  inline std::size_t find_any(std::string_view s, std::size_t pos, std::string_view set)
-  {
-    std::size_t best = std::string_view::npos;
-    for(char c : set)
-    {
-      const std::size_t n = s.find(c, pos);
-      if(n < best)
-      {
-        best = n;
-      }
-    }
-    return best;
-  }
+  // find_any and write_digits live in serde::detail (detail/io.hpp) so csv and
+  // json can reach them. They are spelled serde::detail:: below rather than left
+  // to unqualified lookup: this namespace is reflex::serde::xml::detail, and
+  // reflex::serde::detail is not one of its enclosing scopes, so `detail::` alone
+  // resolves to this namespace and shadows the shared one.
 
   template <typename Ser> void write_text_escaped(Ser& ser, std::string_view text)
   {
     std::size_t pos = 0;
     while(pos < text.size())
     {
-      const std::size_t n = find_any(text, pos, "&<>");
+      const std::size_t n = serde::detail::find_any(text, pos, "&<>");
       if(n == std::string_view::npos)
       {
         ser.write_raw(text.substr(pos));
@@ -385,7 +373,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     std::size_t pos = 0;
     while(pos < text.size())
     {
-      const std::size_t n = find_any(text, pos, "&<\"");
+      const std::size_t n = serde::detail::find_any(text, pos, "&<\"");
       if(n == std::string_view::npos)
       {
         ser.write_raw(text.substr(pos));
@@ -422,15 +410,6 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
   }
 
-  // 64 bytes covers the shortest round-trip form of every type to_chars accepts
-  // here, so the result is never truncated.
-  template <typename Ser, typename N> void write_digits(Ser& ser, N value)
-  {
-    char       buf[64];
-    const auto r = std::to_chars(buf, buf + sizeof(buf), value);
-    ser.write_raw(std::string_view{buf, static_cast<std::size_t>(r.ptr - buf)});
-  }
-
   // A scalar straight into the sink. field_text survives only for the
   // Format-derived case, which needs std::format to render.
   template <bool Attr = false, typename Ser, typename F>
@@ -454,10 +433,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
     else if constexpr(number_c<F>)
     {
-      // Two-argument to_chars is shortest-round-trip, which is what "{}" is
-      // specified to produce, so the rendered bytes are the same. Digits never need
-      // escaping.
-      write_digits(ser, value);
+      // Digits never need escaping.
+      serde::detail::write_digits(ser, value);
     }
     else if constexpr(derives_c<F, derive_t<Format>>)
     {
@@ -467,7 +444,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
     else if constexpr(enum_c<F>)
     {
-      write_digits(ser, std::to_underlying(value));
+      serde::detail::write_digits(ser, std::to_underlying(value));
     }
     else
     {
