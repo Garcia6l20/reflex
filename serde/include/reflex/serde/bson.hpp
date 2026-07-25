@@ -5,6 +5,8 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <charconv>
+
 #include <reflex/serde.hpp>
 #include <reflex/serde/bson_value.hpp>
 #endif
@@ -137,7 +139,11 @@ constexpr void write_array_value(bytes& out, std::string_view key, T const& valu
     std::size_t idx = 0;
     for(auto const& element : value)
     {
-      auto index = std::to_string(idx++);
+      // BSON array keys are the decimal indices. write_element takes a string_view, so render
+      // into a stack buffer rather than constructing a std::string per element.
+      char       buf[24];
+      const auto res   = std::to_chars(buf, buf + sizeof(buf), idx++);
+      const auto index = std::string_view{buf, static_cast<std::size_t>(res.ptr - buf)};
       reflex::visit([&](auto const& v) { write_element(doc, index, v); }, element);
     }
   });
@@ -587,9 +593,11 @@ REFLEX_EXPORT namespace reflex::serde::bson
           throw std::runtime_error("Expected BSON string type");
         }
         auto decoded = cursor_.template read<std::string, true>();
-        if constexpr(requires { value = decoded; })
+        // Probe with the assignment that is actually performed, so the decoded string
+        // is moved into the member rather than copied.
+        if constexpr(requires { value = std::move(decoded); })
         {
-          value = decoded;
+          value = std::move(decoded);
         }
         else
         {
