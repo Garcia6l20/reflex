@@ -322,124 +322,126 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
   }
 
-  template <typename OutputIt> void write_text_escaped(OutputIt& out, std::string_view text)
+  template <typename Ser> void write_text_escaped(Ser& ser, std::string_view text)
   {
     for(char c : text)
     {
       switch(c)
       {
         case '&':
-          std::ranges::copy(std::string_view{"&amp;"}, out);
+          ser.write_raw("&amp;");
           break;
         case '<':
-          std::ranges::copy(std::string_view{"&lt;"}, out);
+          ser.write_raw("&lt;");
           break;
         case '>':
-          std::ranges::copy(std::string_view{"&gt;"}, out);
+          ser.write_raw("&gt;");
           break;
         default:
-          out++ = c;
+          ser.write_char(c);
       }
     }
   }
 
-  template <typename OutputIt> void write_tag(OutputIt& out, std::string_view name, bool closing)
+  template <typename Ser> void write_tag(Ser& ser, std::string_view name, bool closing)
   {
-    out++ = '<';
     if(closing)
     {
-      out++ = '/';
+      ser.write_raw("</");
     }
-    for(char c : name) out++ = c;
-    out++ = '>';
+    else
+    {
+      ser.write_char('<');
+    }
+    ser.write_raw(name);
+    ser.write_char('>');
   }
 
   // Emit CDATA content, splitting any "]]>" across two sections (the only
   // sequence a CDATA section cannot contain): "]]" + reopen + ">".
-  template <typename OutputIt> void write_cdata_content(OutputIt& out, std::string_view text)
+  template <typename Ser> void write_cdata_content(Ser& ser, std::string_view text)
   {
     for(std::size_t i = 0; i < text.size(); ++i)
     {
       if(text[i] == '>' and i >= 2 and text[i - 1] == ']' and text[i - 2] == ']')
       {
-        std::ranges::copy(std::string_view{"]]><![CDATA[>"}, out);
+        ser.write_raw("]]><![CDATA[>");
       }
       else
       {
-        out++ = text[i];
+        ser.write_char(text[i]);
       }
     }
   }
 
   // Element text content: a CDATA section when AsCdata, else entity-escaped.
-  template <bool AsCdata, typename OutputIt, typename F>
-  void write_text_body(OutputIt& out, F const& value)
+  template <bool AsCdata, typename Ser, typename F> void write_text_body(Ser& ser, F const& value)
   {
     if constexpr(AsCdata)
     {
-      std::ranges::copy(std::string_view{"<![CDATA["}, out);
-      write_cdata_content(out, std::string_view{value});
-      std::ranges::copy(std::string_view{"]]>"}, out);
+      ser.write_raw("<![CDATA[");
+      write_cdata_content(ser, std::string_view{value});
+      ser.write_raw("]]>");
     }
     else
     {
-      write_text_escaped(out, field_text(value));
+      write_text_escaped(ser, field_text(value));
     }
   }
 
   // <name><![CDATA[...]]></name>
-  template <typename OutputIt>
-  void write_cdata_element(OutputIt& out, std::string_view name, std::string_view text)
+  template <typename Ser>
+  void write_cdata_element(Ser& ser, std::string_view name, std::string_view text)
   {
-    write_tag(out, name, false);
-    std::ranges::copy(std::string_view{"<![CDATA["}, out);
-    write_cdata_content(out, text);
-    std::ranges::copy(std::string_view{"]]>"}, out);
-    write_tag(out, name, true);
+    write_tag(ser, name, false);
+    ser.write_raw("<![CDATA[");
+    write_cdata_content(ser, text);
+    ser.write_raw("]]>");
+    write_tag(ser, name, true);
   }
 
   // Attribute-value escaping: '&', '<', and the delimiting '"'.
-  template <typename OutputIt> void write_attr_escaped(OutputIt& out, std::string_view text)
+  template <typename Ser> void write_attr_escaped(Ser& ser, std::string_view text)
   {
     for(char c : text)
     {
       switch(c)
       {
         case '&':
-          std::ranges::copy(std::string_view{"&amp;"}, out);
+          ser.write_raw("&amp;");
           break;
         case '<':
-          std::ranges::copy(std::string_view{"&lt;"}, out);
+          ser.write_raw("&lt;");
           break;
         case '"':
-          std::ranges::copy(std::string_view{"&quot;"}, out);
+          ser.write_raw("&quot;");
           break;
         default:
-          out++ = c;
+          ser.write_char(c);
       }
     }
   }
 
   // A member -> zero (empty optional) or one ` name="value"` pair in the open tag.
-  template <typename OutputIt, typename F>
-  void write_attribute(OutputIt& out, std::string_view name, F const& value)
+  template <typename Ser, typename F>
+  void write_attribute(Ser& ser, std::string_view name, F const& value)
   {
     if constexpr(optional_c<F>)
     {
       if(value.has_value())
       {
-        write_attribute(out, name, *value);
+        write_attribute(ser, name, *value);
       }
       // an empty optional attribute is omitted
     }
     else
     {
-      out++ = ' ';
-      for(char c : name) out++ = c;
-      out++ = '=';
-      out++ = '"';
-      write_attr_escaped(out, field_text(value));
-      out++ = '"';
+      ser.write_char(' ');
+      ser.write_raw(name);
+      ser.write_char('=');
+      ser.write_char('"');
+      write_attr_escaped(ser, field_text(value));
+      ser.write_char('"');
     }
   }
 
@@ -570,11 +572,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
   OutputIt tag_invoke(tag_default_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
   {
     const std::string_view name = ser.element_name(display_string_of(dealias(decay(^^T))));
-    auto&                  out  = ser.out();
-    detail::write_tag(out, name, false);
-    detail::write_text_escaped(out, detail::field_text(value));
-    detail::write_tag(out, name, true);
-    return out;
+    detail::write_tag(ser, name, false);
+    detail::write_text_escaped(ser, detail::field_text(value));
+    detail::write_tag(ser, name, true);
+    return ser.out();
   }
 
   // Aggregate: <name> + one child element per member + </name>. Members recurse
@@ -588,19 +589,18 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // at the document root a namespaced type prefixes its own type name
     const std::string type_default = detail::qualify(type_prefix, identifier_of(dealias(decay(^^Agg))));
     const std::string_view name = ser.element_name(type_default);
-    auto&                  out  = ser.out();
 
     // open tag, with an xmlns declaration and attribute members folded in
-    out++ = '<';
-    for(char c : name) out++ = c;
+    ser.write_char('<');
+    ser.write_raw(name);
     if constexpr(not type_prefix.empty())
     {
-      std::ranges::copy(std::string_view{" xmlns:"}, out);
-      std::ranges::copy(type_prefix, out);
-      out++ = '=';
-      out++ = '"';
-      detail::write_attr_escaped(out, type_uri);
-      out++ = '"';
+      ser.write_raw(" xmlns:");
+      ser.write_raw(type_prefix);
+      ser.write_char('=');
+      ser.write_char('"');
+      detail::write_attr_escaped(ser, type_uri);
+      ser.write_char('"');
     }
     template for(constexpr auto member : define_static_array(
                      nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
@@ -610,7 +610,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
         // attributes take a prefix only from a member-level ns annotation
         constexpr std::string_view apfx = ns_prefix_of(member);
         const std::string          aqn  = detail::qualify(apfx, serialized_name(member));
-        detail::write_attribute(out, aqn, value.[:member:]);
+        detail::write_attribute(ser, aqn, value.[:member:]);
       }
     }
 
@@ -628,35 +628,34 @@ REFLEX_EXPORT namespace reflex::serde::xml
           {
             if(value.[:member:].has_value())
             {
-              out++ = '>';
-              detail::write_text_body<as_cdata>(out, value.[:member:].value());
-              detail::write_tag(out, name, true);
+              ser.write_char('>');
+              detail::write_text_body<as_cdata>(ser, value.[:member:].value());
+              detail::write_tag(ser, name, true);
             }
             else
             {
               // absent text -> self-closing <name .../>
-              out++ = '/';
-              out++ = '>';
+              ser.write_raw("/>");
             }
           }
           else
           {
-            out++ = '>';
-            detail::write_text_body<as_cdata>(out, value.[:member:]);
-            detail::write_tag(out, name, true);
+            ser.write_char('>');
+            detail::write_text_body<as_cdata>(ser, value.[:member:]);
+            detail::write_tag(ser, name, true);
           }
         }
         else if constexpr(is_raw_content(member))
         {
-          out++ = '>';
-          for(char c : value.[:member:]) out++ = c; // inner XML verbatim
-          detail::write_tag(out, name, true);
+          ser.write_char('>');
+          ser.write_raw(std::string_view{value.[:member:]}); // inner XML verbatim
+          detail::write_tag(ser, name, true);
         }
       }
     }
     else
     {
-      out++ = '>';
+      ser.write_char('>');
       // non-attribute members as child elements
       template for(constexpr auto member : define_static_array(
                        nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
@@ -673,7 +672,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
           const std::string          cqn  = detail::qualify(cpfx, serialized_name(member));
           if constexpr(is_cdata(member))
           {
-            detail::write_cdata_element(out, cqn, std::string_view{value.[:member:]});
+            detail::write_cdata_element(ser, cqn, std::string_view{value.[:member:]});
           }
           else
           {
@@ -681,9 +680,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
           }
         }
       }
-      detail::write_tag(out, name, true);
+      detail::write_tag(ser, name, true);
     }
-    return out;
+    return ser.out();
   }
 
   template <std::input_iterator InputIt>

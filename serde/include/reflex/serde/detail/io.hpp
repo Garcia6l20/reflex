@@ -5,11 +5,13 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <algorithm>
 #include <concepts>
 #include <iterator>
 #include <optional>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #endif
 
@@ -24,12 +26,33 @@ REFLEX_EXPORT namespace reflex::serde::detail
     using type = T;
   };
 
+  // A back_insert_iterator exposes its container type but not the container, so
+  // the bulk-append fast path needs the container captured at construction. This
+  // detects an output iterator whose container can take a whole string_view at
+  // once; everything else (ostreambuf_iterator, plain iterators) falls back to a
+  // per-character copy.
+  template <typename OutputIt> struct bulk_sink
+  {
+    using type                      = void;
+    static constexpr bool available = false;
+  };
+  template <typename OutputIt>
+    requires requires(typename OutputIt::container_type& c) { c.append(std::string_view{}); }
+  struct bulk_sink<OutputIt>
+  {
+    using type                      = typename OutputIt::container_type;
+    static constexpr bool available = true;
+  };
+
   // Shared serializer state and entry point. A backend serializer derives from
   // this, declares a `format_name` (and an optional `format_hint`) static member
   // for diagnostics, and adds its own tag_invoke overloads.
   template <typename OutputIt> class serializer_base
   {
     OutputIt out_;
+    // The container behind out_, when there is one and it can bulk-append.
+    // Null when the serializer was handed a bare output iterator.
+    typename bulk_sink<OutputIt>::type* sink_ = nullptr;
 
   public:
     serializer_base(OutputIt out) : out_(out)
@@ -38,11 +61,39 @@ REFLEX_EXPORT namespace reflex::serde::detail
     template <typename T>
       requires std::constructible_from<OutputIt, T&>
     serializer_base(T& out) : out_(OutputIt(out))
-    {}
+    {
+      if constexpr(bulk_sink<OutputIt>::available
+                   and std::convertible_to<T*, typename bulk_sink<OutputIt>::type*>)
+      {
+        sink_ = &out;
+      }
+    }
 
     constexpr OutputIt& out()
     {
       return out_;
+    }
+
+    // Bulk write. One append when the output is a container that supports it,
+    // a per-character copy through the iterator otherwise. Same bytes either
+    // way: libstdc++ has no bulk overload of ranges::copy for
+    // back_insert_iterator, so without this every byte costs a push_back.
+    void write_raw(std::string_view s)
+    {
+      if constexpr(bulk_sink<OutputIt>::available)
+      {
+        if(sink_ != nullptr)
+        {
+          sink_->append(s);
+          return;
+        }
+      }
+      std::ranges::copy(s, out_);
+    }
+
+    void write_char(char c)
+    {
+      out_++ = c;
     }
 
     // The explicit object parameter makes `self` the derived serializer, so the
