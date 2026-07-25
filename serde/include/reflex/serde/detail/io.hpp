@@ -155,8 +155,11 @@ REFLEX_EXPORT namespace reflex::serde::detail
     subrange_deserializer(InputIt begin, InputIt end) : cursor_{begin, end}
     {}
 
+    // A type exposing both view() and begin()/end() (mmap_input_stream does)
+    // would make the two overloads ambiguous. Prefer the range spelling: it is
+    // the one that carries the iterator type the cursor is built from.
     template <typename T>
-      requires requires(T const& v) { v.view(); }
+      requires requires(T const& v) { v.view(); } and (not std::ranges::range<T const>)
     subrange_deserializer(T const& v) : cursor_{v.view().begin(), v.view().end()}
     {}
 
@@ -190,6 +193,16 @@ REFLEX_EXPORT namespace reflex::serde::detail
 
 // Deduction guides are neither inherited from subrange_deserializer nor expressible through
 // reflection, so each backend stamps the shared set with this macro.
+//
+// The contiguous_range guide is what makes serde::mmap_input_stream, or any other
+// user type exposing contiguous char iterators, land on the bulk-scan path. The
+// basic_string and basic_string_view guides are more specialized so they still win
+// for those two, spelling the same iterator type.
+//
+// The istream guide deduces std::istreambuf_iterator, which is not contiguous, so
+// every backend's bulk_scan is false and the parse runs a character at a time. It
+// stays for sources that cannot be mapped (a pipe, a socket, std::cin). For a
+// file, use serde::mmap_input_stream.
 #define REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer)                  \
   template <typename... TArgs>                                                    \
   deserializer(std::basic_string<TArgs...> const& in)                             \
@@ -197,6 +210,8 @@ REFLEX_EXPORT namespace reflex::serde::detail
   template <typename... TArgs>                                                    \
   deserializer(std::basic_string_view<TArgs...> const& in)                        \
       -> deserializer<typename std::basic_string_view<TArgs...>::const_iterator>; \
+  template <std::ranges::contiguous_range R>                                      \
+  deserializer(R const& in) -> deserializer<std::ranges::const_iterator_t<R>>;    \
   template <typename CharT, typename CharTrait = std::char_traits<CharT>>         \
   deserializer(std::basic_istream<CharT, CharTrait>)                              \
       ->deserializer<std::istreambuf_iterator<CharT>>

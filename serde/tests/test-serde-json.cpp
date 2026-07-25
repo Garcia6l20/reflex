@@ -412,6 +412,15 @@ TEST_CASE("reflex::core::json file roundtrip")
     CHECK_EQ(value, expected);
   }
 
+  {
+    // the same file through the contiguous path: one deduction guide, no
+    // json-specific entry point, and bulk_scan stays on
+    serde::mmap_input_stream in{json_path};
+    auto                     de = json::deserializer{in};
+    static_assert(std::same_as<decltype(de), json::deserializer<const char*>>);
+    CHECK_EQ(de.load<S>(), expected);
+  }
+
   std::filesystem::remove(json_path);
 }
 

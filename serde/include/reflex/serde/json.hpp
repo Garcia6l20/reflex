@@ -600,17 +600,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
   };
 
-  template <typename... TArgs>
-  deserializer(std::basic_string<TArgs...> const& in)
-      -> deserializer<typename std::basic_string<TArgs...>::const_iterator>;
-
-  template <typename... TArgs>
-  deserializer(std::basic_string_view<TArgs...> const& in)
-      -> deserializer<typename std::basic_string_view<TArgs...>::const_iterator>;
-
-  template <typename CharT, typename CharTrait = std::char_traits<CharT>>
-  deserializer(std::basic_istream<CharT, CharTrait>)
-      -> deserializer<std::istreambuf_iterator<CharT>>;
+  REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
   template <typename InputIt, object_visitable_c Map>
     requires(
