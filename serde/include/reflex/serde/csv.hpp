@@ -7,6 +7,7 @@
 #ifndef REFLEX_MODULE
 #include <array>
 #include <cstring>
+#include <deque>
 
 #include <reflex/concepts.hpp>
 #include <reflex/format.hpp>
@@ -239,11 +240,14 @@ REFLEX_EXPORT namespace reflex::serde::csv
     }
   }
 
-  template <csv_row_c Row>
+  // The header is owned because it has to outlive every record. The cells are
+  // whatever read_record hands out, which on contiguous input is a view into the
+  // input buffer, so Cell is deduced rather than fixed.
+  template <csv_row_c Row, typename Cell>
   void assign_row(
-      Row&                            row,
-      std::span<const std::string>    header,
-      std::span<const std::string>    cells)
+      Row&                         row,
+      std::span<const std::string> header,
+      std::span<const Cell>        cells)
   {
     for(std::size_t i = 0; i < header.size() and i < cells.size(); ++i)
     {
@@ -348,17 +352,74 @@ REFLEX_EXPORT namespace reflex::serde::csv
       return std::string_view::npos;
     }
 
+    // One field of a record. On contiguous input a field is almost always a
+    // single run of the input buffer, so it is handed out as a view of it. A
+    // stream cursor has no buffer to point into and owns its fields instead.
+    using field_str  = std::conditional_t<bulk_scan, std::string_view, std::string>;
+    using field_list = std::vector<field_str>;
+
     // Read one RFC 4180 record into its fields, or nullopt at end of input.
     // Quoted fields may span embedded commas, quotes (doubled), and line breaks.
-    std::optional<std::vector<std::string>> read_record()
+    //
+    // The fields are views into the input buffer, valid until the next
+    // read_record() on this deserializer and only while that buffer is alive. A
+    // field that needed decoding points into a pool the next read_record() clears.
+    // Copy a field to keep it past the record it came from.
+    std::optional<std::span<const field_str>> read_record()
     {
       if(at_end()) return std::nullopt;
 
-      std::vector<std::string> fields;
-      // Enough for the common shape, so the vector does not grow from empty per record.
-      fields.reserve(8);
-      std::string field;
-      bool        in_quotes = false;
+      fields_.clear();
+      pool_.clear();
+
+      std::string      scratch;             // stream mode accumulator
+      std::string_view run;                 // borrowed run, null data means unset
+      std::string*     owned = nullptr;     // set once the field had to be decoded
+      bool             in_quotes = false;
+
+      // Append to the field under construction. In borrowed mode this extends the
+      // run while the new bytes are physically adjacent to it, so a field that never
+      // needed decoding stays one view. The first non-adjacent append materializes.
+      auto add = [&](std::string_view s) {
+        if constexpr(bulk_scan)
+        {
+          if(owned != nullptr)
+          {
+            owned->append(s);
+          }
+          else if(run.data() == nullptr)
+          {
+            run = s;
+          }
+          else if(run.data() + run.size() == s.data())
+          {
+            run = std::string_view{run.data(), run.size() + s.size()};
+          }
+          else
+          {
+            // References into a deque survive its growth, which a vector's do not.
+            owned = &pool_.emplace_back(run);
+            owned->append(s);
+          }
+        }
+        else
+        {
+          scratch.append(s);
+        }
+      };
+      auto end_field = [&] {
+        if constexpr(bulk_scan)
+        {
+          fields_.push_back(owned != nullptr ? std::string_view{*owned} : run);
+          run   = std::string_view{};
+          owned = nullptr;
+        }
+        else
+        {
+          fields_.push_back(std::move(scratch));
+          scratch.clear();
+        }
+      };
 
       while(not at_end())
       {
@@ -370,19 +431,26 @@ REFLEX_EXPORT namespace reflex::serde::csv
           // definition contains none of them.
           //
           // Both scans are bounded by what is then consumed, so the parse stays
-          // linear. Neither restarts from the front of the field after a
-          // doubled quote.
+          // linear. Neither restarts from the front of the field after a doubled
+          // quote.
           const std::string_view sv = rest();
           const std::size_t      n =
               in_quotes ? sv.find('"') // inside quotes only a quote is special
                         : field_end(sv);
-          const std::size_t run = (n == std::string_view::npos) ? sv.size() : n;
-          if(run != 0)
+          const std::size_t len = (n == std::string_view::npos) ? sv.size() : n;
+          if(len != 0)
           {
-            field.append(sv.substr(0, run));
-            skip(run);
+            add(sv.substr(0, len));
+            skip(len);
             continue;
           }
+        }
+        // The address of the byte about to be consumed, so a single significant
+        // byte can extend the borrowed run rather than break it.
+        [[maybe_unused]] const char* at = nullptr;
+        if constexpr(bulk_scan)
+        {
+          at = rest().data();
         }
         const char c = advance();
         if(in_quotes)
@@ -391,7 +459,11 @@ REFLEX_EXPORT namespace reflex::serde::csv
           {
             if(not at_end() and peek() == '"')
             {
-              field.push_back('"');
+              // The pair emits one quote, and it is the first of the two, which
+              // is still adjacent to the run. The second is skipped, and that is
+              // what breaks adjacency for whatever follows.
+              if constexpr(bulk_scan) { add(std::string_view{at, 1}); }
+              else { scratch.push_back('"'); }
               advance();
             }
             else
@@ -401,7 +473,8 @@ REFLEX_EXPORT namespace reflex::serde::csv
           }
           else
           {
-            field.push_back(c);
+            if constexpr(bulk_scan) { add(std::string_view{at, 1}); }
+            else { scratch.push_back(c); }
           }
         }
         else if(c == '"')
@@ -410,8 +483,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
         }
         else if(c == ',')
         {
-          fields.push_back(std::move(field));
-          field.clear();
+          end_field();
         }
         else if(c == '\r')
         {
@@ -424,14 +496,21 @@ REFLEX_EXPORT namespace reflex::serde::csv
         }
         else
         {
-          field.push_back(c);
+          if constexpr(bulk_scan) { add(std::string_view{at, 1}); }
+          else { scratch.push_back(c); }
         }
       }
 
-      fields.push_back(std::move(field));
-      return fields;
+      end_field();
+      return std::span<const field_str>{fields_};
     }
 
+  private:
+    field_list fields_;
+    // Only the fields that needed decoding land here, so it stays empty on input
+    // that has no doubled quotes. A deque rather than a vector because the views
+    // handed out must survive the next emplace_back.
+    std::deque<std::string> pool_;
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
@@ -442,15 +521,18 @@ REFLEX_EXPORT namespace reflex::serde::csv
   {
     using Row = std::ranges::range_value_t<Seq>;
     Seq  result{};
-    auto header = de.read_record();
-    if(not header) return result;
+    auto header_rec = de.read_record();
+    if(not header_rec) return result;
+    // read_record's fields die at the next call and the header is needed for every
+    // record after this one, so it is copied here.
+    const std::vector<std::string> header(header_rec->begin(), header_rec->end());
 
     while(auto record = de.read_record())
     {
       // tolerate a blank trailing line (a single empty field)
       if(record->size() == 1 and record->front().empty()) continue;
       Row row{};
-      detail::assign_row(row, *header, *record);
+      detail::assign_row(row, std::span<const std::string>{header}, *record);
       result.push_back(std::move(row));
     }
     return result;
@@ -459,13 +541,16 @@ REFLEX_EXPORT namespace reflex::serde::csv
   template <typename InputIt, csv_row_c Row>
   Row tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Row>)
   {
-    auto header = de.read_record();
-    if(not header) throw std::runtime_error("CSV: missing header row");
+    auto header_rec = de.read_record();
+    if(not header_rec) throw std::runtime_error("CSV: missing header row");
+    // Must be copied before the next read_record, which invalidates it.
+    const std::vector<std::string> header(header_rec->begin(), header_rec->end());
+
     auto record = de.read_record();
     if(not record) throw std::runtime_error("CSV: missing data row");
 
     Row row{};
-    detail::assign_row(row, *header, *record);
+    detail::assign_row(row, std::span<const std::string>{header}, *record);
     return row;
   }
 
