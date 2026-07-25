@@ -845,6 +845,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
     static constexpr bool bulk_scan =
         std::contiguous_iterator<InputIt> and std::same_as<std::iter_value_t<InputIt>, char>;
 
+    // Internal tag-name carrier: borrowed from the input when it is in memory,
+    // owned otherwise. Never escapes the deserializer.
+    using name_t = std::conditional_t<bulk_scan, std::string_view, std::string>;
+
     // The unconsumed input. Every scan below is bounded by what it is about to
     // consume: a run that is scanned is always then advanced over, so the parse
     // stays linear. Searching the whole remaining input for a byte that is not
@@ -914,7 +918,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     }
 
-    std::string read_name()
+    name_t read_name()
     {
       if constexpr(bulk_scan)
       {
@@ -925,7 +929,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
         const std::size_t      n  = sv.find_first_of(" \t\n\v\f\r>/?");
         const std::string_view name = (n == std::string_view::npos) ? sv : sv.substr(0, n);
         skip(name.size());
-        return std::string{name};
+        return name;
       }
       else
       {
@@ -1022,10 +1026,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
     };
     struct tag_head
     {
-      tag_kind    kind;
-      std::string name;
-      bool        self_closing;
-      attr_list   attributes; // open tags only
+      tag_kind  kind;
+      name_t    name;
+      bool      self_closing;
+      attr_list attributes; // open tags only
     };
 
     // The one tag reader every loop is built on. Skips text, whitespace, XML
@@ -1073,7 +1077,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
           skip_until(">"); // the name is never read for a close tag
           return {tag_kind::close, {}, false, {}};
         }
-        std::string name          = read_name();
+        name_t name                = read_name();
         auto [self_closing, attrs] = read_attributes();
         return {tag_kind::open, std::move(name), self_closing, std::move(attrs)};
       }
@@ -1096,7 +1100,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
         throw std::runtime_error("Expected an XML element");
       }
       current_attributes_ = std::move(head.attributes);
-      return {std::move(head.name), head.self_closing};
+      return {std::string(head.name), head.self_closing};
     }
 
     // Attributes of the element whose open tag read_open_tag last returned.
@@ -1345,9 +1349,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // Read one element's value into T. The open tag (name, self_closing, attrs)
     // has been consumed by read_children; stash it and re-enter deserialize so
     // T's own overload (including any user override) handles the element.
-    template <typename T> T read_child(std::string name, bool self_closing, attr_list attrs)
+    template <typename T> T read_child(name_t name, bool self_closing, attr_list attrs)
     {
-      pending_tag_ = open_tag_t{std::move(name), self_closing, std::move(attrs)};
+      pending_tag_ = open_tag_t{std::string(name), self_closing, std::move(attrs)};
       return deserialize(*this, std::type_identity<T>{});
     }
 
@@ -1356,7 +1360,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // through the CPO, self-closing included -- <Range Min="1" Max="2"/> has no
     // body but still carries a value in its attributes.
     template <typename U>
-    std::optional<U> read_optional(std::string name, bool self_closing, attr_list attrs)
+    std::optional<U> read_optional(name_t name, bool self_closing, attr_list attrs)
     {
       if constexpr(xml_text_c<U>)
       {
