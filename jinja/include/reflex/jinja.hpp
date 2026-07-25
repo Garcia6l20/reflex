@@ -410,6 +410,11 @@ REFLEX_EXPORT namespace reflex::jinja
         {
           auto arg = trim(trimmed.substr(7));
           children.push_back(element{include_block{parse_string_literal(arg, "include")}});
+
+          if(right_trim)
+          {
+            trim_next_text_left = true;
+          }
         }
         else if(trimmed.starts_with("block ") or trimmed == "block")
         {
@@ -774,9 +779,15 @@ REFLEX_EXPORT namespace reflex::jinja
   template <typename... Ts> using context = expr::context<Ts...>;
   using basic_context                     = context<>;
 
+  // Renders without an environment: {% include %} and {% extends %} cannot be resolved, use
+  // environment::render_to for templates that need them.
   template <typename OutputIt, typename ContextT = basic_context>
   OutputIt render_to(OutputIt out, const template_& tmpl, ContextT& ctx)
   {
+    if(tmpl.extends)
+    {
+      throw std::runtime_error("{% extends %} requires an environment");
+    }
     return detail::render_children_to(out, tmpl.children, ctx, nullptr);
   }
 

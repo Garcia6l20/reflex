@@ -4,7 +4,12 @@
 #define REFLEX_EXPORT
 #endif
 
+#include <reflex/jinja.hpp>
+
 #ifndef REFLEX_MODULE
+#include <reflex/scope_guard.hpp>
+
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -20,25 +25,33 @@ REFLEX_EXPORT namespace reflex::jinja
   // A loader never throws on a miss, `environment::get` decides whether a miss is fatal.
   using loader = std::function<std::optional<std::string>(std::string_view name)>;
 
+  // Loads templates from `root`. Names that would escape `root` (absolute, or climbing through
+  // '..') are refused: template names reach this through {% include %}, hence from template text.
   inline loader filesystem_loader(std::filesystem::path root, std::string ext = ".jinja")
   {
     return [root = std::move(root),
             ext  = std::move(ext)](std::string_view name) -> std::optional<std::string> {
       auto relative = std::string{name};
-      if(!ext.empty() and !relative.ends_with(ext))
+      if(not ext.empty() and not relative.ends_with(ext))
       {
         relative += ext;
       }
 
-      auto            path = root / relative;
+      auto normalized = std::filesystem::path{relative}.lexically_normal();
+      if(normalized.is_absolute() or normalized.native().starts_with(".."))
+      {
+        return std::nullopt;
+      }
+
+      auto            path = root / normalized;
       std::error_code ec;
-      if(!std::filesystem::is_regular_file(path, ec))
+      if(not std::filesystem::is_regular_file(path, ec))
       {
         return std::nullopt;
       }
 
       std::ifstream input{path, std::ios::binary};
-      if(!input)
+      if(not input)
       {
         return std::nullopt;
       }
@@ -76,16 +89,20 @@ REFLEX_EXPORT namespace reflex::jinja
       }
 
       auto source = load_(name);
-      if(!source)
+      if(not source)
       {
         throw runtime_error("Template '{}' not found", name);
       }
 
-      // The buffer must never move: parsed nodes hold string_views into it.
-      auto [source_it, _] =
-          sources_.emplace(std::string{name}, std::make_unique<std::string>(std::move(*source)));
-      auto [parsed_it, inserted] = parsed_.emplace(std::string{name}, parse(*source_it->second));
-      return parsed_it->second;
+      // std::map nodes never move, so the string_views the parsed tree holds into the stored
+      // source stay valid. A failed parse must not leave the source behind: the next get()
+      // would then reuse it and keep reporting the stale error.
+      auto [source_it, _] = sources_.insert_or_assign(std::string{name}, std::move(*source));
+      scope_guard rollback{[&] { sources_.erase(source_it); }};
+
+      auto& parsed = parsed_.emplace(std::string{name}, parse(source_it->second)).first->second;
+      rollback.disable();
+      return parsed;
     }
 
     bool has(std::string_view name)
@@ -150,8 +167,10 @@ REFLEX_EXPORT namespace reflex::jinja
     // constraint on it. Includes and inheritance resolve through this environment.
     template <typename ContextT> std::string render_source(std::string_view source, ContextT& ctx)
     {
-      const auto& owned = *anonymous_sources_.emplace_back(std::make_unique<std::string>(source));
-      auto        tmpl  = parse(owned);
+      // Nothing outlives the call: the tree dies here and the output is a fresh string, so the
+      // copy can stay local.
+      const std::string owned{source};
+      auto              tmpl = parse(owned);
 
       std::string          result;
       detail::render_state state{.env = this, .include_stack = {}, .block_overrides = {}};
@@ -161,11 +180,10 @@ REFLEX_EXPORT namespace reflex::jinja
 
   private:
     loader load_;
-    // Node-stable storage: string_view slices in template_ point into these, so the buffer must
-    // never move -> hold it behind a unique_ptr.
-    std::map<std::string, std::unique_ptr<std::string>, std::less<>> sources_;
-    std::map<std::string, template_, std::less<>>                    parsed_;
-    std::vector<std::unique_ptr<std::string>>                        anonymous_sources_;
+    // Node-stable storage: the string_view slices in template_ point into these sources, and
+    // std::map never moves a mapped value once inserted.
+    std::map<std::string, std::string, std::less<>> sources_;
+    std::map<std::string, template_, std::less<>>   parsed_;
   };
 
   namespace detail

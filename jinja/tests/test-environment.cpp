@@ -73,6 +73,35 @@ TEST_CASE("reflex::jinja: environment")
     CHECK(env.render("foo.jinja", ctx) == "x=42");
   }
 
+  SUBCASE("the filesystem loader refuses names escaping its root")
+  {
+    temp_dir dir{"filesystem-escape"};
+    std::filesystem::create_directories(dir.path / "sub");
+    dir.write("secret.jinja", "SECRET");
+
+    jinja::environment env{jinja::filesystem_loader(dir.path / "sub")};
+
+    CHECK(not env.has("../secret"));
+    CHECK_THROWS(env.get("../secret"));
+
+    auto absolute = (dir.path / "secret.jinja").string();
+    CHECK(not env.has(absolute));
+    CHECK_THROWS(env.get(absolute));
+  }
+
+  SUBCASE("a failed parse does not poison the cache")
+  {
+    temp_dir dir{"reload-after-parse-error"};
+    dir.write("broken.jinja", "{% if x %}");
+
+    jinja::environment env{jinja::filesystem_loader(dir.path)};
+
+    CHECK_THROWS(env.get("broken"));
+
+    dir.write("broken.jinja", "fixed");
+    CHECK(env.render("broken", ctx) == "fixed");
+  }
+
   SUBCASE("a missing template is not found and throws on get")
   {
     jinja::environment env{jinja::map_loader({})};
@@ -183,6 +212,19 @@ TEST_CASE("reflex::jinja: include")
   {
     CHECK_THROWS(jinja::parse("{% include a %}"));
     CHECK_THROWS(jinja::parse("{% include %}"));
+  }
+
+  SUBCASE("include honours whitespace control on both sides")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"frag", "F"},
+                           }
+        )
+    };
+
+    CHECK(env.render_source("X{% include 'frag' -%}   \n   Y", ctx) == "XFY");
+    CHECK(env.render_source("X   \n   {%- include 'frag' %}Y", ctx) == "XFY");
   }
 }
 
@@ -319,5 +361,39 @@ TEST_CASE("reflex::jinja: extends / block")
     auto tmpl = jinja::parse("[{% block body %}{{ x }}{% endblock %}]");
     ctx.set("x", 7);
     CHECK(jinja::render(tmpl, ctx) == "[7]");
+  }
+
+  SUBCASE("extends without an environment throws instead of rendering the child")
+  {
+    auto tmpl = jinja::parse("{% extends 'base' %}{% block body %}c{% endblock %}");
+    CHECK_THROWS(jinja::render(tmpl, ctx));
+  }
+
+  SUBCASE("an included template may extend another one")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"base", "[{% block body %}default{% endblock %}]"},
+                           {"frag", "{% extends 'base' %}{% block body %}frag{% endblock %}"},
+                           {"page", "<{% include 'frag' %}>"},
+                           }
+        )
+    };
+
+    CHECK(env.render("page", ctx) == "<[frag]>");
+  }
+
+  SUBCASE("a grandchild overrides a block nested in another block")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"c", "[{% block outer %}({% block inner %}ci{% endblock %}){% endblock %}]"},
+                           {"b", "{% extends 'c' %}"},
+                           {"a", "{% extends 'b' %}{% block inner %}ai{% endblock %}"},
+                           }
+        )
+    };
+
+    CHECK(env.render("a", ctx) == "[(ai)]");
   }
 }
