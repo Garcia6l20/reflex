@@ -6,6 +6,7 @@ reflex_add_cxx_module_library(reflex.jinja
   include/reflex/jinja.hpp
   include/reflex/jinja/expr.hpp
   include/reflex/jinja/context.hpp
+  include/reflex/jinja/environment.hpp
 )
 target_link_libraries(reflex.jinja PUBLIC reflex::core reflex::serde::json)
 

@@ -12,7 +12,9 @@ jinja = project.StaticLibrary(
     ],
 )
 jinja.public.include_dirs.append("include")
-jinja.public.link_libs.extend(project.get_targets("reflex.core", "reflex.poly"))
+jinja.public.link_libs.extend(
+    project.get_targets("reflex.core", "reflex.poly", "reflex.serde", "reflex.serde.json")
+)
 
 
 if build_testing:
