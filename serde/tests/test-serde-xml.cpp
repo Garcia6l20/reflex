@@ -918,11 +918,47 @@ static_assert(
 static_assert(
     std::same_as<xml::deserializer<std::istreambuf_iterator<char>>::name_t, std::string>);
 
-TEST_CASE("reflex::serde::xml::load_file")
-{
-  const std::filesystem::path xml_path = "test-load-file.xml";
+// A deserialize override that keeps the borrowed tag name instead of copying
+// it. That is legal exactly while the input buffer is alive, which is what
+// holding an mmap_input_stream guarantees.
+inline std::string_view borrowed_tag{};
 
-  SUBCASE("reads a whole document")
+struct Borrows
+{
+  int v;
+
+  constexpr bool operator==(Borrows const& other) const = default;
+};
+
+template <typename OutputIt>
+auto tag_invoke(tag_t<serde::serialize>, serde::xml::serializer<OutputIt>& ser, Borrows const& value)
+    -> OutputIt
+{
+  const auto name = ser.element_name("Borrows");
+  return std::format_to(ser.out(), "<{0}>{1}</{0}>", name, value.v);
+}
+
+template <typename InputIt>
+auto tag_invoke(
+    tag_t<serde::deserialize>,
+    serde::xml::deserializer<InputIt>& de,
+    std::type_identity<Borrows>)
+{
+  auto [name, self_closing] = de.read_open_tag();
+  if constexpr(serde::xml::deserializer<InputIt>::bulk_scan)
+  {
+    borrowed_tag = name; // a view into the caller's buffer, not a copy
+  }
+  const int v = std::stoi(de.read_text());
+  de.read_close_tag();
+  return Borrows{v};
+}
+
+TEST_CASE("reflex::serde::xml: deserializing from an mmap_input_stream")
+{
+  const std::filesystem::path xml_path = "test-mmap-input-stream.xml";
+
+  SUBCASE("reads a whole document through the usual deserializer API")
   {
     const WithSeq expected{"xs", {1, 2, 3}};
     {
@@ -930,35 +966,57 @@ TEST_CASE("reflex::serde::xml::load_file")
       xml::serializer ser{out_file};
       ser.dump(expected);
     }
-    CHECK_EQ(xml::load_file<WithSeq>(xml_path), expected);
+    serde::mmap_input_stream in{xml_path};
+    auto                     de = xml::deserializer{in};
+    static_assert(decltype(de)::bulk_scan);
+    CHECK_EQ(de.load<WithSeq>(), expected);
     std::filesystem::remove(xml_path);
   }
 
-  SUBCASE("the result outlives the mapping")
+  SUBCASE("the result owns its strings")
   {
-    // every string below is materialized before load_file releases the file,
-    // so reading them here touches nothing that has been unmapped
     const Basic expected{7, "a value comfortably past the small string limit", 1.5};
     {
       std::ofstream   out_file{xml_path};
       xml::serializer ser{out_file};
       ser.dump(expected);
     }
-    const auto value = xml::load_file<Basic>(xml_path);
+    Basic value{};
+    {
+      serde::mmap_input_stream in{xml_path};
+      value = xml::deserializer{in}.load<Basic>();
+    } // the mapping is gone here, the strings are not
     CHECK_EQ(value.string_member, expected.string_member);
     CHECK_EQ(value, expected);
     std::filesystem::remove(xml_path);
   }
 
-  SUBCASE("entities and CDATA survive the mapping")
+  SUBCASE("a borrowed tag name stays valid while the stream lives")
+  {
+    {
+      std::ofstream out_file{xml_path, std::ios::binary};
+      out_file << "<Borrows>7</Borrows>";
+    }
+    borrowed_tag = {};
+    serde::mmap_input_stream in{xml_path};
+    CHECK_EQ(xml::deserializer{in}.load<Borrows>(), Borrows{7});
+    // the deserializer is gone, `in` is not, so reading the view is defined
+    CHECK_EQ(borrowed_tag, "Borrows"sv);
+    CHECK(borrowed_tag.data() >= in.begin());
+    CHECK(borrowed_tag.data() + borrowed_tag.size() <= in.end());
+    borrowed_tag = {};
+    std::filesystem::remove(xml_path);
+  }
+
+  SUBCASE("entities and CDATA are decoded, not aliased")
   {
     {
       std::ofstream out_file{xml_path};
       out_file << "<WithSeq><name>a &amp; b<![CDATA[ &raw ]]></name>"
                   "<values>1</values></WithSeq>";
     }
-    const auto value = xml::load_file<WithSeq>(xml_path);
-    CHECK_EQ(value.name, "a & b &raw ");
+    serde::mmap_input_stream in{xml_path};
+    CHECK_EQ(xml::deserializer{in}.load<WithSeq>().name, "a & b &raw ");
     std::filesystem::remove(xml_path);
   }
 
@@ -967,13 +1025,21 @@ TEST_CASE("reflex::serde::xml::load_file")
     {
       std::ofstream out_file{xml_path};
     }
-    CHECK_THROWS(xml::load_file<Basic>(xml_path));
+    serde::mmap_input_stream in{xml_path};
+    CHECK(in.empty());
+    CHECK_THROWS(xml::deserializer{in}.load<Basic>());
     std::filesystem::remove(xml_path);
   }
 
-  SUBCASE("a missing file throws")
+  SUBCASE("a truncated document throws rather than reading off the end")
   {
-    CHECK_THROWS(xml::load_file<Basic>("no-such-file-here.xml"));
+    {
+      std::ofstream out_file{xml_path, std::ios::binary};
+      out_file << "<WithSeq><name>abc";
+    }
+    serde::mmap_input_stream in{xml_path};
+    CHECK_THROWS(xml::deserializer{in}.load<WithSeq>());
+    std::filesystem::remove(xml_path);
   }
 
   SUBCASE("no trailing newline is fine")
@@ -982,7 +1048,8 @@ TEST_CASE("reflex::serde::xml::load_file")
       std::ofstream out_file{xml_path, std::ios::binary};
       out_file << "<WithSeq><name>tail</name><values>9</values></WithSeq>";
     }
-    CHECK_EQ(xml::load_file<WithSeq>(xml_path), WithSeq{"tail", {9}});
+    serde::mmap_input_stream in{xml_path};
+    CHECK_EQ(xml::deserializer{in}.load<WithSeq>(), WithSeq{"tail", {9}});
     std::filesystem::remove(xml_path);
   }
 }
