@@ -322,11 +322,40 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
   }
 
+  // Offset of the first byte of `set` at or after `pos`, npos if there is none.
+  // `s` must be a bounded value, a text node or an attribute value, never the
+  // remaining input: scanning to EOF for a byte that is not there turns a linear
+  // parse quadratic.
+  inline std::size_t find_any(std::string_view s, std::size_t pos, std::string_view set)
+  {
+    std::size_t best = std::string_view::npos;
+    for(char c : set)
+    {
+      const std::size_t n = s.find(c, pos);
+      if(n < best)
+      {
+        best = n;
+      }
+    }
+    return best;
+  }
+
   template <typename Ser> void write_text_escaped(Ser& ser, std::string_view text)
   {
-    for(char c : text)
+    std::size_t pos = 0;
+    while(pos < text.size())
     {
-      switch(c)
+      const std::size_t n = find_any(text, pos, "&<>");
+      if(n == std::string_view::npos)
+      {
+        ser.write_raw(text.substr(pos));
+        return;
+      }
+      if(n > pos)
+      {
+        ser.write_raw(text.substr(pos, n - pos));
+      }
+      switch(text[n])
       {
         case '&':
           ser.write_raw("&amp;");
@@ -334,12 +363,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
         case '<':
           ser.write_raw("&lt;");
           break;
-        case '>':
-          ser.write_raw("&gt;");
-          break;
         default:
-          ser.write_char(c);
+          ser.write_raw("&gt;");
       }
+      pos = n + 1;
     }
   }
 
@@ -403,9 +430,20 @@ REFLEX_EXPORT namespace reflex::serde::xml
   // Attribute-value escaping: '&', '<', and the delimiting '"'.
   template <typename Ser> void write_attr_escaped(Ser& ser, std::string_view text)
   {
-    for(char c : text)
+    std::size_t pos = 0;
+    while(pos < text.size())
     {
-      switch(c)
+      const std::size_t n = find_any(text, pos, "&<\"");
+      if(n == std::string_view::npos)
+      {
+        ser.write_raw(text.substr(pos));
+        return;
+      }
+      if(n > pos)
+      {
+        ser.write_raw(text.substr(pos, n - pos));
+      }
+      switch(text[n])
       {
         case '&':
           ser.write_raw("&amp;");
@@ -413,12 +451,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
         case '<':
           ser.write_raw("&lt;");
           break;
-        case '"':
-          ser.write_raw("&quot;");
-          break;
         default:
-          ser.write_char(c);
+          ser.write_raw("&quot;");
       }
+      pos = n + 1;
     }
   }
 
