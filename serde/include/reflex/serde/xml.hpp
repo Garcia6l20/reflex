@@ -815,11 +815,12 @@ REFLEX_EXPORT namespace reflex::serde::xml
   public:
     using attr_list = std::vector<std::pair<std::string, std::string>>;
 
-    // True when the input is contiguous in memory, which enables the bulk-scan
-    // parse path. Public so a consumer can static_assert it and find out at
-    // compile time that a stream cursor put them on the slow path.
-    static constexpr bool bulk_scan =
-        std::contiguous_iterator<InputIt> and std::same_as<std::iter_value_t<InputIt>, char>;
+    // bulk_scan, rest() and skip() come from the shared cursor. The
+    // using-declarations are load-bearing: the base is dependent, so
+    // unqualified lookup inside this template would not find them.
+    using base::bulk_scan;
+    using base::rest;
+    using base::skip;
 
     // Tag-name carrier: borrowed from the input when it is in memory, owned
     // otherwise. read_open_tag hands this out, so on the bulk_scan path a tag
@@ -861,22 +862,6 @@ REFLEX_EXPORT namespace reflex::serde::xml
       const char c = peek();
       cursor_.advance(1);
       return c;
-    }
-
-    // The unconsumed input. Every scan below is bounded by what it is about to
-    // consume: a run that is scanned is always then advanced over, so the parse
-    // stays linear. Searching the whole remaining input for a byte that is not
-    // there would rescan to EOF on every call and make it quadratic.
-    std::string_view rest() const
-      requires bulk_scan
-    {
-      return {std::to_address(cursor_.begin()),
-              static_cast<std::size_t>(cursor_.end() - cursor_.begin())};
-    }
-
-    void skip(std::size_t n)
-    {
-      cursor_.advance(static_cast<std::iter_difference_t<InputIt>>(n));
     }
 
     // The one place the text path and the attribute path decide whether a raw

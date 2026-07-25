@@ -9,6 +9,11 @@ using namespace reflex;
 using namespace reflex::serde;
 using namespace std::literals;
 
+// The bulk-scan cliff, pinned. Same constant, same shared cursor as xml: an
+// in-memory input takes the from_chars fast path, a stream cursor does not.
+static_assert(json::deserializer<std::string_view::const_iterator>::bulk_scan);
+static_assert(not json::deserializer<std::istreambuf_iterator<char>>::bulk_scan);
+
 #define JSON(...) #__VA_ARGS__
 
 struct[[= serde::naming::camel_case, = derive(Debug)]] S

@@ -446,9 +446,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
     {
       Num value;
-      if constexpr(
-          std::contiguous_iterator<InputIt>
-          and std::same_as<std::remove_cv_t<std::iter_value_t<InputIt>>, char>)
+      if constexpr(deserializer<InputIt>::bulk_scan)
       {
         const auto first = std::to_address(de.begin());
         const auto last  = std::to_address(de.end());

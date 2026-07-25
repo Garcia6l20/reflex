@@ -9,6 +9,13 @@ using namespace reflex;
 using namespace reflex::serde;
 using namespace std::literals;
 
+// The bulk-scan cliff, pinned. An in-memory input parses with memchr-backed
+// scans, a stream cursor falls back to one character at a time. Both answers
+// are correct, and the point of bulk_scan being public is that a caller can
+// find out at compile time which one they got.
+static_assert(xml::deserializer<std::string_view::const_iterator>::bulk_scan);
+static_assert(not xml::deserializer<std::istreambuf_iterator<char>>::bulk_scan);
+
 struct[[= serde::naming::camel_case, = derive(Debug)]] Basic
 {
   int                                    int_member;

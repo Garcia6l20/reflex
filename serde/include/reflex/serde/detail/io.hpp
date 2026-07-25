@@ -180,6 +180,14 @@ REFLEX_EXPORT namespace reflex::serde::detail
   public:
     using range_cursor = std::ranges::subrange<InputIt, InputIt>;
 
+    // True when the input is a contiguous block of chars already in memory.
+    // Every backend's bulk-scan fast path is gated on this. Public so a caller
+    // can static_assert it and find out at compile time that it is on the slow
+    // character-at-a-time path.
+    static constexpr bool bulk_scan =
+        std::contiguous_iterator<InputIt>
+        and std::same_as<std::remove_cv_t<std::iter_value_t<InputIt>>, char>;
+
   protected:
     range_cursor cursor_;
 
@@ -187,6 +195,24 @@ REFLEX_EXPORT namespace reflex::serde::detail
     bool at_end() const
     {
       return cursor_.empty();
+    }
+
+    // The unconsumed input. Every scan built on this must be bounded by what it
+    // is about to consume: a run that is scanned is always then advanced over,
+    // so the parse stays linear. Searching the whole remaining input for a byte
+    // that is not there rescans to EOF on every call and makes it quadratic.
+    std::string_view rest() const
+      requires bulk_scan
+    {
+      return {std::to_address(cursor_.begin()),
+              static_cast<std::size_t>(cursor_.end() - cursor_.begin())};
+    }
+
+    // Not constrained on bulk_scan: on a non-contiguous iterator this is n
+    // increments, which is exactly what the fallback paths want.
+    void skip(std::size_t n)
+    {
+      cursor_.advance(static_cast<std::ranges::range_difference_t<range_cursor>>(n));
     }
 
     subrange_deserializer(InputIt begin, InputIt end) : cursor_{begin, end}
