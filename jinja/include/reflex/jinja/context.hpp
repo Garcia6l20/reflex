@@ -104,6 +104,24 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       }
     }
   };
+
+  // Binds by reference when the value type has a reference alternative for T, by value otherwise
+  // (scalars, strings, const elements).
+  template <typename ValueT, typename T> constexpr ValueT make_bound_value(T&& v)
+  {
+    if constexpr(std::same_as<std::remove_cvref_t<T>, ValueT>)
+    {
+      return ValueT{std::forward<T>(v)};
+    }
+    else if constexpr(std::is_lvalue_reference_v<T&&> and requires { ValueT{std::ref(v)}; })
+    {
+      return ValueT{std::ref(v)};
+    }
+    else
+    {
+      return ValueT{std::forward<T>(v)};
+    }
+  }
   } // namespace detail
 
   // scans the types of all nonstatic data members of an aggregate, including nested aggregates and
@@ -203,9 +221,17 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     std::unordered_map<std::string, function_type> funcs;
 
+    // value_type overload, for braced initializer lists which cannot deduce T
     context& set(std::string_view name, value_type v)
     {
       global_vars.insert_or_assign(std::string{name}, std::move(v));
+      return *this;
+    }
+
+    template <typename T> context& set(std::string_view name, T&& v)
+    {
+      global_vars.insert_or_assign(
+          std::string{name}, detail::make_bound_value<value_type>(std::forward<T>(v)));
       return *this;
     }
 
@@ -350,6 +376,13 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       decltype(auto) set(std::string_view name, value_type v)
       {
         ctx.local_vars.at(index).insert_or_assign(std::string{name}, std::move(v));
+        return *this;
+      }
+
+      template <typename T> decltype(auto) set(std::string_view name, T&& v)
+      {
+        ctx.local_vars.at(index).insert_or_assign(
+            std::string{name}, detail::make_bound_value<value_type>(std::forward<T>(v)));
         return *this;
       }
 

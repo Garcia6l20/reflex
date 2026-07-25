@@ -656,20 +656,6 @@ REFLEX_EXPORT namespace reflex::jinja
     loop.last  = (loop.index0 == loop.length - 1);
   }
 
-  // Binds a loop variable by reference when the value type has a reference alternative for it,
-  // by value otherwise (scalars, strings, const elements).
-  constexpr void set_loop_var(auto& scope, std::string_view name, auto&& value)
-  {
-    if constexpr(requires { scope.set(name, std::ref(value)); })
-    {
-      scope.set(name, std::ref(value));
-    }
-    else
-    {
-      scope.set(name, value);
-    }
-  }
-
   template <typename OutputIt, typename ContextT>
   OutputIt render_children_to(
       OutputIt                    out,
@@ -748,7 +734,7 @@ REFLEX_EXPORT namespace reflex::jinja
                     scope.set("loop", std::ref(loop));
                     for(auto&& item : it)
                     {
-                      set_loop_var(scope, v.loop_vars[0], item);
+                      scope.set(v.loop_vars[0], item);
                       out = render_children_to(out, v.children, ctx, state);
                       advance_loop(loop);
                     }
@@ -770,7 +756,7 @@ REFLEX_EXPORT namespace reflex::jinja
                       {
                         // {% for k, v in map %} — bind key and value
                         scope.set(v.loop_vars[0], key);
-                        set_loop_var(scope, v.loop_vars[1], val);
+                        scope.set(v.loop_vars[1], val);
                       }
                       out = render_children_to(out, v.children, ctx, state);
                       advance_loop(loop);
