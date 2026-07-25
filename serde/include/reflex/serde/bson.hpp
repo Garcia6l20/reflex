@@ -325,8 +325,24 @@ REFLEX_EXPORT namespace reflex::serde::bson
       // mapped file, false for an istreambuf_iterator, which is why every check below is guarded.
       static constexpr bool sized_input = std::copyable<It> and std::sized_sentinel_for<It, It>;
 
+      // The input is a block of bytes already in memory, so a run can be read with one memcpy and
+      // a key can be handed out as a view into it instead of being copied.
+      static constexpr bool contiguous_byte_or_char =
+          std::contiguous_iterator<It>
+          and (decays_to_c<std::iter_value_t<It>, std::byte>
+               or decays_to_c<std::iter_value_t<It>, char>
+               or decays_to_c<std::iter_value_t<It>, unsigned char>);
+
+      // Only the non-contiguous path needs somewhere to put a key it cannot borrow. Conditional so
+      // a contiguous cursor does not carry a std::string it never touches.
+      struct no_key_buffer
+      {};
+
       range_type  range;
       std::size_t position = 0;
+
+      [[no_unique_address]] std::
+          conditional_t<contiguous_byte_or_char, no_key_buffer, std::string> key_buf{};
 
       constexpr bool at_end() const
       {
@@ -365,6 +381,46 @@ REFLEX_EXPORT namespace reflex::serde::bson
         position += n;
       }
 
+      // A null-terminated key, borrowed from the input when it is contiguous. The
+      // view is valid until the next cursor operation.
+      constexpr std::string_view read_key()
+      {
+        if constexpr(contiguous_byte_or_char)
+        {
+          const auto* first = std::to_address(range.begin());
+          const auto* last  = std::to_address(range.end());
+          const auto* ptr   = first;
+
+          while(ptr != last and std::bit_cast<std::byte>(*ptr) != std::byte{0x00})
+          {
+            ++ptr;
+          }
+
+          if(ptr == last)
+          {
+            throw std::runtime_error("BSON cstring payload must be null-terminated");
+          }
+
+          const auto n = static_cast<std::size_t>(ptr - first);
+          advance(n + 1);
+          return {reinterpret_cast<char const*>(first), n};
+        }
+        else
+        {
+          key_buf.clear();
+          while(true)
+          {
+            const std::byte b = read_byte();
+            if(b == std::byte{0x00})
+            {
+              break;
+            }
+            key_buf.push_back(static_cast<char>(std::to_integer<unsigned char>(b)));
+          }
+          return key_buf;
+        }
+      }
+
       template <std::size_t N> constexpr auto read_bytes()
       {
         std::array<std::byte, N> bytes{};
@@ -398,12 +454,6 @@ REFLEX_EXPORT namespace reflex::serde::bson
       template <std::same_as<std::string> T, bool has_size = false> constexpr T read()
       {
         std::string out;
-
-        constexpr bool
-            contiguous_byte_or_char = std::contiguous_iterator<It>
-                                  and (decays_to_c<std::iter_value_t<It>, std::byte>
-                                       or decays_to_c<std::iter_value_t<It>, char>
-                                       or decays_to_c<std::iter_value_t<It>, unsigned char>);
 
         if constexpr(has_size)
         {
@@ -447,37 +497,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
         }
         else
         {
-          if constexpr(contiguous_byte_or_char)
-          {
-            const auto* first = std::to_address(range.begin());
-            const auto* ptr   = first;
-            const auto* last  = std::to_address(range.end());
-
-            while(ptr != last and std::bit_cast<std::byte>(*ptr) != std::byte{0x00})
-            {
-              ++ptr;
-            }
-
-            if(ptr == last)
-            {
-              throw std::runtime_error("BSON cstring payload must be null-terminated");
-            }
-
-            out.assign(reinterpret_cast<char const*>(first), static_cast<std::size_t>(ptr - first));
-            advance(static_cast<std::size_t>(ptr - first) + 1);
-          }
-          else
-          {
-            while(true)
-            {
-              const std::byte b = read_byte();
-              if(b == std::byte{0x00})
-              {
-                break;
-              }
-              out.push_back(static_cast<char>(std::to_integer<unsigned char>(b)));
-            }
-          }
+          // The owning spelling of read_key(), for callers that want to keep the result.
+          out = read_key();
         }
         return out;
       }
@@ -555,7 +576,9 @@ REFLEX_EXPORT namespace reflex::serde::bson
           return;
         }
 
-        auto key = cursor_.template read<std::string>();
+        // Borrowed from the input buffer when it is contiguous, valid for the duration
+        // of the call. Copy it to keep it.
+        const std::string_view key = cursor_.read_key();
         std::forward<Fn>(fn)(type, key);
         if(cursor_.position > end_pos)
         {

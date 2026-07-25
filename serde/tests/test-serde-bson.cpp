@@ -303,6 +303,59 @@ template <typename T> std::vector<std::byte> encode(T const& value)
 }
 } // namespace
 
+// read_document hands the callback a key borrowed from the input buffer. Nothing may
+// keep it: the parsed result has to stay valid once the input is gone.
+TEST_CASE("reflex::serde::bson: a parsed document outlives its input buffer")
+{
+  SUBCASE("map keys are copied out of the borrowed view")
+  {
+    const std::map<std::string, std::string> expected{
+        {"alpha",                                        "one"  },
+        {"a-much-longer-key-past-the-sso-limit-for-sure", "two"  },
+        {"gamma",                                        "three"},
+    };
+
+    std::map<std::string, std::string> got;
+    {
+      const auto doc = encode(expected);
+      got            = bson::deserializer{doc}.load<std::map<std::string, std::string>>();
+    }
+    CHECK_EQ(got, expected);
+  }
+
+  SUBCASE("nested bson::value object keys are copied")
+  {
+    bson::object nested;
+    nested["deep-key-well-past-the-sso-limit-so-it-allocates"] = bson::value{std::string{"v"}};
+
+    bson::object root;
+    root["obj"] = bson::value{nested};
+
+    bson::value got;
+    {
+      const auto doc = encode(root);
+      got            = bson::deserializer{doc}.load<bson::value>();
+    }
+
+    REQUIRE(got.is<bson::object>());
+    REQUIRE(got.as<bson::object>().contains("obj"));
+    auto const& inner = got.as<bson::object>().at("obj");
+    REQUIRE(inner.is<bson::object>());
+    CHECK(inner.as<bson::object>().contains("deep-key-well-past-the-sso-limit-so-it-allocates"));
+  }
+
+  SUBCASE("aggregate members survive the input")
+  {
+    const S  expected{42, "Hello, world!", 3.14};
+    S        got{};
+    {
+      const auto doc = encode(expected);
+      got            = bson::deserializer{doc}.load<S>();
+    }
+    CHECK_EQ(got, expected);
+  }
+}
+
 // A length read out of the document must be checked against what the input can actually supply.
 // Before this, a declared length past the end of the buffer was copied out verbatim.
 TEST_CASE("reflex::serde::bson: a length past the end of the input throws")
