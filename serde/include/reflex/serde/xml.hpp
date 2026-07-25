@@ -833,10 +833,43 @@ REFLEX_EXPORT namespace reflex::serde::xml
       return c;
     }
 
+    // Scanning a whole run at a time needs the input as bytes in memory. A
+    // stream cursor (istreambuf_iterator) has none, so it keeps the original
+    // character-at-a-time path.
+    static constexpr bool bulk_scan =
+        std::contiguous_iterator<InputIt> and std::same_as<std::iter_value_t<InputIt>, char>;
+
+    // The unconsumed input. Every scan below is bounded by what it is about to
+    // consume: a run that is scanned is always then advanced over, so the parse
+    // stays linear. Searching the whole remaining input for a byte that is not
+    // there would rescan to EOF on every call and make it quadratic.
+    std::string_view rest() const
+      requires bulk_scan
+    {
+      return {std::to_address(cursor_.begin()),
+              static_cast<std::size_t>(cursor_.end() - cursor_.begin())};
+    }
+
+    void skip(std::size_t n)
+    {
+      cursor_.advance(static_cast<std::iter_difference_t<InputIt>>(n));
+    }
+
     // Consume input until the terminator sequence has been fully matched.
     // KMP so overlapping prefixes (e.g. "--->" against "-->") match correctly.
+    // A single-character terminator needs no table and can go through memchr.
     void skip_until(std::string_view term)
     {
+      if constexpr(bulk_scan)
+      {
+        if(term.size() == 1)
+        {
+          const std::string_view sv = rest();
+          const std::size_t      n  = sv.find(term[0]);
+          skip(n == std::string_view::npos ? sv.size() : n + 1);
+          return;
+        }
+      }
       std::array<std::size_t, 8> fail{};
       for(std::size_t i = 1, k = 0; i < term.size(); ++i)
       {
@@ -877,18 +910,32 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
     std::string read_name()
     {
-      std::string name;
-      while(not at_end())
+      if constexpr(bulk_scan)
       {
-        const char c = peek();
-        if(reflex::is_space(c) or c == '>' or c == '/' or c == '?')
-        {
-          break;
-        }
-        name.push_back(c);
-        advance();
+        // find_first_of rather than a min over find(): a name ends within a few bytes,
+        // and each separate memchr pass would run to the end of the tail before the
+        // min could discard it.
+        const std::string_view sv = rest();
+        const std::size_t      n  = sv.find_first_of(" \t\n\v\f\r>/?");
+        const std::string_view name = (n == std::string_view::npos) ? sv : sv.substr(0, n);
+        skip(name.size());
+        return std::string{name};
       }
-      return name;
+      else
+      {
+        std::string name;
+        while(not at_end())
+        {
+          const char c = peek();
+          if(reflex::is_space(c) or c == '>' or c == '/' or c == '?')
+          {
+            break;
+          }
+          name.push_back(c);
+          advance();
+        }
+        return name;
+      }
     }
 
     // The tag name has been consumed; parse `name="value"` pairs up to '>'.
@@ -988,7 +1035,16 @@ REFLEX_EXPORT namespace reflex::serde::xml
         }
         else
         {
-          while(not at_end() and peek() != '<') advance();
+          if constexpr(bulk_scan)
+          {
+            const std::string_view sv = rest();
+            const std::size_t      n  = sv.find('<');
+            skip(n == std::string_view::npos ? sv.size() : n);
+          }
+          else
+          {
+            while(not at_end() and peek() != '<') advance();
+          }
           if(at_end()) return {tag_kind::end, {}, false, {}};
           advance(); // '<'
         }
@@ -1087,6 +1143,43 @@ REFLEX_EXPORT namespace reflex::serde::xml
       std::string text;
       while(not at_end())
       {
+        if constexpr(bulk_scan)
+        {
+          // The run ends at the next '<', located once and then reused as the bound for
+          // every '&' search inside it. Relocating it per entity would rescan the tail
+          // once per entity and make an entity-dense text node quadratic.
+          const std::string_view sv       = rest();
+          const std::size_t      lt       = sv.find('<');
+          const std::size_t      head_len = (lt == std::string_view::npos) ? sv.size() : lt;
+          if(head_len > 0)
+          {
+            const char* const end = sv.data() + head_len;
+            while(true)
+            {
+              // read_entity stops at '<', so the cursor never passes `end`
+              const char* const cur = std::to_address(cursor_.begin());
+              if(cur >= end) break;
+              const std::string_view head{cur, static_cast<std::size_t>(end - cur)};
+              const std::size_t amp = head.find('&');
+              if(amp == std::string_view::npos)
+              {
+                text.append(head);
+                skip(head.size());
+                break;
+              }
+              if(amp > 0)
+              {
+                text.append(head.substr(0, amp));
+                skip(amp);
+              }
+              skip(1); // '&'
+              read_entity(text);
+            }
+            continue; // at least one byte consumed, so this cannot spin
+          }
+          // head_len == 0: the cursor is on a '<', handled below
+        }
+
         if(peek() != '<')
         {
           const char c = advance();
