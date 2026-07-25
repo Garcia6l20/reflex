@@ -8,6 +8,7 @@
 #include <bit>
 #include <charconv>
 #include <cstring>
+#include <span>
 
 #include <reflex/serde.hpp>
 #include <reflex/serde/bson_value.hpp>
@@ -51,10 +52,15 @@ template <std::integral T> constexpr void append(bytes& out, T value)
 {
   using unsigned_t = std::make_unsigned_t<T>;
   auto raw         = static_cast<unsigned_t>(value);
+
+  // An explicit little-endian shift loop, not a bit_cast: the writer is deliberately
+  // endian-independent and the reader is the side that is native, see read_as.
+  std::array<std::byte, sizeof(T)> buf{};
   for(std::size_t i = 0; i < sizeof(T); ++i)
   {
-    out.push_back(static_cast<std::byte>((raw >> (8 * i)) & 0xFFu));
+    buf[i] = static_cast<std::byte>((raw >> (8 * i)) & 0xFFu);
   }
+  out.append_range(buf);
 }
 
 constexpr void append(bytes& out, double value)
@@ -74,10 +80,20 @@ constexpr void append(bytes& out, std::string_view value, bool include_size = fa
   {
     append(out, static_cast<std::int32_t>(value.size() + 1));
   }
-  for(char ch : value)
+  // One bulk append of the whole body. as_bytes is a reinterpret_cast underneath, so the
+  // constant-evaluated path keeps the byte loop.
+  if consteval
   {
-    out.push_back(static_cast<std::byte>(static_cast<unsigned char>(ch)));
+    for(char ch : value)
+    {
+      out.push_back(static_cast<std::byte>(static_cast<unsigned char>(ch)));
+    }
   }
+  else
+  {
+    out.append_range(std::as_bytes(std::span{value}));
+  }
+
   out.push_back(std::byte{0x00});
 }
 
