@@ -899,6 +899,18 @@ REFLEX_EXPORT namespace reflex::serde::xml
       cursor_.advance(static_cast<std::iter_difference_t<InputIt>>(n));
     }
 
+    // The one place the text path and the attribute path decide whether a raw
+    // run can be taken verbatim, so the two cannot drift apart.
+    static bool has_entity(std::string_view span)
+    {
+      return span.find('&') != std::string_view::npos;
+    }
+
+    void skip_space()
+    {
+      while(not at_end() and reflex::is_space(peek())) advance();
+    }
+
     // Consume input until the terminator sequence has been fully matched.
     // KMP so overlapping prefixes (e.g. "--->" against "-->") match correctly.
     // A single-character terminator needs no table and can go through memchr.
@@ -990,7 +1002,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
       attr_list attrs;
       while(true)
       {
-        while(not at_end() and reflex::is_space(peek())) advance();
+        skip_space();
         if(at_end())
         {
           throw std::runtime_error("Unterminated XML tag");
@@ -1020,28 +1032,48 @@ REFLEX_EXPORT namespace reflex::serde::xml
           advance();
         }
 
-        while(not at_end() and reflex::is_space(peek())) advance();
+        skip_space();
         std::string avalue;
         if(not at_end() and peek() == '=')
         {
           advance();
-          while(not at_end() and reflex::is_space(peek())) advance();
+          skip_space();
           if(not at_end() and (peek() == '"' or peek() == '\''))
           {
             const char quote = advance();
-            while(not at_end() and peek() != quote)
+            bool       taken = false;
+            if constexpr(bulk_scan)
             {
-              const char e = advance();
-              if(e == '&')
+              // the value is bounded by its closing quote; a body with no
+              // entity is one span and is taken whole
+              const std::string_view sv = rest();
+              const std::size_t      q  = sv.find(quote);
+              const std::string_view body = (q == std::string_view::npos) ? sv : sv.substr(0, q);
+              if(not has_entity(body))
               {
-                read_entity(avalue);
-              }
-              else
-              {
-                avalue.push_back(e);
+                avalue.assign(body);
+                skip(body.size());
+                if(q != std::string_view::npos) skip(1); // closing quote
+                taken = true;
               }
             }
-            if(not at_end()) advance(); // closing quote
+            if(not taken)
+            {
+              // entity decode, still bounded by the closing quote
+              while(not at_end() and peek() != quote)
+              {
+                const char e = advance();
+                if(e == '&')
+                {
+                  read_entity(avalue);
+                }
+                else
+                {
+                  avalue.push_back(e);
+                }
+              }
+              if(not at_end()) advance(); // closing quote
+            }
           }
         }
 
@@ -1565,7 +1597,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
         const std::string_view head = (lt == std::string_view::npos) ? sv : sv.substr(0, lt);
         // an entity has to be decoded, and "<!" continues the run with a CDATA
         // section or a comment: both need the owning path
-        const bool simple = head.find('&') == std::string_view::npos
+        const bool simple = not has_entity(head)
                         and (lt == std::string_view::npos or lt + 1 >= sv.size()
                              or sv[lt + 1] != '!');
         if(simple)
