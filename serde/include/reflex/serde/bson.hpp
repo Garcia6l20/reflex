@@ -5,7 +5,9 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <bit>
 #include <charconv>
+#include <cstring>
 
 #include <reflex/serde.hpp>
 #include <reflex/serde/bson_value.hpp>
@@ -418,18 +420,50 @@ REFLEX_EXPORT namespace reflex::serde::bson
         }
       }
 
+      // Every scalar funnels through here. A contiguous input takes the whole four, eight or
+      // sixteen bytes in one memcpy and one advance.
       template <std::size_t N> constexpr auto read_bytes()
       {
         std::array<std::byte, N> bytes{};
-        for(std::size_t i = 0; i < N; ++i)
+
+        if constexpr(contiguous_byte_or_char)
         {
-          bytes[i] = read_byte();
+          require(N);
+
+          const auto* first = std::to_address(range.begin());
+          if consteval
+          {
+            for(std::size_t i = 0; i < N; ++i)
+            {
+              bytes[i] = std::bit_cast<std::byte>(first[i]);
+            }
+          }
+          else
+          {
+            std::memcpy(bytes.data(), first, N);
+          }
+          advance(N);
+        }
+        else
+        {
+          for(std::size_t i = 0; i < N; ++i)
+          {
+            bytes[i] = read_byte();
+          }
         }
         return bytes;
       }
 
       template <typename T> constexpr auto read_as()
       {
+        // detail::append writes every numeric type little-endian with an explicit shift loop
+        // while this reads it back natively, so the fast path must not compile silently where
+        // that asymmetry would be wrong.
+        static_assert(
+            std::endian::native == std::endian::little,
+            "The BSON reader is native-endian while the writer is explicitly little-endian. "
+            "Make the reader explicitly little-endian before targeting a big-endian machine.");
+
         return std::bit_cast<T>(read_bytes<sizeof(T)>());
       }
 
