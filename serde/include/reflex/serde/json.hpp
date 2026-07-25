@@ -141,6 +141,96 @@ REFLEX_EXPORT namespace reflex::serde::json
     ser.write_char('"');
   }
 
+  // The seven escapes JSON names, decoded, or -1 for anything else. Kept apart
+  // from the \u case so it stays small enough to inline: folded together they
+  // become an out-of-line call GCC declines to inline, on a path that runs once
+  // per escape.
+  constexpr int simple_escape(char esc)
+  {
+    switch(esc)
+    {
+      case '"':
+        return '"';
+      case '\\':
+        return '\\';
+      case '/':
+        return '/';
+      case 'b':
+        return '\b';
+      case 'f':
+        return '\f';
+      case 'n':
+        return '\n';
+      case 'r':
+        return '\r';
+      case 't':
+        return '\t';
+      default:
+        return -1;
+    }
+  }
+
+  // The cold half: \u, and every malformed escape. `next` yields the next body
+  // byte and throws when there is none, `emit` takes the decoded byte. Both
+  // cursors share this so the escape semantics exist in exactly one place.
+  template <typename Next, typename Emit> void decode_rare_escape(char esc, Next&& next, Emit&& emit)
+  {
+    switch(esc)
+    {
+      case 'u':
+      {
+        // Only the subset below 0x80 is decoded, which is exactly what the
+        // serializer emits: a control character, as one byte of UTF-8. Surrogate
+        // pairs and higher code points would need a multi-byte encoding and
+        // still throw.
+        int cp = 0;
+        for(int i = 0; i < 4; ++i)
+        {
+          const char d = next();
+          int        n = -1;
+          if(d >= '0' and d <= '9')
+          {
+            n = d - '0';
+          }
+          else if(d >= 'a' and d <= 'f')
+          {
+            n = d - 'a' + 10;
+          }
+          else if(d >= 'A' and d <= 'F')
+          {
+            n = d - 'A' + 10;
+          }
+          else
+          {
+            throw std::runtime_error(std::format("Invalid \\u escape digit: {}", d));
+          }
+          cp = (cp << 4) | n;
+        }
+        if(cp > 0x7F)
+        {
+          throw std::runtime_error("\\uXXXX escapes not implemented");
+        }
+        emit(static_cast<char>(cp));
+        return;
+      }
+      default:
+        throw std::runtime_error(std::format("Unknown escape: \\{}", esc));
+    }
+  }
+
+  // One escape, whichever kind. The common seven stay inline at the call site.
+  template <typename Next, typename Emit> void decode_escape(Next&& next, Emit&& emit)
+  {
+    const char esc    = next();
+    const int  simple = simple_escape(esc);
+    if(simple >= 0)
+    {
+      emit(static_cast<char>(simple));
+      return;
+    }
+    decode_rare_escape(esc, next, emit);
+  }
+
   // `"name":` is a constant, so it is built once at compile time and promoted to
   // static storage.
   //
@@ -485,6 +575,34 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
     }
 
+    // Offset of the closing quote of the string body starting at `sv[0]`, having
+    // skipped over any quote that is itself escaped.
+    //
+    // Linear, and it has to be argued because the obvious spelling is not. Each
+    // resumed find() starts strictly after the previous candidate, so the
+    // forward scans are disjoint. The backwards run counts are disjoint too:
+    // two candidate quotes cannot share a backslash run, the earlier quote sits
+    // between them. So the whole thing is bounded by the string length, not by
+    // the length times the number of escapes.
+    static std::size_t find_terminator(std::string_view sv)
+    {
+      std::size_t end = sv.find('"');
+      while(end != std::string_view::npos)
+      {
+        std::size_t run = end;
+        while(run > 0 and sv[run - 1] == '\\')
+        {
+          --run;
+        }
+        if(((end - run) % 2) == 0)
+        {
+          return end;
+        }
+        end = sv.find('"', end + 1);
+      }
+      throw std::runtime_error("Unterminated JSON string");
+    }
+
     template <str_c Str>
     friend auto
         tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
@@ -513,89 +631,110 @@ REFLEX_EXPORT namespace reflex::serde::json
         }
       }();
 
-      while(not de.at_end())
-      {
-        const char c = de.advance();
-        if(c == '"')
+      // Appends a whole run. std::string takes it as one memcpy, which is the
+      // point of the bulk path. A fixed-capacity target has no bulk append and
+      // falls back to the per-character push, which keeps its bounds check: an
+      // up-front check against the encoded length would wrongly reject a string
+      // whose *decoded* length fits, since an escape is 2 or 6 bytes in and 1
+      // byte out.
+      auto append_run = [&value, &push](std::string_view run) {
+        if constexpr(requires { value.append(std::string_view{}); })
         {
-          return value;
-        }
-
-        if(c == '\\')
-        {
-          const char esc = de.advance();
-          switch(esc)
-          {
-            case '"':
-              push('"');
-              break;
-            case '\\':
-              push('\\');
-              break;
-            case '/':
-              push('/');
-              break;
-            case 'b':
-              push('\b');
-              break;
-            case 'f':
-              push('\f');
-              break;
-            case 'n':
-              push('\n');
-              break;
-            case 'r':
-              push('\r');
-              break;
-            case 't':
-              push('\t');
-              break;
-            case 'u':
-            {
-              // Only the subset below 0x80 is decoded, which is exactly what the
-              // serializer emits: a control character, as one byte of UTF-8.
-              // Surrogate pairs and higher code points would need a multi-byte
-              // encoding and still throw.
-              int cp = 0;
-              for(int i = 0; i < 4; ++i)
-              {
-                const char d = de.advance();
-                int        n = -1;
-                if(d >= '0' and d <= '9')
-                {
-                  n = d - '0';
-                }
-                else if(d >= 'a' and d <= 'f')
-                {
-                  n = d - 'a' + 10;
-                }
-                else if(d >= 'A' and d <= 'F')
-                {
-                  n = d - 'A' + 10;
-                }
-                else
-                {
-                  throw std::runtime_error(std::format("Invalid \\u escape digit: {}", d));
-                }
-                cp = (cp << 4) | n;
-              }
-              if(cp > 0x7F)
-              {
-                throw std::runtime_error("\\uXXXX escapes not implemented");
-              }
-              push(static_cast<char>(cp));
-              break;
-            }
-            default:
-              throw std::runtime_error(std::format("Unknown escape: \\{}", esc));
-          }
+          value.append(run);
         }
         else
         {
-          push(c);
+          for(const char c : run)
+          {
+            push(c);
+          }
         }
+      };
+
+      if constexpr(deserializer<InputIt>::bulk_scan)
+      {
+        const std::string_view sv = de.rest();
+
+        // The bound, located once. Everything below is confined to it, so no
+        // scan can run off into the rest of the document.
+        const std::size_t      end  = find_terminator(sv);
+        const std::string_view span = sv.substr(0, end);
+
+        // The overwhelmingly common case: no escape at all, so the body is one
+        // contiguous run and goes across in one append.
+        std::size_t n = span.find('\\');
+        if(n == std::string_view::npos)
+        {
+          append_run(span);
+          de.skip(end + 1);
+          return value;
+        }
+
+        std::size_t start = 0;
+        while(true)
+        {
+          append_run(span.substr(start, n - start));
+
+          std::size_t i    = n + 1;
+          auto        next = [&span, &i]() -> char {
+            if(i >= span.size())
+            {
+              throw std::runtime_error("Unterminated JSON string");
+            }
+            return span[i++];
+          };
+          const char esc    = next();
+          const int  simple = detail::simple_escape(esc);
+          if(simple >= 0)
+          {
+            push(static_cast<char>(simple));
+          }
+          else
+          {
+            detail::decode_rare_escape(esc, next, push);
+          }
+          start = i;
+
+          n = span.find('\\', start);
+          if(n == std::string_view::npos)
+          {
+            append_run(span.substr(start));
+            break;
+          }
+        }
+        de.skip(end + 1);
+        return value;
       }
-      throw std::runtime_error("Unterminated JSON string");
+      else
+      {
+        while(not de.at_end())
+        {
+          const char c = de.advance();
+          if(c == '"')
+          {
+            return value;
+          }
+
+          if(c == '\\')
+          {
+            const char esc    = de.advance();
+            const int  simple = detail::simple_escape(esc);
+            if(simple >= 0)
+            {
+              push(static_cast<char>(simple));
+            }
+            else
+            {
+              detail::decode_rare_escape(esc, [&de]() -> char { return de.advance(); }, push);
+            }
+          }
+          else
+          {
+            push(c);
+          }
+        }
+        throw std::runtime_error("Unterminated JSON string");
+      }
     }
 
     template <number_c Num>

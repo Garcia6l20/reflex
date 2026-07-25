@@ -794,3 +794,98 @@ TEST_CASE("reflex::serde::json::serializer: scalar rendering is to_chars")
     CHECK_THROWS(json::deserializer{encoded}.load<DottedRename>());
   }
 }
+
+namespace
+{
+  // Reads through the non-contiguous cursor, which has bulk_scan off. Every
+  // string result must match the contiguous path byte for byte.
+  template <typename T> T load_streaming(std::string_view text)
+  {
+    std::istringstream in{std::string{text}};
+    return json::deserializer{in}.template load<T>();
+  }
+
+  template <typename T> T load_contiguous(std::string_view text)
+  {
+    return json::deserializer{text}.template load<T>();
+  }
+} // namespace
+
+TEST_CASE("reflex::serde::json::deserializer: string bodies")
+{
+  // The pair that makes a naive bound wrong: the first '"' in the input is not
+  // the terminator once a backslash precedes it.
+  SUBCASE("an escaped quote is not the terminator")
+  {
+    CHECK_EQ(load_contiguous<std::string>("\"a\\\"b\""), "a\"b");
+    CHECK_EQ(load_streaming<std::string>("\"a\\\"b\""), "a\"b");
+  }
+
+  SUBCASE("a trailing escaped backslash is the last body byte")
+  {
+    CHECK_EQ(load_contiguous<std::string>("\"a\\\\\""), "a\\");
+    CHECK_EQ(load_streaming<std::string>("\"a\\\\\""), "a\\");
+    CHECK_EQ(load_contiguous<std::string>("\"\\\\\\\\\""), "\\\\");
+  }
+
+  SUBCASE("shapes")
+  {
+    CHECK_EQ(load_contiguous<std::string>("\"\""), "");
+    CHECK_EQ(load_contiguous<std::string>("\"a\""), "a");
+    CHECK_EQ(load_contiguous<std::string>("\"\\n\\t\\r\\b\\f\""), "\n\t\r\b\f");
+    CHECK_EQ(load_contiguous<std::string>("\"\\\"\\\"\""), "\"\"");
+    // a raw newline inside a string is accepted today and must stay accepted
+    CHECK_EQ(load_contiguous<std::string>("\"a\nb\""), "a\nb");
+    CHECK_EQ(load_streaming<std::string>("\"a\nb\""), "a\nb");
+  }
+
+  SUBCASE("truncated input throws rather than reading past the end")
+  {
+    CHECK_THROWS(load_contiguous<std::string>("\"unterminated"));
+    CHECK_THROWS(load_streaming<std::string>("\"unterminated"));
+    // ends exactly at EOF with a dangling escape
+    CHECK_THROWS(load_contiguous<std::string>("\"abc\\"));
+    CHECK_THROWS(load_streaming<std::string>("\"abc\\"));
+    CHECK_THROWS(load_contiguous<std::string>("\""));
+    CHECK_THROWS(load_contiguous<std::string>(""));
+    CHECK_THROWS(load_contiguous<std::string>("\"\\u00"));
+  }
+
+  SUBCASE("both cursors agree on a long mixed body")
+  {
+    std::string body;
+    for(int i = 0; i < 200; ++i)
+    {
+      body += "plain";
+      body += "\\\"";
+      body += "more";
+      body += "\\\\";
+      body += "\\n";
+    }
+    const std::string encoded = "\"" + body + "\"";
+    const auto        a       = load_contiguous<std::string>(encoded);
+    const auto        b       = load_streaming<std::string>(encoded);
+    CHECK_EQ(a, b);
+    CHECK_EQ(a.size(), 200u * (5 + 1 + 4 + 1 + 1));
+    // and it re-serializes to what it came from
+    CHECK_EQ(json_dump(a), encoded);
+  }
+
+  SUBCASE("a fixed-capacity target still bounds-checks")
+  {
+    CHECK_EQ(std::string_view{load_contiguous<heapless::string<8>>("\"abc\"")}, "abc"sv);
+    CHECK_EQ(std::string_view{load_contiguous<heapless::string<8>>("\"a\\nc\"")}, "a\nc"sv);
+    CHECK_THROWS(load_contiguous<heapless::string<4>>("\"abcdefghij\""));
+    CHECK_THROWS(load_contiguous<heapless::string<4>>("\"ab\\ncdefghij\""));
+    CHECK_THROWS(load_streaming<heapless::string<4>>("\"abcdefghij\""));
+  }
+
+  SUBCASE("keys and values with escapes inside an object")
+  {
+    const auto v = load_contiguous<json::object>(
+        "{\"a\\\"b\":\"c\\\\d\",\"plain\":\"\\u0041\"}");
+    REQUIRE_EQ(v.size(), 2u);
+    CHECK_EQ(v.at("a\"b"), "c\\d");
+    CHECK_EQ(v.at("plain"), "A");
+  }
+}
