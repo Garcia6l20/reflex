@@ -49,7 +49,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
   // Override contract: a serialize override emits exactly one element and should
   // name it with ser.element_name("default") to be correct when nested, a
   // deserialize override consumes its whole element (open tag via read_open_tag,
-  // body, close tag unless self-closing).
+  // body, close tag unless self-closing). A std::string_view received from the
+  // deserializer views the input buffer and is valid for the duration of the
+  // call only. Copy it if you keep it.
 
   // A std::array<char, N> is treated as a fixed-capacity string (NUL-trimmed),
   // like csv/json. Other std::array instantiations are not text.
@@ -856,14 +858,25 @@ REFLEX_EXPORT namespace reflex::serde::xml
   public:
     using attr_list = std::vector<std::pair<std::string, std::string>>;
 
+    // True when the input is contiguous in memory, which enables the bulk-scan
+    // parse path. Public so a consumer can static_assert it and find out at
+    // compile time that a stream cursor put them on the slow path.
+    static constexpr bool bulk_scan =
+        std::contiguous_iterator<InputIt> and std::same_as<std::iter_value_t<InputIt>, char>;
+
+    // Tag-name carrier: borrowed from the input when it is in memory, owned
+    // otherwise. read_open_tag hands this out, so on the bulk_scan path a tag
+    // name is a view that stays valid only while the input buffer lives.
+    using name_t = std::conditional_t<bulk_scan, std::string_view, std::string>;
+
   private:
     // An element open tag already consumed by read_children, stashed so the
     // matched member's deserialize overload can re-read it via read_open_tag.
     struct open_tag_t
     {
-      std::string name;
-      bool        self_closing;
-      attr_list   attributes;
+      name_t    name;
+      bool      self_closing;
+      attr_list attributes;
     };
     std::optional<open_tag_t> pending_tag_{};
     // Attributes of the element last returned by read_open_tag, consumed by the
@@ -892,16 +905,6 @@ REFLEX_EXPORT namespace reflex::serde::xml
       cursor_.advance(1);
       return c;
     }
-
-    // Scanning a whole run at a time needs the input as bytes in memory. A
-    // stream cursor (istreambuf_iterator) has none, so it keeps the original
-    // character-at-a-time path.
-    static constexpr bool bulk_scan =
-        std::contiguous_iterator<InputIt> and std::same_as<std::iter_value_t<InputIt>, char>;
-
-    // Internal tag-name carrier: borrowed from the input when it is in memory,
-    // owned otherwise. Never escapes the deserializer.
-    using name_t = std::conditional_t<bulk_scan, std::string_view, std::string>;
 
     // The unconsumed input. Every scan below is bounded by what it is about to
     // consume: a run that is scanned is always then advanced over, so the parse
@@ -1172,7 +1175,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // Reads the next element open tag. If a parent stashed an already-consumed
     // open tag, that is returned first. Returns {name, self_closing}; the open
     // tag's attributes are available via attributes() until the next open tag.
-    std::pair<std::string, bool> read_open_tag()
+    std::pair<name_t, bool> read_open_tag()
     {
       if(pending_tag_)
       {
@@ -1186,7 +1189,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
         throw std::runtime_error("Expected an XML element");
       }
       current_attributes_ = std::move(head.attributes);
-      return {std::string(head.name), head.self_closing};
+      return {std::move(head.name), head.self_closing};
     }
 
     // Attributes of the element whose open tag read_open_tag last returned.
@@ -1447,7 +1450,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // T's own overload (including any user override) handles the element.
     template <typename T> T read_child(name_t name, bool self_closing, attr_list attrs)
     {
-      pending_tag_ = open_tag_t{std::string(name), self_closing, std::move(attrs)};
+      pending_tag_ = open_tag_t{std::move(name), self_closing, std::move(attrs)};
       return deserialize(*this, std::type_identity<T>{});
     }
 
@@ -1824,8 +1827,11 @@ REFLEX_EXPORT namespace reflex::serde::xml
   // constructor stays available for callers who genuinely cannot hold the
   // document in memory.
   //
-  // The file contents are released before this returns. T owns its strings, so
-  // nothing borrows from the mapping afterwards.
+  // The file contents are released before this returns. Every library overload
+  // gives T owned strings, so nothing borrows from the mapping afterwards - but
+  // a user deserialize override that keeps the std::string_view handed out by
+  // read_open_tag would be left pointing into an unmapped page. Copy it if you
+  // keep it.
   template <typename T> T load_file(std::filesystem::path const& path)
   {
     const detail::file_bytes bytes{path};

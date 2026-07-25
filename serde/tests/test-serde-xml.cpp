@@ -909,6 +909,15 @@ static_assert(xml::deserializer<std::string_view::const_iterator>::bulk_scan);
 static_assert(xml::deserializer<std::string::const_iterator>::bulk_scan);
 static_assert(not xml::deserializer<std::istreambuf_iterator<char>>::bulk_scan);
 
+// A tag name is borrowed from the input when the input is in memory. Pinned so
+// a refactor cannot quietly materialize it again.
+static_assert(
+    std::same_as<
+        xml::deserializer<std::string_view::const_iterator>::name_t,
+        std::string_view>);
+static_assert(
+    std::same_as<xml::deserializer<std::istreambuf_iterator<char>>::name_t, std::string>);
+
 TEST_CASE("reflex::serde::xml::load_file")
 {
   const std::filesystem::path xml_path = "test-load-file.xml";
