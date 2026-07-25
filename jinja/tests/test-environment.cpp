@@ -343,17 +343,52 @@ TEST_CASE("reflex::jinja: extends / block")
     CHECK_THROWS(jinja::parse("{% block a %}x{% endblock %}{% block a %}y{% endblock %}"));
   }
 
-  SUBCASE("copying a template re-indexes its blocks")
+  SUBCASE("cloning a template re-indexes its blocks")
   {
-    auto tmpl = jinja::parse("[{% block body %}{{ x }}{% endblock %}]");
-    auto copy = tmpl;
+    auto tmpl  = jinja::parse("[{% block body %}{{ x }}{% endblock %}]");
+    auto clone = tmpl.clone();
 
-    REQUIRE(copy.blocks.size() == 1);
-    CHECK(copy.blocks[0].first == "body");
-    CHECK(copy.blocks[0].second != tmpl.blocks[0].second);
+    REQUIRE(clone.blocks.size() == 1);
+    CHECK(clone.blocks[0].first == "body");
+    CHECK(clone.blocks[0].second != tmpl.blocks[0].second);
 
     ctx.set("x", 7);
-    CHECK(jinja::render(copy, ctx) == "[7]");
+    CHECK(jinja::render(clone, ctx) == "[7]");
+  }
+
+  SUBCASE("moving a template keeps its block index valid")
+  {
+    auto  tmpl  = jinja::parse("[{% block body %}{{ x }}{% endblock %}]");
+    auto* body  = tmpl.blocks.at(0).second;
+    auto  moved = std::move(tmpl);
+
+    // the children buffer is not reallocated by the move, so the index still points at it
+    REQUIRE(moved.blocks.size() == 1);
+    CHECK(moved.blocks[0].second == body);
+
+    ctx.set("x", 7);
+    CHECK(jinja::render(moved, ctx) == "[7]");
+  }
+
+  SUBCASE("endblock may repeat the block name")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"base", "[{% block body %}d{% endblock body %}]"},
+                           {"child", "{% extends 'base' %}{% block body %}c{% endblock body %}"},
+                           }
+        )
+    };
+
+    CHECK(env.render("child", ctx) == "[c]");
+    CHECK_THROWS(jinja::parse("{% block a %}x{% endblock b %}"));
+  }
+
+  SUBCASE("malformed names throw at parse time")
+  {
+    CHECK_THROWS(jinja::parse("{% block a scoped %}x{% endblock %}"));
+    CHECK_THROWS(jinja::parse("{% include '' %}"));
+    CHECK_THROWS(jinja::parse("{% extends '' %}"));
   }
 
   SUBCASE("blocks render standalone without an environment")

@@ -199,13 +199,11 @@ REFLEX_EXPORT namespace reflex::jinja
     }
 
     state.include_stack.push_back(name);
+    scope_guard pop{[&] { state.include_stack.pop_back(); }};
 
     // The includer's block overrides do not apply to the included template.
     render_state sub{.env = state.env, .include_stack = state.include_stack, .block_overrides = {}};
-    out = state.env->render_template_to(out, state.env->get(name), ctx, sub);
-
-    state.include_stack.pop_back();
-    return out;
+    return state.env->render_template_to(out, state.env->get(name), ctx, sub);
   }
 
   } // namespace detail

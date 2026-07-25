@@ -150,7 +150,13 @@ REFLEX_EXPORT namespace reflex::jinja
     {
       throw std::runtime_error(std::format("'{}' expects a quoted template name", tag));
     }
-    return arg.substr(1, arg.size() - 2);
+
+    auto name = arg.substr(1, arg.size() - 2);
+    if(name.empty())
+    {
+      throw std::runtime_error(std::format("'{}' expects a non-empty template name", tag));
+    }
+    return name;
   }
 
   constexpr std::vector<std::string_view> parse_loop_vars(std::string_view vars_str)
@@ -335,10 +341,12 @@ REFLEX_EXPORT namespace reflex::jinja
           };
         }
 
-        if(trimmed == "endblock")
+        if(trimmed == "endblock" or trimmed.starts_with("endblock "))
         {
+          // {% endblock name %} carries the name back for validation against the open block
+          auto name = trim(trimmed.substr(8));
           return {
-              std::move(children), block_end{block_end_kind::endblock_, {}, right_trim}
+              std::move(children), block_end{block_end_kind::endblock_, name, right_trim}
           };
         }
 
@@ -423,6 +431,10 @@ REFLEX_EXPORT namespace reflex::jinja
           {
             throw std::runtime_error("Missing name in {% block %}");
           }
+          if(std::ranges::any_of(name, is_trim_char))
+          {
+            throw std::runtime_error(std::format("Malformed {{% block %}} name: '{}'", name));
+          }
 
           block_block block;
           block.name = name;
@@ -430,9 +442,17 @@ REFLEX_EXPORT namespace reflex::jinja
           auto result    = parse_children(input, right_trim);
           block.children = std::move(result.children);
 
-          if(!result.end_tag || result.end_tag->kind != block_end_kind::endblock_)
+          if(not result.end_tag or result.end_tag->kind != block_end_kind::endblock_)
           {
             throw std::runtime_error("Unterminated {% block %} block");
+          }
+
+          if(not result.end_tag->tag_content.empty() and result.end_tag->tag_content != name)
+          {
+            throw std::runtime_error(
+                std::format(
+                    "Mismatched {{% endblock %}}: expected '{}', got '{}'", name,
+                    result.end_tag->tag_content));
           }
 
           if(result.end_tag->trim_next_text_left)
@@ -478,30 +498,32 @@ REFLEX_EXPORT namespace reflex::jinja
 
   } // namespace detail
 
+  // A parsed template. Every node holds string_view slices into the source it was parsed from,
+  // so a template_ never outlives that source - see `environment`, which owns both.
+  // Copying is explicit through clone(): the copy still points at the same source, and `blocks`
+  // has to be re-indexed against the new children.
   struct template_
   {
     using block_map = detail::block_map;
 
     std::vector<detail::element>    children;
     std::optional<std::string_view> extends;
-    block_map                       blocks; // indexes `children`, re-indexed on copy
+    block_map                       blocks; // indexes `children`
 
-    constexpr template_()                       = default;
-    constexpr template_(template_&&)            = default;
-    constexpr template_& operator=(template_&&) = default;
+    constexpr template_()                            = default;
+    constexpr template_(template_&&)                 = default;
+    constexpr template_& operator=(template_&&)      = default;
+    constexpr template_(const template_&)            = delete;
+    constexpr template_& operator=(const template_&) = delete;
 
-    constexpr template_(const template_& other) : children{other.children}, extends{other.extends}
+    // Copies the tree, re-indexing the blocks. The source string is shared, not copied.
+    constexpr template_ clone() const
     {
-      detail::index_blocks(children, blocks);
-    }
-
-    constexpr template_& operator=(const template_& other)
-    {
-      children = other.children;
-      extends  = other.extends;
-      blocks.clear();
-      detail::index_blocks(children, blocks);
-      return *this;
+      template_ result;
+      result.children = children;
+      result.extends  = extends;
+      detail::index_blocks(result.children, result.blocks);
+      return result;
     }
   };
 
