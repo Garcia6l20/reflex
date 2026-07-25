@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include <reflex/concepts.hpp>
+#include <reflex/enum.hpp>
 #include <reflex/format.hpp>
 #include <reflex/heapless/string.hpp>
 #include <reflex/parse.hpp>
@@ -623,7 +624,40 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
     else if constexpr(enum_c<F>)
     {
-      const auto                t = trim(text);
+      const auto t = trim(text);
+      // A Format-derived enum is written through its own formatter, by name, so
+      // it has to be read back by name. This mirrors the two enum formatters in
+      // reflex/enum.hpp: a flags enum renders as "a|b", a plain one as a single
+      // enumerator identifier. An enum without the Format derive is written as
+      // its underlying integer and is not affected. Integers stay acceptable
+      // either way, so this only widens what parses.
+      if constexpr(derives_c<F, derive_t<Format>>)
+      {
+        if constexpr(enum_flags_c<F>)
+        {
+          using U      = std::underlying_type_t<F>;
+          U          bits = 0;
+          bool       all  = not t.empty();
+          for(std::string_view s = t; not s.empty() and all;)
+          {
+            const std::string_view token = s.substr(0, s.find('|'));
+            s.remove_prefix(std::min(s.size(), token.size() + 1));
+            if(const auto v = reflex::to_enum_value<F>(trim(token)))
+            {
+              bits |= std::to_underlying(*v);
+            }
+            else
+            {
+              all = false;
+            }
+          }
+          if(all) return static_cast<F>(bits);
+        }
+        else if(const auto v = reflex::to_enum_value<F>(t))
+        {
+          return *v;
+        }
+      }
       std::underlying_type_t<F> value{};
       auto [ptr, ec] = std::from_chars(t.data(), t.data() + t.size(), value);
       if(ec != std::errc{}) throw std::runtime_error("XML: failed to parse enum");

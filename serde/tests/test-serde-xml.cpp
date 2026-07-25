@@ -780,3 +780,124 @@ static_assert(xml::xml_element_c<Doc>);
 static_assert(not xml::xml_element_c<TwoText>);       // at most one text member
 static_assert(not xml::xml_element_c<TextPlusChild>); // text excludes child elements
 static_assert(not xml::xml_element_c<RawPlusText>);   // text and raw are exclusive
+
+// An enum deriving Format is written through its own formatter, by name, so it
+// has to be read back by name. A plain enum is written as its underlying
+// integer. The two live side by side here so the representations stay
+// distinguishable: if the parse side ever keys on the wrong predicate, one of
+// these two round-trips breaks.
+enum class PlainEnum
+{
+  red  = 0,
+  blue = 7,
+  neg  = -3,
+};
+
+enum class[[= derive(Format)]] NamedEnum
+{
+  alpha = 1,
+  beta  = 2,
+};
+
+enum class[[= derive(Format, EnumFlags)]] FlagEnum
+{
+  none = 0,
+  read = 1,
+  write = 2,
+  exec = 4,
+};
+
+struct[[= derive(Debug)]] EnumText
+{
+  PlainEnum plain;
+  NamedEnum named;
+
+  constexpr bool operator==(EnumText const& other) const = default;
+};
+
+struct[[= derive(Debug)]] EnumAttrs
+{
+  [[= xml::attribute]] PlainEnum plain;
+  [[= xml::attribute]] NamedEnum named;
+  int                            filler;
+
+  constexpr bool operator==(EnumAttrs const& other) const = default;
+};
+
+struct[[= derive(Debug)]] FlagText
+{
+  FlagEnum flags;
+
+  constexpr bool operator==(FlagText const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml: Format-derived enum round-trips by name")
+{
+  SUBCASE("element text")
+  {
+    const EnumText value{PlainEnum::blue, NamedEnum::beta};
+    std::string    out;
+    {
+      xml::serializer ser{out};
+      ser.dump(value);
+    }
+    // the plain enum keeps its integer spelling, the Format-derived one its name
+    CHECK_EQ(out, "<EnumText><plain>7</plain><named>beta</named></EnumText>");
+    CHECK_EQ(xml::deserializer{out}.load<EnumText>(), value);
+  }
+
+  SUBCASE("attributes")
+  {
+    const EnumAttrs value{PlainEnum::neg, NamedEnum::alpha, 5};
+    std::string     out;
+    {
+      xml::serializer ser{out};
+      ser.dump(value);
+    }
+    CHECK_EQ(out, R"(<EnumAttrs plain="-3" named="alpha"><filler>5</filler></EnumAttrs>)");
+    CHECK_EQ(xml::deserializer{out}.load<EnumAttrs>(), value);
+  }
+
+  SUBCASE("every enumerator")
+  {
+    for(const auto e : {NamedEnum::alpha, NamedEnum::beta})
+    {
+      const EnumText value{PlainEnum::red, e};
+      std::string    out;
+      {
+        xml::serializer ser{out};
+        ser.dump(value);
+      }
+      CHECK_EQ(xml::deserializer{out}.load<EnumText>(), value);
+    }
+  }
+
+  SUBCASE("a flags enum round-trips its composite spelling")
+  {
+    using namespace reflex::bitwise_operations;
+    const FlagText value{FlagEnum::read | FlagEnum::exec};
+    std::string    out;
+    {
+      xml::serializer ser{out};
+      ser.dump(value);
+    }
+    CHECK_EQ(out, "<FlagText><flags>read|exec</flags></FlagText>");
+    CHECK_EQ(xml::deserializer{out}.load<FlagText>(), value);
+  }
+
+  SUBCASE("an integer body still parses for both kinds")
+  {
+    // documents written by hand, and anything predating the name spelling
+    CHECK_EQ(xml::deserializer{"<EnumText><plain>7</plain><named>2</named></EnumText>"s}
+                 .load<EnumText>(),
+             EnumText{PlainEnum::blue, NamedEnum::beta});
+  }
+
+  SUBCASE("a plain enum still rejects a name")
+  {
+    // only the Format-derived side gained the name spelling
+    CHECK_THROWS(
+        xml::deserializer{"<EnumText><plain>blue</plain><named>beta</named></EnumText>"s}
+            .load<EnumText>());
+  }
+}
