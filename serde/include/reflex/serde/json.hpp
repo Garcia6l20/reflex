@@ -529,19 +529,14 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
     }
 
+    // reflex::is_space accepts 0x09 to 0x0D and 0x20, so it also takes VT and
+    // FF, which JSON's grammar does not. This parser has always accepted them.
+    // Narrowing to " \t\n\r" would change what parses.
     void ltrim()
     {
-      while(!at_end())
+      while(not at_end() and reflex::is_space(*cursor_.begin()))
       {
-        const auto ch = peek();
-        if(reflex::is_space(ch))
-        {
-          advance();
-        }
-        else
-        {
-          break;
-        }
+        cursor_.advance(1);
       }
     }
 
