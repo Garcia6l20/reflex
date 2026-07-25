@@ -1235,6 +1235,15 @@ REFLEX_EXPORT namespace reflex::serde::xml
       return text;
     }
 
+    // Read this element's text content and its close tag, parsed into T. The
+    // borrowed run is consumed here, so nothing outlives the input buffer.
+    template <typename T> T read_text_field()
+    {
+      text_run run = read_text_run();
+      read_close_tag();
+      return parse_run<T>(std::move(run));
+    }
+
     // An unknown element: skip its whole subtree. self_closing tags have none.
     void skip_subtree(bool self_closing)
     {
@@ -1318,8 +1327,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
       {
         if constexpr(is_text(member))
         {
-          using F          = std::remove_cvref_t<decltype(value.[:member:])>;
-          std::string text = read_text();
+          using F                     = std::remove_cvref_t<decltype(value.[:member:])>;
+          text_run               run  = read_text_run();
+          const std::string_view text = run.view();
           read_close_tag();
           if constexpr(optional_c<F>)
           {
@@ -1330,12 +1340,12 @@ REFLEX_EXPORT namespace reflex::serde::xml
             }
             else
             {
-              value.[:member:] = detail::parse_field<U>(text);
+              value.[:member:] = parse_run<U>(std::move(run));
             }
           }
           else
           {
-            value.[:member:] = detail::parse_field<F>(text);
+            value.[:member:] = parse_run<F>(std::move(run));
           }
         }
         else if constexpr(is_raw_content(member))
@@ -1365,10 +1375,11 @@ REFLEX_EXPORT namespace reflex::serde::xml
       if constexpr(xml_text_c<U>)
       {
         if(self_closing) return std::nullopt;
-        std::string text = read_text();
+        text_run               run  = read_text_run();
+        const std::string_view text = run.view();
         read_close_tag();
         if(detail::trim(text).empty()) return std::nullopt;
-        return detail::parse_field<U>(text);
+        return parse_run<U>(std::move(run));
       }
       else
       {
@@ -1485,6 +1496,58 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
 
   private:
+    // A text run that is one contiguous span of the source is handed back as a
+    // view into it. A run that had to be decoded (entities) or spliced (CDATA),
+    // and anything read from a stream, comes back owned. Strictly internal: the
+    // view is valid only while the input buffer lives.
+    struct text_run
+    {
+      std::string_view borrowed;
+      std::string      owned;
+      bool             is_borrowed = false;
+
+      std::string_view view() const
+      {
+        return is_borrowed ? borrowed : std::string_view{owned};
+      }
+    };
+
+    template <typename F> static F parse_run(text_run&& run)
+    {
+      using U = typename detail::field_value<F>::type;
+      if constexpr(std::same_as<U, std::string>)
+      {
+        if(not run.is_borrowed) return F{std::move(run.owned)};
+      }
+      return detail::parse_field<F>(run.view());
+    }
+
+    text_run read_text_run()
+    {
+      if constexpr(bulk_scan)
+      {
+        const std::string_view sv   = rest();
+        const std::size_t      lt   = sv.find('<');
+        const std::string_view head = (lt == std::string_view::npos) ? sv : sv.substr(0, lt);
+        // an entity has to be decoded, and "<!" continues the run with a CDATA
+        // section or a comment: both need the owning path
+        const bool simple = head.find('&') == std::string_view::npos
+                        and (lt == std::string_view::npos or lt + 1 >= sv.size()
+                             or sv[lt + 1] != '!');
+        if(simple)
+        {
+          skip(head.size());
+          if(lt != std::string_view::npos)
+          {
+            skip(1);             // '<', consumed here
+            lt_consumed_ = true; // so the next tag reader does not expect it again
+          }
+          return {head, {}, true};
+        }
+      }
+      return {{}, read_text(), false};
+    }
+
     // A '&' has already been consumed; decode the entity and append to out.
     // On any malformed or unknown reference the original text is preserved
     // verbatim (never silently dropped, never eats following markup).
@@ -1596,9 +1659,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     {
       return detail::parse_field<T>("");
     }
-    std::string text = de.read_text();
-    de.read_close_tag();
-    return detail::parse_field<T>(text);
+    return de.template read_text_field<T>();
   }
 
   template <typename InputIt, xml_element_c Agg>
