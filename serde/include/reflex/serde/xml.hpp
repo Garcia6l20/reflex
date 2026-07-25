@@ -5,6 +5,7 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <charconv>
 #include <cstring>
 
 #include <reflex/concepts.hpp>
@@ -370,6 +371,102 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
   }
 
+  // Attribute-value escaping: '&', '<', and the delimiting '"'.
+  template <typename Ser> void write_attr_escaped(Ser& ser, std::string_view text)
+  {
+    std::size_t pos = 0;
+    while(pos < text.size())
+    {
+      const std::size_t n = find_any(text, pos, "&<\"");
+      if(n == std::string_view::npos)
+      {
+        ser.write_raw(text.substr(pos));
+        return;
+      }
+      if(n > pos)
+      {
+        ser.write_raw(text.substr(pos, n - pos));
+      }
+      switch(text[n])
+      {
+        case '&':
+          ser.write_raw("&amp;");
+          break;
+        case '<':
+          ser.write_raw("&lt;");
+          break;
+        default:
+          ser.write_raw("&quot;");
+      }
+      pos = n + 1;
+    }
+  }
+
+  template <bool Attr, typename Ser> void write_escaped(Ser& ser, std::string_view text)
+  {
+    if constexpr(Attr)
+    {
+      write_attr_escaped(ser, text);
+    }
+    else
+    {
+      write_text_escaped(ser, text);
+    }
+  }
+
+  // 64 bytes covers the shortest round-trip form of every type to_chars accepts
+  // here, so the result is never truncated.
+  template <typename Ser, typename N> void write_digits(Ser& ser, N value)
+  {
+    char       buf[64];
+    const auto r = std::to_chars(buf, buf + sizeof(buf), value);
+    ser.write_raw(std::string_view{buf, static_cast<std::size_t>(r.ptr - buf)});
+  }
+
+  // A scalar straight into the sink. field_text survives only for the
+  // Format-derived case, which needs std::format to render.
+  template <bool Attr = false, typename Ser, typename F>
+  void write_scalar(Ser& ser, F const& value)
+  {
+    if constexpr(array_of_c<F>) // std::array<char, N>, trimmed at the first NUL
+    {
+      write_escaped<Attr>(ser, {value.data(), ::strnlen(value.data(), value.size())});
+    }
+    else if constexpr(str_c<F>)
+    {
+      write_escaped<Attr>(ser, std::string_view{value});
+    }
+    else if constexpr(std::same_as<F, bool>)
+    {
+      ser.write_raw(value ? "true" : "false");
+    }
+    else if constexpr(std::same_as<F, char>)
+    {
+      write_escaped<Attr>(ser, std::string_view{&value, 1});
+    }
+    else if constexpr(number_c<F>)
+    {
+      // Two-argument to_chars is shortest-round-trip, which is what "{}" is
+      // specified to produce, so the rendered bytes are the same. Digits never need
+      // escaping.
+      write_digits(ser, value);
+    }
+    else if constexpr(derives_c<F, derive_t<Format>>)
+    {
+      // ahead of enum_c on purpose: a Format-derived enum renders through its
+      // own formatter, not as its underlying value
+      write_escaped<Attr>(ser, field_text(value));
+    }
+    else if constexpr(enum_c<F>)
+    {
+      write_digits(ser, std::to_underlying(value));
+    }
+    else
+    {
+      static_assert(false, std::string(display_string_of(^^F)) + " has no XML text mapping");
+    }
+  }
+
   template <typename Ser> void write_tag(Ser& ser, std::string_view name, bool closing)
   {
     if(closing)
@@ -412,7 +509,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
     else
     {
-      write_text_escaped(ser, field_text(value));
+      write_scalar(ser, value);
     }
   }
 
@@ -425,37 +522,6 @@ REFLEX_EXPORT namespace reflex::serde::xml
     write_cdata_content(ser, text);
     ser.write_raw("]]>");
     write_tag(ser, name, true);
-  }
-
-  // Attribute-value escaping: '&', '<', and the delimiting '"'.
-  template <typename Ser> void write_attr_escaped(Ser& ser, std::string_view text)
-  {
-    std::size_t pos = 0;
-    while(pos < text.size())
-    {
-      const std::size_t n = find_any(text, pos, "&<\"");
-      if(n == std::string_view::npos)
-      {
-        ser.write_raw(text.substr(pos));
-        return;
-      }
-      if(n > pos)
-      {
-        ser.write_raw(text.substr(pos, n - pos));
-      }
-      switch(text[n])
-      {
-        case '&':
-          ser.write_raw("&amp;");
-          break;
-        case '<':
-          ser.write_raw("&lt;");
-          break;
-        default:
-          ser.write_raw("&quot;");
-      }
-      pos = n + 1;
-    }
   }
 
   // A member -> zero (empty optional) or one ` name="value"` pair in the open tag.
@@ -476,7 +542,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
       ser.write_raw(name);
       ser.write_char('=');
       ser.write_char('"');
-      write_attr_escaped(ser, field_text(value));
+      write_scalar<true>(ser, value);
       ser.write_char('"');
     }
   }
@@ -609,7 +675,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
   {
     const std::string_view name = ser.element_name(display_string_of(dealias(decay(^^T))));
     detail::write_tag(ser, name, false);
-    detail::write_text_escaped(ser, detail::field_text(value));
+    detail::write_scalar(ser, value);
     detail::write_tag(ser, name, true);
     return ser.out();
   }
