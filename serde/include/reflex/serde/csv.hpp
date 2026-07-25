@@ -188,8 +188,11 @@ REFLEX_EXPORT namespace reflex::serde::csv
     }
     else if constexpr(number_c<F>)
     {
-      F value{};
-      auto [ptr, ec] = std::from_chars(cell.data(), cell.data() + cell.size(), value);
+      // Trailing garbage is accepted: "12abc" reads as 12. from_chars reports how
+      // far it got and this deliberately ignores it, matching the XML backend.
+      // Tightening it is a cross-backend decision.
+      F          value{};
+      const auto ec = std::from_chars(cell.data(), cell.data() + cell.size(), value).ec;
       if(ec != std::errc{}) throw std::runtime_error("CSV: failed to parse number");
       return value;
     }
@@ -200,7 +203,8 @@ REFLEX_EXPORT namespace reflex::serde::csv
     else if constexpr(enum_c<F>)
     {
       std::underlying_type_t<F> value{};
-      auto [ptr, ec] = std::from_chars(cell.data(), cell.data() + cell.size(), value);
+      // Trailing garbage is accepted here too, see the number_c arm above.
+      const auto ec = std::from_chars(cell.data(), cell.data() + cell.size(), value).ec;
       if(ec != std::errc{}) throw std::runtime_error("CSV: failed to parse enum");
       return static_cast<F>(value);
     }
