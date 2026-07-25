@@ -216,7 +216,9 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         {
           result = std::ref(v);
         }
-        else if constexpr(seq_c<U> and requires { value_type{std::ref(v)}; })
+        else if constexpr(seq_c<U> and requires(std::ranges::range_value_t<U>& elem) {
+                            value_type{std::ref(elem)};
+                          })
         {
           result = v
                  | std::views::transform([](auto&& elem) { return std::ref(elem); })

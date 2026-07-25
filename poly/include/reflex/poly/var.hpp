@@ -66,6 +66,33 @@ REFLEX_EXPORT namespace reflex::poly
     using type = std::remove_reference_t<T const>*;
   };
 
+  // Equality comparability that recurses through containers: libstdc++'s std::vector/std::map
+  // operator== are unconstrained templates, so a bare `requires { a == b; }` probe is satisfied
+  // even when the element type has no operator== and instantiation would hard-error.
+  template <typename A, typename B> consteval bool eq_comparable()
+  {
+    constexpr bool shallow = requires(A const& a, B const& b) {
+      { a == b } -> std::convertible_to<bool>;
+    };
+    if constexpr(not shallow)
+    {
+      return false;
+    }
+    else if constexpr(seq_c<A> and seq_c<B>)
+    {
+      return eq_comparable<typename A::value_type, typename B::value_type>();
+    }
+    else if constexpr(map_c<A> and map_c<B>)
+    {
+      return eq_comparable<typename A::key_type, typename B::key_type>()
+         and eq_comparable<typename A::mapped_type, typename B::mapped_type>();
+    }
+    else
+    {
+      return true;
+    }
+  }
+
   template <typename... Ts>
   using base_variant_type = std::variant<
       null_t,
@@ -119,11 +146,14 @@ REFLEX_EXPORT namespace reflex::poly
     using floating_point_type                     = typename[:infos::__floating_point_type():];
     static constexpr bool has_floating_point_type = dealias(^^floating_point_type) != ^^void;
 
-    template <typename T> static constexpr bool can_hold() noexcept
+    // Answers "is there an alternative able to hold T", T& being held as T*.
+    template <typename T> static consteval bool __can_hold()
     {
-      template for(constexpr auto t : infos::base_types)
+      using stored_type = typename detail::wrap_reference<T>::type;
+      auto const wanted = dealias(^^stored_type);
+      for(auto t : template_arguments_of(dealias(^^variant_type)))
       {
-        if constexpr(dealias(t) == dealias(^^T))
+        if(dealias(t) == wanted)
         {
           return true;
         }
@@ -131,16 +161,19 @@ REFLEX_EXPORT namespace reflex::poly
       return false;
     }
 
+    template <typename T> static constexpr bool can_hold() noexcept
+    {
+      return __can_hold<T>();
+    }
+
     using variant_type::variant_type; // inherit constructors
 
+    // Reference capture is opt-in: an implicit `var(T&)` would silently store the address of any
+    // lvalue, including a named local being returned by value.
     template <typename T>
-    constexpr var(std::reference_wrapper<T> ref) : variant_type(std::addressof(ref.get()))
-    {}
-
-    template <typename T>
-    constexpr var(T& ref)
-      requires(can_hold<std::remove_reference_t<T>&>())
-        : variant_type(std::addressof(ref))
+    constexpr var(std::reference_wrapper<T> ref)
+      requires(can_hold<T&>())
+        : variant_type(std::addressof(ref.get()))
     {}
 
     // === numeric catch-all (int, float, size_t, …)
@@ -397,7 +430,7 @@ REFLEX_EXPORT namespace reflex::poly
     {
       return reflex::visit(
           [&other](auto const& s) -> bool {
-            if constexpr(requires { s == other; })
+            if constexpr(detail::eq_comparable<std::remove_cvref_t<decltype(s)>, std::decay_t<T>>())
             {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"

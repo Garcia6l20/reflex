@@ -643,6 +643,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         {
           result = std::forward<M>(member);
         }
+        else if constexpr(std::is_lvalue_reference_v<M> and requires { result = std::ref(member); })
+        {
+          result = std::ref(member);
+        }
         else if constexpr(seq_c<std::decay_t<M>>)
         {
           result = member
