@@ -55,43 +55,52 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
       for(auto m : std::meta::nonstatic_data_members_of(agg, ctx))
       {
-        auto t = dealias(type_of(m));
-        // extract value_type from std::optional
-        if(meta::is_template_instance_of(t, ^^std::optional))
-        {
-          t = dealias(template_arguments_of(t)[0]);
-        }
-        if(meta::eval_concept(
-               ^^seq_c, {
-                            t}))
-        {
-          auto value_type = dealias(meta::member_named(t, "value_type"));
-          if(append_unique(value_type) and is_aggregate_type(value_type))
-          {
-            scan_aggregate(value_type, ctx);
-          }
-          continue;
-        }
+        scan_type(type_of(m), ctx);
+      }
+    }
 
-        if(meta::eval_concept(
-               ^^map_c, {
-                            t}))
+    // collects the types reachable from a single type: unwraps std::optional, descends into
+    // sequence and map element types, recurses into aggregates
+    consteval void scan_type(
+        std::meta::info           t,
+        std::meta::access_context ctx = std::meta::access_context::current())
+    {
+      t = dealias(t);
+      // extract value_type from std::optional
+      if(meta::is_template_instance_of(t, ^^std::optional))
+      {
+        t = dealias(template_arguments_of(t)[0]);
+      }
+      if(meta::eval_concept(
+             ^^seq_c, {
+                          t}))
+      {
+        auto value_type = dealias(meta::member_named(t, "value_type"));
+        if(append_unique(value_type) and is_aggregate_type(value_type))
         {
-          auto key_type = dealias(meta::member_named(t, "key_type"));
-          append_unique(key_type);
-
-          auto mapped_type = dealias(meta::member_named(t, "mapped_type"));
-          if(append_unique(mapped_type) and is_aggregate_type(mapped_type))
-          {
-            scan_aggregate(mapped_type, ctx);
-          }
-          continue;
+          scan_aggregate(value_type, ctx);
         }
+        return;
+      }
 
-        if(append_unique(t) and is_aggregate_type(t))
+      if(meta::eval_concept(
+             ^^map_c, {
+                          t}))
+      {
+        auto key_type = dealias(meta::member_named(t, "key_type"));
+        append_unique(key_type);
+
+        auto mapped_type = dealias(meta::member_named(t, "mapped_type"));
+        if(append_unique(mapped_type) and is_aggregate_type(mapped_type))
         {
-          scan_aggregate(t, ctx);
+          scan_aggregate(mapped_type, ctx);
         }
+        return;
+      }
+
+      if(append_unique(t) and is_aggregate_type(t))
+      {
+        scan_aggregate(t, ctx);
       }
     }
   };
@@ -105,6 +114,24 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   {
     detail::type_scan_accumulator acc;
     acc.scan_aggregate(agg, ctx);
+    return acc.types;
+  }
+
+  // scans the types reachable from a type bound as a context variable: members for an aggregate,
+  // element types for a bound sequence or map
+  consteval auto scan_bound_types(
+      std::meta::info bound, std::meta::access_context ctx = std::meta::access_context::current())
+      -> std::vector<std::meta::info>
+  {
+    detail::type_scan_accumulator acc;
+    if(is_aggregate_type(dealias(bound)))
+    {
+      acc.scan_aggregate(bound, ctx);
+    }
+    else
+    {
+      acc.scan_type(bound, ctx);
+    }
     return acc.types;
   }
 
@@ -140,25 +167,21 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         if(!std::ranges::contains(types, t))
         {
           types.push_back(t);
-          auto dt = decay(t);
-          if(is_aggregate_type(dt))
+          for(auto nt : scan_bound_types(decay(t)))
           {
-            for(auto nt : scan_object_types(dt))
+            if(is_aggregate_type(nt))
             {
-              if(is_aggregate_type(nt))
+              auto ref_type = add_lvalue_reference(nt);
+              if(!std::ranges::contains(types, ref_type))
               {
-                auto ref_type = add_lvalue_reference(nt);
-                if(!std::ranges::contains(types, ref_type))
-                {
-                  types.push_back(ref_type);
-                }
+                types.push_back(ref_type);
               }
-              else
+            }
+            else
+            {
+              if(!std::ranges::contains(types, decay(nt)))
               {
-                if(!std::ranges::contains(types, decay(nt)))
-                {
-                  types.push_back(decay(nt));
-                }
+                types.push_back(decay(nt));
               }
             }
           }

@@ -656,6 +656,20 @@ REFLEX_EXPORT namespace reflex::jinja
     loop.last  = (loop.index0 == loop.length - 1);
   }
 
+  // Binds a loop variable by reference when the value type has a reference alternative for it,
+  // by value otherwise (scalars, strings, const elements).
+  constexpr void set_loop_var(auto& scope, std::string_view name, auto&& value)
+  {
+    if constexpr(requires { scope.set(name, std::ref(value)); })
+    {
+      scope.set(name, std::ref(value));
+    }
+    else
+    {
+      scope.set(name, value);
+    }
+  }
+
   template <typename OutputIt, typename ContextT>
   OutputIt render_children_to(
       OutputIt                    out,
@@ -723,7 +737,7 @@ REFLEX_EXPORT namespace reflex::jinja
             // Evaluate the iterable as a full expression so filters/pipes work.
             auto iterable_val = expr::evaluate(v.iterable, ctx);
 
-            std::visit(
+            reflex::visit(
                 [&]<typename U>(U&& it) {
                   using V = std::decay_t<U>;
                   if constexpr(seq_c<V>)
@@ -732,9 +746,9 @@ REFLEX_EXPORT namespace reflex::jinja
                     auto loop  = make_loop_info(it.size(), ctx);
                     auto scope = ctx.push_locals();
                     scope.set("loop", std::ref(loop));
-                    for(auto& item : it)
+                    for(auto&& item : it)
                     {
-                      scope.set(v.loop_vars[0], std::ref(item));
+                      set_loop_var(scope, v.loop_vars[0], item);
                       out = render_children_to(out, v.children, ctx, state);
                       advance_loop(loop);
                     }
@@ -745,7 +759,7 @@ REFLEX_EXPORT namespace reflex::jinja
                     auto loop  = make_loop_info(it.size(), ctx);
                     auto scope = ctx.push_locals();
                     scope.set("loop", std::ref(loop));
-                    for(const auto& [key, val] : it)
+                    for(auto&& [key, val] : it)
                     {
                       if(v.loop_vars.size() == 1)
                       {
@@ -756,7 +770,7 @@ REFLEX_EXPORT namespace reflex::jinja
                       {
                         // {% for k, v in map %} — bind key and value
                         scope.set(v.loop_vars[0], key);
-                        scope.set(v.loop_vars[1], val);
+                        set_loop_var(scope, v.loop_vars[1], val);
                       }
                       out = render_children_to(out, v.children, ctx, state);
                       advance_loop(loop);

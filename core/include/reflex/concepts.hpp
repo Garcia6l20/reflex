@@ -87,6 +87,36 @@ REFLEX_EXPORT namespace reflex
   template <typename T>
   concept number_c = int_number_c<T> or std::floating_point<T>;
 
+  // Equality comparability that recurses through containers: libstdc++'s std::vector/std::map
+  // operator== are unconstrained templates, so a bare `requires { a == b; }` probe is satisfied
+  // even when the element type has no operator== and instantiation would hard-error.
+  template <typename A, typename B> consteval bool eq_comparable()
+  {
+    constexpr bool shallow = requires(A const& a, B const& b) {
+      { a == b } -> std::convertible_to<bool>;
+    };
+    if constexpr(not shallow)
+    {
+      return false;
+    }
+    else if constexpr(seq_c<A> and seq_c<B>)
+    {
+      return eq_comparable<typename A::value_type, typename B::value_type>();
+    }
+    else if constexpr(map_c<A> and map_c<B>)
+    {
+      return eq_comparable<typename A::key_type, typename B::key_type>()
+         and eq_comparable<typename A::mapped_type, typename B::mapped_type>();
+    }
+    else
+    {
+      return true;
+    }
+  }
+
+  template <typename A, typename B>
+  concept eq_comparable_c = eq_comparable<A, B>();
+
   template <typename T> struct is_optional : std::false_type
   {};
   template <typename T> struct is_optional<std::optional<T>> : std::true_type

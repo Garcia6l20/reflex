@@ -687,20 +687,24 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       }
       const auto idx = static_cast<std::size_t>(index);
 
-      return std::visit(
-          [idx]<typename T>(T const& value) -> value_type {
+      return reflex::visit(
+          [idx]<typename T>(T&& value) -> value_type {
             using U = std::decay_t<T>;
             if constexpr(seq_c<U>)
             {
               if(idx < value.size())
               {
-                if constexpr(requires { value_type{value[idx]}; })
+                if constexpr(requires { value_type{std::ref(value[idx])}; })
+                {
+                  return value_type{std::ref(value[idx])};
+                }
+                else if constexpr(requires { value_type{value[idx]}; })
                 {
                   return value_type{value[idx]};
                 }
                 else
                 {
-                  return value[idx];
+                  return {};
                 }
               }
               return {};
@@ -828,7 +832,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     static value_type coerce_bool(const value_type& v)
     {
-      return std::visit(
+      return reflex::visit(
           [&]<typename T>(T const& value) -> value_type {
             if constexpr(requires { static_cast<bool>(value); })
             {
@@ -850,11 +854,11 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     static bool equal(const value_type& a, const value_type& b)
     {
-      return std::visit(
+      return reflex::visit(
           [&]<typename LHS, typename RHS>(LHS const& lhs, RHS const& rhs) -> bool {
             using DLHS = std::decay_t<LHS>;
             using DRHS = std::decay_t<RHS>;
-            if constexpr(requires { lhs == rhs; })
+            if constexpr(eq_comparable_c<DLHS, DRHS>)
             {
               return lhs == rhs;
             }

@@ -371,6 +371,55 @@ TEST_CASE("reflex::jinja: aggregate support")
   }
 }
 
+TEST_CASE("reflex::jinja: top-level bound containers")
+{
+  SUBCASE("vector")
+  {
+    std::vector<aggregate1> rows{
+        {1, "one"s},
+        {2, "two"s}
+    };
+    auto ctx = expr::context{"rows"_na = rows};
+
+    auto tmpl   = jinja::parse("{% for r in rows %}{{ r.a }}:{{ r.b }} {% endfor %}");
+    auto result = render(tmpl, ctx);
+    CHECK(result == "1:one 2:two ");
+  }
+
+  SUBCASE("vector subscript")
+  {
+    std::vector<aggregate1> rows{
+        {1, "one"s},
+        {2, "two"s}
+    };
+    auto ctx = expr::context{"rows"_na = rows};
+
+    auto result = render(jinja::parse("{{ rows[1].b }}"), ctx);
+    CHECK(result == "two");
+  }
+
+  SUBCASE("map")
+  {
+    std::map<std::string, aggregate1> rows{
+        {"first",  {1, "one"s}},
+        {"second", {2, "two"s}}
+    };
+    auto ctx = expr::context{"rows"_na = rows};
+
+    auto tmpl   = jinja::parse("{% for k, v in rows %}{{ k }}={{ v.a }} {% endfor %}");
+    auto result = render(tmpl, ctx);
+    CHECK(result == "first=1 second=2 ");
+  }
+
+  SUBCASE("truthiness of a bound aggregate")
+  {
+    aggregate1 agg{0, ""s};
+    auto       ctx = expr::context{"agg"_na = agg};
+
+    CHECK(render(jinja::parse("{% if agg.a %}yes{% else %}no{% endif %}"), ctx) == "no");
+  }
+}
+
 template <typename ValueT> ValueT jinja_format(std::span<ValueT const> args)
 {
   if(args.size() > 2)
