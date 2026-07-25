@@ -315,12 +315,29 @@ REFLEX_EXPORT namespace reflex::serde::bson
   private:
     struct cursor_t
     {
+      // The input can report its remaining length in O(1). True for a string_view, a vector or a
+      // mapped file, false for an istreambuf_iterator, which is why every check below is guarded.
+      static constexpr bool sized_input = std::copyable<It> and std::sized_sentinel_for<It, It>;
+
       range_type  range;
       std::size_t position = 0;
 
       constexpr bool at_end() const
       {
         return range.empty();
+      }
+
+      // Reject a length read out of the document before anything acts on it. Free on a sized
+      // input, a no-op otherwise, where read_byte()'s at_end() check is the only guard available.
+      constexpr void require(std::size_t n) const
+      {
+        if constexpr(sized_input)
+        {
+          if(n > static_cast<std::size_t>(range.end() - range.begin()))
+          {
+            throw std::runtime_error("Unexpected end of BSON input");
+          }
+        }
       }
 
       constexpr std::byte read_byte()
@@ -337,10 +354,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
       constexpr void advance(std::size_t n)
       {
-        // if(n > std::ranges::distance(range))
-        // {
-        //   throw std::runtime_error("Unexpected end of BSON input");
-        // }
+        require(n);
         range.advance(n);
         position += n;
       }
@@ -393,6 +407,11 @@ REFLEX_EXPORT namespace reflex::serde::bson
             throw std::runtime_error("Invalid BSON string length");
           }
 
+          // size counts the payload plus its null terminator. Check both before reading either:
+          // the contiguous branch below copies straight off this length without touching
+          // read_byte(), so nothing downstream would catch it.
+          require(static_cast<std::size_t>(size));
+
           if constexpr(contiguous_byte_or_char)
           {
             const auto* first = std::to_address(range.begin());
@@ -401,7 +420,14 @@ REFLEX_EXPORT namespace reflex::serde::bson
           }
           else
           {
-            out.reserve(static_cast<std::size_t>(size - 1));
+            // On an unsized input require() cannot vet the length, so a hostile document must not
+            // turn into a multi-gigabyte reservation. Grow from a bounded guess, read_byte() stops
+            // at end of input either way.
+            constexpr std::size_t max_unchecked_reserve = 64 * 1024;
+
+            auto want = static_cast<std::size_t>(size - 1);
+            out.reserve(sized_input ? want : std::min(want, max_unchecked_reserve));
+
             for(std::int32_t i = 0; i < size - 1; ++i)
             {
               out.push_back(static_cast<char>(std::to_integer<unsigned char>(read_byte())));
@@ -503,6 +529,12 @@ REFLEX_EXPORT namespace reflex::serde::bson
       {
         throw std::runtime_error("Invalid BSON document length");
       }
+
+      // The 4 length bytes are already consumed, the rest of the declared document must still fit.
+      // Rejects a nested length that overruns the buffer at the point it is read rather than after
+      // its elements have been walked.
+      cursor_.require(static_cast<std::size_t>(size) - sizeof(std::int32_t));
+
       const std::size_t end_pos = start + static_cast<std::size_t>(size);
 
       while(cursor_.position < end_pos)

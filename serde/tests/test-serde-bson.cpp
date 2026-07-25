@@ -268,6 +268,162 @@ TEST_CASE("reflex::serde::bson: malformed input throws")
   }
 }
 
+namespace
+{
+struct inner_t
+{
+  int x;
+
+  bool operator==(inner_t const&) const = default;
+};
+
+struct outer_t
+{
+  inner_t     a;
+  std::string b;
+
+  bool operator==(outer_t const&) const = default;
+};
+
+void put_i32(std::vector<std::byte>& b, std::size_t at, std::int32_t v)
+{
+  const auto raw = static_cast<std::uint32_t>(v);
+  for(std::size_t i = 0; i < 4; ++i)
+  {
+    b[at + i] = static_cast<std::byte>((raw >> (8 * i)) & 0xFFu);
+  }
+}
+
+template <typename T> std::vector<std::byte> encode(T const& value)
+{
+  std::vector<std::byte> out;
+  bson::serializer       ser{out};
+  ser.dump(value);
+  return out;
+}
+} // namespace
+
+// A length read out of the document must be checked against what the input can actually supply.
+// Before this, a declared length past the end of the buffer was copied out verbatim.
+TEST_CASE("reflex::serde::bson: a length past the end of the input throws")
+{
+  const S sample{42, "Hello, world!", 3.14};
+
+  SUBCASE("document length exceeds the buffer")
+  {
+    auto buf = encode(sample);
+    put_i32(buf, 0, 0x0000FFFF);
+    CHECK_THROWS_AS((bson::deserializer{buf}.load<S>()), std::runtime_error);
+  }
+
+  SUBCASE("string length exceeds the buffer")
+  {
+    auto buf = encode(sample);
+
+    // Locate the string element's 4-byte length prefix through its unique payload.
+    const std::string_view needle  = "Hello, world!";
+    std::size_t            payload = 0;
+    for(std::size_t i = 0; i + needle.size() <= buf.size(); ++i)
+    {
+      if(std::memcmp(buf.data() + i, needle.data(), needle.size()) == 0)
+      {
+        payload = i;
+        break;
+      }
+    }
+    REQUIRE(payload >= 4);
+
+    auto huge = buf;
+    put_i32(huge, payload - 4, 0x00100000);
+    CHECK_THROWS_AS((bson::deserializer{huge}.load<S>()), std::runtime_error);
+
+    // The tightest possible overrun, one byte more than the input holds.
+    auto edge = buf;
+    put_i32(edge, payload - 4, static_cast<std::int32_t>(buf.size() - payload + 1));
+    CHECK_THROWS_AS((bson::deserializer{edge}.load<S>()), std::runtime_error);
+  }
+
+  SUBCASE("cstring with no terminator")
+  {
+    auto full = encode(sample);
+    // Cut just inside the first key so it runs to the end of the buffer with no null byte.
+    std::vector<std::byte> buf{full.begin(), full.begin() + 7};
+    put_i32(buf, 0, static_cast<std::int32_t>(buf.size()));
+    CHECK_THROWS_AS((bson::deserializer{buf}.load<S>()), std::runtime_error);
+  }
+
+  SUBCASE("nested document length exceeds its parent")
+  {
+    const auto full = encode(outer_t{{5}, std::string(64, 'p')});
+
+    // The nested document follows the root length prefix, one type byte and the key "a\0".
+    const std::size_t nested_at = 4 + 1 + 2;
+
+    auto spans_buffer = full;
+    put_i32(spans_buffer, nested_at, static_cast<std::int32_t>(full.size()));
+    CHECK_THROWS_AS((bson::deserializer{spans_buffer}.load<outer_t>()), std::runtime_error);
+
+    auto past_buffer = full;
+    put_i32(past_buffer, nested_at, 0x00100000);
+    CHECK_THROWS_AS((bson::deserializer{past_buffer}.load<outer_t>()), std::runtime_error);
+  }
+}
+
+// The sweep that finds the length reads the targeted cases above miss. Every proper prefix of a
+// valid document must throw, both as-is and with the root length corrected to the truncated size.
+TEST_CASE("reflex::serde::bson: every truncation of a document throws")
+{
+  SUBCASE("flat, contiguous cursor")
+  {
+    const auto full = encode(S{42, "Hello, world!", 3.14});
+    for(std::size_t n = 0; n < full.size(); ++n)
+    {
+      std::vector<std::byte> buf{full.begin(), full.begin() + static_cast<std::ptrdiff_t>(n)};
+      CAPTURE(n);
+      CHECK_THROWS_AS((bson::deserializer{buf}.load<S>()), std::runtime_error);
+
+      if(n >= 4)
+      {
+        auto fixed = buf;
+        put_i32(fixed, 0, static_cast<std::int32_t>(n));
+        CHECK_THROWS_AS((bson::deserializer{fixed}.load<S>()), std::runtime_error);
+      }
+    }
+  }
+
+  SUBCASE("nested, contiguous cursor")
+  {
+    const auto full = encode(outer_t{{5}, std::string(24, 'p')});
+    for(std::size_t n = 0; n < full.size(); ++n)
+    {
+      std::vector<std::byte> buf{full.begin(), full.begin() + static_cast<std::ptrdiff_t>(n)};
+      CAPTURE(n);
+      CHECK_THROWS_AS((bson::deserializer{buf}.load<outer_t>()), std::runtime_error);
+
+      if(n >= 4)
+      {
+        auto fixed = buf;
+        put_i32(fixed, 0, static_cast<std::int32_t>(n));
+        CHECK_THROWS_AS((bson::deserializer{fixed}.load<outer_t>()), std::runtime_error);
+      }
+    }
+  }
+
+  // The bounds check is compiled out for an unsized cursor, so read_byte()'s end check has to
+  // carry this shape on its own.
+  SUBCASE("flat, istreambuf cursor")
+  {
+    const auto full = encode(S{42, "Hello, world!", 3.14});
+    for(std::size_t n = 0; n < full.size(); ++n)
+    {
+      const std::string raw{reinterpret_cast<char const*>(full.data()), n};
+      std::istringstream in{raw, std::ios::binary};
+      CAPTURE(n);
+      CHECK_THROWS_AS((bson::deserializer{in}.load<S>()), std::runtime_error);
+    }
+  }
+}
+
 TEST_CASE("reflex::core::bson file roundtrip")
 {
   const std::filesystem::path bson_path = "test.bson";
