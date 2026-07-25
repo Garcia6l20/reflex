@@ -82,22 +82,23 @@ constexpr void append(bytes& out, std::string_view value, bool include_size = fa
 template <typename T>
 constexpr void write_element(bytes& out, std::string_view key, T const& value);
 
-template <typename Fn> constexpr bytes make_document(Fn&& write_elements)
+// Append a document to `out` and backpatch its length prefix in place. The length is
+// known once the document closes, and the patch offset stays valid because the buffer
+// only ever grows at the end.
+template <typename Fn> constexpr void make_document(bytes& out, Fn&& write_elements)
 {
-  bytes out{};
+  const auto patch = out.size();
 
   // Reserve space for 4-byte BSON document size.
   append(out, std::int32_t{0});
   std::forward<Fn>(write_elements)(out);
   append(out, std::byte{0x00});
 
-  auto size = static_cast<std::int32_t>(out.size());
+  const auto size = static_cast<std::int32_t>(out.size() - patch);
   for(std::size_t i = 0; i < sizeof(std::int32_t); ++i)
   {
-    out[i] = static_cast<std::byte>((size >> (8 * i)) & 0xFF);
+    out[patch + i] = static_cast<std::byte>((size >> (8 * i)) & 0xFF);
   }
-
-  return out;
 }
 
 template <typename T>
@@ -106,7 +107,7 @@ constexpr void write_document_value(bytes& out, std::string_view key, T const& v
   append(out, detail::bson_type::document);
   append(out, key);
 
-  auto nested = make_document([&](bytes& doc) {
+  make_document(out, [&](bytes& doc) {
     if constexpr(map_c<T>)
     {
       for(auto const& [member_key, member_value] : value)
@@ -125,8 +126,6 @@ constexpr void write_document_value(bytes& out, std::string_view key, T const& v
       }
     }
   });
-
-  out.insert(out.end(), nested.begin(), nested.end());
 }
 
 template <typename T>
@@ -135,7 +134,7 @@ constexpr void write_array_value(bytes& out, std::string_view key, T const& valu
   append(out, detail::bson_type::array);
   append(out, key);
 
-  auto nested = make_document([&](bytes& doc) {
+  make_document(out, [&](bytes& doc) {
     std::size_t idx = 0;
     for(auto const& element : value)
     {
@@ -147,8 +146,6 @@ constexpr void write_array_value(bytes& out, std::string_view key, T const& valu
       reflex::visit([&](auto const& v) { write_element(doc, index, v); }, element);
     }
   });
-
-  out.insert(out.end(), nested.begin(), nested.end());
 }
 
 template <typename T> constexpr void write_element(bytes& out, std::string_view key, T const& value)
@@ -251,17 +248,17 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   }
 }
 
-template <typename T> constexpr bytes encode_root(T const& value)
+template <typename T> constexpr void encode_root(bytes& out, T const& value)
 {
   using U = std::decay_t<T>;
   if constexpr(map_c<U> or (aggregate_c<U> and !bson_scalar_c<U>))
   {
-    return make_document([&](bytes& out) {
+    make_document(out, [&](bytes& doc) {
       if constexpr(map_c<U>)
       {
         for(auto const& [member_key, member_value] : value)
         {
-          write_element(out, std::string_view(member_key), member_value);
+          write_element(doc, std::string_view(member_key), member_value);
         }
       }
       else
@@ -271,18 +268,18 @@ template <typename T> constexpr bytes encode_root(T const& value)
         {
           constexpr std::string_view member_name = serialized_name(member);
           auto const&                member_val  = value.[:member:];
-          reflex::visit([&](auto const& v) { write_element(out, member_name, v); }, member_val);
+          reflex::visit([&](auto const& v) { write_element(doc, member_name, v); }, member_val);
         }
       }
     });
   }
   else if constexpr(reflex::visitable_c<U>)
   {
-    return reflex::visit([&](auto const& v) { return encode_root(v); }, value);
+    reflex::visit([&](auto const& v) { encode_root(out, v); }, value);
   }
   else
   {
-    return make_document([&](bytes& out) { write_element(out, "value", value); });
+    make_document(out, [&](bytes& doc) { write_element(doc, "value", value); });
   }
 }
 
@@ -807,8 +804,9 @@ REFLEX_EXPORT namespace reflex::serde::bson
   template <bson_output_iterator_c OutputIt, typename T>
   OutputIt tag_invoke(tag_default_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
   {
-    auto& out     = ser.out();
-    auto  encoded = detail::encode_root(value);
+    auto&         out = ser.out();
+    detail::bytes encoded;
+    detail::encode_root(encoded, value);
 
     if constexpr(std::output_iterator<OutputIt, std::byte>)
     {
