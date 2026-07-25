@@ -8,9 +8,11 @@
 #include <algorithm>
 #include <charconv>
 #include <concepts>
+#include <cstddef>
 #include <iterator>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -27,18 +29,32 @@ REFLEX_EXPORT namespace reflex::serde::detail
     using type = T;
   };
 
+  // A container that takes a whole string_view in one call. std::string does.
+  template <typename C>
+  concept string_bulk_sink_c = requires(C& c) { c.append(std::string_view{}); };
+
+  // A container that takes a whole span of bytes in one call. std::vector<std::byte> does, and it
+  // is the natural sink for a binary backend, which has no use for append(string_view).
+  template <typename C>
+  concept byte_bulk_sink_c =
+      requires(C& c) { c.insert_range(c.end(), std::span<std::byte const>{}); };
+
   // A back_insert_iterator exposes its container type but not the container, so
   // the bulk-append fast path needs the container captured at construction. This
-  // detects an output iterator whose container can take a whole string_view at
-  // once; everything else (ostreambuf_iterator, plain iterators) falls back to a
+  // detects an output iterator whose container can take a whole run at once;
+  // everything else (ostreambuf_iterator, plain iterators) falls back to a
   // per-character copy.
+  //
+  // One specialization with a disjunctive constraint rather than two, so a container satisfying
+  // both spellings could never make the choice ambiguous.
   template <typename OutputIt> struct bulk_sink
   {
     using type                      = void;
     static constexpr bool available = false;
   };
   template <typename OutputIt>
-    requires requires(typename OutputIt::container_type& c) { c.append(std::string_view{}); }
+    requires string_bulk_sink_c<typename OutputIt::container_type>
+          or byte_bulk_sink_c<typename OutputIt::container_type>
   struct bulk_sink<OutputIt>
   {
     using type                      = typename OutputIt::container_type;
@@ -75,6 +91,14 @@ REFLEX_EXPORT namespace reflex::serde::detail
       return out_;
     }
 
+    // The sink container itself, when the serializer was handed one that can take a whole run at
+    // once. Null when it was handed a bare output iterator. A backend that can build its output
+    // directly in the container uses this to skip the temporary entirely.
+    constexpr typename bulk_sink<OutputIt>::type* sink() const
+    {
+      return sink_;
+    }
+
     // Bulk write. One append when the output is a container that supports it,
     // a per-character copy through the iterator otherwise. Same bytes either
     // way: libstdc++ has no bulk overload of ranges::copy for
@@ -83,13 +107,50 @@ REFLEX_EXPORT namespace reflex::serde::detail
     {
       if constexpr(bulk_sink<OutputIt>::available)
       {
-        if(sink_ != nullptr)
+        if constexpr(string_bulk_sink_c<typename bulk_sink<OutputIt>::type>)
         {
-          sink_->append(s);
-          return;
+          if(sink_ != nullptr)
+          {
+            sink_->append(s);
+            return;
+          }
         }
       }
       std::ranges::copy(s, out_);
+    }
+
+    // The byte-oriented half of write_raw, for binary backends. Same reasoning: without it every
+    // byte costs a push_back through the iterator, since libstdc++ has no bulk overload of
+    // ranges::copy for back_insert_iterator.
+    void write_bytes(std::span<std::byte const> s)
+    {
+      if constexpr(bulk_sink<OutputIt>::available)
+      {
+        if constexpr(byte_bulk_sink_c<typename bulk_sink<OutputIt>::type>)
+        {
+          if(sink_ != nullptr)
+          {
+            sink_->insert_range(sink_->end(), s);
+            return;
+          }
+        }
+      }
+
+      for(std::byte b : s)
+      {
+        if constexpr(std::output_iterator<OutputIt, std::byte>)
+        {
+          out_++ = b;
+        }
+        else if constexpr(std::output_iterator<OutputIt, char>)
+        {
+          out_++ = static_cast<char>(std::to_integer<unsigned char>(b));
+        }
+        else
+        {
+          out_++ = static_cast<unsigned char>(std::to_integer<unsigned char>(b));
+        }
+      }
     }
 
     void write_char(char c)

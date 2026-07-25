@@ -804,30 +804,24 @@ REFLEX_EXPORT namespace reflex::serde::bson
   template <bson_output_iterator_c OutputIt, typename T>
   OutputIt tag_invoke(tag_default_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
   {
-    auto&         out = ser.out();
+    // When the serializer was handed the byte container itself, encode straight into it,
+    // with no temporary in between.
+    if constexpr(std::same_as<typename serde::detail::bulk_sink<OutputIt>::type, detail::bytes>)
+    {
+      if(auto* sink = ser.sink(); sink != nullptr)
+      {
+        detail::encode_root(*sink, value);
+        return ser.out();
+      }
+    }
+
+    // Otherwise the document has to be built somewhere before it can be handed over, because the
+    // length prefixes are backpatched and an output iterator cannot be revisited.
     detail::bytes encoded;
     detail::encode_root(encoded, value);
+    ser.write_bytes(encoded);
 
-    if constexpr(std::output_iterator<OutputIt, std::byte>)
-    {
-      std::ranges::copy(encoded, out);
-    }
-    else if constexpr(std::output_iterator<OutputIt, char>)
-    {
-      for(std::byte b : encoded)
-      {
-        *out++ = static_cast<char>(std::to_integer<unsigned char>(b));
-      }
-    }
-    else if constexpr(std::output_iterator<OutputIt, unsigned char>)
-    {
-      for(std::byte b : encoded)
-      {
-        *out++ = static_cast<unsigned char>(std::to_integer<unsigned char>(b));
-      }
-    }
-
-    return out;
+    return ser.out();
   }
 
   template <typename It> auto tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de)

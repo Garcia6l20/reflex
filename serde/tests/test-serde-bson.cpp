@@ -303,6 +303,41 @@ template <typename T> std::vector<std::byte> encode(T const& value)
 }
 } // namespace
 
+// A serializer handed the byte container encodes straight into it. A serializer handed a bare
+// output iterator cannot, and goes through a temporary. Both must produce the same bytes.
+TEST_CASE("reflex::serde::bson: every sink kind produces the same bytes")
+{
+  const S sample{42, "Hello, world!", 3.14};
+
+  std::vector<std::byte> via_container;
+  {
+    bson::serializer ser{via_container};
+    ser.dump(sample);
+  }
+
+  std::vector<std::byte> via_iterator;
+  {
+    bson::serializer<std::back_insert_iterator<std::vector<std::byte>>> ser{
+        std::back_inserter(via_iterator)};
+    ser.dump(sample);
+  }
+
+  std::ostringstream via_stream_buf;
+  {
+    bson::serializer ser{via_stream_buf};
+    ser.dump(sample);
+  }
+  const auto stream_str = via_stream_buf.str();
+
+  CHECK_EQ(via_container, via_iterator);
+  REQUIRE_EQ(stream_str.size(), via_container.size());
+  CHECK(std::memcmp(stream_str.data(), via_container.data(), via_container.size()) == 0);
+
+  // And all three still read back.
+  CHECK_EQ(bson::deserializer{via_container}.load<S>(), sample);
+  CHECK_EQ(bson::deserializer{via_iterator}.load<S>(), sample);
+}
+
 // read_document hands the callback a key borrowed from the input buffer. Nothing may
 // keep it: the parsed result has to stay valid once the input is gone.
 TEST_CASE("reflex::serde::bson: a parsed document outlives its input buffer")
