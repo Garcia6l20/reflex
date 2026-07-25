@@ -129,7 +129,10 @@ REFLEX_EXPORT namespace reflex::serde::csv
     }
   }
 
-  template <csv_row_c Row, typename OutputIt> void write_header(OutputIt& out)
+  // Writes one CRLF-terminated record: `write_cell<member>(out)` emits each cell, this handles
+  // the comma separator and the line ending.
+  template <csv_row_c Row, typename OutputIt, typename WriteCell>
+  void write_record(OutputIt& out, WriteCell write_cell)
   {
     bool first = true;
     template for(constexpr auto member : define_static_array(
@@ -137,25 +140,23 @@ REFLEX_EXPORT namespace reflex::serde::csv
     {
       if(not first) out++ = ',';
       else first = false;
-      constexpr std::string_view name = serialized_name(member);
-      write_escaped(out, name);
+      write_cell.template operator()<member>(out);
     }
     out++ = '\r';
     out++ = '\n';
   }
 
+  template <csv_row_c Row, typename OutputIt> void write_header(OutputIt& out)
+  {
+    write_record<Row>(out, []<auto member>(OutputIt& o) {
+      constexpr std::string_view name = serialized_name(member);
+      write_escaped(o, name);
+    });
+  }
+
   template <typename OutputIt, csv_row_c Row> void write_row(OutputIt& out, Row const& row)
   {
-    bool first = true;
-    template for(constexpr auto member : define_static_array(
-                     nonstatic_data_members_of(^^Row, std::meta::access_context::current())))
-    {
-      if(not first) out++ = ',';
-      else first = false;
-      write_field(out, row.[:member:]);
-    }
-    out++ = '\r';
-    out++ = '\n';
+    write_record<Row>(out, [&row]<auto member>(OutputIt& o) { write_field(o, row.[:member:]); });
   }
 
   template <typename F> F parse_field(std::string_view cell)
