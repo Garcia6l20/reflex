@@ -4,9 +4,29 @@
 #define REFLEX_EXPORT
 #endif
 
+// A private file mapping is the cheapest way to hand the parser one contiguous
+// span, which is what turns bulk_scan on. Where it is unavailable load_file
+// reads the file into a std::string instead: same signature, same semantics,
+// one extra copy.
+#if defined(__unix__) or defined(__APPLE__)
+#define REFLEX_XML_HAVE_MMAP 1
+#else
+#define REFLEX_XML_HAVE_MMAP 0
+#endif
+
 #ifndef REFLEX_MODULE
 #include <charconv>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+
+#if REFLEX_XML_HAVE_MMAP
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 #include <reflex/concepts.hpp>
 #include <reflex/enum.hpp>
@@ -1714,6 +1734,103 @@ REFLEX_EXPORT namespace reflex::serde::xml
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+
+  namespace detail
+  {
+  // Whole-file input for load_file. A private mapping where the platform has
+  // mmap, a read into a std::string otherwise. Either way the deserializer is
+  // handed one contiguous span, so deserializer<...>::bulk_scan is true and the
+  // parser takes its fast path. Non-copyable: it owns a mapping.
+  //
+  // Caveat, the same one every mmap reader has: a file rewritten underneath a
+  // MAP_PRIVATE mapping can change while the parse is running. Read the file
+  // into a string first if that matters.
+  class file_bytes
+  {
+    std::string       copy_;
+    const char*       data_ = nullptr;
+    std::size_t       size_ = 0;
+#if REFLEX_XML_HAVE_MMAP
+    void*             map_  = nullptr;
+#endif
+
+  public:
+    explicit file_bytes(std::filesystem::path const& path)
+    {
+#if REFLEX_XML_HAVE_MMAP
+      const int fd = ::open(path.c_str(), O_RDONLY);
+      if(fd < 0)
+      {
+        throw std::runtime_error("XML: cannot open " + path.string());
+      }
+      struct ::stat st{};
+      if(::fstat(fd, &st) != 0)
+      {
+        ::close(fd);
+        throw std::runtime_error("XML: cannot stat " + path.string());
+      }
+      size_ = static_cast<std::size_t>(st.st_size);
+      if(size_ == 0) // mmap rejects a zero length
+      {
+        ::close(fd);
+        data_ = "";
+        return;
+      }
+      map_ = ::mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd, 0);
+      ::close(fd); // the mapping keeps its own reference
+      if(map_ == MAP_FAILED)
+      {
+        map_  = nullptr;
+        size_ = 0;
+        throw std::runtime_error("XML: cannot map " + path.string());
+      }
+      data_ = static_cast<const char*>(map_);
+#else
+      std::ifstream in{path, std::ios::binary};
+      if(not in)
+      {
+        throw std::runtime_error("XML: cannot open " + path.string());
+      }
+      std::ostringstream buf;
+      buf << in.rdbuf();
+      copy_ = std::move(buf).str();
+      data_ = copy_.data();
+      size_ = copy_.size();
+#endif
+    }
+
+    ~file_bytes()
+    {
+#if REFLEX_XML_HAVE_MMAP
+      if(map_ != nullptr) ::munmap(map_, size_);
+#endif
+    }
+
+    file_bytes(file_bytes const&)            = delete;
+    file_bytes& operator=(file_bytes const&) = delete;
+
+    std::string_view view() const
+    {
+      return {data_, size_};
+    }
+  };
+  } // namespace detail
+
+  // Deserialize T from a whole file, without streaming it a byte at a time.
+  //
+  // Prefer this over `deserializer{std::ifstream{path}}`: an ifstream deduces
+  // std::istreambuf_iterator, which is not contiguous, so every bulk scan in the
+  // parser silently falls back to its character-at-a-time path. The streaming
+  // constructor stays available for callers who genuinely cannot hold the
+  // document in memory.
+  //
+  // The file contents are released before this returns. T owns its strings, so
+  // nothing borrows from the mapping afterwards.
+  template <typename T> T load_file(std::filesystem::path const& path)
+  {
+    const detail::file_bytes bytes{path};
+    return deserializer{bytes.view()}.template load<T>();
+  }
 
   // Leaf: read <name>text</name> (or a self-closing empty element) into a scalar.
   template <typename InputIt, xml_text_c T>

@@ -901,3 +901,79 @@ TEST_CASE("reflex::serde::xml: Format-derived enum round-trips by name")
             .load<EnumText>());
   }
 }
+
+// bulk_scan is the parser's fast-path predicate. It is public so a caller can
+// assert at compile time which path they are on, rather than discovering the
+// difference as an unexplained slowdown.
+static_assert(xml::deserializer<std::string_view::const_iterator>::bulk_scan);
+static_assert(xml::deserializer<std::string::const_iterator>::bulk_scan);
+static_assert(not xml::deserializer<std::istreambuf_iterator<char>>::bulk_scan);
+
+TEST_CASE("reflex::serde::xml::load_file")
+{
+  const std::filesystem::path xml_path = "test-load-file.xml";
+
+  SUBCASE("reads a whole document")
+  {
+    const WithSeq expected{"xs", {1, 2, 3}};
+    {
+      std::ofstream   out_file{xml_path};
+      xml::serializer ser{out_file};
+      ser.dump(expected);
+    }
+    CHECK_EQ(xml::load_file<WithSeq>(xml_path), expected);
+    std::filesystem::remove(xml_path);
+  }
+
+  SUBCASE("the result outlives the mapping")
+  {
+    // every string below is materialized before load_file releases the file,
+    // so reading them here touches nothing that has been unmapped
+    const Basic expected{7, "a value comfortably past the small string limit", 1.5};
+    {
+      std::ofstream   out_file{xml_path};
+      xml::serializer ser{out_file};
+      ser.dump(expected);
+    }
+    const auto value = xml::load_file<Basic>(xml_path);
+    CHECK_EQ(value.string_member, expected.string_member);
+    CHECK_EQ(value, expected);
+    std::filesystem::remove(xml_path);
+  }
+
+  SUBCASE("entities and CDATA survive the mapping")
+  {
+    {
+      std::ofstream out_file{xml_path};
+      out_file << "<WithSeq><name>a &amp; b<![CDATA[ &raw ]]></name>"
+                  "<values>1</values></WithSeq>";
+    }
+    const auto value = xml::load_file<WithSeq>(xml_path);
+    CHECK_EQ(value.name, "a & b &raw ");
+    std::filesystem::remove(xml_path);
+  }
+
+  SUBCASE("an empty file is not a document")
+  {
+    {
+      std::ofstream out_file{xml_path};
+    }
+    CHECK_THROWS(xml::load_file<Basic>(xml_path));
+    std::filesystem::remove(xml_path);
+  }
+
+  SUBCASE("a missing file throws")
+  {
+    CHECK_THROWS(xml::load_file<Basic>("no-such-file-here.xml"));
+  }
+
+  SUBCASE("no trailing newline is fine")
+  {
+    {
+      std::ofstream out_file{xml_path, std::ios::binary};
+      out_file << "<WithSeq><name>tail</name><values>9</values></WithSeq>";
+    }
+    CHECK_EQ(xml::load_file<WithSeq>(xml_path), WithSeq{"tail", {9}});
+    std::filesystem::remove(xml_path);
+  }
+}
