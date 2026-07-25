@@ -271,15 +271,6 @@ REFLEX_EXPORT namespace reflex::serde::json
       return cursor_.end();
     }
 
-    InputIt advance_while(auto pred)
-    {
-      while(not at_end() and pred(peek()))
-      {
-        advance();
-      }
-      return cursor_.begin();
-    }
-
     auto peek() const
     {
       if(at_end())
