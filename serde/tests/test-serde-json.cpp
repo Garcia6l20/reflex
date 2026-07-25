@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 import reflex.serde.json;
+import serde.tests.types;
 
 import std;
 
@@ -33,13 +34,6 @@ struct[[= serde::naming::camel_case, = derive(Debug)]] S3
   std::optional<S>  s;
   std::optional<S2> s2;
   constexpr bool    operator==(S3 const& other) const = default;
-};
-
-enum class[[= derive(Format, Parse)]] Color
-{
-  Red,
-  Green,
-  Blue
 };
 
 enum class[[= derive(EnumFlags, Format, Parse)]] FilePermissions

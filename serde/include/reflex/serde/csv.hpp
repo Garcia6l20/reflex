@@ -352,23 +352,9 @@ REFLEX_EXPORT namespace reflex::serde::csv
       return fields;
     }
 
-    template <typename T> T load()
-    {
-      return deserialize(*this, std::type_identity<T>{});
-    }
   };
 
-  template <typename... TArgs>
-  deserializer(std::basic_string<TArgs...> const& in)
-      -> deserializer<typename std::basic_string<TArgs...>::const_iterator>;
-
-  template <typename... TArgs>
-  deserializer(std::basic_string_view<TArgs...> const& in)
-      -> deserializer<typename std::basic_string_view<TArgs...>::const_iterator>;
-
-  template <typename CharT, typename CharTrait = std::char_traits<CharT>>
-  deserializer(std::basic_istream<CharT, CharTrait>)
-      -> deserializer<std::istreambuf_iterator<CharT>>;
+  REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
   template <typename InputIt, seq_c Seq>
     requires csv_row_c<std::ranges::range_value_t<Seq>>

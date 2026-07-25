@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 import reflex.serde.xml;
+import serde.tests.types;
 
 import std;
 
@@ -15,29 +16,6 @@ struct[[= serde::naming::camel_case, = derive(Debug)]] Basic
   [[= serde::naming::kebab_case]] double double_member;
 
   constexpr bool operator==(Basic const& other) const = default;
-};
-
-enum class[[= derive(Format, Parse)]] Color
-{
-  Red,
-  Green,
-  Blue
-};
-
-struct[[= derive(Debug)]] Opt
-{
-  std::string        name;
-  std::optional<int> count;
-
-  constexpr bool operator==(Opt const& other) const = default;
-};
-
-struct[[= derive(Debug)]] Enumed
-{
-  std::string name;
-  Color       color;
-
-  constexpr bool operator==(Enumed const& other) const = default;
 };
 
 struct[[= derive(Debug)]] WithSeq

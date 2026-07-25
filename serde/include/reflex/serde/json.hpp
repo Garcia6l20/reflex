@@ -328,10 +328,8 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
     }
 
-    template <typename T = json::value> T load()
-    {
-      return deserialize(*this, std::type_identity<T>{});
-    }
+    // makes load() without an explicit type read a json::value
+    using default_load_type = json::value;
 
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de)
     {

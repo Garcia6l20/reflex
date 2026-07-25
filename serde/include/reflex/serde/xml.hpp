@@ -1280,11 +1280,6 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     }
 
-    template <typename T> T load()
-    {
-      return deserialize(*this, std::type_identity<T>{});
-    }
-
   private:
     // A '&' has already been consumed; decode the entity and append to out.
     // On any malformed or unknown reference the original text is preserved
@@ -1385,17 +1380,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
   };
 
-  template <typename... TArgs>
-  deserializer(std::basic_string<TArgs...> const& in)
-      -> deserializer<typename std::basic_string<TArgs...>::const_iterator>;
-
-  template <typename... TArgs>
-  deserializer(std::basic_string_view<TArgs...> const& in)
-      -> deserializer<typename std::basic_string_view<TArgs...>::const_iterator>;
-
-  template <typename CharT, typename CharTrait = std::char_traits<CharT>>
-  deserializer(std::basic_istream<CharT, CharTrait>)
-      -> deserializer<std::istreambuf_iterator<CharT>>;
+  REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
   // Leaf: read <name>text</name> (or a self-closing empty element) into a scalar.
   template <typename InputIt, xml_text_c T>
