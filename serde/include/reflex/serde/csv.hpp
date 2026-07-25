@@ -69,11 +69,24 @@ REFLEX_EXPORT namespace reflex::serde::csv
     return std::format("{}", value);
   }
 
+  // Does this cell have to be quoted at all? Two scans, picked by cell length,
+  // because neither wins everywhere: find_first_of rescans the whole needle set
+  // per input byte, so it starts cheap and grows linearly, while find_any is
+  // four memchr passes, a fixed setup that then barely grows.
+  inline bool needs_quoting(std::string_view cell)
+  {
+    if(cell.size() < 32)
+    {
+      return cell.find_first_of(",\"\r\n") != std::string_view::npos;
+    }
+    return serde::detail::find_any(cell, 0, ",\"\r\n") != std::string_view::npos;
+  }
+
   // RFC 4180 quoting: quote the cell only when it contains a delimiter, quote, or
   // line ending, and double any embedded quote.
   template <typename Ser> void write_escaped(Ser& ser, std::string_view cell)
   {
-    if(cell.find_first_of(",\"\r\n") == std::string_view::npos)
+    if(not needs_quoting(cell))
     {
       ser.write_raw(cell);
       return;
