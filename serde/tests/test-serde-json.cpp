@@ -675,3 +675,122 @@ TEST_CASE("reflex::serde::json: string escaping")
     CHECK_EQ(json::deserializer{encoded}.load<Escaped>(), expected);
   }
 }
+
+namespace
+{
+  // No char member: the serializer has a char overload but the deserializer has
+  // none, so a char field cannot round-trip. Pre-existing, and the char
+  // serialize path is covered by the escaping test case above.
+  struct[[= derive(Debug)]] Scalars
+  {
+    double         d;
+    std::int64_t   i;
+    std::string    s;
+    constexpr bool operator==(Scalars const&) const = default;
+  };
+
+  struct[[= derive(Debug)]] Empties
+  {
+    std::vector<int>       arr;
+    std::map<std::string, int> obj;
+    std::optional<int>     opt;
+    constexpr bool         operator==(Empties const&) const = default;
+  };
+
+  // A rename that needs no escaping still has to work: it is the same path the
+  // static_assert in detail::quoted_key guards.
+  struct[[= derive(Debug)]] Renamed
+  {
+    [[= serde::rename{"a-weird/name:with punctuation"}]] int value;
+    constexpr bool operator==(Renamed const&) const = default;
+  };
+
+  // A rename containing a dot serializes correctly but cannot be read back:
+  // object_visit treats a key as a dotted path and splits on '.', so no member
+  // matches either half. Pre-existing, pinned here so the asymmetry is not
+  // rediscovered as a regression.
+  struct[[= derive(Debug)]] DottedRename
+  {
+    [[= serde::rename{"outer.inner"}]] int value;
+    constexpr bool operator==(DottedRename const&) const = default;
+  };
+} // namespace
+
+TEST_CASE("reflex::serde::json::serializer: scalar rendering is to_chars")
+{
+  SUBCASE("explicit values")
+  {
+    CHECK_EQ(json_dump(3.14159), "3.14159");
+    CHECK_EQ(json_dump(1e+300), "1e+300");
+    CHECK_EQ(json_dump(-0.0), "-0");
+    CHECK_EQ(json_dump(std::numeric_limits<std::int64_t>::min()), "-9223372036854775808");
+    CHECK_EQ(json_dump(std::numeric_limits<std::uint64_t>::max()), "18446744073709551615");
+    CHECK_EQ(json_dump(0), "0");
+  }
+
+  SUBCASE("to_chars renders what format(\"{}\") rendered")
+  {
+    for(const double d : {3.14159, 1e+300, -0.0, 0.0, 1e-300, 1e16, 1e17, 2.2250738585072014e-308})
+    {
+      CAPTURE(d);
+      CHECK_EQ(json_dump(d), std::format("{}", d));
+    }
+    for(const std::int64_t i :
+        {std::int64_t{0}, std::int64_t{-1}, std::numeric_limits<std::int64_t>::min()})
+    {
+      CAPTURE(i);
+      CHECK_EQ(json_dump(i), std::format("{}", i));
+    }
+  }
+
+  SUBCASE("infinities and NaN are still emitted as invalid JSON")
+  {
+    // Pre-existing defect, pinned. inf and nan are not JSON. Fixing it is a
+    // wire-format decision and is filed separately, not made here.
+    CHECK_EQ(json_dump(std::numeric_limits<double>::infinity()), "inf");
+    CHECK_EQ(json_dump(-std::numeric_limits<double>::infinity()), "-inf");
+    CHECK_EQ(json_dump(std::numeric_limits<double>::quiet_NaN()), "nan");
+  }
+
+  SUBCASE("literals and structure")
+  {
+    CHECK_EQ(json_dump(true), "true");
+    CHECK_EQ(json_dump(false), "false");
+    CHECK_EQ(json_dump(json::null), "null");
+    CHECK_EQ(json_dump(std::optional<int>{}), "null");
+    CHECK_EQ(json_dump(std::optional<int>{7}), "7");
+    CHECK_EQ(json_dump(std::vector<int>{}), "[]");
+    CHECK_EQ(json_dump(std::vector<int>{1}), "[1]");
+    CHECK_EQ(json_dump(std::map<std::string, int>{}), "{}");
+  }
+
+  SUBCASE("an aggregate of every scalar kind round-trips")
+  {
+    const Scalars expected{3.14159, std::numeric_limits<std::int64_t>::min(), ""};
+    const auto    encoded = json_dump(expected);
+    CHECK_EQ(encoded, "{\"d\":3.14159,\"i\":-9223372036854775808,\"s\":\"\"}");
+    CHECK_EQ(json::deserializer{encoded}.load<Scalars>(), expected);
+  }
+
+  SUBCASE("empty containers inside an aggregate")
+  {
+    const Empties expected{};
+    const auto    encoded = json_dump(expected);
+    CHECK_EQ(encoded, "{\"arr\":[],\"obj\":{},\"opt\":null}");
+  }
+
+  SUBCASE("a rename needing no escape still produces its key token")
+  {
+    const Renamed expected{42};
+    const auto    encoded = json_dump(expected);
+    CHECK_EQ(encoded, "{\"a-weird/name:with punctuation\":42}");
+    CHECK_EQ(json::deserializer{encoded}.load<Renamed>(), expected);
+  }
+
+  SUBCASE("a rename containing a dot writes but does not read back")
+  {
+    const auto encoded = json_dump(DottedRename{42});
+    CHECK_EQ(encoded, "{\"outer.inner\":42}");
+    CHECK_THROWS(json::deserializer{encoded}.load<DottedRename>());
+  }
+}

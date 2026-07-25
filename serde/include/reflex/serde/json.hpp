@@ -140,6 +140,27 @@ REFLEX_EXPORT namespace reflex::serde::json
     write_escaped(ser, text);
     ser.write_char('"');
   }
+
+  // `"name":` is a constant, so it is built once at compile time and promoted to
+  // static storage.
+  //
+  // The name is checked here rather than escaped. Identifiers cannot need an
+  // escape, but a serde::rename can carry an arbitrary string, and a key that
+  // silently emitted an unescaped quote would produce invalid JSON.
+  template <std::meta::info Member> consteval std::string_view quoted_key()
+  {
+    constexpr std::string_view name = serialized_name(Member);
+    static_assert(
+        std::ranges::none_of(name, needs_escape),
+        "a JSON object key cannot contain a quote, a backslash or a control "
+        "character: check the serde::rename annotation on this member");
+    std::string s;
+    s.reserve(name.size() + 3);
+    s += '"';
+    s += name;
+    s += "\":";
+    return {std::define_static_string(s), s.size()};
+  }
   } // namespace detail
 
   template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
@@ -151,7 +172,7 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, null_t const&)
     {
-      std::ranges::copy(std::string_view{"null"}, ser.out());
+      ser.write_raw("null");
       return ser.out();
     }
 
@@ -167,7 +188,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
       else
       {
-        std::ranges::copy(std::string_view{"null"}, ser.out());
+        ser.write_raw("null");
       }
       return ser.out();
     }
@@ -190,7 +211,8 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <number_c Num>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Num const& value)
     {
-      return std::format_to(ser.out(), "{}", value);
+      serde::detail::write_digits(ser, value);
+      return ser.out();
     }
 
     template <std::same_as<char> Char>
@@ -212,7 +234,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <std::same_as<boolean> Boolean>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Boolean value)
     {
-      std::ranges::copy(std::string_view{value ? "true" : "false"}, ser.out());
+      ser.write_raw(value ? "true" : "false");
       return ser.out();
     }
 
@@ -238,12 +260,11 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <seq_c Seq>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Seq const& value)
     {
-      auto& out = ser.out();
-      out++     = '[';
+      ser.write_char('[');
       if(value.empty())
       {
-        out++ = ']';
-        return out;
+        ser.write_char(']');
+        return ser.out();
       }
 
       auto view = std::views::all(value);
@@ -251,32 +272,30 @@ REFLEX_EXPORT namespace reflex::serde::json
       for(const auto& elem : view | std::views::take(value.size() - 1))
       {
         serialize(ser, elem);
-        out++ = ',';
+        ser.write_char(',');
       }
       serialize(ser, view.back());
 
-      out++ = ']';
-      return out;
+      ser.write_char(']');
+      return ser.out();
     }
 
     template <pair_c Pair>
     friend OutputIt
         tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Pair const& value)
     {
-      auto& out = ser.out();
-      out++     = '{';
+      ser.write_char('{');
       serialize(ser, value.first);
-      out++ = ':';
+      ser.write_char(':');
       reflex::visit([&ser](const auto& v) { serialize(ser, v); }, value.second);
-      out++ = '}';
-      return out;
+      ser.write_char('}');
+      return ser.out();
     }
 
     template <map_c Map>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Map const& value)
     {
-      auto& out = ser.out();
-      out++     = '{';
+      ser.write_char('{');
 
       bool first = true;
 
@@ -284,14 +303,14 @@ REFLEX_EXPORT namespace reflex::serde::json
       {
         if(not first)
         {
-          out++ = ',';
+          ser.write_char(',');
         }
         else
         {
           first = false;
         }
         serialize(ser, key);
-        out++ = ':';
+        ser.write_char(':');
         reflex::visit(
             [&ser]<typename U>(const U& v) {
               using var_type = typename Map::mapped_type;
@@ -306,8 +325,8 @@ REFLEX_EXPORT namespace reflex::serde::json
             },
             val);
       }
-      out++ = '}';
-      return out;
+      ser.write_char('}');
+      return ser.out();
     }
 
     template <visitable_c T>
@@ -328,8 +347,7 @@ REFLEX_EXPORT namespace reflex::serde::json
   OutputIt tag_invoke(
       tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
   {
-    auto& out = ser.out();
-    out++     = '{';
+    ser.write_char('{');
 
     constexpr bool tag = TagT::value;
 
@@ -337,8 +355,9 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     if constexpr(tag)
     {
-      serialize(ser, "__type");
-      out++                   = ':';
+      ser.write_raw("\"__type\":");
+      // Hashing at compile time would change the emitted id, which is a wire format
+      // break.
       static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Agg))));
       serialize(ser, expected_id);
     }
@@ -347,22 +366,21 @@ REFLEX_EXPORT namespace reflex::serde::json
     template for(constexpr auto member : define_static_array(
                      nonstatic_data_members_of(type, std::meta::access_context::current())))
     {
-      constexpr std::string_view name = serialized_name(member);
       if(not first)
       {
-        out++ = ',';
+        ser.write_char(',');
       }
       else
       {
         first = false;
       }
-      serialize(ser, name);
-      out++                    = ':';
+      static constexpr std::string_view key_token = detail::quoted_key<member>();
+      ser.write_raw(key_token);
       auto const& member_value = value.[:member:];
       reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
     }
-    out++ = '}';
-    return out;
+    ser.write_char('}');
+    return ser.out();
   }
 
   template <std::input_iterator InputIt>
