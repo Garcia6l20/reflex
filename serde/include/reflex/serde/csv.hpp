@@ -240,31 +240,65 @@ REFLEX_EXPORT namespace reflex::serde::csv
     }
   }
 
-  // The header is owned because it has to outlive every record. The cells are
-  // whatever read_record hands out, which on contiguous input is a view into the
-  // input buffer, so Cell is deduced rather than fixed.
-  template <csv_row_c Row, typename Cell>
-  void assign_row(
-      Row&                         row,
-      std::span<const std::string> header,
-      std::span<const Cell>        cells)
+  template <typename T> consteval std::size_t member_count()
   {
-    for(std::size_t i = 0; i < header.size() and i < cells.size(); ++i)
+    return nonstatic_data_members_of(^^T, std::meta::access_context::current()).size();
+  }
+
+  // Which header column each member takes its value from, or -1 for a member the
+  // header does not mention. Built once per document.
+  template <csv_row_c Row> using header_map = std::array<int, member_count<Row>()>;
+
+  // The precedence here is the one the per-row scan had, and it is not the
+  // obvious one. Columns are walked in order and each takes the first member
+  // whose identifier or serialized name equals it, so when a header names the
+  // same member twice the later column overwrites the earlier. Building the
+  // table member-first instead would keep the earlier one, which is why this
+  // loops over columns and lets the assignment overwrite.
+  template <csv_row_c Row, typename Cell>
+  header_map<Row> resolve_header(std::span<const Cell> header)
+  {
+    header_map<Row> map;
+    map.fill(-1);
+    for(std::size_t i = 0; i < header.size(); ++i)
     {
-      const std::string_view col  = header[i];
-      const std::string_view cell = cells[i];
+      const std::string_view col     = header[i];
+      std::size_t            idx     = 0;
       bool                   matched = false;
       template for(constexpr auto member : define_static_array(
                        nonstatic_data_members_of(^^Row, std::meta::access_context::current())))
       {
         if(not matched and (identifier_of(member) == col or serialized_name(member) == col))
         {
-          using F      = std::remove_cvref_t<decltype(row.[:member:])>;
-          row.[:member:] = parse_field<F>(cell);
-          matched      = true;
+          map[idx] = static_cast<int>(i);
+          matched  = true;
         }
+        ++idx;
       }
       // unknown columns are ignored
+    }
+    return map;
+  }
+
+  // One integer compare per member per row. The cells span is what read_record
+  // hands out, which on contiguous input is a view into the input buffer, so
+  // Cell is deduced.
+  template <csv_row_c Row, typename Cell>
+  void assign_row(Row& row, header_map<Row> const& map, std::span<const Cell> cells)
+  {
+    std::size_t idx = 0;
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^Row, std::meta::access_context::current())))
+    {
+      const int col = map[idx];
+      // The bound is per record, not per document: a short row leaves the
+      // members its missing cells would have filled at their defaults.
+      if(col >= 0 and static_cast<std::size_t>(col) < cells.size())
+      {
+        using F        = std::remove_cvref_t<decltype(row.[:member:])>;
+        row.[:member:] = parse_field<F>(std::string_view{cells[static_cast<std::size_t>(col)]});
+      }
+      ++idx;
     }
   }
   } // namespace detail
@@ -523,16 +557,17 @@ REFLEX_EXPORT namespace reflex::serde::csv
     Seq  result{};
     auto header_rec = de.read_record();
     if(not header_rec) return result;
-    // read_record's fields die at the next call and the header is needed for every
-    // record after this one, so it is copied here.
-    const std::vector<std::string> header(header_rec->begin(), header_rec->end());
+    // Resolved here, while the header record's fields are still valid. The map is
+    // plain integers and borrows nothing, so the header itself no longer has to
+    // be copied to outlive the records.
+    const auto map = detail::resolve_header<Row>(*header_rec);
 
     while(auto record = de.read_record())
     {
       // tolerate a blank trailing line (a single empty field)
       if(record->size() == 1 and record->front().empty()) continue;
       Row row{};
-      detail::assign_row(row, std::span<const std::string>{header}, *record);
+      detail::assign_row(row, map, *record);
       result.push_back(std::move(row));
     }
     return result;
@@ -543,14 +578,15 @@ REFLEX_EXPORT namespace reflex::serde::csv
   {
     auto header_rec = de.read_record();
     if(not header_rec) throw std::runtime_error("CSV: missing header row");
-    // Must be copied before the next read_record, which invalidates it.
-    const std::vector<std::string> header(header_rec->begin(), header_rec->end());
+    // Must be resolved before the next read_record, which invalidates the fields
+    // it is built from.
+    const auto map = detail::resolve_header<Row>(*header_rec);
 
     auto record = de.read_record();
     if(not record) throw std::runtime_error("CSV: missing data row");
 
     Row row{};
-    detail::assign_row(row, std::span<const std::string>{header}, *record);
+    detail::assign_row(row, map, *record);
     return row;
   }
 
