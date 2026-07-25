@@ -268,16 +268,21 @@ REFLEX_EXPORT namespace reflex::serde::xml
     return colon == std::string_view::npos ? qname : qname.substr(colon + 1);
   }
 
-  // "prefix:local", or just "local" when prefix is empty.
-  inline std::string qualify(std::string_view prefix, std::string_view local)
+  // "prefix:local", or just "local" when prefix is empty. consteval: every
+  // caller has a constant prefix and a constant local part, so the result is
+  // promoted to static storage instead of being rebuilt per element.
+  consteval std::string_view qualified(std::string_view prefix, std::string_view local)
   {
-    if(prefix.empty()) return std::string{local};
+    if(prefix.empty())
+    {
+      return {std::define_static_string(local), local.size()};
+    }
     std::string s;
     s.reserve(prefix.size() + 1 + local.size());
     s += prefix;
     s += ':';
     s += local;
-    return s;
+    return {std::define_static_string(s), s.size()};
   }
 
   // An xmlns / xmlns:* declaration is namespace machinery, never a field.
@@ -689,7 +694,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
     constexpr std::string_view type_prefix = ns_prefix_of(^^Agg);
     constexpr std::string_view type_uri    = ns_uri_of(^^Agg);
     // at the document root a namespaced type prefixes its own type name
-    const std::string type_default = detail::qualify(type_prefix, identifier_of(dealias(decay(^^Agg))));
+    constexpr std::string_view type_default =
+        detail::qualified(type_prefix, identifier_of(dealias(decay(^^Agg))));
     const std::string_view name = ser.element_name(type_default);
 
     // open tag, with an xmlns declaration and attribute members folded in
@@ -711,7 +717,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
       {
         // attributes take a prefix only from a member-level ns annotation
         constexpr std::string_view apfx = ns_prefix_of(member);
-        const std::string          aqn  = detail::qualify(apfx, serialized_name(member));
+        constexpr std::string_view aqn  = detail::qualified(apfx, serialized_name(member));
         detail::write_attribute(ser, aqn, value.[:member:]);
       }
     }
@@ -771,7 +777,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
           // a child element takes a member-level prefix, else the type prefix
           constexpr std::string_view mpfx = ns_prefix_of(member);
           constexpr std::string_view cpfx = mpfx.empty() ? type_prefix : mpfx;
-          const std::string          cqn  = detail::qualify(cpfx, serialized_name(member));
+          constexpr std::string_view cqn  = detail::qualified(cpfx, serialized_name(member));
           if constexpr(is_cdata(member))
           {
             detail::write_cdata_element(ser, cqn, std::string_view{value.[:member:]});
