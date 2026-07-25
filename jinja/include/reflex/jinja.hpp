@@ -634,6 +634,28 @@ REFLEX_EXPORT namespace reflex::jinja
     block_map                     block_overrides;
   };
 
+  // Builds the {{ loop }} of a {% for %} body, chaining to the enclosing loop if there is one.
+  // Call before pushing the body's scope, so "loop" still resolves to the parent.
+  template <typename ContextT> expr::loop_info make_loop_info(std::size_t length, ContextT& ctx)
+  {
+    return expr::loop_info{
+        .index0 = 0,
+        .index  = 1,
+        .first  = true,
+        .length = int(length),
+        .last   = length == 1,
+        .parent = ctx.template get<expr::loop_info>("loop"),
+    };
+  }
+
+  constexpr void advance_loop(expr::loop_info& loop)
+  {
+    ++loop.index0;
+    ++loop.index;
+    loop.first = false;
+    loop.last  = (loop.index0 == loop.length - 1);
+  }
+
   template <typename OutputIt, typename ContextT>
   OutputIt render_children_to(
       OutputIt                    out,
@@ -707,40 +729,21 @@ REFLEX_EXPORT namespace reflex::jinja
                   if constexpr(seq_c<V>)
                   {
                     // === sequence: {% for item in list %}
-                    auto parent = ctx.template get<expr::loop_info>("loop");
-                    auto scope  = ctx.push_locals();
-                    auto loop   = expr::loop_info{
-                        .index0 = 0,
-                        .index  = 1,
-                        .first  = true,
-                        .length = int(it.size()),
-                        .last   = it.size() == 1,
-                        .parent = parent,
-                    };
+                    auto loop  = make_loop_info(it.size(), ctx);
+                    auto scope = ctx.push_locals();
                     scope.set("loop", std::ref(loop));
                     for(auto& item : it)
                     {
                       scope.set(v.loop_vars[0], std::ref(item));
                       out = render_children_to(out, v.children, ctx, state);
-                      ++loop.index0;
-                      ++loop.index;
-                      loop.first = false;
-                      loop.last  = (loop.index0 == int(it.size()) - 1);
+                      advance_loop(loop);
                     }
                   }
                   else if constexpr(map_c<V>)
                   {
                     // === mapping: {% for k, v in obj %}
-                    auto parent = ctx.template get<expr::loop_info>("loop");
-                    auto scope  = ctx.push_locals();
-                    auto loop   = expr::loop_info{
-                        .index0 = 0,
-                        .index  = 1,
-                        .first  = true,
-                        .length = int(it.size()),
-                        .last   = it.size() == 1,
-                        .parent = parent,
-                    };
+                    auto loop  = make_loop_info(it.size(), ctx);
+                    auto scope = ctx.push_locals();
                     scope.set("loop", std::ref(loop));
                     for(const auto& [key, val] : it)
                     {
@@ -756,10 +759,7 @@ REFLEX_EXPORT namespace reflex::jinja
                         scope.set(v.loop_vars[1], val);
                       }
                       out = render_children_to(out, v.children, ctx, state);
-                      ++loop.index0;
-                      ++loop.index;
-                      loop.first = false;
-                      loop.last  = (loop.index0 == int(it.size()) - 1);
+                      advance_loop(loop);
                     }
                   }
                   else
