@@ -563,3 +563,115 @@ TEST_CASE("reflex::serde::json: user-defined type nested in aggregate")
   const auto value = json::deserializer{out}.load<custom_holder>();
   CHECK_EQ(value, expected);
 }
+
+namespace
+{
+  std::string json_dump(auto const& value)
+  {
+    std::string      out;
+    json::serializer ser{out};
+    ser.dump(value);
+    return out;
+  }
+
+  struct[[= derive(Debug)]] Escaped
+  {
+    std::string    text;
+    int            n;
+    constexpr bool operator==(Escaped const&) const = default;
+  };
+} // namespace
+
+TEST_CASE("reflex::serde::json: string escaping")
+{
+  SUBCASE("the seven named escapes")
+  {
+    CHECK_EQ(json_dump("a\"b"s), "\"a\\\"b\"");
+    CHECK_EQ(json_dump("a\\b"s), "\"a\\\\b\"");
+    CHECK_EQ(json_dump("a\bb"s), "\"a\\bb\"");
+    CHECK_EQ(json_dump("a\fb"s), "\"a\\fb\"");
+    CHECK_EQ(json_dump("a\nb"s), "\"a\\nb\"");
+    CHECK_EQ(json_dump("a\rb"s), "\"a\\rb\"");
+    CHECK_EQ(json_dump("a\tb"s), "\"a\\tb\"");
+  }
+
+  SUBCASE("the unnamed control characters use the \\u00XX form")
+  {
+    CHECK_EQ(json_dump(std::string(1, '\0')), "\"\\u0000\"");
+    CHECK_EQ(json_dump("\x01"s), "\"\\u0001\"");
+    CHECK_EQ(json_dump("\x1f"s), "\"\\u001f\"");
+  }
+
+  SUBCASE("solidus is not escaped on output but is accepted on input")
+  {
+    CHECK_EQ(json_dump("a/b"s), "\"a/b\"");
+    CHECK_EQ(json::deserializer{"\"a\\/b\""sv}.load<std::string>(), "a/b");
+  }
+
+  SUBCASE("every control character round-trips and none survives literally")
+  {
+    for(int c = 0; c < 0x20; ++c)
+    {
+      CAPTURE(c);
+      const std::string original{'x', static_cast<char>(c), 'y'};
+      const std::string encoded = json_dump(original);
+      CHECK_EQ(encoded.find(static_cast<char>(c)), std::string::npos);
+      CHECK_EQ(json::deserializer{encoded}.load<std::string>(), original);
+    }
+  }
+
+  SUBCASE("edge shapes")
+  {
+    CHECK_EQ(json_dump(""s), "\"\"");
+    CHECK_EQ(json_dump("\"\"\""s), "\"\\\"\\\"\\\"\"");
+    CHECK_EQ(json_dump("ends with\\"s), "\"ends with\\\\\"");
+    CHECK_EQ(json::deserializer{json_dump("ends with\\"s)}.load<std::string>(), "ends with\\");
+    CHECK_EQ(json::deserializer{json_dump("\"\"\""s)}.load<std::string>(), "\"\"\"");
+  }
+
+  SUBCASE("UTF-8 passes through unescaped")
+  {
+    // two-, three- and four-byte sequences
+    for(const auto& original : {"e\u00e9e"s, "e\u20ache"s, "e\U0001F600e"s})
+    {
+      CAPTURE(original);
+      const std::string encoded = json_dump(original);
+      CHECK_EQ(encoded, "\"" + original + "\"");
+      CHECK_EQ(json::deserializer{encoded}.load<std::string>(), original);
+    }
+  }
+
+  SUBCASE("char values are escaped too")
+  {
+    CHECK_EQ(json_dump('"'), "\"\\\"\"");
+    CHECK_EQ(json_dump('\\'), "\"\\\\\"");
+    CHECK_EQ(json_dump('\n'), "\"\\n\"");
+    CHECK_EQ(json_dump('\x01'), "\"\\u0001\"");
+    CHECK_EQ(json_dump('a'), "\"a\"");
+  }
+
+  SUBCASE("map keys are escaped")
+  {
+    const auto m = std::map<std::string, int>{
+        {"a\"b", 1}
+    };
+    CHECK_EQ(json_dump(m), "{\"a\\\"b\":1}");
+  }
+
+  SUBCASE("the \\u00XX subset below 0x80 is decoded, anything above still throws")
+  {
+    CHECK_EQ(json::deserializer{"\"\\u0041\""sv}.load<std::string>(), "A");
+    CHECK_EQ(json::deserializer{"\"\\u0009\""sv}.load<std::string>(), "\t");
+    CHECK_EQ(json::deserializer{"\"\\u007f\""sv}.load<std::string>(), "\x7f");
+    CHECK_THROWS(json::deserializer{"\"\\u00e9\""sv}.load<std::string>());
+    CHECK_THROWS(json::deserializer{"\"\\ud83d\""sv}.load<std::string>());
+    CHECK_THROWS(json::deserializer{"\"\\u00zz\""sv}.load<std::string>());
+  }
+
+  SUBCASE("an aggregate carrying every escapable class round-trips")
+  {
+    const Escaped expected{"quote \" backslash \\ newline \n tab \t bell \x07 done", 7};
+    const auto    encoded = json_dump(expected);
+    CHECK_EQ(json::deserializer{encoded}.load<Escaped>(), expected);
+  }
+}

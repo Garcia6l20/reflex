@@ -45,6 +45,101 @@ REFLEX_EXPORT namespace reflex::serde::json
     static constexpr auto empty = std::array<std::meta::info, 0>{};
     return empty;
   }
+
+  // One entry per byte value, true when the byte cannot appear literally inside a
+  // JSON string: 0x00-0x1F, '"' and '\\'. '/' is deliberately absent, JSON allows
+  // it to be escaped but does not require it. Bytes 0x80-0xFF are absent too, they
+  // are UTF-8 lead and continuation bytes and pass through unchanged.
+  inline constexpr std::array<bool, 256> escape_table = [] {
+    std::array<bool, 256> t{};
+    for(unsigned c = 0; c < 0x20; ++c)
+    {
+      t[c] = true;
+    }
+    t[static_cast<unsigned char>('"')]  = true;
+    t[static_cast<unsigned char>('\\')] = true;
+    return t;
+  }();
+
+  constexpr bool needs_escape(char c)
+  {
+    return escape_table[static_cast<unsigned char>(c)];
+  }
+
+  // A bulk scan is wrong here. JSON's escape set is thirty-four bytes, so a min
+  // over find(char) is thirty-four memchr passes and find_first_of is a per-byte
+  // loop rescanning all thirty-four. The table walk beats both.
+  inline std::size_t find_escapable(std::string_view s)
+  {
+    const auto* const first = s.data();
+    const auto* const last  = first + s.size();
+    const auto*       it    = std::find_if(first, last, needs_escape);
+    return it == last ? std::string_view::npos : static_cast<std::size_t>(it - first);
+  }
+
+  // Emits the two-character escape for the seven bytes JSON names, and \u00XX for
+  // every other control character.
+  template <typename Ser> void write_escape(Ser& ser, char c)
+  {
+    switch(c)
+    {
+      case '"':
+        ser.write_raw("\\\"");
+        return;
+      case '\\':
+        ser.write_raw("\\\\");
+        return;
+      case '\b':
+        ser.write_raw("\\b");
+        return;
+      case '\f':
+        ser.write_raw("\\f");
+        return;
+      case '\n':
+        ser.write_raw("\\n");
+        return;
+      case '\r':
+        ser.write_raw("\\r");
+        return;
+      case '\t':
+        ser.write_raw("\\t");
+        return;
+      default:
+      {
+        static constexpr std::string_view hex = "0123456789abcdef";
+        const auto                        u   = static_cast<unsigned char>(c);
+        const char buf[6] = {'\\', 'u', '0', '0', hex[u >> 4], hex[u & 0x0F]};
+        ser.write_raw(std::string_view{buf, sizeof(buf)});
+        return;
+      }
+    }
+  }
+
+  // Writes the body of a JSON string: runs of clean bytes go out whole, only the
+  // bytes needing an escape are handled one at a time.
+  template <typename Ser> void write_escaped(Ser& ser, std::string_view text)
+  {
+    std::size_t pos = 0;
+    while(pos < text.size())
+    {
+      const std::size_t n = find_escapable(text.substr(pos));
+      if(n == std::string_view::npos)
+      {
+        ser.write_raw(text.substr(pos));
+        return;
+      }
+      ser.write_raw(text.substr(pos, n));
+      write_escape(ser, text[pos + n]);
+      pos += n + 1;
+    }
+  }
+
+  template <typename Ser> void write_quoted(Ser& ser, std::string_view text)
+  {
+    ser.write_char('"');
+    write_escaped(ser, text);
+    ser.write_char('"');
+  }
   } // namespace detail
 
   template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
@@ -82,14 +177,14 @@ REFLEX_EXPORT namespace reflex::serde::json
     {
       if constexpr(meta::is_template_instance_of(^^Str, ^^std::array))
       {
-        return std::format_to(
-            ser.out(), "\"{}\"",
-            std::string_view{value.data(), ::strnlen(value.data(), value.size())});
+        detail::write_quoted(
+            ser, std::string_view{value.data(), ::strnlen(value.data(), value.size())});
       }
       else
       {
-        return std::format_to(ser.out(), "\"{}\"", value);
+        detail::write_quoted(ser, std::string_view{value});
       }
+      return ser.out();
     }
 
     template <number_c Num>
@@ -101,11 +196,17 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <std::same_as<char> Char>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Char value)
     {
-      auto& out = ser.out();
-      out++     = '"';
-      out++     = value;
-      out++     = '"';
-      return out;
+      ser.write_char('"');
+      if(detail::needs_escape(value))
+      {
+        detail::write_escape(ser, value);
+      }
+      else
+      {
+        ser.write_char(value);
+      }
+      ser.write_char('"');
+      return ser.out();
     }
 
     template <std::same_as<boolean> Boolean>
@@ -118,7 +219,20 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <derives_c<derive_t<Format>> T>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
     {
-      return std::format_to(ser.out(), "\"{}\"", value);
+      // The rendered text has to be scanned before it reaches the sink, so it
+      // cannot be formatted straight through. Anything a formatter is likely to
+      // produce here fits the stack buffer.
+      std::array<char, 128> buf{};
+      const auto            r = std::format_to_n(buf.data(), buf.size(), "{}", value);
+      if(static_cast<std::size_t>(r.size) <= buf.size())
+      {
+        detail::write_quoted(ser, std::string_view{buf.data(), static_cast<std::size_t>(r.size)});
+      }
+      else
+      {
+        detail::write_quoted(ser, std::format("{}", value));
+      }
+      return ser.out();
     }
 
     template <seq_c Seq>
@@ -419,7 +533,41 @@ REFLEX_EXPORT namespace reflex::serde::json
               push('\t');
               break;
             case 'u':
-              throw std::runtime_error("\\uXXXX escapes not implemented");
+            {
+              // Only the subset below 0x80 is decoded, which is exactly what the
+              // serializer emits: a control character, as one byte of UTF-8.
+              // Surrogate pairs and higher code points would need a multi-byte
+              // encoding and still throw.
+              int cp = 0;
+              for(int i = 0; i < 4; ++i)
+              {
+                const char d = de.advance();
+                int        n = -1;
+                if(d >= '0' and d <= '9')
+                {
+                  n = d - '0';
+                }
+                else if(d >= 'a' and d <= 'f')
+                {
+                  n = d - 'a' + 10;
+                }
+                else if(d >= 'A' and d <= 'F')
+                {
+                  n = d - 'A' + 10;
+                }
+                else
+                {
+                  throw std::runtime_error(std::format("Invalid \\u escape digit: {}", d));
+                }
+                cp = (cp << 4) | n;
+              }
+              if(cp > 0x7F)
+              {
+                throw std::runtime_error("\\uXXXX escapes not implemented");
+              }
+              push(static_cast<char>(cp));
+              break;
+            }
             default:
               throw std::runtime_error(std::format("Unknown escape: \\{}", esc));
           }
