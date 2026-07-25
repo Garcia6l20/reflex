@@ -306,6 +306,9 @@ REFLEX_EXPORT namespace reflex::serde::csv
   public:
     using base::base;
     using base::at_end;
+    using base::bulk_scan;
+    using base::rest;
+    using base::skip;
 
     char peek() const
     {
@@ -319,6 +322,19 @@ REFLEX_EXPORT namespace reflex::serde::csv
       return c;
     }
 
+    // Index of the first byte that can end a run of ordinary field content: a
+    // delimiter, either line ending, or a quote. Everything before it is literal
+    // and can be copied in one go.
+    static std::size_t field_end(std::string_view sv)
+    {
+      for(std::size_t i = 0; i < sv.size(); ++i)
+      {
+        const char c = sv[i];
+        if(c == ',' or c == '\r' or c == '\n' or c == '"') return i;
+      }
+      return std::string_view::npos;
+    }
+
     // Read one RFC 4180 record into its fields, or nullopt at end of input.
     // Quoted fields may span embedded commas, quotes (doubled), and line breaks.
     std::optional<std::vector<std::string>> read_record()
@@ -326,11 +342,35 @@ REFLEX_EXPORT namespace reflex::serde::csv
       if(at_end()) return std::nullopt;
 
       std::vector<std::string> fields;
-      std::string              field;
-      bool                     in_quotes = false;
+      // Enough for the common shape, so the vector does not grow from empty per record.
+      fields.reserve(8);
+      std::string field;
+      bool        in_quotes = false;
 
       while(not at_end())
       {
+        if constexpr(bulk_scan)
+        {
+          // The character loop below still handles every byte that means
+          // something, so the lenient cases it implements (a quote opening
+          // mid-field, content after a closing quote) are untouched: a run by
+          // definition contains none of them.
+          //
+          // Both scans are bounded by what is then consumed, so the parse stays
+          // linear. Neither restarts from the front of the field after a
+          // doubled quote.
+          const std::string_view sv = rest();
+          const std::size_t      n =
+              in_quotes ? sv.find('"') // inside quotes only a quote is special
+                        : field_end(sv);
+          const std::size_t run = (n == std::string_view::npos) ? sv.size() : n;
+          if(run != 0)
+          {
+            field.append(sv.substr(0, run));
+            skip(run);
+            continue;
+          }
+        }
         const char c = advance();
         if(in_quotes)
         {
