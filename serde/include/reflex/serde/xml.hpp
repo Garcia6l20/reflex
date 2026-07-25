@@ -907,9 +907,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
         if(d == '/')
         {
           advance();
-          std::string name = read_name();
-          skip_until(">");
-          return {tag_kind::close, std::move(name), false, {}};
+          skip_until(">"); // the name is never read for a close tag
+          return {tag_kind::close, {}, false, {}};
         }
         std::string name          = read_name();
         auto [self_closing, attrs] = read_attributes();
@@ -1256,7 +1255,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
               if constexpr(seq_c<F> and not array_of_c<F>)
               {
                 using E = typename F::value_type;
-                value.[:member:].push_back(read_child<E>(head.name, self_closing, head.attributes));
+                value.[:member:].push_back(
+                    read_child<E>(head.name, self_closing, std::move(head.attributes)));
               }
               else if constexpr(optional_c<F>)
               {
