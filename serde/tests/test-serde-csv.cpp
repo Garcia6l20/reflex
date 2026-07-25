@@ -137,6 +137,41 @@ TEST_CASE("reflex::serde::csv: file roundtrip")
   std::filesystem::remove(csv_path);
 }
 
+TEST_CASE("reflex::serde::csv::deserializer: read_record borrows from the input")
+{
+  const std::string_view in = "a,b\r\nplain,\"quo\"\"ted\"\r\n";
+  csv::deserializer      de{in};
+
+  auto header = de.read_record();
+  REQUIRE(header.has_value());
+  REQUIRE_EQ(header->size(), 2u);
+  // A field that needed no decoding points into the input buffer itself.
+  CHECK_EQ((*header)[0].data(), in.data());
+
+  auto record = de.read_record();
+  REQUIRE(record.has_value());
+  REQUIRE_EQ(record->size(), 2u);
+  CHECK_EQ((*record)[0], "plain"sv);
+  CHECK_EQ((*record)[0].data(), in.data() + 5);
+  // A field that had to be decoded is materialized, so it does not alias the
+  // input, but it must still read correctly.
+  CHECK_EQ((*record)[1], "quo\"ted"sv);
+
+  // End of input, and the fields of the last record are still readable until the
+  // next call returns nullopt.
+  CHECK_FALSE(de.read_record().has_value());
+}
+
+// The contiguous fast path is what makes read_record hand out views. Pin both
+// halves so a future change to the cursor cannot silently move CSV onto the
+// character-at-a-time path, or silently change what read_record owns.
+static_assert(csv::deserializer<std::string_view::const_iterator>::bulk_scan);
+static_assert(std::same_as<csv::deserializer<std::string_view::const_iterator>::field_str,
+                           std::string_view>);
+static_assert(not csv::deserializer<std::istreambuf_iterator<char>>::bulk_scan);
+static_assert(std::same_as<csv::deserializer<std::istreambuf_iterator<char>>::field_str,
+                           std::string>);
+
 // Compile-time rejection of non-scalar fields: a struct with a nested aggregate
 // or a container member is not a csv_row_c.
 struct Nested
