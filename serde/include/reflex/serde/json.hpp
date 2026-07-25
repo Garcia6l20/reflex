@@ -479,6 +479,10 @@ REFLEX_EXPORT namespace reflex::serde::json
     using base = serde::detail::subrange_deserializer<InputIt>;
     using base::cursor_;
 
+    // Backs read_key() when the key cannot be borrowed. One buffer, not a pool:
+    // a key is consumed by object_visit and dead before the next key is read.
+    std::string key_buf_;
+
   public:
     using base::at_end;
     using base::base;
@@ -539,6 +543,42 @@ REFLEX_EXPORT namespace reflex::serde::json
           break;
         }
       }
+    }
+
+    // Reads an object key and hands back a view of it.
+    //
+    // The view points into the input buffer, not into anything the parse owns,
+    // so advancing the cursor does not invalidate it. Nothing borrowed escapes
+    // the deserializer: object_visit copies what it needs into the target.
+    //
+    // The fast path is a key with no escape on a contiguous cursor, which is
+    // every key in practice. It borrows. Everything else, an escaped key or a
+    // non-contiguous cursor, goes through the ordinary string reader and lands
+    // in key_buf_, so the escape semantics are not duplicated here.
+    std::string_view read_key()
+    {
+      if constexpr(base::bulk_scan)
+      {
+        const std::string_view sv = this->rest();
+        if(sv.size() >= 2 and sv.front() == '"')
+        {
+          // With no backslash in the body, the first quote after the opening one
+          // is necessarily the terminator, so the escaped-quote walk is not
+          // needed. Both scans are bounded by the key.
+          const std::size_t end = sv.find('"', 1);
+          if(end != std::string_view::npos)
+          {
+            const std::string_view span = sv.substr(1, end - 1);
+            if(span.find('\\') == std::string_view::npos)
+            {
+              this->skip(end + 1);
+              return span;
+            }
+          }
+        }
+      }
+      key_buf_ = this->template load<std::string>();
+      return key_buf_;
     }
 
     // makes load() without an explicit type read a json::value
@@ -919,7 +959,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     while(true)
     {
       de.ltrim();
-      auto key = de.template load<std::string>();
+      const std::string_view key = de.read_key();
       de.ltrim();
       if(de.advance() != ':')
       {
@@ -927,7 +967,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
       de.ltrim();
 
-      serde::object_visit(std::move(key), value, [&]<typename V>(V& v) {
+      serde::object_visit(key, value, [&]<typename V>(V& v) {
         v = de.template load<std::remove_cvref_t<V>>();
         if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
         {
