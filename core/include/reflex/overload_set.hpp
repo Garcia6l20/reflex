@@ -111,10 +111,9 @@ REFLEX_EXPORT namespace reflex
       {
         return std::meta::parent_of(function);
       }
-      const auto sig = signature();
-      // A function type has no return_type_of, only a decomposition.
-      return std::meta::is_type(sig) ? meta::function_type_parts(sig).front()
-                                     : std::meta::return_type_of(sig);
+      // return_type_of reads a function type as readily as a function, so the
+      // stored callable of a data member needs nothing special here.
+      return std::meta::return_type_of(signature());
     }
 
     /** @brief what this candidate could take, before the arity cuts it down */

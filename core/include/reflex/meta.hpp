@@ -9,6 +9,7 @@
 #include <meta>
 #endif
 
+#include <reflex/constant.hpp>
 #include <reflex/views/cartesian_product.hpp>
 
 namespace reflex::meta::detail
@@ -309,26 +310,32 @@ REFLEX_EXPORT namespace reflex::meta
     return ^^T::operator();
   }
 
-  template <typename... Ts> struct type_list;
+  // Splitting a function type is a pattern match, and partial specialization is
+  // the only thing that can do one. Nothing else here is a type list: the
+  // parameters are reflections already, so they go into a vector of them, and
+  // reflex::constant is what carries a vector through a reflection.
+  template <typename> constexpr constant<std::vector<meta::info>> function_parameters{
+      std::vector<meta::info>{}};
 
-  template <typename T> struct function_parts;
-
-  template <typename R, typename... A> struct function_parts<R(A...)>
-  {
-    using type = type_list<R, A...>;
-  };
+  template <typename R, typename... A>
+  constexpr constant<std::vector<meta::info>> function_parameters<R(A...)>{
+      std::vector<meta::info>{^^A...}};
   } // namespace detail
 
-  /** @brief the return type of a function type, then its parameter types
+  /** @brief the parameter types of a function type
    *
-   * parameters_of does not accept a function type, only a function, so a
-   * pointer to one has to be taken apart by partial specialization instead.
+   * parameters_of does accept a function type, but the parameters it hands back
+   * carry no type of their own, so type_of on one throws. The types have to
+   * come from taking the type apart instead.
+   *
+   * return_type_of needs none of this, it reads a function type directly.
    */
-  consteval auto function_type_parts(info R) -> std::vector<info>
+  consteval auto function_type_parameters(info R) -> std::vector<info>
   {
-    const info parts = substitute(^^detail::function_parts, {R});
-    const info list  = dealias(member_named(parts, "type", access_context::unchecked()));
-    return template_arguments_of(list) | std::ranges::to<std::vector<info>>();
+    // constant normalizes the vector into a span over static storage, so what
+    // comes back out is a view and gets collected here.
+    return *extract<constant<std::vector<info>>>(substitute(^^detail::function_parameters, {R})) //
+         | std::ranges::to<std::vector<info>>();
   }
 
   /** @brief the function behind a callable, or meta::null
@@ -433,8 +440,7 @@ REFLEX_EXPORT namespace reflex::meta
   {
     if(is_type(R))
     {
-      auto parts = function_type_parts(R);
-      return {parts.begin() + 1, parts.end()};
+      return function_type_parameters(R);
     }
     return parameters_of(R)                                                        //
          | std::views::drop(is_explicit_object_member_function(R) ? 1uz : 0uz)      //
@@ -450,13 +456,14 @@ REFLEX_EXPORT namespace reflex::meta
    */
   consteval auto min_arity_of(info R) -> std::size_t
   {
-    // A function type carries no default arguments, only the parameter list.
+    auto params = parameters_of(R);
+    // A function type carries no default arguments, and asking one of its
+    // parameters throws, so every parameter is required.
     if(is_type(R))
     {
-      return function_type_parts(R).size() - 1;
+      return params.size();
     }
-    auto        params = parameters_of(R);
-    std::size_t n      = params.size();
+    std::size_t n = params.size();
     while(n > 0 and has_default_argument(params[n - 1]))
     {
       --n;
@@ -468,9 +475,8 @@ REFLEX_EXPORT namespace reflex::meta
   /** @brief every argument count a call to @p R may supply, shortest first */
   consteval auto arities_of(info R) -> std::vector<std::size_t>
   {
-    const std::size_t declared =
-        is_type(R) ? function_type_parts(R).size() - 1 : parameters_of(R).size();
-    const std::size_t total = declared - (is_explicit_object_member_function(R) ? 1 : 0);
+    const std::size_t total =
+        parameters_of(R).size() - (is_explicit_object_member_function(R) ? 1 : 0);
     return std::views::iota(min_arity_of(R), total + 1) //
          | std::ranges::to<std::vector<std::size_t>>();
   }

@@ -87,13 +87,17 @@ TEST_CASE("reflex::meta: parameters and arity")
   }
   SUBCASE("a function type is taken apart by decomposition")
   {
-    constexpr auto parts = [] consteval {
-      return meta::function_type_parts(^^int(double, char));
+    constexpr auto params = [] consteval {
+      return meta::function_type_parameters(^^int(double, char));
     };
-    static_assert(parts().size() == 3);
-    static_assert(parts()[0] == ^^int);
-    static_assert(parts()[1] == ^^double);
-    static_assert(parts()[2] == ^^char);
+    static_assert(params().size() == 2);
+    static_assert(params()[0] == ^^double);
+    static_assert(params()[1] == ^^char);
+    static_assert(meta::function_type_parameters(^^void()).empty());
+
+    // the return type needs no decomposition, return_type_of reads it directly
+    static_assert(std::meta::return_type_of(^^int(double, char)) == ^^int);
+
     static_assert(meta::parameter_types_of(^^int(double, char)).size() == 2);
     static_assert(meta::arities_of(^^int(double, char)).size() == 1);
   }
