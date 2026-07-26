@@ -43,7 +43,8 @@ void nothing()
 
 int maybe([[= cli::argument{"Optional value."}]] std::optional<int> value)
 {
-  return value.value_or(-1);
+  std::println("{}", value.value_or(-1));
+  return 0;
 }
 
 int only_options([[= cli::option{"-n/--name", "A name."}]] std::string name)
@@ -119,4 +120,145 @@ TEST_CASE("reflex::cli: a synthesized member is a real member")
   });
   CHECK(err.empty());
   CHECK_EQ(out, "...\n...\n");
+}
+
+using namespace std::string_view_literals;
+
+TEST_CASE("reflex::cli: a function runs as a command")
+{
+  SUBCASE("an argument alone")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^dots>({"dots"sv, "3"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "...\n");
+  }
+
+  SUBCASE("an option in long form")
+  {
+    const auto [out, err] = testutils::capture_out_err(
+        [] { CHECK_EQ(cli::run<^^dots>({"dots"sv, "2"sv, "--repeat"sv, "2"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "..\n..\n");
+  }
+
+  SUBCASE("an option in short form")
+  {
+    const auto [out, err] = testutils::capture_out_err(
+        [] { CHECK_EQ(cli::run<^^dots>({"dots"sv, "2"sv, "-r"sv, "3"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "..\n..\n..\n");
+  }
+
+  SUBCASE("a function returning void reports success")
+  {
+    CHECK_EQ(cli::run<^^nothing>({"nothing"sv}), 0);
+  }
+
+  SUBCASE("a function without parameters takes none")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_NE(cli::run<^^nothing>({"nothing"sv, "3"sv}), 0); });
+    CHECK_FALSE(err.empty());
+  }
+}
+
+TEST_CASE("reflex::cli: two function commands do not collide")
+{
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^dots>({"dots"sv, "3"sv}), 0); });
+    CHECK_EQ(out, "...\n");
+  }
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^dashes>({"dashes"sv, "3"sv}), 0); });
+    CHECK_EQ(out, "---\n");
+  }
+}
+
+TEST_CASE("reflex::cli: a function command reports what it cannot parse")
+{
+  SUBCASE("an unknown option")
+  {
+    const auto [out, err] = testutils::capture_out_err(
+        [] { CHECK_NE(cli::run<^^dots>({"dots"sv, "3"sv, "--nope"sv}), 0); });
+    CHECK_FALSE(err.empty());
+  }
+
+  SUBCASE("a missing argument")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_NE(cli::run<^^dots>({"dots"sv}), 0); });
+    CHECK_FALSE(err.empty());
+  }
+
+  SUBCASE("a value the number does not consume whole")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_NE(cli::run<^^dots>({"dots"sv, "2abc"sv}), 0); });
+    CHECK_NE(err.find("invalid argument value: 2abc"), std::string::npos);
+  }
+}
+
+TEST_CASE("reflex::cli: an optional parameter may be left out")
+{
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^maybe>({"maybe"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "-1\n");
+  }
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^maybe>({"maybe"sv, "7"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "7\n");
+  }
+}
+
+// A command holding nothing but sub-commands has no operator() either, and is
+// meant to report at run time rather than fail to compile. Supplying the invoke
+// from outside the command is what could have turned that into a build error.
+struct[[= cli::command{"A leaf."}]] leaf
+{
+  int operator()() const
+  {
+    return 0;
+  }
+};
+
+struct[[= cli::command{"Holds a sub-command and nothing else."}]] branch
+{
+  leaf sub;
+};
+
+TEST_CASE("reflex::cli: a command with no way to run reports it")
+{
+  const auto [out, err] =
+      testutils::capture_out_err([] { CHECK_NE(cli::run(branch{}, {"branch"sv}), 0); });
+  CHECK_NE(err.find("no command to execute"), std::string::npos);
+}
+
+TEST_CASE("reflex::cli: a function command prints its usage")
+{
+  const auto [out, err] =
+      testutils::capture_out_err([] { CHECK_EQ(cli::run<^^dots>({"dots"sv, "--help"sv}), 0); });
+  CHECK(err.empty());
+  CHECK_EQ(
+      out,
+      "USAGE: dots [OPTIONS...] ARGUMENTS...\n"
+      "\n"
+      "Print a line of dots.\n"
+      "\n"
+      "OPTIONS:\n"
+      "  --help               Print this message and exit.\n"
+      "  --install-completion Install shell completion.\n"
+      "  --show-completion    Show shell completion.\n"
+      "  -r/--repeat          Repeat the line.\n"
+      "\n"
+      "ARGUMENTS:\n"
+      "  count            How many dots.\n"
+      "\n"
+      "\n");
 }

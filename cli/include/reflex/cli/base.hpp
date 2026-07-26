@@ -741,7 +741,33 @@ REFLEX_EXPORT namespace reflex::cli
     }
   };
 
-  template <bool show_help = true, bool include_install_completion = true, typename Cli>
+  /** @brief how a parsed command is run
+   *
+   * A hand written command carries its state in its members and is called with
+   * nothing. A synthesized one carries a function's arguments instead and has
+   * no call operator at all, so what it means to call it is supplied alongside
+   * it rather than found on it.
+   *
+   * The constraint is what keeps a command holding nothing but sub-commands
+   * reporting missing_command at run time instead of failing to compile.
+   */
+  inline constexpr auto default_invoker = []<typename C>(C& cli) -> decltype(auto)
+    requires requires { cli(); }
+  {
+    return cli();
+  };
+
+  /** @brief call @p Fn with the arguments parsed into its aggregate */
+  template <std::meta::info Fn>
+  inline constexpr auto function_invoker = [](auto& cli) -> decltype(auto) {
+    // to_tuple returns by value, so the pack binds by forwarding reference.
+    return std::apply(
+        [](auto&&... args) -> decltype(auto) { return [:Fn:](args...); }, reflex::to_tuple(cli));
+  };
+
+  template <
+      bool show_help = true, bool include_install_completion = true, typename Cli,
+      typename Invoker = decltype(default_invoker)>
   int process_cmdline(
       Cli&&            cli,
       std::string_view command,
@@ -749,7 +775,8 @@ REFLEX_EXPORT namespace reflex::cli
       auto             it,
       auto             end,
       auto             state_handler,
-      std::size_t      index = 1)
+      std::size_t      index   = 1,
+      Invoker          invoker = default_invoker)
   {
     static constexpr auto                           cli_type = remove_cvref(^^Cli);
     parse_trackers<Cli, include_install_completion> trackers{cli};
@@ -1061,7 +1088,7 @@ REFLEX_EXPORT namespace reflex::cli
       }
     }
 
-    if constexpr(requires { cli(); })
+    if constexpr(requires { invoker(cli); })
     {
       trackers.state = parsing_state::completed;
       return state_handler(trackers);
