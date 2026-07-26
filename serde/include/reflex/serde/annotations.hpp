@@ -9,10 +9,23 @@
 #include <reflex/constant.hpp>
 #endif
 
+#include <reflex/const_check.hpp>
+
 REFLEX_EXPORT namespace reflex::serde
 {
   struct rename : constant_string
-  {};
+  {
+    consteval rename(std::string_view name) : constant_string{name}
+    {
+      for(char c : name)
+      {
+        REFLEX_META_CHECK(
+            c != '.' and c != '"' and c != '\\' and static_cast<unsigned char>(c) >= 0x20,
+            "a serde::rename cannot contain a dot, a quote, a backslash or a control character",
+            ^^rename);
+      }
+    }
+  };
 
   using naming = caseconv::naming;
 
