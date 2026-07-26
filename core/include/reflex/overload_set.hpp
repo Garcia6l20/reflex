@@ -181,17 +181,174 @@ REFLEX_EXPORT namespace reflex
       return std::meta::substitute(^^overload_base, candidates);
     }
 
-    consteval auto resolver_type(std::meta::info scope, std::string_view name) -> std::meta::info
+    /** @brief a member function candidate, with its object already chosen
+     *
+     * The object is held rather than passed, so operator() carries the
+     * arguments alone. Passing it as an ordinary first parameter would let the
+     * object conversion compete with the argument conversions, which is not how
+     * the implicit object parameter is ranked: `w.convert(2.0)` against an
+     * `convert(int)` and a `convert(double) const` is unambiguous, while the
+     * same pair written as two-parameter functions is not.
+     */
+    template <std::meta::info Fn, typename Self, typename... Args> struct member_candidate
     {
-      if(std::meta::is_namespace(scope))
+      Self self;
+
+      constexpr decltype(auto) operator()(Args... args) const
       {
-        return set_type(^^free_candidate, scope, name);
+        return (std::forward<Self>(self).[:Fn:])(std::forward<Args>(args)...);
       }
-      if(std::meta::is_type(scope) and name.empty())
+    };
+
+    template <std::meta::info Fn, typename Self, typename... Args>
+    struct deleted_member_candidate
+    {
+      Self self;
+
+      constexpr void operator()(Args...) const = delete;
+    };
+
+    template <typename Self, typename... Cs> struct bound_overload_base : Cs...
+    {
+      using Cs::operator()...;
+
+      constexpr explicit bound_overload_base(Self s) : Cs{static_cast<Self>(s)}...
+      {}
+    };
+
+    /** @brief can @p m be called on an object of type @p self
+     *
+     * @p self carries both constness and value category, as a reference type.
+     * This is the viability half of what the language does with the implicit
+     * object parameter before it ranks anything.
+     */
+    consteval auto callable_on(std::meta::info m, std::meta::info self) -> bool
+    {
+      const bool self_const  = std::meta::is_const_type(std::meta::remove_reference(self));
+      const bool self_rvalue = std::meta::is_rvalue_reference_type(self);
+
+      if(self_const and not std::meta::is_const(m))
       {
-        return set_type(^^ctor_candidate, scope, name);
+        return false;
       }
-      throw std::meta::exception("reflex::resolve: unsupported scope", scope);
+      if(self_rvalue and std::meta::is_lvalue_reference_qualified(m))
+      {
+        return false;
+      }
+      if(not self_rvalue and std::meta::is_rvalue_reference_qualified(m))
+      {
+        return false;
+      }
+      return true;
+    }
+
+    /** @brief how closely @p m wants the object it is called on
+     *
+     * Used only to break a tie between two members with the same parameter
+     * list, which the language resolves on the object parameter alone.
+     */
+    consteval auto self_rank(std::meta::info m) -> int
+    {
+      int rank = std::meta::is_const(m) ? 0 : 2;
+      if(std::meta::is_lvalue_reference_qualified(m) or std::meta::is_rvalue_reference_qualified(m))
+      {
+        rank += 1;
+      }
+      return rank;
+    }
+
+    consteval auto bound_set_type(
+        std::meta::info scope, std::meta::info self, std::string_view name) -> std::meta::info
+    {
+      std::vector<std::meta::info> chosen;
+      for(auto m : meta::functions_named(scope, name, std::meta::access_context::unchecked()))
+      {
+        if(not callable_on(m, self))
+        {
+          continue;
+        }
+        // Overloads differing only in their qualifiers are one name to the
+        // caller, and the object decides between them. Keeping both would leave
+        // two identical operator() to choose from and make every call ambiguous.
+        const auto params    = meta::parameter_types_of(m);
+        bool       displaced = false;
+        for(auto& c : chosen)
+        {
+          if(meta::parameter_types_of(c) == params)
+          {
+            if(self_rank(m) > self_rank(c))
+            {
+              c = m;
+            }
+            displaced = true;
+            break;
+          }
+        }
+        if(not displaced)
+        {
+          chosen.push_back(m);
+        }
+      }
+
+      std::vector<std::meta::info> candidates{self};
+      for(auto m : chosen)
+      {
+        const auto tmpl =
+            std::meta::is_deleted(m) ? ^^deleted_member_candidate : ^^member_candidate;
+        for(auto arity : meta::arities_of(m))
+        {
+          std::vector<std::meta::info> targs{std::meta::reflect_constant(m), self};
+          targs.append_range(overload{m, arity}.parameter_types());
+          candidates.push_back(std::meta::substitute(tmpl, targs));
+        }
+      }
+      return std::meta::substitute(^^bound_overload_base, candidates);
+    }
+
+    template <std::meta::info Scope, constant_string Name, typename Self>
+    using bound_set_t = [:bound_set_type(Scope, ^^Self&&, Name.get()):];
+
+    // The requirement names this variable rather than the alias directly: a
+    // requires-clause mentioning a consteval splice alias corrupts the splice
+    // on GCC 16.
+    template <std::meta::info Scope, constant_string Name, typename Self, typename... Args>
+    constexpr bool bound_invocable = std::invocable<bound_set_t<Scope, Name, Self>, Args...>;
+
+    /** @brief resolves a member call once the object is known
+     *
+     * Self is deduced rather than fixed, so it takes no part in ranking the
+     * arguments. The set is built for that exact object type, which is what
+     * makes const, ref qualified and plain overloads land the way they do on a
+     * direct call.
+     */
+    template <std::meta::info Scope, constant_string Name> struct member_resolver
+    {
+      template <typename Self, typename... Args>
+        requires bound_invocable<Scope, Name, Self, Args...>
+      constexpr decltype(auto) operator()(Self&& self, Args&&... args) const
+      {
+        using set_type = [:bound_set_type(Scope, ^^Self&&, Name.get()):];
+        return set_type{std::forward<Self>(self)}(std::forward<Args>(args)...);
+      }
+    };
+
+    template <std::meta::info Scope, constant_string Name>
+    consteval auto resolver_type() -> std::meta::info
+    {
+      const std::string_view name = Name.get();
+      if(std::meta::is_namespace(Scope))
+      {
+        return set_type(^^free_candidate, Scope, name);
+      }
+      if(std::meta::is_type(Scope) and name.empty())
+      {
+        return set_type(^^ctor_candidate, Scope, name);
+      }
+      if(std::meta::is_type(Scope))
+      {
+        return ^^member_resolver<Scope, Name>;
+      }
+      throw std::meta::exception("reflex::resolve: unsupported scope", Scope);
     }
   } // namespace detail
 
@@ -202,9 +359,12 @@ REFLEX_EXPORT namespace reflex
    * f(1);                                        // ns::f(int)
    * f(2.0);                                      // ns::f(double)
    * static_assert(not std::invocable<decltype(f), void*>);
+   *
+   * reflex::resolve<^^widget>(1, "x");           // a construction
+   * reflex::resolve<^^widget, "convert">(w, 2.0) // a member, object first
    * @endcode
    */
   template <std::meta::info Scope, constant_string Name = "">
-  inline constexpr [:detail::resolver_type(Scope, Name.get()):] resolve{};
+  inline constexpr [:detail::resolver_type<Scope, Name>():] resolve{};
 
 } // namespace reflex
