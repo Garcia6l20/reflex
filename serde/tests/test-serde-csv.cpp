@@ -173,11 +173,15 @@ TEST_CASE("reflex::serde::csv::deserializer: header to member precedence")
     const std::string_view in = "intMember,intMember\r\n1,2\r\n";
     CHECK_EQ(csv::deserializer{in}.load<Row>().int_member, 2);
   }
-  SUBCASE("identifier and serialized name are both accepted for the same member")
+  SUBCASE("only the serialized name is accepted, not the C++ identifier")
   {
-    CHECK_EQ(csv::deserializer{"int_member\r\n5\r\n"sv}.load<Row>().int_member, 5);
+    // A member is read under the name it is written under. int_member is
+    // serialized as intMember, so a header spelling the identifier names no
+    // column this row has.
     CHECK_EQ(csv::deserializer{"intMember\r\n5\r\n"sv}.load<Row>().int_member, 5);
-    // Both spellings in one header still resolve to that one member, last wins.
+    CHECK_EQ(csv::deserializer{"int_member\r\n5\r\n"sv}.load<Row>().int_member, 0);
+    // The identifier spelling is an unknown column, so it is ignored and does
+    // not shift the cell the serialized name resolves to.
     CHECK_EQ(csv::deserializer{"int_member,intMember\r\n1,2\r\n"sv}.load<Row>().int_member, 2);
   }
   SUBCASE("a column matching no member is ignored, and does not shift the rest")

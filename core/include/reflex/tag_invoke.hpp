@@ -38,6 +38,18 @@ REFLEX_EXPORT namespace reflex
   }
   using namespace _tag_invoke_cpo;
 
+  // Library code inside namespace reflex must call the object through this
+  // name, never as a bare `tag_invoke(...)`. Unqualified lookup from inside
+  // reflex finds both the object above, which the using-directive makes a
+  // member of reflex, and every tag_invoke overload any header has already
+  // declared there. A variable and a function set under one name is ambiguous,
+  // so a bare call compiles or not depending on which headers were included
+  // first. Reaching the object by its own namespace has neither problem, and
+  // it still dispatches through ADL exactly as before.
+  //
+  // Header-only builds are what this protects: a module build never sees the
+  // headers in a user-chosen order.
+
   using _tag_invoke::tag_invoke_result_t;
 
   template <auto const& Cpo> using tag_t = std::remove_cvref_t<decltype(Cpo)>;

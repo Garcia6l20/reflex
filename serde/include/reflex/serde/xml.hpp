@@ -1484,7 +1484,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
         {
           if constexpr(is_attribute(member))
           {
-            if(serialized_name(member) == an or identifier_of(member) == an) any_exact = true;
+            if(serialized_name(member) == an) any_exact = true;
           }
         }
 
@@ -1494,9 +1494,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
         {
           if constexpr(is_attribute(member))
           {
-            const bool exact = serialized_name(member) == an or identifier_of(member) == an;
-            const bool loc   = not any_exact
-                           and (serialized_name(member) == local or identifier_of(member) == local);
+            const bool exact = serialized_name(member) == an;
+            const bool loc   = not any_exact and serialized_name(member) == local;
             if(not matched and (exact or loc))
             {
               using F        = std::remove_cvref_t<decltype(value.[:member:])>;
@@ -1531,7 +1530,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
         {
           if constexpr(not is_attribute(member))
           {
-            if(serialized_name(member) == name or identifier_of(member) == name) any_exact = true;
+            if(serialized_name(member) == name) any_exact = true;
           }
         }
 
@@ -1541,9 +1540,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
           // attribute members are filled from the open tag, never child elements
           if constexpr(not is_attribute(member))
           {
-            const bool exact = serialized_name(member) == name or identifier_of(member) == name;
-            const bool loc   = not any_exact
-                           and (serialized_name(member) == local or identifier_of(member) == local);
+            const bool exact = serialized_name(member) == name;
+            const bool loc   = not any_exact and serialized_name(member) == local;
             if(not matched and (exact or loc))
             {
               matched     = true;

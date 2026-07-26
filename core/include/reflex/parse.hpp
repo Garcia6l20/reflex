@@ -43,22 +43,24 @@ REFLEX_EXPORT namespace reflex
   template <parsable_c T, constant_string Spec> struct __parse_fn : __parse_tag
   {
     constexpr auto operator()(std::string_view s) const
-        noexcept(noexcept(tag_invoke(Parse, s, std::type_identity<T>{})))
+        noexcept(noexcept(_tag_invoke_cpo::tag_invoke(Parse, s, std::type_identity<T>{})))
       requires(basic_parsable_c<T> and not spec_parsable_c<T>)
     {
-      return tag_invoke(Parse, s, std::type_identity<T>{});
+      return _tag_invoke_cpo::tag_invoke(Parse, s, std::type_identity<T>{});
     }
     constexpr auto operator()(std::string_view s) const
-        noexcept(noexcept(tag_invoke(Parse, s, std::type_identity<T>{}, constant_wrapper<Spec>{})))
+        noexcept(noexcept(
+            _tag_invoke_cpo::tag_invoke(Parse, s, std::type_identity<T>{}, constant_wrapper<Spec>{})))
       requires(spec_parsable_c<T>)
     {
-      return tag_invoke(Parse, s, std::type_identity<T>{}, constant_wrapper<Spec>{});
+      return _tag_invoke_cpo::tag_invoke(Parse, s, std::type_identity<T>{}, constant_wrapper<Spec>{});
     }
     constexpr auto operator()(std::string_view s, constant_wrapper<Spec>) const
-        noexcept(noexcept(tag_invoke(Parse, s, std::type_identity<T>{}, constant_wrapper<Spec>{})))
+        noexcept(noexcept(
+            _tag_invoke_cpo::tag_invoke(Parse, s, std::type_identity<T>{}, constant_wrapper<Spec>{})))
       requires(spec_parsable_c<T>)
     {
-      return tag_invoke(Parse, s, std::type_identity<T>{}, constant_wrapper<Spec>{});
+      return _tag_invoke_cpo::tag_invoke(Parse, s, std::type_identity<T>{}, constant_wrapper<Spec>{});
     }
   };
 
