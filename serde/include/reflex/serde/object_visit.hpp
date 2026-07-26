@@ -74,6 +74,14 @@ REFLEX_EXPORT namespace reflex::serde
   template <object_visitable_c T, typename Fn>
   constexpr decltype(auto) object_visit(std::string_view key, T && value, Fn && fn)
   {
+    // Most keys carry no dot at all, and the split machinery below costs about
+    // as much as the member scan it feeds. Skip straight to the visitor when
+    // there is nothing to split.
+    if(key.find('.') == std::string_view::npos)
+    {
+      return object_visitor<std::decay_t<T>>{}(std::forward<Fn>(fn), key, std::forward<T>(value));
+    }
+
     const auto to_sv = [](auto&& r) { return std::string_view(r.begin(), r.end()); };
     auto       rng   = key | std::views::split('.') | std::views::transform(to_sv);
 
