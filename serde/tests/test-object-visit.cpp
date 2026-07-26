@@ -226,3 +226,35 @@ TEST_CASE("reflex::serde::object_visit: var with aggregates")
     }
   }
 }
+
+TEST_CASE("reflex::serde::object_visit: dotted key depth is bounded")
+{
+  // Keys reach object_visit straight from a document, so the segment count is
+  // input-controlled. Past max_key_depth it has to be reported, not written
+  // past the end of the fixed array.
+  const auto dotted = [](std::size_t segments) {
+    std::string key = "name";
+    for(std::size_t i = 1; i < segments; ++i)
+    {
+      key += ".name";
+    }
+    return key;
+  };
+
+  person alice{
+      .name = "alice"s,
+      .age  = 30,
+      .addr = {.city = "Wonderland"s, .zip = 12345},
+  };
+
+  SUBCASE("at the limit")
+  {
+    CHECK_NOTHROW(object_visit(dotted(max_key_depth), alice, [](auto const&) {}));
+  }
+  SUBCASE("past the limit")
+  {
+    CHECK_THROWS_AS(object_visit(dotted(max_key_depth + 1), alice, [](auto const&) {}),
+                    std::runtime_error);
+    CHECK_THROWS_AS(object_visit(dotted(200), alice, [](auto const&) {}), std::runtime_error);
+  }
+}

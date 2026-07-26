@@ -66,13 +66,27 @@ REFLEX_EXPORT namespace reflex::serde
     }
   }
 
+  // Longest dotted path object_visit will split. Keys reach this function
+  // straight from a document, so the segment count is input-controlled and the
+  // copy below has to be bounded.
+  inline constexpr std::size_t max_key_depth = 32;
+
   template <object_visitable_c T, typename Fn>
   constexpr decltype(auto) object_visit(std::string_view key, T && value, Fn && fn)
   {
     const auto to_sv = [](auto&& r) { return std::string_view(r.begin(), r.end()); };
     auto       rng   = key | std::views::split('.') | std::views::transform(to_sv);
-    std::array<std::string_view, 16> keys{};
-    auto key_count = std::ranges::copy(rng, keys.begin()).out - keys.begin();
+
+    std::array<std::string_view, max_key_depth> keys;
+    std::size_t                                 key_count = 0;
+    for(auto segment : rng)
+    {
+      if(key_count == max_key_depth)
+      {
+        throw std::runtime_error("Object key has more than 32 dotted segments");
+      }
+      keys[key_count++] = segment;
+    }
     if(key_count == 0)
     {
       // empty key, treat as single key with empty string
