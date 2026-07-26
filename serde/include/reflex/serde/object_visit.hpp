@@ -5,16 +5,72 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <reflex/hash.hpp>
 #include <reflex/serde/annotations.hpp>
+
+#include <bit>
+#include <cstring>
 #endif
 
 REFLEX_EXPORT namespace reflex::serde
 {
+  namespace detail
+  {
+    // First eight bytes of a name, little-end first, zero padded. Bounded: it
+    // never reads past the name, so it is safe on a view into a document buffer
+    // that ends at a page boundary.
+    constexpr std::uint64_t name_word(std::string_view s) noexcept
+    {
+      if !consteval
+      {
+        if constexpr(std::endian::native == std::endian::little)
+        {
+          std::uint64_t w = 0;
+          std::memcpy(&w, s.data(), s.size() < 8 ? s.size() : 8);
+          return w;
+        }
+      }
+      std::uint64_t w = 0;
+      for(std::size_t i = 0; i < s.size() and i < 8; ++i)
+      {
+        w |= static_cast<std::uint64_t>(static_cast<unsigned char>(s[i])) << (8 * i);
+      }
+      return w;
+    }
+
+    // Below this many members a straight chain of comparisons wins: the one-off
+    // setup a hash or a prefix word needs costs more than the comparisons it
+    // saves. Measured on GCC 16.1.1 at -O3, where the chain overtakes both
+    // between 20 and 24 members.
+    inline constexpr std::size_t wide_object_threshold = 24;
+  } // namespace detail
+
   template <typename T> struct object_visitor;
 
   template <aggregate_c T> struct object_visitor<T>
   {
     static constexpr auto __access_context = std::meta::access_context::current();
+
+    static consteval auto __members()
+    {
+      return define_static_array(
+          nonstatic_data_members_of(remove_reference(^^T), __access_context));
+    }
+
+    // A name past eight bytes does not fit a machine word, which is what
+    // decides between the two wide-object strategies.
+    static consteval bool __any_long_name()
+    {
+      for(auto member : nonstatic_data_members_of(remove_reference(^^T), __access_context))
+      {
+        if(std::string_view{identifier_of(member)}.size() > 8
+           or std::string_view{serialized_name(member)}.size() > 8)
+        {
+          return true;
+        }
+      }
+      return false;
+    }
 
     template <typename Fn, decays_to_c<T> Agg>
     static inline constexpr decltype(auto) operator()(
@@ -22,25 +78,73 @@ REFLEX_EXPORT namespace reflex::serde
         [[maybe_unused]] std::string_view key,
         [[maybe_unused]] Agg&&            agg)
     {
-      template for(constexpr auto& member : define_static_array(
-                       nonstatic_data_members_of(remove_reference(^^T), __access_context)))
+      constexpr std::size_t count = __members().size();
+
+      if constexpr(count < detail::wide_object_threshold)
       {
-        constexpr std::string_view id   = identifier_of(member);
-        constexpr std::string_view name = serialized_name(member);
-        // A member only carries a second name when it is renamed or cased, so
-        // most of the time the two comparisons are the same one done twice.
-        if constexpr(id == name)
+        template for(constexpr auto& member : __members())
         {
-          if(key == name)
+          constexpr std::string_view id   = identifier_of(member);
+          constexpr std::string_view name = serialized_name(member);
+          // A member only carries a second name when it is renamed or cased, so
+          // most of the time the two comparisons are the same one done twice.
+          if constexpr(id == name)
+          {
+            if(key == name)
+            {
+              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            }
+          }
+          else
+          {
+            if(key == name or key == id)
+            {
+              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            }
+          }
+        }
+      }
+      else if constexpr(__any_long_name())
+      {
+        // Names run past a word, so a full comparison per member is expensive.
+        // Reject on length and first word, and compare in full only on a hit.
+        const std::uint64_t kw = detail::name_word(key);
+        template for(constexpr auto& member : __members())
+        {
+          constexpr std::string_view id   = identifier_of(member);
+          constexpr std::string_view name = serialized_name(member);
+          if(key.size() == name.size() and kw == detail::name_word(name) and key == name)
           {
             return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
           }
+          if constexpr(id != name)
+          {
+            if(key.size() == id.size() and kw == detail::name_word(id) and key == id)
+            {
+              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            }
+          }
         }
-        else
+      }
+      else
+      {
+        // Every name fits a word, so a comparison is already cheap and only the
+        // number of them hurts. Hash once and reject on an integer.
+        const std::size_t kh = reflex::hash_bytes(key.data(), key.size());
+        template for(constexpr auto& member : __members())
         {
-          if(key == name or key == id)
+          constexpr std::string_view id   = identifier_of(member);
+          constexpr std::string_view name = serialized_name(member);
+          if(kh == reflex::hash_bytes(name.data(), name.size()) and key == name)
           {
             return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+          }
+          if constexpr(id != name)
+          {
+            if(kh == reflex::hash_bytes(id.data(), id.size()) and key == id)
+            {
+              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            }
           }
         }
       }
