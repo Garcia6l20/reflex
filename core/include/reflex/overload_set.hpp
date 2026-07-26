@@ -1,3 +1,47 @@
+/** @file
+ * @brief naming an overload set and resolving a call against it
+ *
+ * `^^f` is ill-formed as soon as `f` names more than one function, so an
+ * overload set cannot be reflected directly. It is reached through its
+ * enclosing scope instead.
+ *
+ * @code
+ * reflex::resolve<^^ns, "f">(1);            // a free function
+ * reflex::resolve<^^widget>(8080, "host");  // a construction
+ * reflex::resolve<^^widget, "get">(w, 2.0); // a member, object first
+ * reflex::resolve<^^widget, "operator+">(a, b);
+ *
+ * static_assert(std::invocable<decltype(reflex::resolve<^^ns, "f">), int>);
+ * static_assert(reflex::overloads_of(^^ns, "f").size() == 3);
+ * @endcode
+ *
+ * Overload resolution is not reimplemented. Every candidate is materialized as
+ * a type carrying one concrete operator(), they are inherited into a single
+ * type, and the compiler resolves the call. So invocability comes out of
+ * std::invocable, the return type out of std::invoke_result_t, and an ambiguous
+ * call out of an unsatisfied requirement rather than a hard error.
+ *
+ * What resolves:
+ *  - free functions in a namespace, the global one included
+ *  - constructors, and an aggregate's member list, which is a construction path
+ *    of its own
+ *  - member functions, with const, ref qualifiers and deducing this
+ *  - static member functions, with or without an object
+ *  - data members holding a callable, reached as `obj.name(args)`
+ *  - operators, named the way they are written
+ *  - default arguments, as one candidate per reachable arity
+ *
+ * What does not:
+ *  - function templates and templated call operators. `is_function` is false
+ *    for a template, and there are no parameter types to match against until it
+ *    is substituted. Nothing reports this: such a name simply yields no
+ *    candidate, and the call is not invocable.
+ *  - expression level operator lookup. Only operators declared in the named
+ *    scope are candidates, so built-in operators, free operators reached by
+ *    argument dependent lookup from elsewhere, and the candidates rewritten
+ *    from a spaceship or an equality are all outside it.
+ *  - conversion functions, which have no name to ask for.
+ */
 #pragma once
 
 #ifndef REFLEX_EXPORT
@@ -88,36 +132,16 @@ REFLEX_EXPORT namespace reflex
     }
   };
 
-  /** @brief everything in @p scope reachable by calling @p name
-   *
-   * A data member holding a callable is reached the same way a member function
-   * is, `obj.name(args)`, and a name is never both, so the two land in one list.
-   */
-  consteval auto detail_named_members(
-      std::meta::info scope, std::string_view name, std::meta::access_context ctx)
-      -> std::vector<std::meta::info>
-  {
-    auto found = meta::functions_named(scope, name, ctx);
-    if(not found.empty() or not std::meta::is_type(scope))
-    {
-      return found;
-    }
-    for(auto m : std::meta::nonstatic_data_members_of(scope, ctx))
-    {
-      if(std::meta::has_identifier(m) and std::meta::identifier_of(m) == name
-         and meta::is_invocable_data_member(m))
-      {
-        found.push_back(m);
-      }
-    }
-    return found;
-  }
-
   /** @brief every candidate that a call to @p name in @p scope could select
    *
    * @p scope may be a namespace or a class type. An empty @p name on a class
    * type means its constructors, which is how a construction is spelled: there
-   * is no identifier to name them with.
+   * is no identifier to name them with, and an aggregate's member list joins
+   * them as a construction path of its own.
+   *
+   * An operator is named the way it is written, `"operator+"`. A data member
+   * holding a callable is a candidate too, since it is reached the same way a
+   * member function is.
    *
    * Function templates are absent: they have no parameter types to match until
    * they are substituted.
@@ -131,7 +155,7 @@ REFLEX_EXPORT namespace reflex
     const bool aggregate    = constructing and std::meta::is_aggregate_type(scope);
 
     const auto functions =
-        constructing ? meta::constructors_of(scope, ctx) : detail_named_members(scope, name, ctx);
+        constructing ? meta::constructors_of(scope, ctx) : meta::callables_named(scope, name, ctx);
 
     std::vector<overload> candidates;
     for(auto fn : functions)
@@ -342,7 +366,7 @@ REFLEX_EXPORT namespace reflex
         std::meta::info scope, std::meta::info self, std::string_view name) -> std::meta::info
     {
       std::vector<std::meta::info> chosen;
-      for(auto m : detail_named_members(scope, name, std::meta::access_context::unchecked()))
+      for(auto m : meta::callables_named(scope, name, std::meta::access_context::unchecked()))
       {
         if(not callable_on(m, self))
         {

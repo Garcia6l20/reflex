@@ -396,6 +396,31 @@ REFLEX_EXPORT namespace reflex::meta
          | std::ranges::to<std::vector<info>>();
   }
 
+  /** @brief everything in @p R that a call to @p name could reach
+   *
+   * The functions under that name, and failing those, a data member holding a
+   * callable, which is reached the same way, `obj.name(args)`. A name is never
+   * both, so the two land in one list.
+   */
+  consteval auto callables_named(
+      info R, std::string_view name, access_context ctx = access_context::current())
+      -> std::vector<info>
+  {
+    auto found = functions_named(R, name, ctx);
+    if(not found.empty() or not is_type(R))
+    {
+      return found;
+    }
+    for(auto m : nonstatic_data_members_of(R, ctx))
+    {
+      if(has_identifier(m) and identifier_of(m) == name and is_invocable_data_member(m))
+      {
+        found.push_back(m);
+      }
+    }
+    return found;
+  }
+
   /** @brief the types a call to @p R supplies, without its return type
    *
    * detail::signature_of returns the return type first, which is the wrong
