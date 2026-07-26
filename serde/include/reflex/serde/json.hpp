@@ -5,6 +5,7 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <cmath>
 #include <cstring>
 
 #include <reflex/format.hpp>
@@ -301,6 +302,17 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <number_c Num>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Num const& value)
     {
+      // The JSON grammar has no literal for a non-finite number, so emitting one
+      // would produce a document no conforming reader accepts. Checked here and
+      // not in write_digits, which the CSV and XML backends share and where
+      // inf and nan do round-trip.
+      if constexpr(std::floating_point<Num>)
+      {
+        if(not std::isfinite(value))
+        {
+          throw std::runtime_error("JSON has no literal for a non-finite number");
+        }
+      }
       serde::detail::write_digits(ser, value);
       return ser.out();
     }
