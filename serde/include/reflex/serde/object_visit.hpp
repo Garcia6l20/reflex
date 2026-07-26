@@ -25,9 +25,23 @@ REFLEX_EXPORT namespace reflex::serde
       template for(constexpr auto& member : define_static_array(
                        nonstatic_data_members_of(remove_reference(^^T), __access_context)))
       {
-        if(identifier_of(member) == key or serialized_name(member) == key)
+        constexpr std::string_view id   = identifier_of(member);
+        constexpr std::string_view name = serialized_name(member);
+        // A member only carries a second name when it is renamed or cased, so
+        // most of the time the two comparisons are the same one done twice.
+        if constexpr(id == name)
         {
-          return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+          if(key == name)
+          {
+            return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+          }
+        }
+        else
+        {
+          if(key == name or key == id)
+          {
+            return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+          }
         }
       }
       throw std::runtime_error("Key not found in object");
