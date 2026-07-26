@@ -1,4 +1,5 @@
 #include <doctest/doctest.h>
+#include <reflex/const_check.hpp>
 
 import reflex.serde.json;
 import serde.tests.types;
@@ -705,15 +706,11 @@ namespace
     constexpr bool operator==(Renamed const&) const = default;
   };
 
-  // A rename containing a dot serializes correctly but cannot be read back:
-  // object_visit treats a key as a dotted path and splits on '.', so no member
-  // matches either half. Pre-existing, pinned here so the asymmetry is not
-  // rediscovered as a regression.
-  struct[[= derive(Debug)]] DottedRename
+  struct[[= derive(Debug)]] NonFinite
   {
-    [[= serde::rename{"outer.inner"}]] int value;
-    constexpr bool operator==(DottedRename const&) const = default;
+    double value;
   };
+
 } // namespace
 
 TEST_CASE("reflex::serde::json::serializer: scalar rendering is to_chars")
@@ -743,13 +740,18 @@ TEST_CASE("reflex::serde::json::serializer: scalar rendering is to_chars")
     }
   }
 
-  SUBCASE("infinities and NaN are still emitted as invalid JSON")
+  SUBCASE("infinities and NaN are rejected")
   {
-    // Pre-existing defect, pinned. inf and nan are not JSON. Fixing it is a
-    // wire-format decision and is filed separately, not made here.
-    CHECK_EQ(json_dump(std::numeric_limits<double>::infinity()), "inf");
-    CHECK_EQ(json_dump(-std::numeric_limits<double>::infinity()), "-inf");
-    CHECK_EQ(json_dump(std::numeric_limits<double>::quiet_NaN()), "nan");
+    CHECK_THROWS(json_dump(std::numeric_limits<double>::infinity()));
+    CHECK_THROWS(json_dump(-std::numeric_limits<double>::infinity()));
+    CHECK_THROWS(json_dump(std::numeric_limits<double>::quiet_NaN()));
+
+    // A member is reached through the same overload, so a whole aggregate is
+    // rejected rather than half written.
+    CHECK_THROWS(json_dump(NonFinite{std::numeric_limits<double>::infinity()}));
+
+    // Finite extremes still render, so the guard costs nothing at the edges.
+    CHECK_EQ(json_dump(std::numeric_limits<double>::max()), "1.7976931348623157e+308");
   }
 
   SUBCASE("literals and structure")
@@ -787,11 +789,15 @@ TEST_CASE("reflex::serde::json::serializer: scalar rendering is to_chars")
     CHECK_EQ(json::deserializer{encoded}.load<Renamed>(), expected);
   }
 
-  SUBCASE("a rename containing a dot writes but does not read back")
-  {
-    const auto encoded = json_dump(DottedRename{42});
-    CHECK_EQ(encoded, "{\"outer.inner\":42}");
-    CHECK_THROWS(json::deserializer{encoded}.load<DottedRename>());
+  // A rename carries the only arbitrary string that becomes a serialized name,
+  // so it is the one place these characters can enter. Rejection is a build
+  // failure, which is why it is pinned here rather than with a CHECK.
+  consteval {
+    REFLEX_CONSTEVAL_NOTHROW(rename{"a-weird/name:with punctuation"});
+    REFLEX_CONSTEVAL_THROWS(rename{"outer.inner"});
+    REFLEX_CONSTEVAL_THROWS(rename{"say \"hi\""});
+    REFLEX_CONSTEVAL_THROWS(rename{"back\\slash"});
+    REFLEX_CONSTEVAL_THROWS(rename{"nl\n"});
   }
 }
 
