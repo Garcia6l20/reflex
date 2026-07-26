@@ -1039,7 +1039,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
         const char e = advance();
         if(e == '&')
         {
-          read_entity(out);
+          read_entity(out, quote);
         }
         else
         {
@@ -1632,13 +1632,15 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // A '&' has already been consumed; decode the entity and append to out.
     // On any malformed or unknown reference the original text is preserved
     // verbatim (never silently dropped, never eats following markup).
-    void read_entity(std::string& out)
+    // `stop` is the caller's own boundary, the active quote in an attribute value.
+    void read_entity(std::string& out, char stop = '\0')
     {
       std::string name;
       while(not at_end())
       {
         const char c = peek();
-        if(c == ';' or c == '<' or c == '&' or reflex::is_space(c) or name.size() >= 16)
+        if(c == ';' or c == '<' or c == '&' or c == stop or reflex::is_space(c)
+           or name.size() >= 16)
         {
           break;
         }

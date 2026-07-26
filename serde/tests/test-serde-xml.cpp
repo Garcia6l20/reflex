@@ -1174,6 +1174,61 @@ TEST_CASE("reflex::serde::xml::deserializer: entities in attribute values")
   }
 }
 
+struct[[= derive(Debug)]] AttrPairText
+{
+  [[= xml::attribute]] std::string a;
+  [[= xml::attribute]] std::string b;
+  [[= xml::text]] std::string      text;
+
+  constexpr bool operator==(AttrPairText const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml::deserializer: an unterminated entity in an attribute is kept raw")
+{
+  // element content preserves a malformed reference verbatim and never eats the
+  // markup behind it, an attribute value has to follow the same policy
+  SUBCASE("element content, the behaviour the attribute path must match")
+  {
+    const std::string_view in =
+        "<Basic><intMember>1</intMember><stringMember>&amp</stringMember>"
+        "<double-member>2</double-member></Basic>";
+    CHECK_EQ(xml::deserializer{in}.load<Basic>().string_member, "&amp");
+    CHECK_EQ(load_streaming<Basic>(in).string_member, "&amp");
+  }
+  SUBCASE("double-quoted attribute")
+  {
+    const std::string_view in = R"(<AttrText a="&amp"/>)";
+    CHECK_EQ(xml::deserializer{in}.load<AttrText>().a, "&amp");
+    CHECK_EQ(load_streaming<AttrText>(in).a, "&amp");
+  }
+  SUBCASE("single-quoted attribute")
+  {
+    const std::string_view in = R"(<AttrText a='&amp'/>)";
+    CHECK_EQ(xml::deserializer{in}.load<AttrText>().a, "&amp");
+    CHECK_EQ(load_streaming<AttrText>(in).a, "&amp");
+  }
+  SUBCASE("a bare ampersand is a value of its own")
+  {
+    const std::string_view in = R"(<AttrText a="&"/>)";
+    CHECK_EQ(xml::deserializer{in}.load<AttrText>().a, "&");
+    CHECK_EQ(load_streaming<AttrText>(in).a, "&");
+  }
+  SUBCASE("the scan stops at the quote, the rest of the element still parses")
+  {
+    const std::string_view in = R"(<AttrPairText a="&amp" b="ok">tail</AttrPairText>)";
+    const AttrPairText     expected{"&amp", "ok", "tail"};
+    CHECK_EQ(xml::deserializer{in}.load<AttrPairText>(), expected);
+    CHECK_EQ(load_streaming<AttrPairText>(in), expected);
+  }
+  SUBCASE("an unknown reference mid-value keeps its surroundings")
+  {
+    const std::string_view in = R"(<AttrPairText a="x&ampy" b="ok">tail</AttrPairText>)";
+    const AttrPairText     expected{"x&ampy", "ok", "tail"};
+    CHECK_EQ(xml::deserializer{in}.load<AttrPairText>(), expected);
+    CHECK_EQ(load_streaming<AttrPairText>(in), expected);
+  }
+}
+
 TEST_CASE("reflex::serde::xml::deserializer: attribute shapes")
 {
   SUBCASE("empty value")
