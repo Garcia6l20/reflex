@@ -276,6 +276,39 @@ REFLEX_EXPORT namespace reflex::meta
     return meta::null;
   }
 
+  /** @brief every function declared in @p R under the identifier @p name
+   *
+   * @p R may be a namespace or a class type. An overloaded name cannot be
+   * reflected directly, since `^^f` is ill-formed when `f` names more than one
+   * function, so going through the enclosing scope is the only way to reach the
+   * whole set.
+   *
+   * Function templates are not returned: `is_function` is false for them, and a
+   * template has no parameter types to match against until it is substituted.
+   */
+  consteval auto functions_named(
+      info R, std::string_view name, access_context ctx = access_context::current())
+      -> std::vector<info>
+  {
+    return members_of(R, ctx)                                                     //
+         | std::views::filter([](info m) { return is_function(m); })              //
+         | std::views::filter(has_identifier)                                     //
+         | std::views::filter([name](info m) { return identifier_of(m) == name; }) //
+         | std::ranges::to<std::vector<info>>();
+  }
+
+  /** @brief the parameter types of a function, without its return type
+   *
+   * detail::signature_of returns the return type first, which is the wrong
+   * shape whenever the parameters are what is being matched.
+   */
+  consteval auto parameter_types_of(info R) -> std::vector<info>
+  {
+    return parameters_of(R)                     //
+         | std::views::transform(meta::type_of) //
+         | std::ranges::to<std::vector<info>>();
+  }
+
   consteval auto member_functions_annotated_with(
       info R, info A, access_context ctx = access_context::current())
   {
