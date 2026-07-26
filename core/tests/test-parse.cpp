@@ -132,3 +132,65 @@ TEST_CASE("reflex::core::parse: enum flags")
   CHECK(*parse<Permission>("Write") == Permission::Write);
   CHECK(*parse<Permission>("Read|Execute") == (Permission::Read | Permission::Execute));
 }
+
+namespace
+{
+  // A user-taught parsable type, to show parse_strict reaches beyond the
+  // arithmetic overloads. Forwarding the inner end() is what lets it: reporting
+  // the whole input would claim everything was consumed.
+  struct Ratio
+  {
+    double value{};
+    constexpr bool operator==(Ratio const&) const = default;
+  };
+
+  constexpr parse_result<Ratio> tag_invoke(
+      tag_t<Parse>, std::string_view s, std::type_identity<Ratio>) noexcept
+  {
+    auto inner = parse<double>(s);
+    if(not inner)
+    {
+      return std::unexpected(std::errc::invalid_argument);
+    }
+    return {Ratio{*inner}, inner.end()};
+  }
+}
+
+TEST_CASE("reflex::parse: permissive, and reports how far it got")
+{
+  // Integral and floating point behave the same way. They used to differ: the
+  // floating point overload rejected a short parse and the integral one did not.
+  CHECK_EQ(*parse<int>("12abc"), 12);
+  CHECK_EQ(*parse<double>("1.5abc"), 1.5);
+  CHECK_EQ(*parse<int>("12 "), 12);
+  CHECK_EQ(*parse<double>("1.5 "), 1.5);
+
+  // end() is the point of the permissive path: it is what lets a caller read a
+  // sequence of fields out of one buffer.
+  const auto text = "12abc"sv;
+  CHECK_EQ(parse<int>(text).end(), text.data() + 2);
+}
+
+TEST_CASE("reflex::parse_strict: the whole input must be consumed")
+{
+  CHECK_EQ(*parse_strict<int>("12"), 12);
+  CHECK_EQ(*parse_strict<double>("1.5"), 1.5);
+
+  CHECK_FALSE(parse_strict<int>("12abc"));
+  CHECK_FALSE(parse_strict<double>("1.5abc"));
+  CHECK_FALSE(parse_strict<int>("12 "));
+  CHECK_FALSE(parse_strict<double>("1.5 "));
+
+  // The base prefixes still consume the whole value.
+  CHECK_EQ(*parse_strict<int>("0x1f"), 31);
+  CHECK_EQ(*parse_strict<int>("0b101"), 5);
+  CHECK_FALSE(parse_strict<int>("0x1fz"));
+
+  CHECK_EQ(*parse_strict<Ratio>("2.5"), Ratio{2.5});
+  CHECK_FALSE(parse_strict<Ratio>("2.5abc"));
+
+  CHECK_EQ(parse_strict_or<int>("12abc", -1), -1);
+  CHECK_EQ(parse_strict_or<int>("12", -1), 12);
+  CHECK_THROWS_AS(parse_strict_or_throw<int>("12abc"), parse_error);
+  CHECK_EQ(parse_strict_or_else<int>("12abc", [](std::errc) { return -7; }), -7);
+}

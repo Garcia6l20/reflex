@@ -232,6 +232,13 @@ REFLEX_EXPORT namespace reflex::serde::json
     decode_rare_escape(esc, next, emit);
   }
 
+  // What may legally follow a number: a structural character, or whitespace
+  // before one.
+  constexpr bool ends_number(char c) noexcept
+  {
+    return c == ',' or c == ']' or c == '}' or reflex::is_space(c);
+  }
+
   // `"name":` is a constant, so it is built once at compile time and promoted to
   // static storage.
   //
@@ -794,7 +801,12 @@ REFLEX_EXPORT namespace reflex::serde::json
         const auto first = std::to_address(de.begin());
         const auto last  = std::to_address(de.end());
         auto [ptr, ec]   = std::from_chars(first, last, value);
-        if(ec != std::errc{})
+        // A number is followed by more document, so the end of the input is not
+        // the bound: what must follow is a structural character or whitespace.
+        // Anything else, `1.2.3` being the case that used to slip through, is
+        // trailing garbage and is rejected here rather than left for the next
+        // token to fail on with an unrelated message.
+        if(ec != std::errc{} or (ptr != last and not detail::ends_number(*ptr)))
         {
           throw std::runtime_error("Failed to parse number");
         }
@@ -817,8 +829,13 @@ REFLEX_EXPORT namespace reflex::serde::json
             break;
           }
         }
-        auto [result, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
-        if(ec != std::errc{})
+        // Two checks, matching the contiguous path's single one. The token must
+        // be consumed whole, which covers `1.2.3` where the collector is more
+        // permissive than the parser, and what stopped the collector must be a
+        // character that may follow a number, which covers `1.5abc`.
+        auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
+        if(ec != std::errc{} or ptr != token.data() + token.size()
+           or (not de.at_end() and not detail::ends_number(de.peek())))
         {
           throw std::runtime_error("Failed to parse number");
         }

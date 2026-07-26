@@ -595,12 +595,15 @@ REFLEX_EXPORT namespace reflex::serde::xml
       const auto t   = trim(text);
       F          value{};
       auto [ptr, ec] = std::from_chars(t.data(), t.data() + t.size(), value);
-      if(ec != std::errc{}) throw std::runtime_error("XML: failed to parse number");
+      if(ec != std::errc{} or ptr != t.data() + t.size())
+      {
+        throw std::runtime_error("XML: failed to parse number");
+      }
       return value;
     }
     else if constexpr(derives_c<F, derive_t<Parse>>)
     {
-      return parse_or_throw<F>(trim(text));
+      return parse_strict_or_throw<F>(trim(text));
     }
     else if constexpr(enum_c<F>)
     {
@@ -640,7 +643,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
       std::underlying_type_t<F> value{};
       auto [ptr, ec] = std::from_chars(t.data(), t.data() + t.size(), value);
-      if(ec != std::errc{}) throw std::runtime_error("XML: failed to parse enum");
+      if(ec != std::errc{} or ptr != t.data() + t.size())
+      {
+        throw std::runtime_error("XML: failed to parse enum");
+      }
       return static_cast<F>(value);
     }
     else

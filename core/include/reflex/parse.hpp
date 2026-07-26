@@ -173,10 +173,6 @@ REFLEX_EXPORT namespace reflex
     {
       return std::unexpected(ec);
     }
-    if(ptr != s.data() + s.size())
-    {
-      return std::unexpected(std::errc::invalid_argument);
-    }
     return {value, ptr};
   }
 
@@ -223,6 +219,7 @@ REFLEX_EXPORT namespace reflex
     typename T::clock;
     typename T::duration;
   };
+
 
   template <constant_string Spec, time_point_c TimePoint>
   constexpr parse_result<TimePoint> tag_invoke(
@@ -342,10 +339,38 @@ REFLEX_EXPORT namespace reflex
     return {std::chrono::sys_days{year / month / day} + hours + mins + ns, s.data()};
   }
 
+  // parse<T> stops as soon as it has a value and reports how far it got through
+  // end(), which is what lets a caller read a sequence of fields out of one
+  // buffer. parse_strict<T> adds the requirement that nothing is left over.
+  //
+  //   parse<int>("12abc")        -> 12, end() at 'a'
+  //   parse_strict<int>("12abc") -> invalid_argument
+  //
+  // It wraps parse rather than duplicating any overload, so it applies to every
+  // parsable type, including one a user taught through tag_invoke. That is also
+  // what an overload owes it: end() has to report what was actually consumed,
+  // since claiming the whole input silently defeats the check.
+  template <parsable_c T, constant_string spec = "">
+  constexpr parse_result<T> parse_strict(std::string_view s)
+  {
+    auto result = parse<T, spec>(s);
+    if(result.has_value() and result.end() != s.data() + s.size())
+    {
+      return std::unexpected(std::errc::invalid_argument);
+    }
+    return result;
+  }
+
   template <parsable_c T, constant_string spec = "">
   constexpr T parse_or(std::string_view s, T fallback)
   {
-    return parse<T, spec>(s).value_or(fallback);
+    return parse<T, spec>(s).value_or(std::move(fallback));
+  }
+
+  template <parsable_c T, constant_string spec = "">
+  constexpr T parse_strict_or(std::string_view s, T fallback)
+  {
+    return parse_strict<T, spec>(s).value_or(std::move(fallback));
   }
 
   template <parsable_c T, constant_string spec = ""> constexpr T parse_or_throw(std::string_view s)
@@ -353,9 +378,21 @@ REFLEX_EXPORT namespace reflex
     return parse<T, spec>(s).value_or_throw();
   }
 
+  template <parsable_c T, constant_string spec = "">
+  constexpr T parse_strict_or_throw(std::string_view s)
+  {
+    return parse_strict<T, spec>(s).value_or_throw();
+  }
+
   template <parsable_c T, constant_string spec = "", typename OnError>
   constexpr T parse_or_else(std::string_view s, OnError && on_error)
   {
     return parse<T, spec>(s).value_or_else(std::forward<OnError>(on_error));
+  }
+
+  template <parsable_c T, constant_string spec = "", typename OnError>
+  constexpr T parse_strict_or_else(std::string_view s, OnError && on_error)
+  {
+    return parse_strict<T, spec>(s).value_or_else(std::forward<OnError>(on_error));
   }
 } // namespace reflex

@@ -727,7 +727,7 @@ REFLEX_EXPORT namespace reflex::cli
                   if constexpr(seq_c<T>)
                   {
                     auto parsed =
-                        reflex::parse<typename T::value_type>(trackers.current.value_view);
+                        reflex::parse_strict<typename T::value_type>(trackers.current.value_view);
                     if(not parsed)
                     {
                       trackers.current.parse_error = parsed.error();
@@ -739,7 +739,7 @@ REFLEX_EXPORT namespace reflex::cli
                   }
                   else
                   {
-                    auto parsed = reflex::parse<T>(trackers.current.value_view);
+                    auto parsed = reflex::parse_strict<T>(trackers.current.value_view);
                     if(not parsed)
                     {
                       trackers.current.parse_error = parsed.error();
@@ -842,7 +842,7 @@ REFLEX_EXPORT namespace reflex::cli
                 // consume all remaining arguments
                 auto view             = std::string_view(*it);
                 trackers.current.view = view;
-                auto parsed           = reflex::parse<typename T::value_type>(view);
+                auto parsed           = reflex::parse_strict<typename T::value_type>(view);
                 if(not parsed)
                 {
                   trackers.current.parse_error = parsed.error();
@@ -858,7 +858,7 @@ REFLEX_EXPORT namespace reflex::cli
             {
               auto view             = std::string_view(*it);
               trackers.current.view = view;
-              auto parsed           = reflex::parse<T>(view);
+              auto parsed           = reflex::parse_strict<T>(view);
               if(not parsed)
               {
                 trackers.current.parse_error = parsed.error();
