@@ -36,6 +36,27 @@ REFLEX_EXPORT namespace reflex
       return std::meta::is_type(function);
     }
 
+    /** @brief a data member holding a callable, reached as `obj.member(args)` */
+    consteval auto is_data_member() const -> bool
+    {
+      return not is_aggregate_init() and std::meta::is_nonstatic_data_member(function);
+    }
+
+    /** @brief the function whose parameters describe this candidate
+     *
+     * The member itself for a member function, the stored callable for a data
+     * member, and null for an aggregate initialization, which has a member list
+     * instead of a parameter list.
+     */
+    consteval auto signature() const -> std::meta::info
+    {
+      if(is_aggregate_init())
+      {
+        return std::meta::info{};
+      }
+      return is_data_member() ? meta::callable_function_of(function) : function;
+    }
+
     consteval auto return_type() const -> std::meta::info
     {
       if(is_aggregate_init())
@@ -46,18 +67,51 @@ REFLEX_EXPORT namespace reflex
       {
         return std::meta::parent_of(function);
       }
-      return std::meta::return_type_of(function);
+      const auto sig = signature();
+      // A function type has no return_type_of, only a decomposition.
+      return std::meta::is_type(sig) ? meta::function_type_parts(sig).front()
+                                     : std::meta::return_type_of(sig);
+    }
+
+    /** @brief what this candidate could take, before the arity cuts it down */
+    consteval auto all_parameter_types() const -> std::vector<std::meta::info>
+    {
+      return is_aggregate_init() ? meta::nonstatic_data_member_types_of(function)
+                                 : meta::parameter_types_of(signature());
     }
 
     consteval auto parameter_types() const -> std::vector<std::meta::info>
     {
-      auto types = is_aggregate_init()
-                     ? meta::nonstatic_data_member_types_of(function)
-                     : meta::parameter_types_of(function);
+      auto types = all_parameter_types();
       types.resize(arity);
       return types;
     }
   };
+
+  /** @brief everything in @p scope reachable by calling @p name
+   *
+   * A data member holding a callable is reached the same way a member function
+   * is, `obj.name(args)`, and a name is never both, so the two land in one list.
+   */
+  consteval auto detail_named_members(
+      std::meta::info scope, std::string_view name, std::meta::access_context ctx)
+      -> std::vector<std::meta::info>
+  {
+    auto found = meta::functions_named(scope, name, ctx);
+    if(not found.empty() or not std::meta::is_type(scope))
+    {
+      return found;
+    }
+    for(auto m : std::meta::nonstatic_data_members_of(scope, ctx))
+    {
+      if(std::meta::has_identifier(m) and std::meta::identifier_of(m) == name
+         and meta::is_invocable_data_member(m))
+      {
+        found.push_back(m);
+      }
+    }
+    return found;
+  }
 
   /** @brief every candidate that a call to @p name in @p scope could select
    *
@@ -77,7 +131,7 @@ REFLEX_EXPORT namespace reflex
     const bool aggregate    = constructing and std::meta::is_aggregate_type(scope);
 
     const auto functions =
-        constructing ? meta::constructors_of(scope, ctx) : meta::functions_named(scope, name, ctx);
+        constructing ? meta::constructors_of(scope, ctx) : detail_named_members(scope, name, ctx);
 
     std::vector<overload> candidates;
     for(auto fn : functions)
@@ -90,7 +144,7 @@ REFLEX_EXPORT namespace reflex
       }
       // A defaulted parameter makes one function reachable at several argument
       // counts, and each one is a candidate of its own.
-      for(auto arity : meta::arities_of(fn))
+      for(auto arity : meta::arities_of(overload{fn, 0}.signature()))
       {
         candidates.push_back(overload{fn, arity});
       }
@@ -225,8 +279,10 @@ REFLEX_EXPORT namespace reflex
     consteval auto callable_on(std::meta::info m, std::meta::info self) -> bool
     {
       // A static member has no object parameter to satisfy, and naming it
-      // through an object is legal whatever that object is qualified with.
-      if(std::meta::is_static_member(m))
+      // through an object is legal whatever that object is qualified with. A
+      // data member is reached the same way, and its own constness is the
+      // object's, which the candidate body settles rather than this.
+      if(std::meta::is_static_member(m) or std::meta::is_nonstatic_data_member(m))
       {
         return true;
       }
@@ -268,7 +324,7 @@ REFLEX_EXPORT namespace reflex
         std::meta::info scope, std::meta::info self, std::string_view name) -> std::meta::info
     {
       std::vector<std::meta::info> chosen;
-      for(auto m : meta::functions_named(scope, name, std::meta::access_context::unchecked()))
+      for(auto m : detail_named_members(scope, name, std::meta::access_context::unchecked()))
       {
         if(not callable_on(m, self))
         {
@@ -277,11 +333,11 @@ REFLEX_EXPORT namespace reflex
         // Overloads differing only in their qualifiers are one name to the
         // caller, and the object decides between them. Keeping both would leave
         // two identical operator() to choose from and make every call ambiguous.
-        const auto params    = meta::parameter_types_of(m);
+        const auto params    = overload{m, 0}.all_parameter_types();
         bool       displaced = false;
         for(auto& c : chosen)
         {
-          if(meta::parameter_types_of(c) == params)
+          if(overload{c, 0}.all_parameter_types() == params)
           {
             if(self_rank(m) > self_rank(c))
             {
@@ -300,9 +356,10 @@ REFLEX_EXPORT namespace reflex
       std::vector<std::meta::info> candidates{self};
       for(auto m : chosen)
       {
-        const auto tmpl =
-            std::meta::is_deleted(m) ? ^^deleted_member_candidate : ^^member_candidate;
-        for(auto arity : meta::arities_of(m))
+        const bool deleted =
+            not std::meta::is_nonstatic_data_member(m) and std::meta::is_deleted(m);
+        const auto tmpl = deleted ? ^^deleted_member_candidate : ^^member_candidate;
+        for(auto arity : meta::arities_of(overload{m, 0}.signature()))
         {
           std::vector<std::meta::info> targs{std::meta::reflect_constant(m), self};
           targs.append_range(overload{m, arity}.parameter_types());

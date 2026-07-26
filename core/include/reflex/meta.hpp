@@ -311,6 +311,70 @@ REFLEX_EXPORT namespace reflex::meta
          | std::ranges::to<std::vector<info>>();
   }
 
+  namespace detail
+  {
+  template <typename T> consteval auto call_operator() -> meta::info
+  {
+    return ^^T::operator();
+  }
+
+  template <typename... Ts> struct type_list;
+
+  template <typename T> struct function_parts;
+
+  template <typename R, typename... A> struct function_parts<R(A...)>
+  {
+    using type = type_list<R, A...>;
+  };
+  } // namespace detail
+
+  /** @brief the return type of a function type, then its parameter types
+   *
+   * parameters_of does not accept a function type, only a function, so a
+   * pointer to one has to be taken apart by partial specialization instead.
+   */
+  consteval auto function_type_parts(info R) -> std::vector<info>
+  {
+    const info parts = substitute(^^detail::function_parts, {R});
+    const info list  = dealias(member_named(parts, "type", access_context::unchecked()));
+    return template_arguments_of(list) | std::ranges::to<std::vector<info>>();
+  }
+
+  /** @brief the function behind a callable, or meta::null
+   *
+   * Handles a function, a pointer or reference to one, and a class type with a
+   * call operator, which covers std::function and a lambda alike.
+   *
+   * A templated call operator yields null: it has no parameter types until it
+   * is substituted, the same reason a function template is not reachable
+   * through a reflection.
+   */
+  consteval auto callable_function_of(info R) -> info
+  {
+    const info type = is_type(R) ? R : type_of(R);
+    if(is_function_type(type))
+    {
+      return type;
+    }
+    const info stripped = remove_pointer(remove_reference(type));
+    if(is_function_type(stripped))
+    {
+      return stripped;
+    }
+    if(is_class_type(type) and meta::has_call_operator(type))
+    {
+      const info call = extract<info (*)()>(substitute(^^detail::call_operator, {type}))();
+      return is_function(call) ? call : meta::null;
+    }
+    return meta::null;
+  }
+
+  /** @brief a data member holding something callable, like a std::function */
+  consteval auto is_invocable_data_member(info R) -> bool
+  {
+    return is_nonstatic_data_member(R) and callable_function_of(R) != meta::null;
+  }
+
   /** @brief the types of the non-static data members of @p R, in declaration order */
   consteval auto nonstatic_data_member_types_of(
       info R, access_context ctx = access_context::current()) -> std::vector<info>
@@ -327,6 +391,11 @@ REFLEX_EXPORT namespace reflex::meta
    */
   consteval auto parameter_types_of(info R) -> std::vector<info>
   {
+    if(is_type(R))
+    {
+      auto parts = function_type_parts(R);
+      return {parts.begin() + 1, parts.end()};
+    }
     return parameters_of(R)                     //
          | std::views::transform(meta::type_of) //
          | std::ranges::to<std::vector<info>>();
@@ -340,6 +409,11 @@ REFLEX_EXPORT namespace reflex::meta
    */
   consteval auto min_arity_of(info R) -> std::size_t
   {
+    // A function type carries no default arguments, only the parameter list.
+    if(is_type(R))
+    {
+      return function_type_parts(R).size() - 1;
+    }
     auto        params = parameters_of(R);
     std::size_t n      = params.size();
     while(n > 0 and has_default_argument(params[n - 1]))
@@ -352,7 +426,9 @@ REFLEX_EXPORT namespace reflex::meta
   /** @brief every argument count @p R accepts, shortest first */
   consteval auto arities_of(info R) -> std::vector<std::size_t>
   {
-    return std::views::iota(min_arity_of(R), parameters_of(R).size() + 1) //
+    const std::size_t total =
+        is_type(R) ? function_type_parts(R).size() - 1 : parameters_of(R).size();
+    return std::views::iota(min_arity_of(R), total + 1) //
          | std::ranges::to<std::vector<std::size_t>>();
   }
 
