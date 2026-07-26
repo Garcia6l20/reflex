@@ -991,7 +991,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
       de.ltrim();
 
-      serde::object_visit(key, value, [&]<typename V>(V& v) {
+      serde::object_visit_flat(key, value, [&]<typename V>(V& v) {
         v = de.template load<std::remove_cvref_t<V>>();
         if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
         {

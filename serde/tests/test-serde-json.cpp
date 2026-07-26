@@ -378,6 +378,13 @@ TEST_CASE("reflex::serde::json::deserializer: aggregate")
     CHECK(!value.s.has_value());
     CHECK(!value.s2.has_value());
   }
+  SUBCASE("a dotted key names one member, it is not a path")
+  {
+    // A dot is an ordinary character in a JSON key. Reading it as a path would
+    // let a document write a member it never named.
+    const std::string_view in = JSON({"s.intMember":42});
+    CHECK_THROWS(json::deserializer{in}.load<S3>());
+  }
 }
 
 using custom_var1 = poly::var<json::string, json::number, json::boolean, S>;

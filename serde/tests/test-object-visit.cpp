@@ -258,3 +258,43 @@ TEST_CASE("reflex::serde::object_visit: dotted key depth is bounded")
     CHECK_THROWS_AS(object_visit(dotted(200), alice, [](auto const&) {}), std::runtime_error);
   }
 }
+
+TEST_CASE("reflex::serde::object_visit_flat: a dot is part of the name")
+{
+  person alice{
+      .name = "alice"s,
+      .age  = 30,
+      .addr = {.city = "Wonderland"s, .zip = 12345},
+  };
+
+  SUBCASE("object_visit walks the path")
+  {
+    bool visited = false;
+    object_visit("addr.city", alice, [&visited](auto const& value) {
+      if constexpr(decay(type_of(^^value)) == dealias(^^std::string))
+      {
+        CHECK(value == "Wonderland");
+        visited = true;
+      }
+    });
+    CHECK(visited);
+  }
+  SUBCASE("object_visit_flat looks for a member actually called that")
+  {
+    // A key read out of a document names one member. Splitting it would let
+    // the document reach a member it never named, so the whole key is matched.
+    CHECK_THROWS_AS(object_visit_flat("addr.city", alice, [](auto const&) {}), std::runtime_error);
+  }
+  SUBCASE("an undotted key is unaffected")
+  {
+    bool visited = false;
+    object_visit_flat("age", alice, [&visited](auto const& value) {
+      if constexpr(decay(type_of(^^value)) == ^^int)
+      {
+        CHECK(value == 30);
+        visited = true;
+      }
+    });
+    CHECK(visited);
+  }
+}

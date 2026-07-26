@@ -54,7 +54,7 @@ template <typename... Ts> struct object_visitor<poly::var<Ts...>>
           }
           else if constexpr(object_visitable_c<U>)
           {
-            return object_visit(key, std::forward<N>(nested), std::forward<Fn>(fn));
+            return object_visit_flat(key, std::forward<N>(nested), std::forward<Fn>(fn));
           }
           else
           {

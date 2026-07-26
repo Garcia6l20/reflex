@@ -66,6 +66,16 @@ REFLEX_EXPORT namespace reflex::serde
     }
   }
 
+  // Visit one member named by the whole key. A dot in the key is part of the
+  // name, not a path separator, which is what a caller holding a key read out
+  // of a document wants: there a dot is an ordinary character, and treating it
+  // as a path lets a document reach into a member it never named.
+  template <object_visitable_c T, typename Fn>
+  constexpr decltype(auto) object_visit_flat(std::string_view key, T && value, Fn && fn)
+  {
+    return object_visitor<std::decay_t<T>>{}(std::forward<Fn>(fn), key, std::forward<T>(value));
+  }
+
   // Longest dotted path object_visit will split. Keys reach this function
   // straight from a document, so the segment count is input-controlled and the
   // copy below has to be bounded.
@@ -79,7 +89,7 @@ REFLEX_EXPORT namespace reflex::serde
     // there is nothing to split.
     if(key.find('.') == std::string_view::npos)
     {
-      return object_visitor<std::decay_t<T>>{}(std::forward<Fn>(fn), key, std::forward<T>(value));
+      return object_visit_flat(key, std::forward<T>(value), std::forward<Fn>(fn));
     }
 
     const auto to_sv = [](auto&& r) { return std::string_view(r.begin(), r.end()); };

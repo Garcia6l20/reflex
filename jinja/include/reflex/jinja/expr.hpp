@@ -633,7 +633,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       bool       found  = false;
       value_type result = {};
 
-      serde::object_visit(key, base, [&]<typename M>(M&& member) {
+      serde::object_visit_flat(key, base, [&]<typename M>(M&& member) {
         found = true;
         if constexpr(requires { result = value_type{std::forward<M>(member)}; })
         {

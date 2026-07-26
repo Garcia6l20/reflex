@@ -760,7 +760,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
           throw std::runtime_error("Expected BSON document type");
         }
         read_document([this, &value](detail::bson_type elem_type, std::string_view key) {
-          object_visit(
+          object_visit_flat(
               key, value, [this, elem_type](auto& member) { read_element(elem_type, member); });
         });
       }
@@ -920,7 +920,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         }
         else
         {
-          object_visit(key, value, [&](auto& member) { de.read_element(type, member); });
+          object_visit_flat(key, value, [&](auto& member) { de.read_element(type, member); });
         }
       });
     }
