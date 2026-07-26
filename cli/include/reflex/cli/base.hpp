@@ -31,6 +31,39 @@
  * callable works the same way: a lambda, capturing or not, a function object
  * type, and a function all reduce to one function whose parameters are read.
  *
+ * A sub-command is a nested struct, or a member function annotated the same
+ * way. A member function is called on the command that declares it, so the
+ * parent's options are in scope without carrying a reference back to it.
+ *
+ * @code
+ * struct[[= cli::command{"Git-like tool."}]] git
+ * {
+ *   [[= cli::option{"-v/--verbose", "Verbose output."}]] int verbose = 0;
+ *
+ *   [[= cli::command{"Commit staged changes."}]]
+ *   int commit([[= cli::argument{"Commit message."}]] std::string message)
+ *   { ...; return 0; }   // verbose is readable here
+ * };
+ * @endcode
+ *
+ * **A member function sub-command is always a leaf.** Its parameters become an
+ * aggregate, and an aggregate holds no sub-commands, so a command that has
+ * sub-commands of its own has to be a nested struct. A parameter that would
+ * become a sub-command is refused rather than silently ignored.
+ *
+ * A parent's options are parsed before the descent, so they have to be written
+ * before the sub-command name: `git -v commit "msg"`, not `git commit -v "msg"`.
+ * This is what nested struct sub-commands already do and is not specific to
+ * member functions.
+ *
+ * Two further limits on a member function sub-command: it has to be public,
+ * because the parser reaches it from outside, and two annotated overloads are
+ * refused, because they would share one name and only the first could be
+ * reached. A member function *template* cannot be one at all and cannot be
+ * diagnosed either: annotations_of accepts a function but not a function
+ * template, and throws on one, so an annotated member function template is
+ * simply not seen.
+ *
  * What a function command cannot do:
  *  - **carry a defaulted parameter.** There is nowhere to put the default, and
  *    it would silently become a value-initialized member. Write

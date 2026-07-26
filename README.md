@@ -80,6 +80,24 @@ int main(int argc, const char** argv)
 }
 ```
 
+A sub-command can be a member function, which reads the parent's options
+directly. It is always a leaf: a command with sub-commands of its own stays a
+nested struct.
+
+```cpp
+struct [[= cli::command{"Git-like tool."}]] git
+{
+  [[= cli::option{"-v/--verbose", "Verbosity."}.counter()]] int verbose = 0;
+
+  [[= cli::command{"Push changes."}]]
+  int push([[= cli::option{"-r/--remote", "Remote name."}]] std::string remote)
+  {
+    std::println("pushing to {} (verbose={})", remote, verbose);
+    return 0;
+  }
+};
+```
+
 > See [cli/README.md](cli/README.md) for more details.
 
 ### `reflex.serde` - aggregate serialization with no registration
