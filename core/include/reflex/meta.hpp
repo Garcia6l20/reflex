@@ -309,6 +309,30 @@ REFLEX_EXPORT namespace reflex::meta
          | std::ranges::to<std::vector<info>>();
   }
 
+  /** @brief the fewest arguments a call to @p R can supply
+   *
+   * Trailing parameters carrying a default argument may be omitted. A default
+   * cannot be followed by a non-defaulted parameter, so walking backwards from
+   * the end stops at the first parameter that must be supplied.
+   */
+  consteval auto min_arity_of(info R) -> std::size_t
+  {
+    auto        params = parameters_of(R);
+    std::size_t n      = params.size();
+    while(n > 0 and has_default_argument(params[n - 1]))
+    {
+      --n;
+    }
+    return n;
+  }
+
+  /** @brief every argument count @p R accepts, shortest first */
+  consteval auto arities_of(info R) -> std::vector<std::size_t>
+  {
+    return std::views::iota(min_arity_of(R), parameters_of(R).size() + 1) //
+         | std::ranges::to<std::vector<std::size_t>>();
+  }
+
   consteval auto member_functions_annotated_with(
       info R, info A, access_context ctx = access_context::current())
   {

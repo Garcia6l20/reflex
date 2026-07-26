@@ -17,6 +17,15 @@ namespace free_fns
   int ambiguous(double, int) { return 2; }
 
   int single(int v) { return v; }
+
+  int one_default(double v, int mul = 3) { return static_cast<int>(v) * mul; }
+
+  std::string two_defaults(std::string_view head, int n = 2, char sep = '-')
+  {
+    return std::string{head} + sep + std::to_string(n);
+  }
+
+  int all_defaults(int a = 1, int b = 2) { return a * 10 + b; }
 } // namespace free_fns
 
 int global_fn(int v)
@@ -75,6 +84,42 @@ TEST_CASE("reflex::resolve: free functions")
   }
 }
 
+TEST_CASE("reflex::resolve: default arguments")
+{
+  SUBCASE("a defaulted parameter may be omitted")
+  {
+    constexpr auto od = reflex::resolve<^^free_fns, "one_default">;
+    CHECK_EQ(od(2.0), 6);
+    CHECK_EQ(od(2.0, 5), 10);
+    static_assert(std::invocable<decltype(od), double>);
+    static_assert(std::invocable<decltype(od), double, int>);
+    static_assert(not std::invocable<decltype(od)>);
+    static_assert(not std::invocable<decltype(od), double, int, int>);
+  }
+  SUBCASE("two defaults give three arities")
+  {
+    constexpr auto td = reflex::resolve<^^free_fns, "two_defaults">;
+    CHECK_EQ(td("a"sv), "a-2");
+    CHECK_EQ(td("a"sv, 7), "a-7");
+    CHECK_EQ(td("a"sv, 7, '+'), "a+7");
+    static_assert(not std::invocable<decltype(td)>);
+  }
+  SUBCASE("a fully defaulted function is invocable with no argument")
+  {
+    constexpr auto ad = reflex::resolve<^^free_fns, "all_defaults">;
+    CHECK_EQ(ad(), 12);
+    CHECK_EQ(ad(3), 32);
+    CHECK_EQ(ad(3, 4), 34);
+  }
+  SUBCASE("the return type is the same whichever arity is selected")
+  {
+    constexpr auto td = reflex::resolve<^^free_fns, "two_defaults">;
+    static_assert(std::same_as<std::invoke_result_t<decltype(td), std::string_view>, std::string>);
+    static_assert(
+        std::same_as<std::invoke_result_t<decltype(td), std::string_view, int>, std::string>);
+  }
+}
+
 TEST_CASE("reflex::overloads_of: free functions")
 {
   SUBCASE("every overload of the name is listed")
@@ -97,5 +142,29 @@ TEST_CASE("reflex::overloads_of: free functions")
   SUBCASE("an unknown name yields no candidates")
   {
     static_assert(reflex::overloads_of(^^free_fns, "nope").empty());
+  }
+  SUBCASE("a defaulted parameter yields one candidate per reachable arity")
+  {
+    constexpr auto arities = [] consteval {
+      std::vector<std::size_t> out;
+      for(auto o : reflex::overloads_of(^^free_fns, "two_defaults"))
+      {
+        out.push_back(o.arity);
+      }
+      return out;
+    };
+    static_assert(arities().size() == 3);
+    static_assert(arities()[0] == 1);
+    static_assert(arities()[1] == 2);
+    static_assert(arities()[2] == 3);
+  }
+  SUBCASE("a candidate reports only the parameters it takes")
+  {
+    constexpr auto shortest = [] consteval {
+      return reflex::overloads_of(^^free_fns, "one_default").front();
+    }();
+    static_assert(shortest.arity == 1);
+    static_assert(shortest.parameter_types().size() == 1);
+    static_assert(shortest.parameter_types().front() == ^^double);
   }
 }

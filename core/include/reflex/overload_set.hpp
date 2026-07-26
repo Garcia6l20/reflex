@@ -55,7 +55,12 @@ REFLEX_EXPORT namespace reflex
     std::vector<overload> candidates;
     for(auto fn : meta::functions_named(scope, name, ctx))
     {
-      candidates.push_back(overload{fn, std::meta::parameters_of(fn).size()});
+      // A defaulted parameter makes one function reachable at several argument
+      // counts, and each one is a candidate of its own.
+      for(auto arity : meta::arities_of(fn))
+      {
+        candidates.push_back(overload{fn, arity});
+      }
     }
     return candidates;
   }
