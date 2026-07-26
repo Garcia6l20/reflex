@@ -7,6 +7,7 @@
 #ifndef REFLEX_MODULE
 #include <charconv>
 #include <cstring>
+#include <deque>
 
 #include <reflex/concepts.hpp>
 #include <reflex/enum.hpp>
@@ -813,8 +814,6 @@ REFLEX_EXPORT namespace reflex::serde::xml
     using base::cursor_;
 
   public:
-    using attr_list = std::vector<std::pair<std::string, std::string>>;
-
     // bulk_scan, rest() and skip() come from the shared cursor. The
     // using-declarations are load-bearing: the base is dependent, so
     // unqualified lookup inside this template would not find them.
@@ -827,7 +826,18 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // name is a view that stays valid only while the input buffer lives.
     using name_t = std::conditional_t<bulk_scan, std::string_view, std::string>;
 
+    // Attribute names and values carry like a tag name: on the bulk_scan path
+    // they are views, valid while the input buffer and this deserializer live.
+    using attr_str  = std::conditional_t<bulk_scan, std::string_view, std::string>;
+    using attr_list = std::vector<std::pair<attr_str, attr_str>>;
+
   private:
+    // Values that had to be decoded, viewed from the attribute list. A deque so
+    // those views survive later appends, and freed only with the deserializer:
+    // lists are live in current_attributes_, in pending_tag_ and in a caller's
+    // hands at once, so no single point owns one element's values.
+    std::deque<std::string> attr_pool_{};
+
     // An element open tag already consumed by read_children, stashed so the
     // matched member's deserialize overload can re-read it via read_open_tag.
     struct open_tag_t
@@ -959,6 +969,80 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     }
 
+    // An attribute name can never hold an entity, so it is taken whole.
+    attr_str read_attr_name()
+    {
+      if constexpr(bulk_scan)
+      {
+        const std::string_view sv = rest();
+        const std::size_t      n  = sv.find_first_of(" \t\n\v\f\r=>/");
+        const std::string_view name = (n == std::string_view::npos) ? sv : sv.substr(0, n);
+        skip(name.size());
+        return name;
+      }
+      else
+      {
+        std::string name;
+        while(not at_end())
+        {
+          const char d = peek();
+          if(reflex::is_space(d) or d == '=' or d == '>' or d == '/')
+          {
+            break;
+          }
+          name.push_back(d);
+          advance();
+        }
+        return name;
+      }
+    }
+
+    // The opening quote is at the cursor, the value ends at the matching one. A
+    // body with no entity is one span and is taken whole, one that has to be
+    // decoded is materialized (into attr_pool_ on the bulk_scan path).
+    attr_str read_attr_value()
+    {
+      const char quote = advance();
+      if constexpr(bulk_scan)
+      {
+        const std::string_view sv = rest();
+        const std::size_t      q  = sv.find(quote);
+        const std::string_view body = (q == std::string_view::npos) ? sv : sv.substr(0, q);
+        if(not has_entity(body))
+        {
+          skip(body.size());
+          if(q != std::string_view::npos) skip(1); // closing quote
+          return body;
+        }
+        std::string& decoded = attr_pool_.emplace_back();
+        decode_attr_value(decoded, quote);
+        return std::string_view{decoded};
+      }
+      else
+      {
+        std::string decoded;
+        decode_attr_value(decoded, quote);
+        return decoded;
+      }
+    }
+
+    void decode_attr_value(std::string& out, char quote)
+    {
+      while(not at_end() and peek() != quote)
+      {
+        const char e = advance();
+        if(e == '&')
+        {
+          read_entity(out);
+        }
+        else
+        {
+          out.push_back(e);
+        }
+      }
+      if(not at_end()) advance(); // closing quote
+    }
+
     // The tag name has been consumed; parse `name="value"` pairs up to '>'.
     // Returns {self_closing, attributes}. Values accept single or double quotes
     // and have their entity references unescaped.
@@ -985,60 +1069,17 @@ REFLEX_EXPORT namespace reflex::serde::xml
           return {true, std::move(attrs)};
         }
 
-        std::string aname;
-        while(not at_end())
-        {
-          const char d = peek();
-          if(reflex::is_space(d) or d == '=' or d == '>' or d == '/')
-          {
-            break;
-          }
-          aname.push_back(d);
-          advance();
-        }
+        attr_str aname = read_attr_name();
 
         skip_space();
-        std::string avalue;
+        attr_str avalue;
         if(not at_end() and peek() == '=')
         {
           advance();
           skip_space();
           if(not at_end() and (peek() == '"' or peek() == '\''))
           {
-            const char quote = advance();
-            bool       taken = false;
-            if constexpr(bulk_scan)
-            {
-              // the value is bounded by its closing quote; a body with no
-              // entity is one span and is taken whole
-              const std::string_view sv = rest();
-              const std::size_t      q  = sv.find(quote);
-              const std::string_view body = (q == std::string_view::npos) ? sv : sv.substr(0, q);
-              if(not has_entity(body))
-              {
-                avalue.assign(body);
-                skip(body.size());
-                if(q != std::string_view::npos) skip(1); // closing quote
-                taken = true;
-              }
-            }
-            if(not taken)
-            {
-              // entity decode, still bounded by the closing quote
-              while(not at_end() and peek() != quote)
-              {
-                const char e = advance();
-                if(e == '&')
-                {
-                  read_entity(avalue);
-                }
-                else
-                {
-                  avalue.push_back(e);
-                }
-              }
-              if(not at_end()) advance(); // closing quote
-            }
+            avalue = read_attr_value();
           }
         }
 
@@ -1134,7 +1175,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
       return {std::move(head.name), head.self_closing};
     }
 
-    // Attributes of the element whose open tag read_open_tag last returned.
+    // Attributes of the element whose open tag read_open_tag last returned. The
+    // list itself is rebuilt by the next read_open_tag, but on the bulk_scan
+    // path a name or value taken out of it stays readable while the input buffer
+    // and this deserializer live.
     const attr_list& attributes() const
     {
       return current_attributes_;

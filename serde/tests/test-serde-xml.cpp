@@ -925,6 +925,15 @@ static_assert(
 static_assert(
     std::same_as<xml::deserializer<std::istreambuf_iterator<char>>::name_t, std::string>);
 
+// Attribute names and values follow the same rule, so a caller has one lifetime
+// to reason about instead of three.
+static_assert(
+    std::same_as<
+        xml::deserializer<std::string_view::const_iterator>::attr_str,
+        std::string_view>);
+static_assert(
+    std::same_as<xml::deserializer<std::istreambuf_iterator<char>>::attr_str, std::string>);
+
 // A deserialize override that keeps the borrowed tag name instead of copying
 // it. That is legal exactly while the input buffer is alive, which is what
 // holding an mmap_input_stream guarantees.
@@ -1059,4 +1068,177 @@ TEST_CASE("reflex::serde::xml: deserializing from an mmap_input_stream")
     CHECK_EQ(xml::deserializer{in}.load<WithSeq>(), WithSeq{"tail", {9}});
     std::filesystem::remove(xml_path);
   }
+}
+
+namespace
+{
+  bool aliases(std::string_view part, std::string_view whole)
+  {
+    return part.data() >= whole.data()
+       and part.data() + part.size() <= whole.data() + whole.size();
+  }
+
+  // Reads through the non-contiguous cursor, where nothing borrows. Every
+  // attribute must come back the same as on the contiguous path.
+  template <typename T> T load_streaming(std::string_view text)
+  {
+    std::istringstream in{std::string{text}};
+    return xml::deserializer{in}.template load<T>();
+  }
+} // namespace
+
+struct[[= derive(Debug)]] AttrText
+{
+  [[= xml::attribute]] std::string a;
+
+  constexpr bool operator==(AttrText const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml::deserializer: attributes borrow from the input")
+{
+  const std::string_view in = R"(<e plain="v" enc="a&amp;b" empty="" sq='s'/>)";
+  xml::deserializer      de{in};
+  de.read_open_tag();
+  auto const& attrs = de.attributes();
+  REQUIRE_EQ(attrs.size(), 4u);
+
+  // a name can never hold an entity, so it is always a span of the input
+  for(auto const& [name, value] : attrs)
+  {
+    CHECK(aliases(name, in));
+  }
+
+  CHECK_EQ(attrs[0].first, "plain"sv);
+  CHECK_EQ(attrs[0].second, "v"sv);
+  CHECK(aliases(attrs[0].second, in));
+
+  // a value that had to be decoded is materialized, so it cannot alias the
+  // input, but it must still read correctly
+  CHECK_EQ(attrs[1].second, "a&b"sv);
+  CHECK_FALSE(aliases(attrs[1].second, in));
+
+  CHECK_EQ(attrs[2].second, ""sv);
+  CHECK_EQ(attrs[3].second, "s"sv);
+  CHECK(aliases(attrs[3].second, in));
+}
+
+TEST_CASE("reflex::serde::xml::deserializer: an attribute view outlives the next open tag")
+{
+  // What borrowing buys: tag names, attribute names and attribute values all
+  // follow one lifetime rule instead of three, so a view taken from one element
+  // still reads after the parse has moved on to the next.
+  const std::string in = R"(<root a="one" e="x&amp;y"><child b="two"/></root>)";
+  std::string_view  kept_name{}, kept_value{};
+  {
+    xml::deserializer de{std::string_view{in}};
+    de.read_open_tag();
+    kept_name                           = de.attributes()[0].first;
+    kept_value                          = de.attributes()[0].second;
+    const std::string_view kept_decoded = de.attributes()[1].second;
+
+    de.read_open_tag(); // the list is rebuilt for <child>
+    REQUIRE_EQ(de.attributes().size(), 1u);
+    CHECK_EQ(de.attributes()[0].first, "b"sv);
+    CHECK_EQ(kept_name, "a"sv);
+    CHECK_EQ(kept_value, "one"sv);
+    // a decoded value is owned by the deserializer, so it lives this long too
+    CHECK_EQ(kept_decoded, "x&y"sv);
+  }
+  // the deserializer is gone, the input buffer is not
+  CHECK_EQ(kept_name, "a"sv);
+  CHECK_EQ(kept_value, "one"sv);
+}
+
+TEST_CASE("reflex::serde::xml::deserializer: entities in attribute values")
+{
+  const std::pair<std::string_view, std::string_view> cases[]{
+      {"&amp;", "&"},
+      {"&lt;", "<"},
+      {"&gt;", ">"},
+      {"&quot;", "\""},
+      {"&apos;", "'"},
+      {"&#65;", "A"},
+      {"&#x42;", "B"},
+      {"a&amp;b&lt;c&gt;d", "a&b<c>d"},
+      {"&amp;tail", "&tail"},
+      {"head&amp;", "head&"},
+      {"&amp;&amp;", "&&"},
+      {"plain", "plain"},
+  };
+  for(auto const& [raw, decoded] : cases)
+  {
+    CAPTURE(raw);
+    const std::string in = std::format(R"(<AttrText a="{}"/>)", raw);
+    CHECK_EQ(xml::deserializer{std::string_view{in}}.load<AttrText>().a, decoded);
+    CHECK_EQ(load_streaming<AttrText>(in).a, decoded);
+  }
+}
+
+TEST_CASE("reflex::serde::xml::deserializer: attribute shapes")
+{
+  SUBCASE("empty value")
+  {
+    const std::string_view in = R"(<AttrText a=""/>)";
+    CHECK_EQ(xml::deserializer{in}.load<AttrText>().a, "");
+    CHECK_EQ(load_streaming<AttrText>(in).a, "");
+  }
+  SUBCASE("single-quoted value, holding the other quote and an entity")
+  {
+    const std::string_view in = R"(<AttrText a='say "it&apos;s"'/>)";
+    CHECK_EQ(xml::deserializer{in}.load<AttrText>().a, "say \"it's\"");
+    CHECK_EQ(load_streaming<AttrText>(in).a, "say \"it's\"");
+  }
+  SUBCASE("attribute-only self-closing element")
+  {
+    const std::string_view in = R"(<Range min="1.5" max="2.5"/>)";
+    CHECK_EQ(xml::deserializer{in}.load<Range>(), Range{1.5, 2.5});
+    CHECK_EQ(load_streaming<Range>(in), Range{1.5, 2.5});
+  }
+  SUBCASE("namespace declarations are skipped, not assigned")
+  {
+    const std::string_view in = R"(<n:AttrText xmlns="urn:d" xmlns:n="urn:x" n:a="v"/>)";
+    CHECK_EQ(xml::deserializer{in}.load<AttrText>().a, "v");
+    CHECK_EQ(load_streaming<AttrText>(in).a, "v");
+  }
+}
+
+struct[[= derive(Debug)]] Cell
+{
+  [[= xml::attribute]] std::string name;
+  [[= xml::attribute]] int         row;
+  [[= xml::attribute]] int         col;
+  [[= xml::attribute]] std::string kind;
+
+  constexpr bool operator==(Cell const& other) const = default;
+};
+
+struct[[= derive(Debug)]] Sheet
+{
+  [[= xml::attribute]] std::string title;
+  std::vector<Cell>                cell;
+
+  constexpr bool operator==(Sheet const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::xml: attribute-dense document round-trips byte for byte")
+{
+  Sheet expected{"a & b <sheet>", {}};
+  for(int i = 0; i < 32; ++i)
+  {
+    expected.cell.push_back(Cell{std::format("c{}", i), i, i * 2, (i % 2) ? "num" : R"(a "&" b)"});
+  }
+  std::string out;
+  {
+    xml::serializer ser{out};
+    ser.dump(expected);
+  }
+  CHECK_EQ(xml::deserializer{std::string_view{out}}.load<Sheet>(), expected);
+  CHECK_EQ(load_streaming<Sheet>(out), expected);
+
+  std::string again;
+  {
+    xml::serializer ser{again};
+    ser.dump(xml::deserializer{std::string_view{out}}.load<Sheet>());
+  }
+  CHECK_EQ(again, out);
 }
