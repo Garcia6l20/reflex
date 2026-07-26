@@ -239,41 +239,33 @@ REFLEX_EXPORT namespace reflex::meta
            });
   }
 
-  namespace detail
-  {
-  template <typename T> consteval auto call_operator() -> meta::info
-  {
-    return ^^T::operator();
-  }
-  } // namespace detail
-
-  /** @brief the function behind a callable, or meta::null
+  /** @brief how @p R is written at a call site
    *
-   * Handles a function, a pointer or reference to one, and a class type with a
-   * call operator, which covers std::function and a lambda alike.
+   * The identifier for an ordinary function, and the spelled operator name for
+   * an operator, which carries no identifier of its own. Empty for anything
+   * that has neither, a constructor among them.
    *
-   * A templated call operator yields null: it has no parameter types until it
-   * is substituted, the same reason a function template is not reachable
-   * through a reflection.
+   * @code
+   * spelling_of(^^std::string::size)  // "size"
+   * spelling_of(some_operator_plus)   // "operator+"
+   * spelling_of(some_operator_new)    // "operator new", the space is required
+   * @endcode
    */
-  consteval auto callable_function_of(info R) -> info
+  consteval auto spelling_of(info R) -> std::string
   {
-    const info type = is_type(R) ? R : type_of(R);
-    if(is_function_type(type))
+    if(has_identifier(R))
     {
-      return type;
+      return std::string{identifier_of(R)};
     }
-    const info stripped = remove_pointer(remove_reference(type));
-    if(is_function_type(stripped))
+    if(is_operator_function(R) or is_operator_function_template(R))
     {
-      return stripped;
+      const std::string_view symbol = symbol_of(operator_of(R));
+      // new, delete and co_await are words, and a word needs separating from
+      // the keyword before it.
+      const bool word = not symbol.empty() and symbol.front() >= 'a' and symbol.front() <= 'z';
+      return std::string{"operator"} + (word ? " " : "") + std::string{symbol};
     }
-    if(is_class_type(type) and meta::has_call_operator(type))
-    {
-      const info call = extract<info (*)()>(substitute(^^detail::call_operator, {type}))();
-      return is_function(call) ? call : meta::null;
-    }
-    return meta::null;
+    return {};
   }
 
   /** @brief every function declared in @p R under the identifier @p name
@@ -290,10 +282,9 @@ REFLEX_EXPORT namespace reflex::meta
       info R, std::string_view name, access_context ctx = access_context::current())
       -> std::vector<info>
   {
-    return members_of(R, ctx)                                                     //
-         | std::views::filter([](info m) { return is_function(m); })              //
-         | std::views::filter(has_identifier)                                     //
-         | std::views::filter([name](info m) { return identifier_of(m) == name; }) //
+    return members_of(R, ctx)                                                //
+         | std::views::filter([](info m) { return is_function(m); })         //
+         | std::views::filter([name](info m) { return spelling_of(m) == name; }) //
          | std::ranges::to<std::vector<info>>();
   }
 
