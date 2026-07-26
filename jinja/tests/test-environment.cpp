@@ -89,6 +89,17 @@ TEST_CASE("reflex::jinja: environment")
     CHECK_THROWS(env.get(absolute));
   }
 
+  SUBCASE("a name merely beginning with dots is not an escape")
+  {
+    temp_dir dir{"filesystem-dotted"};
+    dir.write("..hidden.jinja", "HIDDEN");
+
+    jinja::environment env{jinja::filesystem_loader(dir.path)};
+
+    CHECK(env.has("..hidden"));
+    CHECK(env.render("..hidden", ctx) == "HIDDEN");
+  }
+
   SUBCASE("a failed parse does not poison the cache")
   {
     temp_dir dir{"reload-after-parse-error"};

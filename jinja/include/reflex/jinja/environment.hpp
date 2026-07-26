@@ -38,7 +38,11 @@ REFLEX_EXPORT namespace reflex::jinja
       }
 
       auto normalized = std::filesystem::path{relative}.lexically_normal();
-      if(normalized.is_absolute() or normalized.native().starts_with(".."))
+      // Test for a parent-directory component, not for a leading "..": a name like
+      // "..hidden" escapes nothing and must still resolve.
+      const bool escapes = std::ranges::any_of(
+          normalized, [](std::filesystem::path const& part) { return part.native() == ".."; });
+      if(normalized.is_absolute() or escapes)
       {
         return std::nullopt;
       }
