@@ -253,6 +253,42 @@ REFLEX_EXPORT namespace reflex::cli
     const_assert(false, message, loc);
   }
 
+  /** @brief the function a command names
+   *
+   * A command may be named by a function, by a variable holding something
+   * callable, or by the type of one. All three reduce to a single function, and
+   * everything downstream reads the parameters off that.
+   */
+  consteval auto command_function_of(std::meta::info R) -> std::meta::info
+  {
+    if(std::meta::is_function(R))
+    {
+      return R;
+    }
+
+    const auto call = meta::callable_function_of(R);
+    if(call == meta::null)
+    {
+      // A generic lambda lands here: a templated call operator has no parameter
+      // types until it is substituted, so there is nothing to build members
+      // from.
+      refuse_command(
+          std::meta::identifier_of(R), "names",
+          "nothing callable with parameter types a command line could fill",
+          source_location_of(R));
+    }
+
+    // A type is named without an object, so the command has to make one.
+    if(is_type(R) and not is_default_constructible_type(R))
+    {
+      refuse_command(
+          std::meta::identifier_of(R), "names",
+          "a type the command cannot build, name an object of it instead",
+          source_location_of(R));
+    }
+    return call;
+  }
+
   /** @brief one data member per parameter of @p Fn, carrying its annotations
    *
    * A command is driven off an aggregate: the parser walks the members and
@@ -261,17 +297,18 @@ REFLEX_EXPORT namespace reflex::cli
    *
    * Every function command goes through here, so the refusals live here too.
    */
-  template <std::meta::info Fn> consteval auto command_member_specs()
+  template <std::meta::info Command> consteval auto command_member_specs()
       -> std::vector<std::meta::info>
   {
-    const auto name        = std::meta::identifier_of(Fn);
+    const auto Fn          = command_function_of(Command);
+    const auto name        = std::meta::identifier_of(Command);
     const auto return_type = std::meta::return_type_of(Fn);
 
     if(not is_void_type(return_type) and not is_convertible_type(return_type, ^^int))
     {
       refuse_command(
           name, "returns", "something that is neither void nor convertible to int",
-          source_location_of(Fn));
+          source_location_of(Command));
     }
 
     std::vector<std::meta::info> members;
@@ -757,12 +794,28 @@ REFLEX_EXPORT namespace reflex::cli
     return cli();
   };
 
-  /** @brief call @p Fn with the arguments parsed into its aggregate */
-  template <std::meta::info Fn>
+  /** @brief call what @p Command names with the arguments parsed for it
+   *
+   * A function and a variable holding a callable are both spliced and called,
+   * which is what carries a capturing lambda's state to the call: the state is
+   * in the variable the user named. A type is built first, so a function object
+   * has to be default constructible to be a command.
+   */
+  template <std::meta::info Command>
   inline constexpr auto function_invoker = [](auto& cli) -> decltype(auto) {
     // to_tuple returns by value, so the pack binds by forwarding reference.
     return std::apply(
-        [](auto&&... args) -> decltype(auto) { return [:Fn:](args...); }, reflex::to_tuple(cli));
+        [](auto&&... args) -> decltype(auto) {
+          if constexpr(std::meta::is_type(Command))
+          {
+            return typename[:Command:]{}(args...);
+          }
+          else
+          {
+            return [:Command:](args...);
+          }
+        },
+        reflex::to_tuple(cli));
   };
 
   template <

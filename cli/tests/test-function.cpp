@@ -240,6 +240,72 @@ TEST_CASE("reflex::cli: a command with no way to run reports it")
   CHECK_NE(err.find("no command to execute"), std::string::npos);
 }
 
+[[= cli::command{"Print a line of stars."}]]
+constexpr auto stars = []([[= cli::argument{"How many stars."}]] int count) {
+  for(auto _ : std::views::iota(0, count))
+  {
+    std::print("*");
+  }
+  std::println();
+  return 0;
+};
+
+// The state a capturing lambda holds lives in the variable the user names, and
+// the invoke splices that variable, so it reaches the call unchanged.
+int hidden = 4;
+auto scaled = [factor = 3]([[= cli::argument{"A number."}]] int n) {
+  std::println("{}", n * factor + hidden);
+  return 0;
+};
+
+struct[[= cli::command{"Print a line of hashes."}]] hashes
+{
+  int operator()([[= cli::argument{"How many hashes."}]] int count) const
+  {
+    for(auto _ : std::views::iota(0, count))
+    {
+      std::print("#");
+    }
+    std::println();
+    return 0;
+  }
+};
+
+TEST_CASE("reflex::cli: a callable runs as a command")
+{
+  SUBCASE("a lambda")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^stars>({"stars"sv, "3"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "***\n");
+  }
+
+  SUBCASE("a capturing lambda keeps its captures")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^scaled>({"scaled"sv, "5"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "19\n");
+  }
+
+  SUBCASE("a function object type")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^hashes>({"hashes"sv, "4"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "####\n");
+  }
+
+  SUBCASE("a lambda's own annotation describes it")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^stars>({"stars"sv, "--help"sv}), 0); });
+    CHECK_NE(out.find("Print a line of stars."), std::string::npos);
+    CHECK_NE(out.find("count            How many stars."), std::string::npos);
+  }
+}
+
 TEST_CASE("reflex::cli: a function command prints its usage")
 {
   const auto [out, err] =
