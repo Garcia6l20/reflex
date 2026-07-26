@@ -297,6 +297,20 @@ REFLEX_EXPORT namespace reflex::meta
          | std::ranges::to<std::vector<info>>();
   }
 
+  /** @brief every constructor of the class type @p R
+   *
+   * Constructor templates are absent, for the same reason function templates
+   * are absent from functions_named.
+   */
+  consteval auto constructors_of(info R, access_context ctx = access_context::current())
+      -> std::vector<info>
+  {
+    return members_of(R, ctx)                                        //
+         | std::views::filter([](info m) { return is_function(m); }) //
+         | std::views::filter(is_constructor)                        //
+         | std::ranges::to<std::vector<info>>();
+  }
+
   /** @brief the parameter types of a function, without its return type
    *
    * detail::signature_of returns the return type first, which is the wrong

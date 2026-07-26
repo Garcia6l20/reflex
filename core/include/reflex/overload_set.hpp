@@ -31,6 +31,10 @@ REFLEX_EXPORT namespace reflex
 
     consteval auto return_type() const -> std::meta::info
     {
+      if(std::meta::is_constructor(function))
+      {
+        return std::meta::parent_of(function);
+      }
       return std::meta::return_type_of(function);
     }
 
@@ -44,16 +48,23 @@ REFLEX_EXPORT namespace reflex
 
   /** @brief every candidate that a call to @p name in @p scope could select
    *
-   * @p scope may be a namespace or a class type. Function templates are absent:
-   * they have no parameter types to match until they are substituted.
+   * @p scope may be a namespace or a class type. An empty @p name on a class
+   * type means its constructors, which is how a construction is spelled: there
+   * is no identifier to name them with.
+   *
+   * Function templates are absent: they have no parameter types to match until
+   * they are substituted.
    */
   consteval auto overloads_of(
       std::meta::info scope, std::string_view name,
       std::meta::access_context ctx = std::meta::access_context::unchecked())
       -> std::vector<overload>
   {
+    const auto functions =
+        name.empty() ? meta::constructors_of(scope, ctx) : meta::functions_named(scope, name, ctx);
+
     std::vector<overload> candidates;
-    for(auto fn : meta::functions_named(scope, name, ctx))
+    for(auto fn : functions)
     {
       // A defaulted parameter makes one function reachable at several argument
       // counts, and each one is a candidate of its own.
@@ -88,19 +99,47 @@ REFLEX_EXPORT namespace reflex
       }
     };
 
+    // T is named rather than the constructor: a constructor cannot be called
+    // through its own reflection, only through the type it builds.
+    template <typename T, typename... Args> struct ctor_candidate
+    {
+      constexpr auto operator()(Args... args) const -> T
+      {
+        return T(std::forward<Args>(args)...);
+      }
+    };
+
+    /** @brief a candidate that cannot be called
+     *
+     * A deleted function still takes part in overload resolution, and selecting
+     * it is what makes the call ill-formed. Dropping it from the set instead
+     * would silently hand the call to a worse candidate, so it is materialized
+     * as deleted and the compiler reaches the same verdict as it would on the
+     * real function.
+     */
+    template <std::meta::info Fn, typename... Args> struct deleted_candidate
+    {
+      constexpr void operator()(Args...) const = delete;
+    };
+
     consteval auto candidate_type(std::meta::info tmpl, overload o) -> std::meta::info
     {
-      std::vector<std::meta::info> targs{std::meta::reflect_constant(o.function)};
+      const bool deleted = std::meta::is_deleted(o.function);
+      const bool ctor    = std::meta::is_constructor(o.function);
+
+      std::vector<std::meta::info> targs{
+          deleted or not ctor ? std::meta::reflect_constant(o.function) : o.return_type()};
       targs.append_range(o.parameter_types());
-      return std::meta::substitute(tmpl, targs);
+      return std::meta::substitute(deleted ? ^^deleted_candidate : tmpl, targs);
     }
 
-    consteval auto free_set_type(std::meta::info scope, std::string_view name) -> std::meta::info
+    consteval auto set_type(
+        std::meta::info tmpl, std::meta::info scope, std::string_view name) -> std::meta::info
     {
       std::vector<std::meta::info> candidates;
       for(auto o : overloads_of(scope, name))
       {
-        candidates.push_back(candidate_type(^^free_candidate, o));
+        candidates.push_back(candidate_type(tmpl, o));
       }
       return std::meta::substitute(^^overload_base, candidates);
     }
@@ -109,7 +148,11 @@ REFLEX_EXPORT namespace reflex
     {
       if(std::meta::is_namespace(scope))
       {
-        return free_set_type(scope, name);
+        return set_type(^^free_candidate, scope, name);
+      }
+      if(std::meta::is_type(scope) and name.empty())
+      {
+        return set_type(^^ctor_candidate, scope, name);
       }
       throw std::meta::exception("reflex::resolve: unsupported scope", scope);
     }
@@ -124,7 +167,7 @@ REFLEX_EXPORT namespace reflex
    * static_assert(not std::invocable<decltype(f), void*>);
    * @endcode
    */
-  template <std::meta::info Scope, constant_string Name>
+  template <std::meta::info Scope, constant_string Name = "">
   inline constexpr [:detail::resolver_type(Scope, Name.get()):] resolve{};
 
 } // namespace reflex
