@@ -31,6 +31,24 @@ namespace
     int a;
     int b;
   };
+
+  struct config
+  {
+    int         port;
+    std::string host;
+  };
+
+  struct with_defaults
+  {
+    int a = 1;
+    int b = 2;
+  };
+
+  struct nested
+  {
+    config c;
+    int    n;
+  };
 } // namespace
 
 using namespace std::string_literals;
@@ -79,6 +97,59 @@ TEST_CASE("reflex::resolve: constructors")
   }
 }
 
+TEST_CASE("reflex::resolve: aggregate initialization")
+{
+  constexpr auto make = reflex::resolve<^^config>;
+
+  SUBCASE("the member list is a construction path of its own")
+  {
+    const auto c = make(8080, "localhost"s);
+    CHECK_EQ(c.port, 8080);
+    CHECK_EQ(c.host, "localhost");
+  }
+  SUBCASE("trailing members may be omitted")
+  {
+    CHECK_EQ(make(8080).host, "");
+    CHECK_EQ(make().port, 0);
+    static_assert(std::invocable<decltype(make)>);
+    static_assert(std::invocable<decltype(make), int>);
+    static_assert(std::invocable<decltype(make), int, std::string>);
+  }
+  SUBCASE("a member cannot be skipped, only dropped from the end")
+  {
+    static_assert(not std::invocable<decltype(make), std::string>);
+    static_assert(not std::invocable<decltype(make), int, std::string, int>);
+  }
+  SUBCASE("a default member initializer is used for an omitted member")
+  {
+    constexpr auto wd = reflex::resolve<^^with_defaults>;
+    CHECK_EQ(wd().a, 1);
+    CHECK_EQ(wd().b, 2);
+    CHECK_EQ(wd(9).a, 9);
+    CHECK_EQ(wd(9).b, 2);
+  }
+  SUBCASE("an aggregate member is initialized like any other")
+  {
+    constexpr auto mk = reflex::resolve<^^nested>;
+    const auto     n  = mk(config{80, "h"}, 5);
+    CHECK_EQ(n.c.port, 80);
+    CHECK_EQ(n.n, 5);
+  }
+  SUBCASE("the copy constructor still wins over a one member initialization")
+  {
+    const config src{1, "a"};
+    const auto   copy = make(src);
+    CHECK_EQ(copy.host, "a");
+    static_assert(std::same_as<std::invoke_result_t<decltype(make), const config&>, config>);
+  }
+  SUBCASE("a type with declared constructors keeps only those")
+  {
+    // point is not an aggregate, so its member list is not a construction path.
+    constexpr auto mk = reflex::resolve<^^point>;
+    static_assert(not std::invocable<decltype(mk), int, std::string, int>);
+  }
+}
+
 TEST_CASE("reflex::overloads_of: constructors")
 {
   SUBCASE("a constructor candidate reports the constructed type")
@@ -107,11 +178,24 @@ TEST_CASE("reflex::overloads_of: constructors")
     static_assert(std::meta::is_deleted(all()[1].function));
     static_assert(std::meta::is_deleted(all()[2].function));
   }
-  SUBCASE("an aggregate exposes its implicit constructors")
+  SUBCASE("an aggregate lists its member list next to its implicit constructors")
   {
-    // Default, copy and move. Initialization from the member list is a
-    // different construction path and is covered separately.
+    // Copy and move, plus one member list prefix per arity. The implicit
+    // default constructor is dropped: the empty prefix covers the same call.
     constexpr auto count = reflex::overloads_of(^^aggregate, "").size();
-    static_assert(count == 3);
+    static_assert(count == 5);
+  }
+  SUBCASE("an aggregate initialization candidate names the type, not a function")
+  {
+    constexpr auto last = [] consteval {
+      return reflex::overloads_of(^^config, "").back();
+    }();
+    static_assert(last.is_aggregate_init());
+    static_assert(last.function == ^^config);
+    static_assert(last.return_type() == ^^config);
+    static_assert(last.arity == 2);
+    static_assert(last.parameter_types().front() == ^^int);
+    static_assert(std::meta::dealias(last.parameter_types().back())
+                  == std::meta::dealias(^^std::string));
   }
 }

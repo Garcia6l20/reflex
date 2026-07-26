@@ -311,6 +311,15 @@ REFLEX_EXPORT namespace reflex::meta
          | std::ranges::to<std::vector<info>>();
   }
 
+  /** @brief the types of the non-static data members of @p R, in declaration order */
+  consteval auto nonstatic_data_member_types_of(
+      info R, access_context ctx = access_context::current()) -> std::vector<info>
+  {
+    return nonstatic_data_members_of(R, ctx)    //
+         | std::views::transform(meta::type_of) //
+         | std::ranges::to<std::vector<info>>();
+  }
+
   /** @brief the parameter types of a function, without its return type
    *
    * detail::signature_of returns the return type first, which is the wrong

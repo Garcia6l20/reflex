@@ -26,11 +26,22 @@ REFLEX_EXPORT namespace reflex
    */
   struct overload
   {
+    /** the function, or the class type itself for an aggregate initialization,
+     * which is a construction path with no function behind it */
     std::meta::info function;
     std::size_t     arity;
 
+    consteval auto is_aggregate_init() const -> bool
+    {
+      return std::meta::is_type(function);
+    }
+
     consteval auto return_type() const -> std::meta::info
     {
+      if(is_aggregate_init())
+      {
+        return function;
+      }
       if(std::meta::is_constructor(function))
       {
         return std::meta::parent_of(function);
@@ -40,7 +51,9 @@ REFLEX_EXPORT namespace reflex
 
     consteval auto parameter_types() const -> std::vector<std::meta::info>
     {
-      auto types = meta::parameter_types_of(function);
+      auto types = is_aggregate_init()
+                     ? meta::nonstatic_data_member_types_of(function)
+                     : meta::parameter_types_of(function);
       types.resize(arity);
       return types;
     }
@@ -60,17 +73,38 @@ REFLEX_EXPORT namespace reflex
       std::meta::access_context ctx = std::meta::access_context::unchecked())
       -> std::vector<overload>
   {
+    const bool constructing = name.empty();
+    const bool aggregate    = constructing and std::meta::is_aggregate_type(scope);
+
     const auto functions =
-        name.empty() ? meta::constructors_of(scope, ctx) : meta::functions_named(scope, name, ctx);
+        constructing ? meta::constructors_of(scope, ctx) : meta::functions_named(scope, name, ctx);
 
     std::vector<overload> candidates;
     for(auto fn : functions)
     {
+      // An aggregate has no default constructor to speak of: the member list
+      // covers the same call, and keeping both would make it ambiguous.
+      if(aggregate and std::meta::is_default_constructor(fn))
+      {
+        continue;
+      }
       // A defaulted parameter makes one function reachable at several argument
       // counts, and each one is a candidate of its own.
       for(auto arity : meta::arities_of(fn))
       {
         candidates.push_back(overload{fn, arity});
+      }
+    }
+
+    if(aggregate)
+    {
+      // Parenthesized aggregate initialization takes a prefix of the member
+      // list. A member cannot be skipped, only dropped from the end, so the
+      // reachable argument counts run from none to all of them.
+      const auto members = std::meta::nonstatic_data_members_of(scope, ctx).size();
+      for(std::size_t arity = 0; arity <= members; ++arity)
+      {
+        candidates.push_back(overload{scope, arity});
       }
     }
     return candidates;
@@ -124,11 +158,14 @@ REFLEX_EXPORT namespace reflex
 
     consteval auto candidate_type(std::meta::info tmpl, overload o) -> std::meta::info
     {
-      const bool deleted = std::meta::is_deleted(o.function);
-      const bool ctor    = std::meta::is_constructor(o.function);
+      const bool aggregate = o.is_aggregate_init();
+      const bool deleted   = not aggregate and std::meta::is_deleted(o.function);
+      const bool builds    = aggregate or std::meta::is_constructor(o.function);
 
+      // A construction names the type it builds, anything else names its
+      // function, since a constructor cannot be called through its reflection.
       std::vector<std::meta::info> targs{
-          deleted or not ctor ? std::meta::reflect_constant(o.function) : o.return_type()};
+          builds and not deleted ? o.return_type() : std::meta::reflect_constant(o.function)};
       targs.append_range(o.parameter_types());
       return std::meta::substitute(deleted ? ^^deleted_candidate : tmpl, targs);
     }
