@@ -290,6 +290,24 @@ REFLEX_EXPORT namespace reflex
       const bool self_const  = std::meta::is_const_type(std::meta::remove_reference(self));
       const bool self_rvalue = std::meta::is_rvalue_reference_type(self);
 
+      // A deducing this member spells its object out as an ordinary parameter,
+      // so what it accepts is read off that parameter rather than off the
+      // qualifiers, which it carries none of.
+      const auto object = meta::explicit_object_type_of(m);
+      if(object != meta::null)
+      {
+        if(not std::meta::is_reference_type(object))
+        {
+          return true; // taken by value, so any object will do
+        }
+        if(self_const and not std::meta::is_const_type(std::meta::remove_reference(object)))
+        {
+          return false;
+        }
+        return self_rvalue == std::meta::is_rvalue_reference_type(object)
+            or std::meta::is_const_type(std::meta::remove_reference(object));
+      }
+
       if(self_const and not std::meta::is_const(m))
       {
         return false;

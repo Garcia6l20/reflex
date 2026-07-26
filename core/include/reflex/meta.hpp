@@ -369,6 +369,27 @@ REFLEX_EXPORT namespace reflex::meta
     return meta::null;
   }
 
+  /** @brief a member function declared with an explicit object parameter
+   *
+   * GCC 16 does not ship std::meta::is_explicit_object_member_function, so the
+   * query goes through the first parameter, which is what carries the mark.
+   */
+  consteval auto is_explicit_object_member_function(info R) -> bool
+  {
+    if(not is_function(R))
+    {
+      return false;
+    }
+    const auto params = parameters_of(R);
+    return not params.empty() and is_explicit_object_parameter(params.front());
+  }
+
+  /** @brief the object parameter of a deducing this member, or meta::null */
+  consteval auto explicit_object_type_of(info R) -> info
+  {
+    return is_explicit_object_member_function(R) ? type_of(parameters_of(R).front()) : meta::null;
+  }
+
   /** @brief a data member holding something callable, like a std::function */
   consteval auto is_invocable_data_member(info R) -> bool
   {
@@ -384,10 +405,13 @@ REFLEX_EXPORT namespace reflex::meta
          | std::ranges::to<std::vector<info>>();
   }
 
-  /** @brief the parameter types of a function, without its return type
+  /** @brief the types a call to @p R supplies, without its return type
    *
    * detail::signature_of returns the return type first, which is the wrong
    * shape whenever the parameters are what is being matched.
+   *
+   * An explicit object parameter is left out: it is the object, not an
+   * argument, and no call site writes it.
    */
   consteval auto parameter_types_of(info R) -> std::vector<info>
   {
@@ -396,8 +420,9 @@ REFLEX_EXPORT namespace reflex::meta
       auto parts = function_type_parts(R);
       return {parts.begin() + 1, parts.end()};
     }
-    return parameters_of(R)                     //
-         | std::views::transform(meta::type_of) //
+    return parameters_of(R)                                                        //
+         | std::views::drop(is_explicit_object_member_function(R) ? 1uz : 0uz)      //
+         | std::views::transform(meta::type_of)                                    //
          | std::ranges::to<std::vector<info>>();
   }
 
@@ -420,14 +445,16 @@ REFLEX_EXPORT namespace reflex::meta
     {
       --n;
     }
-    return n;
+    // The explicit object parameter is the object, never an argument.
+    return n - (is_explicit_object_member_function(R) ? 1 : 0);
   }
 
-  /** @brief every argument count @p R accepts, shortest first */
+  /** @brief every argument count a call to @p R may supply, shortest first */
   consteval auto arities_of(info R) -> std::vector<std::size_t>
   {
-    const std::size_t total =
+    const std::size_t declared =
         is_type(R) ? function_type_parts(R).size() - 1 : parameters_of(R).size();
+    const std::size_t total = declared - (is_explicit_object_member_function(R) ? 1 : 0);
     return std::views::iota(min_arity_of(R), total + 1) //
          | std::ranges::to<std::vector<std::size_t>>();
   }
