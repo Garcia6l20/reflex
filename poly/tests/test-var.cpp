@@ -337,3 +337,93 @@ TEST_CASE("reflex::poly::var: ref to aggregates")
       v);
   std::println("value with ref to aggregate: {}", v);
 }
+
+struct opaque
+{
+  int x;
+};
+
+TEST_CASE("reflex::poly::var: equality with non-comparable alternatives")
+{
+  // std::vector<opaque>'s operator== is well-formed but instantiating it is not: the guard in
+  // var::operator== must reject it without probing libstdc++'s unconstrained overload.
+  using eq_value = var<bool, double, std::string, std::vector<opaque>>;
+
+  eq_value v = 3.0;
+  CHECK(v == 3);
+  CHECK(v == 3.0);
+  CHECK_FALSE(v == "x");
+
+  eq_value s = "abc"s;
+  CHECK(s == "abc");
+  CHECK_FALSE(s == 3);
+
+  eq_value o = std::vector<opaque>{{1}, {2}};
+  CHECK_FALSE(o == 3);
+  CHECK_FALSE(o == null);
+
+  // comparing against the non-comparable type itself instantiates std::vector's unconstrained
+  // operator== for every alternative, which only a deep comparability guard prevents
+  CHECK_FALSE(v == std::vector<opaque>{{1}});
+  CHECK_FALSE(o == std::vector<opaque>{{1}});
+}
+
+TEST_CASE("reflex::poly::var: references are opt-in")
+{
+  using value_with_refs = var<bool, int, std::string, std::string&, aggregate1&>;
+
+  // an lvalue never binds by reference implicitly: a named local returned by value used to be
+  // stored as a dangling std::string&
+  auto make = []() -> value_with_refs {
+    std::string local = "hello";
+    return local;
+  };
+  auto v = make();
+  CHECK(v.template is<std::string>());
+  CHECK_FALSE(v.template is<std::string&>());
+  CHECK(std::format("{}", v) == "hello");
+
+  // a type with only a reference alternative is not implicitly bindable at all
+  static_assert(not std::constructible_from<value_with_refs, aggregate1&>);
+
+  auto a = aggregate1{1, "one"};
+  auto r = value_with_refs{std::ref(a)};
+  CHECK(r.template is<aggregate1&>());
+  CHECK(&r.template as<aggregate1&>() == &a);
+}
+
+TEST_CASE("reflex::poly::var: std::ref without a reference alternative falls back to a copy")
+{
+  // the reference_wrapper ctor is constrained, so it drops out and the value alternative wins
+  // instead of hard-erroring inside variant_type(std::string*)
+  auto  s = "hello"s;
+  value v = std::ref(s);
+  CHECK(v.template is<std::string>());
+  CHECK(v == "hello");
+  s = "changed";
+  CHECK(v == "hello"); // a copy, not a reference
+
+  using ref_only = var<bool, int, aggregate1>;
+  static_assert(not ref_only::can_hold<aggregate1&>());
+  static_assert(
+      not std::constructible_from<value, std::reference_wrapper<std::vector<std::string>>>);
+}
+
+TEST_CASE("reflex::poly::var: can_hold reports every alternative")
+{
+  static_assert(value::can_hold<bool>());
+  static_assert(value::can_hold<double>());
+  static_assert(value::can_hold<std::string>());
+  static_assert(value::can_hold<null_t>());
+  static_assert(value::can_hold<array>());
+  static_assert(value::can_hold<object>());
+  static_assert(value::can_hold<value&>());
+  static_assert(value::can_hold<array&>());
+  static_assert(value::can_hold<object&>());
+  static_assert(not value::can_hold<char*>());
+  static_assert(not value::can_hold<std::string&>());
+
+  using value_with_refs = var<bool, int, aggregate1&>;
+  static_assert(value_with_refs::can_hold<aggregate1&>());
+  static_assert(not value_with_refs::can_hold<aggregate1>());
+}

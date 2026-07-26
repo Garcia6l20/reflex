@@ -1,12 +1,18 @@
 #include <doctest/doctest.h>
 
 import reflex.serde.json;
+import serde.tests.types;
 
 import std;
 
 using namespace reflex;
 using namespace reflex::serde;
 using namespace std::literals;
+
+// The bulk-scan cliff, pinned. Same constant, same shared cursor as xml: an
+// in-memory input takes the from_chars fast path, a stream cursor does not.
+static_assert(json::deserializer<std::string_view::const_iterator>::bulk_scan);
+static_assert(not json::deserializer<std::istreambuf_iterator<char>>::bulk_scan);
 
 #define JSON(...) #__VA_ARGS__
 
@@ -33,13 +39,6 @@ struct[[= serde::naming::camel_case, = derive(Debug)]] S3
   std::optional<S>  s;
   std::optional<S2> s2;
   constexpr bool    operator==(S3 const& other) const = default;
-};
-
-enum class[[= derive(Format, Parse)]] Color
-{
-  Red,
-  Green,
-  Blue
 };
 
 enum class[[= derive(EnumFlags, Format, Parse)]] FilePermissions
@@ -418,6 +417,15 @@ TEST_CASE("reflex::core::json file roundtrip")
     CHECK_EQ(value, expected);
   }
 
+  {
+    // the same file through the contiguous path: one deduction guide, no
+    // json-specific entry point, and bulk_scan stays on
+    serde::mmap_input_stream in{json_path};
+    auto                     de = json::deserializer{in};
+    static_assert(std::same_as<decltype(de), json::deserializer<const char*>>);
+    CHECK_EQ(de.load<S>(), expected);
+  }
+
   std::filesystem::remove(json_path);
 }
 
@@ -554,4 +562,371 @@ TEST_CASE("reflex::serde::json: user-defined type nested in aggregate")
   CHECK_EQ(out, JSON({"inner":42,"other":7}));
   const auto value = json::deserializer{out}.load<custom_holder>();
   CHECK_EQ(value, expected);
+}
+
+namespace
+{
+  std::string json_dump(auto const& value)
+  {
+    std::string      out;
+    json::serializer ser{out};
+    ser.dump(value);
+    return out;
+  }
+
+  struct[[= derive(Debug)]] Escaped
+  {
+    std::string    text;
+    int            n;
+    constexpr bool operator==(Escaped const&) const = default;
+  };
+} // namespace
+
+TEST_CASE("reflex::serde::json: string escaping")
+{
+  SUBCASE("the seven named escapes")
+  {
+    CHECK_EQ(json_dump("a\"b"s), "\"a\\\"b\"");
+    CHECK_EQ(json_dump("a\\b"s), "\"a\\\\b\"");
+    CHECK_EQ(json_dump("a\bb"s), "\"a\\bb\"");
+    CHECK_EQ(json_dump("a\fb"s), "\"a\\fb\"");
+    CHECK_EQ(json_dump("a\nb"s), "\"a\\nb\"");
+    CHECK_EQ(json_dump("a\rb"s), "\"a\\rb\"");
+    CHECK_EQ(json_dump("a\tb"s), "\"a\\tb\"");
+  }
+
+  SUBCASE("the unnamed control characters use the \\u00XX form")
+  {
+    CHECK_EQ(json_dump(std::string(1, '\0')), "\"\\u0000\"");
+    CHECK_EQ(json_dump("\x01"s), "\"\\u0001\"");
+    CHECK_EQ(json_dump("\x1f"s), "\"\\u001f\"");
+  }
+
+  SUBCASE("solidus is not escaped on output but is accepted on input")
+  {
+    CHECK_EQ(json_dump("a/b"s), "\"a/b\"");
+    CHECK_EQ(json::deserializer{"\"a\\/b\""sv}.load<std::string>(), "a/b");
+  }
+
+  SUBCASE("every control character round-trips and none survives literally")
+  {
+    for(int c = 0; c < 0x20; ++c)
+    {
+      CAPTURE(c);
+      const std::string original{'x', static_cast<char>(c), 'y'};
+      const std::string encoded = json_dump(original);
+      CHECK_EQ(encoded.find(static_cast<char>(c)), std::string::npos);
+      CHECK_EQ(json::deserializer{encoded}.load<std::string>(), original);
+    }
+  }
+
+  SUBCASE("edge shapes")
+  {
+    CHECK_EQ(json_dump(""s), "\"\"");
+    CHECK_EQ(json_dump("\"\"\""s), "\"\\\"\\\"\\\"\"");
+    CHECK_EQ(json_dump("ends with\\"s), "\"ends with\\\\\"");
+    CHECK_EQ(json::deserializer{json_dump("ends with\\"s)}.load<std::string>(), "ends with\\");
+    CHECK_EQ(json::deserializer{json_dump("\"\"\""s)}.load<std::string>(), "\"\"\"");
+  }
+
+  SUBCASE("UTF-8 passes through unescaped")
+  {
+    // two-, three- and four-byte sequences
+    for(const auto& original : {"e\u00e9e"s, "e\u20ache"s, "e\U0001F600e"s})
+    {
+      CAPTURE(original);
+      const std::string encoded = json_dump(original);
+      CHECK_EQ(encoded, "\"" + original + "\"");
+      CHECK_EQ(json::deserializer{encoded}.load<std::string>(), original);
+    }
+  }
+
+  SUBCASE("char values are escaped too")
+  {
+    CHECK_EQ(json_dump('"'), "\"\\\"\"");
+    CHECK_EQ(json_dump('\\'), "\"\\\\\"");
+    CHECK_EQ(json_dump('\n'), "\"\\n\"");
+    CHECK_EQ(json_dump('\x01'), "\"\\u0001\"");
+    CHECK_EQ(json_dump('a'), "\"a\"");
+  }
+
+  SUBCASE("map keys are escaped")
+  {
+    const auto m = std::map<std::string, int>{
+        {"a\"b", 1}
+    };
+    CHECK_EQ(json_dump(m), "{\"a\\\"b\":1}");
+  }
+
+  SUBCASE("the \\u00XX subset below 0x80 is decoded, anything above still throws")
+  {
+    CHECK_EQ(json::deserializer{"\"\\u0041\""sv}.load<std::string>(), "A");
+    CHECK_EQ(json::deserializer{"\"\\u0009\""sv}.load<std::string>(), "\t");
+    CHECK_EQ(json::deserializer{"\"\\u007f\""sv}.load<std::string>(), "\x7f");
+    CHECK_THROWS(json::deserializer{"\"\\u00e9\""sv}.load<std::string>());
+    CHECK_THROWS(json::deserializer{"\"\\ud83d\""sv}.load<std::string>());
+    CHECK_THROWS(json::deserializer{"\"\\u00zz\""sv}.load<std::string>());
+  }
+
+  SUBCASE("an aggregate carrying every escapable class round-trips")
+  {
+    const Escaped expected{"quote \" backslash \\ newline \n tab \t bell \x07 done", 7};
+    const auto    encoded = json_dump(expected);
+    CHECK_EQ(json::deserializer{encoded}.load<Escaped>(), expected);
+  }
+}
+
+namespace
+{
+  // No char member: the serializer has a char overload but the deserializer has
+  // none, so a char field cannot round-trip. Pre-existing, and the char
+  // serialize path is covered by the escaping test case above.
+  struct[[= derive(Debug)]] Scalars
+  {
+    double         d;
+    std::int64_t   i;
+    std::string    s;
+    constexpr bool operator==(Scalars const&) const = default;
+  };
+
+  struct[[= derive(Debug)]] Empties
+  {
+    std::vector<int>       arr;
+    std::map<std::string, int> obj;
+    std::optional<int>     opt;
+    constexpr bool         operator==(Empties const&) const = default;
+  };
+
+  // A rename that needs no escaping still has to work: it is the same path the
+  // static_assert in detail::quoted_key guards.
+  struct[[= derive(Debug)]] Renamed
+  {
+    [[= serde::rename{"a-weird/name:with punctuation"}]] int value;
+    constexpr bool operator==(Renamed const&) const = default;
+  };
+
+  // A rename containing a dot serializes correctly but cannot be read back:
+  // object_visit treats a key as a dotted path and splits on '.', so no member
+  // matches either half. Pre-existing, pinned here so the asymmetry is not
+  // rediscovered as a regression.
+  struct[[= derive(Debug)]] DottedRename
+  {
+    [[= serde::rename{"outer.inner"}]] int value;
+    constexpr bool operator==(DottedRename const&) const = default;
+  };
+} // namespace
+
+TEST_CASE("reflex::serde::json::serializer: scalar rendering is to_chars")
+{
+  SUBCASE("explicit values")
+  {
+    CHECK_EQ(json_dump(3.14159), "3.14159");
+    CHECK_EQ(json_dump(1e+300), "1e+300");
+    CHECK_EQ(json_dump(-0.0), "-0");
+    CHECK_EQ(json_dump(std::numeric_limits<std::int64_t>::min()), "-9223372036854775808");
+    CHECK_EQ(json_dump(std::numeric_limits<std::uint64_t>::max()), "18446744073709551615");
+    CHECK_EQ(json_dump(0), "0");
+  }
+
+  SUBCASE("to_chars renders what format(\"{}\") rendered")
+  {
+    for(const double d : {3.14159, 1e+300, -0.0, 0.0, 1e-300, 1e16, 1e17, 2.2250738585072014e-308})
+    {
+      CAPTURE(d);
+      CHECK_EQ(json_dump(d), std::format("{}", d));
+    }
+    for(const std::int64_t i :
+        {std::int64_t{0}, std::int64_t{-1}, std::numeric_limits<std::int64_t>::min()})
+    {
+      CAPTURE(i);
+      CHECK_EQ(json_dump(i), std::format("{}", i));
+    }
+  }
+
+  SUBCASE("infinities and NaN are still emitted as invalid JSON")
+  {
+    // Pre-existing defect, pinned. inf and nan are not JSON. Fixing it is a
+    // wire-format decision and is filed separately, not made here.
+    CHECK_EQ(json_dump(std::numeric_limits<double>::infinity()), "inf");
+    CHECK_EQ(json_dump(-std::numeric_limits<double>::infinity()), "-inf");
+    CHECK_EQ(json_dump(std::numeric_limits<double>::quiet_NaN()), "nan");
+  }
+
+  SUBCASE("literals and structure")
+  {
+    CHECK_EQ(json_dump(true), "true");
+    CHECK_EQ(json_dump(false), "false");
+    CHECK_EQ(json_dump(json::null), "null");
+    CHECK_EQ(json_dump(std::optional<int>{}), "null");
+    CHECK_EQ(json_dump(std::optional<int>{7}), "7");
+    CHECK_EQ(json_dump(std::vector<int>{}), "[]");
+    CHECK_EQ(json_dump(std::vector<int>{1}), "[1]");
+    CHECK_EQ(json_dump(std::map<std::string, int>{}), "{}");
+  }
+
+  SUBCASE("an aggregate of every scalar kind round-trips")
+  {
+    const Scalars expected{3.14159, std::numeric_limits<std::int64_t>::min(), ""};
+    const auto    encoded = json_dump(expected);
+    CHECK_EQ(encoded, "{\"d\":3.14159,\"i\":-9223372036854775808,\"s\":\"\"}");
+    CHECK_EQ(json::deserializer{encoded}.load<Scalars>(), expected);
+  }
+
+  SUBCASE("empty containers inside an aggregate")
+  {
+    const Empties expected{};
+    const auto    encoded = json_dump(expected);
+    CHECK_EQ(encoded, "{\"arr\":[],\"obj\":{},\"opt\":null}");
+  }
+
+  SUBCASE("a rename needing no escape still produces its key token")
+  {
+    const Renamed expected{42};
+    const auto    encoded = json_dump(expected);
+    CHECK_EQ(encoded, "{\"a-weird/name:with punctuation\":42}");
+    CHECK_EQ(json::deserializer{encoded}.load<Renamed>(), expected);
+  }
+
+  SUBCASE("a rename containing a dot writes but does not read back")
+  {
+    const auto encoded = json_dump(DottedRename{42});
+    CHECK_EQ(encoded, "{\"outer.inner\":42}");
+    CHECK_THROWS(json::deserializer{encoded}.load<DottedRename>());
+  }
+}
+
+namespace
+{
+  // Reads through the non-contiguous cursor, which has bulk_scan off. Every
+  // string result must match the contiguous path byte for byte.
+  template <typename T> T load_streaming(std::string_view text)
+  {
+    std::istringstream in{std::string{text}};
+    return json::deserializer{in}.template load<T>();
+  }
+
+  template <typename T> T load_contiguous(std::string_view text)
+  {
+    return json::deserializer{text}.template load<T>();
+  }
+} // namespace
+
+TEST_CASE("reflex::serde::json::deserializer: string bodies")
+{
+  // The pair that makes a naive bound wrong: the first '"' in the input is not
+  // the terminator once a backslash precedes it.
+  SUBCASE("an escaped quote is not the terminator")
+  {
+    CHECK_EQ(load_contiguous<std::string>("\"a\\\"b\""), "a\"b");
+    CHECK_EQ(load_streaming<std::string>("\"a\\\"b\""), "a\"b");
+  }
+
+  SUBCASE("a trailing escaped backslash is the last body byte")
+  {
+    CHECK_EQ(load_contiguous<std::string>("\"a\\\\\""), "a\\");
+    CHECK_EQ(load_streaming<std::string>("\"a\\\\\""), "a\\");
+    CHECK_EQ(load_contiguous<std::string>("\"\\\\\\\\\""), "\\\\");
+  }
+
+  SUBCASE("shapes")
+  {
+    CHECK_EQ(load_contiguous<std::string>("\"\""), "");
+    CHECK_EQ(load_contiguous<std::string>("\"a\""), "a");
+    CHECK_EQ(load_contiguous<std::string>("\"\\n\\t\\r\\b\\f\""), "\n\t\r\b\f");
+    CHECK_EQ(load_contiguous<std::string>("\"\\\"\\\"\""), "\"\"");
+    // a raw newline inside a string is accepted today and must stay accepted
+    CHECK_EQ(load_contiguous<std::string>("\"a\nb\""), "a\nb");
+    CHECK_EQ(load_streaming<std::string>("\"a\nb\""), "a\nb");
+  }
+
+  SUBCASE("truncated input throws rather than reading past the end")
+  {
+    CHECK_THROWS(load_contiguous<std::string>("\"unterminated"));
+    CHECK_THROWS(load_streaming<std::string>("\"unterminated"));
+    // ends exactly at EOF with a dangling escape
+    CHECK_THROWS(load_contiguous<std::string>("\"abc\\"));
+    CHECK_THROWS(load_streaming<std::string>("\"abc\\"));
+    CHECK_THROWS(load_contiguous<std::string>("\""));
+    CHECK_THROWS(load_contiguous<std::string>(""));
+    CHECK_THROWS(load_contiguous<std::string>("\"\\u00"));
+  }
+
+  SUBCASE("both cursors agree on a long mixed body")
+  {
+    std::string body;
+    for(int i = 0; i < 200; ++i)
+    {
+      body += "plain";
+      body += "\\\"";
+      body += "more";
+      body += "\\\\";
+      body += "\\n";
+    }
+    const std::string encoded = "\"" + body + "\"";
+    const auto        a       = load_contiguous<std::string>(encoded);
+    const auto        b       = load_streaming<std::string>(encoded);
+    CHECK_EQ(a, b);
+    CHECK_EQ(a.size(), 200u * (5 + 1 + 4 + 1 + 1));
+    // and it re-serializes to what it came from
+    CHECK_EQ(json_dump(a), encoded);
+  }
+
+  SUBCASE("a fixed-capacity target still bounds-checks")
+  {
+    CHECK_EQ(std::string_view{load_contiguous<heapless::string<8>>("\"abc\"")}, "abc"sv);
+    CHECK_EQ(std::string_view{load_contiguous<heapless::string<8>>("\"a\\nc\"")}, "a\nc"sv);
+    CHECK_THROWS(load_contiguous<heapless::string<4>>("\"abcdefghij\""));
+    CHECK_THROWS(load_contiguous<heapless::string<4>>("\"ab\\ncdefghij\""));
+    CHECK_THROWS(load_streaming<heapless::string<4>>("\"abcdefghij\""));
+  }
+
+  SUBCASE("keys and values with escapes inside an object")
+  {
+    const auto v = load_contiguous<json::object>(
+        "{\"a\\\"b\":\"c\\\\d\",\"plain\":\"\\u0041\"}");
+    REQUIRE_EQ(v.size(), 2u);
+    CHECK_EQ(v.at("a\"b"), "c\\d");
+    CHECK_EQ(v.at("plain"), "A");
+  }
+}
+
+// An output iterator that carries its position by value. write_char advances it
+// through the postfix increment, so write_raw must assign back the iterator
+// ranges::copy returns or the bulk write is overwritten by the next byte.
+namespace
+{
+  struct cursor_out
+  {
+    using iterator_category = std::output_iterator_tag;
+    using value_type        = void;
+    using difference_type   = std::ptrdiff_t;
+    using pointer           = void;
+    using reference         = void;
+
+    char* p{};
+
+    cursor_out& operator*() { return *this; }
+    cursor_out& operator=(char c)
+    {
+      *p = c;
+      return *this;
+    }
+    cursor_out& operator++() { ++p; return *this; }
+    cursor_out  operator++(int)
+    {
+      auto copy = *this;
+      ++p;
+      return copy;
+    }
+  };
+} // namespace
+
+TEST_CASE("reflex::serde::json: serializing through a position-carrying iterator")
+{
+  char buffer[32] = {};
+
+  reflex::serde::json::serializer<cursor_out> ser{cursor_out{buffer}};
+  reflex::serde::serialize(ser, std::string_view{"ab"});
+
+  CHECK_EQ(std::string_view{buffer}, "\"ab\"");
 }

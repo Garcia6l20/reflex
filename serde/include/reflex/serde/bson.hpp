@@ -5,6 +5,11 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <bit>
+#include <charconv>
+#include <cstring>
+#include <span>
+
 #include <reflex/serde.hpp>
 #include <reflex/serde/bson_value.hpp>
 #endif
@@ -47,10 +52,15 @@ template <std::integral T> constexpr void append(bytes& out, T value)
 {
   using unsigned_t = std::make_unsigned_t<T>;
   auto raw         = static_cast<unsigned_t>(value);
+
+  // An explicit little-endian shift loop, not a bit_cast: the writer is deliberately
+  // endian-independent and the reader is the side that is native, see read_as.
+  std::array<std::byte, sizeof(T)> buf{};
   for(std::size_t i = 0; i < sizeof(T); ++i)
   {
-    out.push_back(static_cast<std::byte>((raw >> (8 * i)) & 0xFFu));
+    buf[i] = static_cast<std::byte>((raw >> (8 * i)) & 0xFFu);
   }
+  out.append_range(buf);
 }
 
 constexpr void append(bytes& out, double value)
@@ -70,32 +80,43 @@ constexpr void append(bytes& out, std::string_view value, bool include_size = fa
   {
     append(out, static_cast<std::int32_t>(value.size() + 1));
   }
-  for(char ch : value)
+  // One bulk append of the whole body. as_bytes is a reinterpret_cast underneath, so the
+  // constant-evaluated path keeps the byte loop.
+  if consteval
   {
-    out.push_back(static_cast<std::byte>(static_cast<unsigned char>(ch)));
+    for(char ch : value)
+    {
+      out.push_back(static_cast<std::byte>(static_cast<unsigned char>(ch)));
+    }
   }
+  else
+  {
+    out.append_range(std::as_bytes(std::span{value}));
+  }
+
   out.push_back(std::byte{0x00});
 }
 
 template <typename T>
 constexpr void write_element(bytes& out, std::string_view key, T const& value);
 
-template <typename Fn> constexpr bytes make_document(Fn&& write_elements)
+// Append a document to `out` and backpatch its length prefix in place. The length is
+// known once the document closes, and the patch offset stays valid because the buffer
+// only ever grows at the end.
+template <typename Fn> constexpr void make_document(bytes& out, Fn&& write_elements)
 {
-  bytes out{};
+  const auto patch = out.size();
 
   // Reserve space for 4-byte BSON document size.
   append(out, std::int32_t{0});
   std::forward<Fn>(write_elements)(out);
   append(out, std::byte{0x00});
 
-  auto size = static_cast<std::int32_t>(out.size());
+  const auto size = static_cast<std::int32_t>(out.size() - patch);
   for(std::size_t i = 0; i < sizeof(std::int32_t); ++i)
   {
-    out[i] = static_cast<std::byte>((size >> (8 * i)) & 0xFF);
+    out[patch + i] = static_cast<std::byte>((size >> (8 * i)) & 0xFF);
   }
-
-  return out;
 }
 
 template <typename T>
@@ -104,7 +125,7 @@ constexpr void write_document_value(bytes& out, std::string_view key, T const& v
   append(out, detail::bson_type::document);
   append(out, key);
 
-  auto nested = make_document([&](bytes& doc) {
+  make_document(out, [&](bytes& doc) {
     if constexpr(map_c<T>)
     {
       for(auto const& [member_key, member_value] : value)
@@ -123,8 +144,6 @@ constexpr void write_document_value(bytes& out, std::string_view key, T const& v
       }
     }
   });
-
-  out.insert(out.end(), nested.begin(), nested.end());
 }
 
 template <typename T>
@@ -133,16 +152,18 @@ constexpr void write_array_value(bytes& out, std::string_view key, T const& valu
   append(out, detail::bson_type::array);
   append(out, key);
 
-  auto nested = make_document([&](bytes& doc) {
+  make_document(out, [&](bytes& doc) {
     std::size_t idx = 0;
     for(auto const& element : value)
     {
-      auto index = std::to_string(idx++);
+      // BSON array keys are the decimal indices. write_element takes a string_view, so render
+      // into a stack buffer rather than constructing a std::string per element.
+      char       buf[24];
+      const auto res   = std::to_chars(buf, buf + sizeof(buf), idx++);
+      const auto index = std::string_view{buf, static_cast<std::size_t>(res.ptr - buf)};
       reflex::visit([&](auto const& v) { write_element(doc, index, v); }, element);
     }
   });
-
-  out.insert(out.end(), nested.begin(), nested.end());
 }
 
 template <typename T> constexpr void write_element(bytes& out, std::string_view key, T const& value)
@@ -245,17 +266,17 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   }
 }
 
-template <typename T> constexpr bytes encode_root(T const& value)
+template <typename T> constexpr void encode_root(bytes& out, T const& value)
 {
   using U = std::decay_t<T>;
   if constexpr(map_c<U> or (aggregate_c<U> and !bson_scalar_c<U>))
   {
-    return make_document([&](bytes& out) {
+    make_document(out, [&](bytes& doc) {
       if constexpr(map_c<U>)
       {
         for(auto const& [member_key, member_value] : value)
         {
-          write_element(out, std::string_view(member_key), member_value);
+          write_element(doc, std::string_view(member_key), member_value);
         }
       }
       else
@@ -265,18 +286,18 @@ template <typename T> constexpr bytes encode_root(T const& value)
         {
           constexpr std::string_view member_name = serialized_name(member);
           auto const&                member_val  = value.[:member:];
-          reflex::visit([&](auto const& v) { write_element(out, member_name, v); }, member_val);
+          reflex::visit([&](auto const& v) { write_element(doc, member_name, v); }, member_val);
         }
       }
     });
   }
   else if constexpr(reflex::visitable_c<U>)
   {
-    return reflex::visit([&](auto const& v) { return encode_root(v); }, value);
+    reflex::visit([&](auto const& v) { encode_root(out, v); }, value);
   }
   else
   {
-    return make_document([&](bytes& out) { write_element(out, "value", value); });
+    make_document(out, [&](bytes& doc) { write_element(doc, "value", value); });
   }
 }
 
@@ -315,12 +336,45 @@ REFLEX_EXPORT namespace reflex::serde::bson
   private:
     struct cursor_t
     {
+      // The input can report its remaining length in O(1). True for a string_view, a vector or a
+      // mapped file, false for an istreambuf_iterator, which is why every check below is guarded.
+      static constexpr bool sized_input = std::copyable<It> and std::sized_sentinel_for<It, It>;
+
+      // The input is a block of bytes already in memory, so a run can be read with one memcpy and
+      // a key can be handed out as a view into it instead of being copied.
+      static constexpr bool contiguous_byte_or_char =
+          std::contiguous_iterator<It>
+          and (decays_to_c<std::iter_value_t<It>, std::byte>
+               or decays_to_c<std::iter_value_t<It>, char>
+               or decays_to_c<std::iter_value_t<It>, unsigned char>);
+
+      // Only the non-contiguous path needs somewhere to put a key it cannot borrow. Conditional so
+      // a contiguous cursor does not carry a std::string it never touches.
+      struct no_key_buffer
+      {};
+
       range_type  range;
       std::size_t position = 0;
+
+      [[no_unique_address]] std::
+          conditional_t<contiguous_byte_or_char, no_key_buffer, std::string> key_buf{};
 
       constexpr bool at_end() const
       {
         return range.empty();
+      }
+
+      // Reject a length read out of the document before anything acts on it. Free on a sized
+      // input, a no-op otherwise, where read_byte()'s at_end() check is the only guard available.
+      constexpr void require(std::size_t n) const
+      {
+        if constexpr(sized_input)
+        {
+          if(n > static_cast<std::size_t>(range.end() - range.begin()))
+          {
+            throw std::runtime_error("Unexpected end of BSON input");
+          }
+        }
       }
 
       constexpr std::byte read_byte()
@@ -337,26 +391,95 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
       constexpr void advance(std::size_t n)
       {
-        // if(n > std::ranges::distance(range))
-        // {
-        //   throw std::runtime_error("Unexpected end of BSON input");
-        // }
+        require(n);
         range.advance(n);
         position += n;
       }
 
+      // A null-terminated key, borrowed from the input when it is contiguous. The
+      // view is valid until the next cursor operation.
+      constexpr std::string_view read_key()
+      {
+        if constexpr(contiguous_byte_or_char)
+        {
+          const auto* first = std::to_address(range.begin());
+          const auto* last  = std::to_address(range.end());
+          const auto* ptr   = first;
+
+          while(ptr != last and std::bit_cast<std::byte>(*ptr) != std::byte{0x00})
+          {
+            ++ptr;
+          }
+
+          if(ptr == last)
+          {
+            throw std::runtime_error("BSON cstring payload must be null-terminated");
+          }
+
+          const auto n = static_cast<std::size_t>(ptr - first);
+          advance(n + 1);
+          return {reinterpret_cast<char const*>(first), n};
+        }
+        else
+        {
+          key_buf.clear();
+          while(true)
+          {
+            const std::byte b = read_byte();
+            if(b == std::byte{0x00})
+            {
+              break;
+            }
+            key_buf.push_back(static_cast<char>(std::to_integer<unsigned char>(b)));
+          }
+          return key_buf;
+        }
+      }
+
+      // Every scalar funnels through here. A contiguous input takes the whole four, eight or
+      // sixteen bytes in one memcpy and one advance.
       template <std::size_t N> constexpr auto read_bytes()
       {
         std::array<std::byte, N> bytes{};
-        for(std::size_t i = 0; i < N; ++i)
+
+        if constexpr(contiguous_byte_or_char)
         {
-          bytes[i] = read_byte();
+          require(N);
+
+          const auto* first = std::to_address(range.begin());
+          if consteval
+          {
+            for(std::size_t i = 0; i < N; ++i)
+            {
+              bytes[i] = std::bit_cast<std::byte>(first[i]);
+            }
+          }
+          else
+          {
+            std::memcpy(bytes.data(), first, N);
+          }
+          advance(N);
+        }
+        else
+        {
+          for(std::size_t i = 0; i < N; ++i)
+          {
+            bytes[i] = read_byte();
+          }
         }
         return bytes;
       }
 
       template <typename T> constexpr auto read_as()
       {
+        // detail::append writes every numeric type little-endian with an explicit shift loop
+        // while this reads it back natively, so the fast path must not compile silently where
+        // that asymmetry would be wrong.
+        static_assert(
+            std::endian::native == std::endian::little,
+            "The BSON reader is native-endian while the writer is explicitly little-endian. "
+            "Make the reader explicitly little-endian before targeting a big-endian machine.");
+
         return std::bit_cast<T>(read_bytes<sizeof(T)>());
       }
 
@@ -379,12 +502,6 @@ REFLEX_EXPORT namespace reflex::serde::bson
       {
         std::string out;
 
-        constexpr bool
-            contiguous_byte_or_char = std::contiguous_iterator<It>
-                                  and (decays_to_c<std::iter_value_t<It>, std::byte>
-                                       or decays_to_c<std::iter_value_t<It>, char>
-                                       or decays_to_c<std::iter_value_t<It>, unsigned char>);
-
         if constexpr(has_size)
         {
           auto size = read<std::int32_t>();
@@ -392,6 +509,11 @@ REFLEX_EXPORT namespace reflex::serde::bson
           {
             throw std::runtime_error("Invalid BSON string length");
           }
+
+          // size counts the payload plus its null terminator. Check both before reading either:
+          // the contiguous branch below copies straight off this length without touching
+          // read_byte(), so nothing downstream would catch it.
+          require(static_cast<std::size_t>(size));
 
           if constexpr(contiguous_byte_or_char)
           {
@@ -401,7 +523,14 @@ REFLEX_EXPORT namespace reflex::serde::bson
           }
           else
           {
-            out.reserve(static_cast<std::size_t>(size - 1));
+            // On an unsized input require() cannot vet the length, so a hostile document must not
+            // turn into a multi-gigabyte reservation. Grow from a bounded guess, read_byte() stops
+            // at end of input either way.
+            constexpr std::size_t max_unchecked_reserve = 64 * 1024;
+
+            auto want = static_cast<std::size_t>(size - 1);
+            out.reserve(sized_input ? want : std::min(want, max_unchecked_reserve));
+
             for(std::int32_t i = 0; i < size - 1; ++i)
             {
               out.push_back(static_cast<char>(std::to_integer<unsigned char>(read_byte())));
@@ -415,37 +544,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
         }
         else
         {
-          if constexpr(contiguous_byte_or_char)
-          {
-            const auto* first = std::to_address(range.begin());
-            const auto* ptr   = first;
-            const auto* last  = std::to_address(range.end());
-
-            while(ptr != last and std::bit_cast<std::byte>(*ptr) != std::byte{0x00})
-            {
-              ++ptr;
-            }
-
-            if(ptr == last)
-            {
-              throw std::runtime_error("BSON cstring payload must be null-terminated");
-            }
-
-            out.assign(reinterpret_cast<char const*>(first), static_cast<std::size_t>(ptr - first));
-            advance(static_cast<std::size_t>(ptr - first) + 1);
-          }
-          else
-          {
-            while(true)
-            {
-              const std::byte b = read_byte();
-              if(b == std::byte{0x00})
-              {
-                break;
-              }
-              out.push_back(static_cast<char>(std::to_integer<unsigned char>(b)));
-            }
-          }
+          // The owning spelling of read_key(), for callers that want to keep the result.
+          out = read_key();
         }
         return out;
       }
@@ -503,6 +603,12 @@ REFLEX_EXPORT namespace reflex::serde::bson
       {
         throw std::runtime_error("Invalid BSON document length");
       }
+
+      // The 4 length bytes are already consumed, the rest of the declared document must still fit.
+      // Rejects a nested length that overruns the buffer at the point it is read rather than after
+      // its elements have been walked.
+      cursor_.require(static_cast<std::size_t>(size) - sizeof(std::int32_t));
+
       const std::size_t end_pos = start + static_cast<std::size_t>(size);
 
       while(cursor_.position < end_pos)
@@ -517,7 +623,9 @@ REFLEX_EXPORT namespace reflex::serde::bson
           return;
         }
 
-        auto key = cursor_.template read<std::string>();
+        // Borrowed from the input buffer when it is contiguous, valid for the duration
+        // of the call. Copy it to keep it.
+        const std::string_view key = cursor_.read_key();
         std::forward<Fn>(fn)(type, key);
         if(cursor_.position > end_pos)
         {
@@ -555,9 +663,11 @@ REFLEX_EXPORT namespace reflex::serde::bson
           throw std::runtime_error("Expected BSON string type");
         }
         auto decoded = cursor_.template read<std::string, true>();
-        if constexpr(requires { value = decoded; })
+        // Probe with the assignment that is actually performed, so the decoded string
+        // is moved into the member rather than copied.
+        if constexpr(requires { value = std::move(decoded); })
         {
-          value = decoded;
+          value = std::move(decoded);
         }
         else
         {
@@ -744,29 +854,24 @@ REFLEX_EXPORT namespace reflex::serde::bson
   template <bson_output_iterator_c OutputIt, typename T>
   OutputIt tag_invoke(tag_default_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
   {
-    auto& out     = ser.out();
-    auto  encoded = detail::encode_root(value);
-
-    if constexpr(std::output_iterator<OutputIt, std::byte>)
+    // When the serializer was handed the byte container itself, encode straight into it,
+    // with no temporary in between.
+    if constexpr(std::same_as<typename serde::detail::bulk_sink<OutputIt>::type, detail::bytes>)
     {
-      std::ranges::copy(encoded, out);
-    }
-    else if constexpr(std::output_iterator<OutputIt, char>)
-    {
-      for(std::byte b : encoded)
+      if(auto* sink = ser.sink(); sink != nullptr)
       {
-        *out++ = static_cast<char>(std::to_integer<unsigned char>(b));
-      }
-    }
-    else if constexpr(std::output_iterator<OutputIt, unsigned char>)
-    {
-      for(std::byte b : encoded)
-      {
-        *out++ = static_cast<unsigned char>(std::to_integer<unsigned char>(b));
+        detail::encode_root(*sink, value);
+        return ser.out();
       }
     }
 
-    return out;
+    // Otherwise the document has to be built somewhere before it can be handed over, because the
+    // length prefixes are backpatched and an output iterator cannot be revisited.
+    detail::bytes encoded;
+    detail::encode_root(encoded, value);
+    ser.write_bytes(encoded);
+
+    return ser.out();
   }
 
   template <typename It> auto tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de)

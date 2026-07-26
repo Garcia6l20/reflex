@@ -55,46 +55,73 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
       for(auto m : std::meta::nonstatic_data_members_of(agg, ctx))
       {
-        auto t = dealias(type_of(m));
-        // extract value_type from std::optional
-        if(meta::is_template_instance_of(t, ^^std::optional))
-        {
-          t = dealias(template_arguments_of(t)[0]);
-        }
-        if(meta::eval_concept(
-               ^^seq_c, {
-                            t}))
-        {
-          auto value_type = dealias(meta::member_named(t, "value_type"));
-          if(append_unique(value_type) and is_aggregate_type(value_type))
-          {
-            scan_aggregate(value_type, ctx);
-          }
-          continue;
-        }
+        scan_type(type_of(m), ctx);
+      }
+    }
 
-        if(meta::eval_concept(
-               ^^map_c, {
-                            t}))
+    // collects the types reachable from a single type: unwraps std::optional, descends into
+    // sequence and map element types, recurses into aggregates
+    consteval void scan_type(
+        std::meta::info           t,
+        std::meta::access_context ctx = std::meta::access_context::current())
+    {
+      t = dealias(t);
+      // extract value_type from std::optional
+      if(meta::is_template_instance_of(t, ^^std::optional))
+      {
+        t = dealias(template_arguments_of(t)[0]);
+      }
+      if(meta::eval_concept(
+             ^^seq_c, {
+                          t}))
+      {
+        auto value_type = dealias(meta::member_named(t, "value_type"));
+        if(append_unique(value_type) and is_aggregate_type(value_type))
         {
-          auto key_type = dealias(meta::member_named(t, "key_type"));
-          append_unique(key_type);
-
-          auto mapped_type = dealias(meta::member_named(t, "mapped_type"));
-          if(append_unique(mapped_type) and is_aggregate_type(mapped_type))
-          {
-            scan_aggregate(mapped_type, ctx);
-          }
-          continue;
+          scan_aggregate(value_type, ctx);
         }
+        return;
+      }
 
-        if(append_unique(t) and is_aggregate_type(t))
+      if(meta::eval_concept(
+             ^^map_c, {
+                          t}))
+      {
+        auto key_type = dealias(meta::member_named(t, "key_type"));
+        append_unique(key_type);
+
+        auto mapped_type = dealias(meta::member_named(t, "mapped_type"));
+        if(append_unique(mapped_type) and is_aggregate_type(mapped_type))
         {
-          scan_aggregate(t, ctx);
+          scan_aggregate(mapped_type, ctx);
         }
+        return;
+      }
+
+      if(append_unique(t) and is_aggregate_type(t))
+      {
+        scan_aggregate(t, ctx);
       }
     }
   };
+
+  // Binds by reference when the value type has a reference alternative for T, by value otherwise
+  // (scalars, strings, const elements).
+  template <typename ValueT, typename T> constexpr ValueT make_bound_value(T&& v)
+  {
+    if constexpr(std::same_as<std::remove_cvref_t<T>, ValueT>)
+    {
+      return ValueT{std::forward<T>(v)};
+    }
+    else if constexpr(std::is_lvalue_reference_v<T&&> and requires { ValueT{std::ref(v)}; })
+    {
+      return ValueT{std::ref(v)};
+    }
+    else
+    {
+      return ValueT{std::forward<T>(v)};
+    }
+  }
   } // namespace detail
 
   // scans the types of all nonstatic data members of an aggregate, including nested aggregates and
@@ -105,6 +132,24 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   {
     detail::type_scan_accumulator acc;
     acc.scan_aggregate(agg, ctx);
+    return acc.types;
+  }
+
+  // scans the types reachable from a type bound as a context variable: members for an aggregate,
+  // element types for a bound sequence or map
+  consteval auto scan_bound_types(
+      std::meta::info bound, std::meta::access_context ctx = std::meta::access_context::current())
+      -> std::vector<std::meta::info>
+  {
+    detail::type_scan_accumulator acc;
+    if(is_aggregate_type(dealias(bound)))
+    {
+      acc.scan_aggregate(bound, ctx);
+    }
+    else
+    {
+      acc.scan_type(bound, ctx);
+    }
     return acc.types;
   }
 
@@ -140,25 +185,21 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         if(!std::ranges::contains(types, t))
         {
           types.push_back(t);
-          auto dt = decay(t);
-          if(is_aggregate_type(dt))
+          for(auto nt : scan_bound_types(decay(t)))
           {
-            for(auto nt : scan_object_types(dt))
+            if(is_aggregate_type(nt))
             {
-              if(is_aggregate_type(nt))
+              auto ref_type = add_lvalue_reference(nt);
+              if(!std::ranges::contains(types, ref_type))
               {
-                auto ref_type = add_lvalue_reference(nt);
-                if(!std::ranges::contains(types, ref_type))
-                {
-                  types.push_back(ref_type);
-                }
+                types.push_back(ref_type);
               }
-              else
+            }
+            else
+            {
+              if(!std::ranges::contains(types, decay(nt)))
               {
-                if(!std::ranges::contains(types, decay(nt)))
-                {
-                  types.push_back(decay(nt));
-                }
+                types.push_back(decay(nt));
               }
             }
           }
@@ -180,9 +221,17 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     std::unordered_map<std::string, function_type> funcs;
 
+    // value_type overload, for braced initializer lists which cannot deduce T
     context& set(std::string_view name, value_type v)
     {
       global_vars.insert_or_assign(std::string{name}, std::move(v));
+      return *this;
+    }
+
+    template <typename T> context& set(std::string_view name, T&& v)
+    {
+      global_vars.insert_or_assign(
+          std::string{name}, detail::make_bound_value<value_type>(std::forward<T>(v)));
       return *this;
     }
 
@@ -216,7 +265,9 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         {
           result = std::ref(v);
         }
-        else if constexpr(seq_c<U> and requires { value_type{std::ref(v)}; })
+        else if constexpr(seq_c<U> and requires(std::ranges::range_value_t<U>& elem) {
+                            value_type{std::ref(elem)};
+                          })
         {
           result = v
                  | std::views::transform([](auto&& elem) { return std::ref(elem); })
@@ -325,6 +376,13 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       decltype(auto) set(std::string_view name, value_type v)
       {
         ctx.local_vars.at(index).insert_or_assign(std::string{name}, std::move(v));
+        return *this;
+      }
+
+      template <typename T> decltype(auto) set(std::string_view name, T&& v)
+      {
+        ctx.local_vars.at(index).insert_or_assign(
+            std::string{name}, detail::make_bound_value<value_type>(std::forward<T>(v)));
         return *this;
       }
 
