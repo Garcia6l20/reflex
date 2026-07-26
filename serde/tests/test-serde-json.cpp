@@ -889,3 +889,44 @@ TEST_CASE("reflex::serde::json::deserializer: string bodies")
     CHECK_EQ(v.at("plain"), "A");
   }
 }
+
+// An output iterator that carries its position by value. write_char advances it
+// through the postfix increment, so write_raw must assign back the iterator
+// ranges::copy returns or the bulk write is overwritten by the next byte.
+namespace
+{
+  struct cursor_out
+  {
+    using iterator_category = std::output_iterator_tag;
+    using value_type        = void;
+    using difference_type   = std::ptrdiff_t;
+    using pointer           = void;
+    using reference         = void;
+
+    char* p{};
+
+    cursor_out& operator*() { return *this; }
+    cursor_out& operator=(char c)
+    {
+      *p = c;
+      return *this;
+    }
+    cursor_out& operator++() { ++p; return *this; }
+    cursor_out  operator++(int)
+    {
+      auto copy = *this;
+      ++p;
+      return copy;
+    }
+  };
+} // namespace
+
+TEST_CASE("reflex::serde::json: serializing through a position-carrying iterator")
+{
+  char buffer[32] = {};
+
+  reflex::serde::json::serializer<cursor_out> ser{cursor_out{buffer}};
+  reflex::serde::serialize(ser, std::string_view{"ab"});
+
+  CHECK_EQ(std::string_view{buffer}, "\"ab\"");
+}

@@ -116,7 +116,9 @@ REFLEX_EXPORT namespace reflex::serde::detail
           }
         }
       }
-      std::ranges::copy(s, out_);
+      // Assign the result back: write_char advances out_, so a stateful iterator
+      // such as a raw pointer would otherwise have the next write overwrite this one.
+      out_ = std::ranges::copy(s, out_).out;
     }
 
     // The byte-oriented half of write_raw, for binary backends. Same reasoning: without it every
