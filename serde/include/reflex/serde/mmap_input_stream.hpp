@@ -137,7 +137,12 @@ REFLEX_EXPORT namespace reflex::serde
       {
         fail(path, EACCES, "serde::mmap_input_stream: cannot open file");
       }
+      // tellg reports -1 on failure, which would turn into an enormous resize.
       const auto size = static_cast<std::streamoff>(in.tellg());
+      if(size < 0)
+      {
+        fail(path, EIO, "serde::mmap_input_stream: cannot size file");
+      }
       in.seekg(0);
       copy_.resize(static_cast<std::size_t>(size));
       if(size > 0 and not in.read(copy_.data(), size))
