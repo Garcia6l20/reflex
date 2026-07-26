@@ -5,7 +5,6 @@
 #endif
 
 #ifndef REFLEX_MODULE
-#include <reflex/hash.hpp>
 #include <reflex/serde/annotations.hpp>
 
 #include <bit>
@@ -38,8 +37,22 @@ REFLEX_EXPORT namespace reflex::serde
       return w;
     }
 
+    // FNV-1a. Local rather than reflex::hash_bytes, which cannot be reached
+    // from here: including <reflex/hash.hpp> alongside <reflex/parse.hpp> in
+    // one non-module translation unit makes reflex::tag_invoke ambiguous, and
+    // every header-only serde user includes both.
+    constexpr std::uint64_t name_digest(std::string_view s) noexcept
+    {
+      std::uint64_t h = 14695981039346656037ULL;
+      for(char c : s)
+      {
+        h = (h ^ static_cast<unsigned char>(c)) * 1099511628211ULL;
+      }
+      return h;
+    }
+
     // Below this many members a straight chain of comparisons wins: the one-off
-    // setup a hash or a prefix word needs costs more than the comparisons it
+    // setup a digest or a prefix word needs costs more than the comparisons it
     // saves. Measured on GCC 16.1.1 at -O3, where the chain overtakes both
     // between 20 and 24 members.
     inline constexpr std::size_t wide_object_threshold = 24;
@@ -129,19 +142,19 @@ REFLEX_EXPORT namespace reflex::serde
       else
       {
         // Every name fits a word, so a comparison is already cheap and only the
-        // number of them hurts. Hash once and reject on an integer.
-        const std::size_t kh = reflex::hash_bytes(key.data(), key.size());
+        // number of them hurts. Digest the key once and reject on an integer.
+        const std::uint64_t kd = detail::name_digest(key);
         template for(constexpr auto& member : __members())
         {
           constexpr std::string_view id   = identifier_of(member);
           constexpr std::string_view name = serialized_name(member);
-          if(kh == reflex::hash_bytes(name.data(), name.size()) and key == name)
+          if(kd == detail::name_digest(name) and key == name)
           {
             return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
           }
           if constexpr(id != name)
           {
-            if(kh == reflex::hash_bytes(id.data(), id.size()) and key == id)
+            if(kd == detail::name_digest(id) and key == id)
             {
               return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
             }
