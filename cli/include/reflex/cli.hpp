@@ -22,7 +22,7 @@ REFLEX_EXPORT namespace reflex::cli
   {
     auto command = std::filesystem::path{executable}.filename().string();
     return detail::process_cmdline(
-        std::forward<Cli>(cli), command, executable, it, end, [invoker](auto const& trackers) {
+        std::forward<Cli>(cli), command, executable, it, end, [](auto const& trackers) {
           const auto state = trackers.state;
           const auto view  = trackers.current.view;
 
@@ -66,14 +66,14 @@ REFLEX_EXPORT namespace reflex::cli
           {
             // actual command execution
             if constexpr(requires {
-                           { invoker(trackers.root) } -> std::convertible_to<int>;
+                           { trackers.invoke() } -> std::convertible_to<int>;
                          })
             {
-              return invoker(trackers.root);
+              return trackers.invoke();
             }
-            else if constexpr(requires { invoker(trackers.root); })
+            else if constexpr(requires { trackers.invoke(); })
             {
-              invoker(trackers.root);
+              trackers.invoke();
               return 0;
             }
             else

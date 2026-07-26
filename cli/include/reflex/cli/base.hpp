@@ -411,7 +411,11 @@ REFLEX_EXPORT namespace reflex::cli
       }
       if(is_sub_command)
       {
-        refuse_command(name, subject, "names a sub-command, and sub-commands are struct only", where);
+        refuse_command(
+            name, subject,
+            "names a sub-command, which a command's parameters cannot hold, "
+            "use a nested struct for a command that has sub-commands of its own",
+            where);
       }
 
       members.push_back(
@@ -485,10 +489,47 @@ REFLEX_EXPORT namespace reflex::cli
       options.push_back(^^show_completion_option);
     }
 
+    // Walked with an unchecked context and filtered by hand rather than asking
+    // for accessible members only: a sub-command that cannot be reached needs
+    // to be refused by name, and a member the walk never returns cannot be.
+    // Data members keep exactly the visibility they had, which is public.
     template for(constexpr auto mem :
-                 define_static_array(nonstatic_data_members_of(I, meta::access_context::current())))
+                 define_static_array(members_of(I, meta::access_context::unchecked())))
     {
       if constexpr(is_function(mem))
+      {
+        // A member function is a sub-command only when it says so. Everything
+        // else a class declares, operator() included, is left alone.
+        if(meta::has_annotation(mem, ^^command))
+        {
+          const_assert(
+              is_accessible(mem, meta::access_context::current()),
+              "a sub-command must be reachable from outside its command, make it public",
+              source_location_of(mem));
+          // Two annotated overloads share one name, so only the first would
+          // ever be reachable and the rest would be dead.
+          const_assert(
+              std::ranges::none_of(
+                  sub_commands,
+                  [&](auto other) {
+                    return has_identifier(other) and identifier_of(other) == identifier_of(mem);
+                  }),
+              "two sub-commands cannot share a name, give the overload a name of its own",
+              source_location_of(mem));
+          sub_commands.push_back(mem);
+        }
+        continue;
+      }
+      // A nested type carrying the annotation is reached through the member
+      // that holds it, so only the member counts. Anything else that is not a
+      // data member has no value to parse into. A member function template is
+      // among them, and cannot even be asked: annotations_of accepts a
+      // function but not a function template, and throws on one.
+      if constexpr(not is_nonstatic_data_member(mem))
+      {
+        continue;
+      }
+      if constexpr(not is_accessible(mem, meta::access_context::current()))
       {
         continue;
       }
@@ -775,7 +816,26 @@ REFLEX_EXPORT namespace reflex::cli
     return item_tracker<items>{};
   }
 
-  template <typename Cmd, bool include_install_completion = true> struct parse_trackers
+  /** @brief how a parsed command is run
+   *
+   * A hand written command carries its state in its members and is called with
+   * nothing. A synthesized one carries a function's arguments instead and has
+   * no call operator at all, so what it means to call it is supplied alongside
+   * it rather than found on it.
+   *
+   * The constraint is what keeps a command holding nothing but sub-commands
+   * reporting missing_command at run time instead of failing to compile.
+   */
+  inline constexpr auto default_invoker = []<typename C>(C& cli) -> decltype(auto)
+    requires requires { cli(); }
+  {
+    return cli();
+  };
+
+  template <
+      typename Cmd, bool include_install_completion = true,
+      typename Invoker = decltype(default_invoker)>
+  struct parse_trackers
   {
     static constexpr auto cmd_type = remove_cvref(^^Cmd);
 
@@ -789,6 +849,23 @@ REFLEX_EXPORT namespace reflex::cli
         command_info::from_info_range(std::get<2>(_raw)) | std::ranges::to<std::vector>();
 
     Cmd& root;
+
+    // How the command is run travels with the trackers because the state
+    // handler is what runs it, and a sub-command may be reached through an
+    // invoker the handler never saw. A member function sub-command is exactly
+    // that case: it needs the parent bound, and the handler was built before
+    // the parent existed.
+    Invoker invoker;
+
+    // A template so that an unrunnable command is a substitution failure the
+    // caller can test for. A non-template member has its declaration
+    // instantiated with the class, which would make it a hard error instead.
+    template <typename Self = Cmd>
+    constexpr auto invoke() const
+        -> decltype(std::declval<Invoker const&>()(std::declval<Self&>()))
+    {
+      return invoker(root);
+    }
 
     item_tracker<args> args_track{};
     item_tracker<opts> opts_track{};
@@ -825,21 +902,22 @@ REFLEX_EXPORT namespace reflex::cli
     }
   };
 
-  /** @brief how a parsed command is run
+  /** @brief call the sub-command @p Fn on the command that declares it
    *
-   * A hand written command carries its state in its members and is called with
-   * nothing. A synthesized one carries a function's arguments instead and has
-   * no call operator at all, so what it means to call it is supplied alongside
-   * it rather than found on it.
-   *
-   * The constraint is what keeps a command holding nothing but sub-commands
-   * reporting missing_command at run time instead of failing to compile.
+   * A member function sub-command is the one shape where the parsed arguments
+   * and the object they run against live in two different places: the
+   * arguments in the synthesized aggregate, the object in the parent whose own
+   * options were parsed before the descent. Binding the parent here is what
+   * lets the sub-command read them.
    */
-  inline constexpr auto default_invoker = []<typename C>(C& cli) -> decltype(auto)
-    requires requires { cli(); }
+  template <std::meta::info Fn> constexpr auto member_invoker(auto& parent)
   {
-    return cli();
-  };
+    return [&parent](auto& cli) -> decltype(auto) {
+      return std::apply(
+          [&parent](auto&&... args) -> decltype(auto) { return (parent.[:Fn:])(args...); },
+          reflex::to_tuple(cli));
+    };
+  }
 
   /** @brief call what @p Command names with the arguments parsed for it
    *
@@ -878,8 +956,8 @@ REFLEX_EXPORT namespace reflex::cli
       std::size_t      index   = 1,
       Invoker          invoker = default_invoker)
   {
-    static constexpr auto                           cli_type = remove_cvref(^^Cli);
-    parse_trackers<Cli, include_install_completion> trackers{cli};
+    static constexpr auto                                    cli_type = remove_cvref(^^Cli);
+    parse_trackers<Cli, include_install_completion, Invoker> trackers{cli, invoker};
     trackers.command = command;
     trackers.program = executable.empty() ? command : executable;
     trackers.index   = index;
@@ -1092,9 +1170,22 @@ REFLEX_EXPORT namespace reflex::cli
               return 1;
             }
             ++trackers.index;
-            return process_cmdline<show_help, false>(
-                cli.[:cmd.member:], std::format("{} {}", trackers.program, trackers.current.view),
-                                  trackers.program, it, end, state_handler, trackers.index);
+            auto sub_command = std::format("{} {}", trackers.program, trackers.current.view);
+            if constexpr(is_function(cmd.member))
+            {
+              // The parameters are the sub-command, so they get an aggregate of
+              // their own and the parent is carried to the call by the invoker.
+              command_args<cmd.member> sub_args{};
+              return process_cmdline<show_help, false>(
+                  sub_args, sub_command, trackers.program, it, end, state_handler, trackers.index,
+                  member_invoker<cmd.member>(cli));
+            }
+            else
+            {
+              return process_cmdline<show_help, false>(
+                  cli.[:cmd.member:], sub_command, trackers.program, it, end, state_handler,
+                  trackers.index);
+            }
           }
         }
 

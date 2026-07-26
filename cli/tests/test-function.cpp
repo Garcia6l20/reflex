@@ -337,6 +337,121 @@ TEST_CASE("reflex::cli: a callable runs as a command")
   }
 }
 
+// A member function sub-command reads its parent's options because the parent
+// is bound at the call. A nested struct has to be handed a back-reference to
+// get the same thing.
+struct[[= cli::command{"Shape tool."}]] shapes
+{
+  [[= cli::option{"-w/--width", "How wide."}]] int width = 1;
+
+  [[= cli::command{"Draw a row of dots."}]]
+  int row([[= cli::argument{"Which character."}]] std::string glyph)
+  {
+    for(auto _ : std::views::iota(0, width))
+    {
+      std::print("{}", glyph);
+    }
+    std::println();
+    return 0;
+  }
+
+  [[= cli::command{"Report the width."}]]
+  void report() const
+  {
+    std::println("width={}", width);
+  }
+
+  // a nested struct sub-command alongside the function ones
+  struct[[= cli::command{"A nested struct sub-command."}]]
+  {
+    [[= cli::argument{"A label."}]] std::string label = "";
+
+    int operator()() const
+    {
+      std::println("nested {}", label);
+      return 0;
+    }
+  } nested{};
+};
+
+TEST_CASE("reflex::cli: a member function is a sub-command")
+{
+  SUBCASE("it runs")
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run(shapes{}, {"shapes"sv, "row"sv, "x"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "x\n");
+  }
+
+  SUBCASE("it reads an option the parent parsed before the descent")
+  {
+    const auto [out, err] = testutils::capture_out_err(
+        [] { CHECK_EQ(cli::run(shapes{}, {"shapes"sv, "-w"sv, "4"sv, "row"sv, "y"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "yyyy\n");
+  }
+
+  SUBCASE("a const sub-command returning void works")
+  {
+    const auto [out, err] = testutils::capture_out_err(
+        [] { CHECK_EQ(cli::run(shapes{}, {"shapes"sv, "-w"sv, "3"sv, "report"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "width=3\n");
+  }
+
+  SUBCASE("a struct sub-command and a function sub-command coexist")
+  {
+    const auto [out, err] = testutils::capture_out_err(
+        [] { CHECK_EQ(cli::run(shapes{}, {"shapes"sv, "nested"sv, "here"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "nested here\n");
+  }
+
+  SUBCASE("a parent option after the sub-command name is not the parent's")
+  {
+    // Same rule as a nested struct sub-command: the parent's options have to
+    // come first, because after the descent the parser is matching against the
+    // sub-command's own list.
+    const auto [out, err] = testutils::capture_out_err(
+        [] { CHECK_NE(cli::run(shapes{}, {"shapes"sv, "report"sv, "-w"sv, "4"sv}), 0); });
+    CHECK_NE(err.find("unknown option: -w"), std::string::npos);
+  }
+}
+
+TEST_CASE("reflex::cli: a hybrid command lists both kinds of sub-command")
+{
+  const auto [out, err] =
+      testutils::capture_out_err([] { CHECK_EQ(cli::run(shapes{}, {"shapes"sv, "--help"sv}), 0); });
+  CHECK(err.empty());
+  CHECK_EQ(
+      out,
+      "USAGE: shapes [OPTIONS...] ARGUMENTS...\n"
+      "\n"
+      "Shape tool.\n"
+      "\n"
+      "OPTIONS:\n"
+      "  --help               Print this message and exit.\n"
+      "  --install-completion Install shell completion.\n"
+      "  --show-completion    Show shell completion.\n"
+      "  -w/--width           How wide.\n"
+      "\n"
+      "COMMANDS:\n"
+      "  row              Draw a row of dots.\n"
+      "  report           Report the width.\n"
+      "  nested           A nested struct sub-command.\n"
+      "\n");
+}
+
+TEST_CASE("reflex::cli: a member function sub-command prints its own usage")
+{
+  const auto [out, err] = testutils::capture_out_err(
+      [] { CHECK_EQ(cli::run(shapes{}, {"shapes"sv, "row"sv, "--help"sv}), 0); });
+  CHECK(err.empty());
+  CHECK_NE(out.find("Draw a row of dots."), std::string::npos);
+  CHECK_NE(out.find("glyph            Which character."), std::string::npos);
+}
+
 TEST_CASE("reflex::cli: a function command prints its usage")
 {
   const auto [out, err] =
