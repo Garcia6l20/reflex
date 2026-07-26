@@ -76,8 +76,7 @@ REFLEX_EXPORT namespace reflex::serde
     {
       for(auto member : nonstatic_data_members_of(remove_reference(^^T), __access_context))
       {
-        if(std::string_view{identifier_of(member)}.size() > 8
-           or std::string_view{serialized_name(member)}.size() > 8)
+        if(std::string_view{serialized_name(member)}.size() > 8)
         {
           return true;
         }
@@ -97,23 +96,10 @@ REFLEX_EXPORT namespace reflex::serde
       {
         template for(constexpr auto& member : __members())
         {
-          constexpr std::string_view id   = identifier_of(member);
           constexpr std::string_view name = serialized_name(member);
-          // A member only carries a second name when it is renamed or cased, so
-          // most of the time the two comparisons are the same one done twice.
-          if constexpr(id == name)
+          if(key == name)
           {
-            if(key == name)
-            {
-              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
-            }
-          }
-          else
-          {
-            if(key == name or key == id)
-            {
-              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
-            }
+            return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
           }
         }
       }
@@ -124,18 +110,10 @@ REFLEX_EXPORT namespace reflex::serde
         const std::uint64_t kw = detail::name_word(key);
         template for(constexpr auto& member : __members())
         {
-          constexpr std::string_view id   = identifier_of(member);
           constexpr std::string_view name = serialized_name(member);
           if(key.size() == name.size() and kw == detail::name_word(name) and key == name)
           {
             return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
-          }
-          if constexpr(id != name)
-          {
-            if(key.size() == id.size() and kw == detail::name_word(id) and key == id)
-            {
-              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
-            }
           }
         }
       }
@@ -146,18 +124,10 @@ REFLEX_EXPORT namespace reflex::serde
         const std::uint64_t kd = detail::name_digest(key);
         template for(constexpr auto& member : __members())
         {
-          constexpr std::string_view id   = identifier_of(member);
           constexpr std::string_view name = serialized_name(member);
           if(kd == detail::name_digest(name) and key == name)
           {
             return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
-          }
-          if constexpr(id != name)
-          {
-            if(kd == detail::name_digest(id) and key == id)
-            {
-              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
-            }
           }
         }
       }

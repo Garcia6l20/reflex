@@ -1297,3 +1297,29 @@ TEST_CASE("reflex::serde::xml: attribute-dense document round-trips byte for byt
   }
   CHECK_EQ(again, out);
 }
+
+TEST_CASE("reflex::serde::xml::deserializer: a member reads only under its serialized name")
+{
+  // Basic is camelCase with double_member kebab-cased, so the serialized names
+  // are intMember, stringMember and double-member. XML resolves elements and
+  // attributes with its own matching code, separate from object_visit, so the
+  // rule needs pinning here too.
+  SUBCASE("the serialized name resolves")
+  {
+    const std::string_view in =
+        "<Basic><intMember>7</intMember><stringMember>hi</stringMember>"
+        "<double-member>1.5</double-member></Basic>";
+    const auto value = xml::deserializer{in}.load<Basic>();
+    CHECK_EQ(value.int_member, 7);
+    CHECK_EQ(value.string_member, "hi");
+    CHECK_EQ(value.double_member, 1.5);
+  }
+  SUBCASE("the C++ identifier does not")
+  {
+    const std::string_view in =
+        "<Basic><int_member>7</int_member><string_member>hi</string_member></Basic>";
+    const auto value = xml::deserializer{in}.load<Basic>();
+    CHECK_EQ(value.int_member, 0);
+    CHECK_EQ(value.string_member, "");
+  }
+}

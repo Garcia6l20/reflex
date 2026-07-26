@@ -270,7 +270,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
       template for(constexpr auto member : define_static_array(
                        nonstatic_data_members_of(^^Row, std::meta::access_context::current())))
       {
-        if(not matched and (identifier_of(member) == col or serialized_name(member) == col))
+        if(not matched and serialized_name(member) == col)
         {
           map[idx] = static_cast<int>(i);
           matched  = true;

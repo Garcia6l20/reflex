@@ -392,14 +392,16 @@ TEST_CASE("reflex::serde::object_visit: every dispatch strategy matches the same
     CHECK_THROWS_AS(object_visit_flat("identifier_missing", v, [](auto const&) {}),
                     std::runtime_error);
   }
-  SUBCASE("wide, a renamed member answers to both names")
+  SUBCASE("wide, a renamed member answers to its serialized name only")
   {
     wide_renamed_shape v{};
     v.r00 = 5;
     v.t23 = 24;
     CHECK(reads(v, "a_rather_long_replacement_name", 5));
-    CHECK(reads(v, "r00", 5));
     CHECK(reads(v, "t23", 24));
+    // The rename replaces the name, it does not add one, so the C++ identifier
+    // no longer resolves.
+    CHECK_THROWS_AS(object_visit_flat("r00", v, [](auto const&) {}), std::runtime_error);
     CHECK_THROWS_AS(object_visit_flat("a_rather_long_replacement", v, [](auto const&) {}),
                     std::runtime_error);
   }

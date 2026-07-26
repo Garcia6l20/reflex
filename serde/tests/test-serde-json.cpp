@@ -378,6 +378,15 @@ TEST_CASE("reflex::serde::json::deserializer: aggregate")
     CHECK(!value.s.has_value());
     CHECK(!value.s2.has_value());
   }
+  SUBCASE("a member reads only under the name it is written under")
+  {
+    // S is camelCase, so int_member serializes as intMember. The C++ identifier
+    // is not a second name the reader also accepts.
+    const std::string_view serialized = JSON({"intMember":42});
+    const std::string_view identifier  = JSON({"int_member":42});
+    CHECK_EQ(json::deserializer{serialized}.load<S>().int_member, 42);
+    CHECK_THROWS(json::deserializer{identifier}.load<S>());
+  }
   SUBCASE("a dotted key names one member, it is not a path")
   {
     // A dot is an ordinary character in a JSON key. Reading it as a path would
