@@ -2,8 +2,8 @@
 
 > **command-line interfaces for C++26**, powered by static reflection.
 
-Define your CLI entirely as an annotated struct.  `reflex.cli` derives the parser,
-help text, and shell completions automatically.
+Define your CLI as an annotated struct, or as an annotated function.  `reflex.cli`
+derives the parser, help text, and shell completions automatically.
 
 No code generation, no macros, no registration calls.
 
@@ -63,14 +63,71 @@ ARGUMENTS:
 
 ---
 
+## Functions and callables
+
+A command can be a plain function instead of a struct.  Annotate the parameters
+rather than the members and pass the function's reflection to `cli::run`.
+
+```cpp
+[[= cli::command{"Simple echo command."}]]
+int echo(
+    [[= cli::argument{"Message to print."}]] std::string message,
+    [[= cli::option{"-p/--prefix", "Prefix."}]] std::string prefix,
+    [[= cli::option{"-r/--repeat", "Repeat count."}]] int repeat)
+{
+  for(auto _ : std::views::iota(0, std::max(repeat, 1)))
+  {
+    if(!prefix.empty())
+      std::print("{}: ", prefix);
+    std::println("{}", message);
+  }
+  return 0;
+}
+
+int main(int argc, const char** argv)
+{
+  return cli::run<^^echo>(argc, argv);
+}
+```
+
+The help text, the parsing and the completions are the same as for a struct: the
+parameters are described as the members of a synthesized aggregate and the
+ordinary parser runs on that.
+
+A lambda or a function object works the same way, named through the variable or
+the type that holds it.  A capturing lambda keeps its captures, and a function
+object type is default constructed.
+
+```cpp
+[[= cli::command{"Print a line of stars."}]]
+constexpr auto stars = []([[= cli::argument{"How many."}]] int count) { … };
+
+cli::run<^^stars>(argc, argv);
+```
+
+### What a function command cannot do
+
+| Refused | Why, and what to write instead |
+|---|---|
+| a defaulted parameter | there is nowhere to keep the default. Use `std::optional<T>` |
+| a reference parameter | a command line has nothing to bind it to |
+| a sub-command parameter | sub-commands are struct only, a parameter is not descended into |
+| a generic lambda | a templated call operator has no parameter types to read |
+| a return type that is neither `void` nor convertible to `int` | what a command returns is what the process returns |
+
+---
+
 ## Annotations
 
 ### `cli::command`
 
-Marks a struct as a (sub)command and provides its help text.
+Marks a struct as a (sub)command and provides its help text.  It marks a
+function, a lambda variable or a function object type the same way.
 
 ```cpp
 struct [[= cli::command{"Does something useful."}]] my_cmd { … };
+
+[[= cli::command{"Does something useful."}]] int my_cmd(…);
 ```
 
 ### `cli::argument`
@@ -104,6 +161,8 @@ forms: `"-f/--flag"`.  If only a long option is needed write `"--flag"`.
 ### Sub-commands
 
 Nest annotated structs as members.  Each nested struct becomes a sub-command.
+Sub-commands are struct only: a function parameter is not something the parser
+can descend into, so one that would become a sub-command is refused.
 
 ```cpp
 struct [[= cli::command{"Git-like tool."}]] git

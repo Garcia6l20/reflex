@@ -1,3 +1,50 @@
+/** @file
+ * @brief parsing a command line into an annotated command
+ *
+ * A command is a struct whose members are annotated, or a function whose
+ * parameters are. Both are driven by `cli::run`.
+ *
+ * @code
+ * struct[[= cli::command{"Print a message."}]] echo
+ * {
+ *   [[= cli::argument{"What to print."}]] std::string message;
+ *   [[= cli::option{"-r/--repeat", "How many times."}]] int repeat = 1;
+ *
+ *   int operator()() const { ...; return 0; }
+ * };
+ *
+ * int main(int argc, const char** argv) { return cli::run(echo{}, argc, argv); }
+ * @endcode
+ *
+ * @code
+ * [[= cli::command{"Print a message."}]]
+ * int echo([[= cli::argument{"What to print."}]] std::string message,
+ *          [[= cli::option{"-r/--repeat", "How many times."}]] int repeat)
+ * { ...; return 0; }
+ *
+ * int main(int argc, const char** argv) { return cli::run<^^echo>(argc, argv); }
+ * @endcode
+ *
+ * A function command is parsed by describing its parameters as the members of a
+ * synthesized aggregate and running the ordinary parser on that, so a
+ * diagnostic naming a type nobody wrote is naming those parameters. Anything
+ * callable works the same way: a lambda, capturing or not, a function object
+ * type, and a function all reduce to one function whose parameters are read.
+ *
+ * What a function command cannot do:
+ *  - **carry a defaulted parameter.** There is nowhere to put the default, and
+ *    it would silently become a value-initialized member. Write
+ *    `std::optional<T>`, which the parser already treats as optional.
+ *  - **take a reference parameter.** A command line has nothing to bind it to.
+ *  - **hold sub-commands.** A sub-command is a member the parser descends into
+ *    and calls, and a parameter is not something to descend into. Sub-commands
+ *    are struct only, and a parameter that would become one is refused.
+ *  - **be a generic lambda,** or anything else whose call operator is a
+ *    template. There are no parameter types to build members from until it is
+ *    substituted.
+ *  - **return something other than void or a type convertible to int.** What a
+ *    command returns is what the process returns.
+ */
 #pragma once
 
 #ifndef REFLEX_EXPORT

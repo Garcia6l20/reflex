@@ -29,7 +29,7 @@ compile time — fully type-safe, with zero overhead at runtime.
 
 ## Taste of the API
 
-### `reflex.cli` - annotated structs become argument parsers
+### `reflex.cli` - annotated structs and functions become argument parsers
 
 ```cpp
 import reflex.cli;
@@ -65,6 +65,19 @@ OPTIONS:
 
 COMMANDS:
   push             Push changes.
+```
+
+A command can also be a function, with its parameters annotated instead of a
+struct's members.
+
+```cpp
+[[= cli::command{"Print a line of dots."}]]
+int dots([[= cli::argument{"How many dots."}]] int count) { … }
+
+int main(int argc, const char** argv)
+{
+  return cli::run<^^dots>(argc, argv);
+}
 ```
 
 > See [cli/README.md](cli/README.md) for more details.

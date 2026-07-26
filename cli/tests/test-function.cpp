@@ -233,6 +233,37 @@ struct[[= cli::command{"Holds a sub-command and nothing else."}]] branch
   leaf sub;
 };
 
+struct[[= cli::command{"Print a line of pluses."}]] pluses
+{
+  [[= cli::argument{"How many pluses."}]] int count;
+
+  int operator()() const
+  {
+    for(auto _ : std::views::iota(0, count))
+    {
+      std::print("+");
+    }
+    std::println();
+    return 0;
+  }
+};
+
+TEST_CASE("reflex::cli: a struct command and a function command share a unit")
+{
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run(pluses{}, {"pluses"sv, "3"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "+++\n");
+  }
+  {
+    const auto [out, err] =
+        testutils::capture_out_err([] { CHECK_EQ(cli::run<^^dots>({"dots"sv, "3"sv}), 0); });
+    CHECK(err.empty());
+    CHECK_EQ(out, "...\n");
+  }
+}
+
 TEST_CASE("reflex::cli: a command with no way to run reports it")
 {
   const auto [out, err] =
