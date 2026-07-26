@@ -224,6 +224,13 @@ REFLEX_EXPORT namespace reflex
      */
     consteval auto callable_on(std::meta::info m, std::meta::info self) -> bool
     {
+      // A static member has no object parameter to satisfy, and naming it
+      // through an object is legal whatever that object is qualified with.
+      if(std::meta::is_static_member(m))
+      {
+        return true;
+      }
+
       const bool self_const  = std::meta::is_const_type(std::meta::remove_reference(self));
       const bool self_rvalue = std::meta::is_rvalue_reference_type(self);
 
@@ -305,14 +312,57 @@ REFLEX_EXPORT namespace reflex
       return std::meta::substitute(^^bound_overload_base, candidates);
     }
 
+    /** @brief the members of @p scope named @p name that need no object */
+    consteval auto static_set_type(std::meta::info scope, std::string_view name) -> std::meta::info
+    {
+      std::vector<std::meta::info> candidates;
+      for(auto o : overloads_of(scope, name))
+      {
+        if(std::meta::is_static_member(o.function))
+        {
+          candidates.push_back(candidate_type(^^free_candidate, o));
+        }
+      }
+      return std::meta::substitute(^^overload_base, candidates);
+    }
+
     template <std::meta::info Scope, constant_string Name, typename Self>
     using bound_set_t = [:bound_set_type(Scope, ^^Self&&, Name.get()):];
 
-    // The requirement names this variable rather than the alias directly: a
+    template <std::meta::info Scope, constant_string Name>
+    using static_set_t = [:static_set_type(Scope, Name.get()):];
+
+    // These requirements name a variable rather than the alias directly: a
     // requires-clause mentioning a consteval splice alias corrupts the splice
     // on GCC 16.
+    //
+    // The object has to be one, not merely the first argument. Without that,
+    // a static call whose first argument happens to fit would be taken for a
+    // member call and fail inside the candidate rather than here.
+    template <std::meta::info Scope> using scope_t = [:Scope:];
+
+    // The object test has to be settled before the set is built at all, hence
+    // if constexpr rather than a conjunction: a set bound to something that is
+    // not an object of the class still substitutes, and asking whether it is
+    // invocable then instantiates a candidate body that cannot compile.
     template <std::meta::info Scope, constant_string Name, typename Self, typename... Args>
-    constexpr bool bound_invocable = std::invocable<bound_set_t<Scope, Name, Self>, Args...>;
+    consteval auto bound_invocable_of() -> bool
+    {
+      if constexpr(std::derived_from<std::remove_cvref_t<Self>, scope_t<Scope>>)
+      {
+        return std::invocable<bound_set_t<Scope, Name, Self>, Args...>;
+      }
+      else
+      {
+        return false;
+      }
+    }
+
+    template <std::meta::info Scope, constant_string Name, typename Self, typename... Args>
+    constexpr bool bound_invocable = bound_invocable_of<Scope, Name, Self, Args...>();
+
+    template <std::meta::info Scope, constant_string Name, typename... Args>
+    constexpr bool static_invocable = std::invocable<static_set_t<Scope, Name>, Args...>;
 
     /** @brief resolves a member call once the object is known
      *
@@ -329,6 +379,17 @@ REFLEX_EXPORT namespace reflex
       {
         using set_type = [:bound_set_type(Scope, ^^Self&&, Name.get()):];
         return set_type{std::forward<Self>(self)}(std::forward<Args>(args)...);
+      }
+
+      // A static member needs no object, so it is reachable with the arguments
+      // alone. It stays in the bound set as well, since a static member can be
+      // named through an object too.
+      template <typename... Args>
+        requires static_invocable<Scope, Name, Args...>
+      constexpr decltype(auto) operator()(Args&&... args) const
+      {
+        using set_type = [:static_set_type(Scope, Name.get()):];
+        return set_type{}(std::forward<Args>(args)...);
       }
     };
 
