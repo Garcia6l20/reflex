@@ -236,6 +236,158 @@ REFLEX_EXPORT namespace reflex::cli
     {}
   };
 
+  /** @brief refuse @p subject of command @p command, pointing at @p loc
+   *
+   * The messages are assembled rather than formatted because std::format is not
+   * available in a constant expression under libstdc++.
+   */
+  consteval void refuse_command(
+      std::string_view command, std::string_view subject, std::string_view reason,
+      std::source_location loc)
+  {
+    std::string message{command};
+    message += ": ";
+    message += subject;
+    message += ' ';
+    message += reason;
+    const_assert(false, message, loc);
+  }
+
+  /** @brief one data member per parameter of @p Fn, carrying its annotations
+   *
+   * A command is driven off an aggregate: the parser walks the members and
+   * writes parsed values into them. Describing a function's parameters as
+   * members lets that same walk read a function without knowing it is one.
+   *
+   * Every function command goes through here, so the refusals live here too.
+   */
+  template <std::meta::info Fn> consteval auto command_member_specs()
+      -> std::vector<std::meta::info>
+  {
+    const auto name        = std::meta::identifier_of(Fn);
+    const auto return_type = std::meta::return_type_of(Fn);
+
+    if(not is_void_type(return_type) and not is_convertible_type(return_type, ^^int))
+    {
+      refuse_command(
+          name, "returns", "something that is neither void nor convertible to int",
+          source_location_of(Fn));
+    }
+
+    std::vector<std::meta::info> members;
+    std::size_t                  position = 0;
+    for(auto param : std::meta::parameters_of(Fn))
+    {
+      ++position;
+      const auto where = source_location_of(param);
+
+      if(not has_identifier(param))
+      {
+        refuse_command(name, "an unnamed parameter", "has no member to fill", where);
+        continue;
+      }
+
+      const auto param_name = std::meta::identifier_of(param);
+      const auto type       = std::meta::type_of(param);
+
+      std::string subject{"parameter '"};
+      subject += param_name;
+      subject += '\'';
+
+      // data_member_spec carries no initializer, so a declared default would be
+      // silently replaced by value-initialization. std::optional<T> says the
+      // same thing and the parser already treats it as optional.
+      if(has_default_argument(param))
+      {
+        refuse_command(
+            name, subject,
+            "has a default argument, which a command cannot carry, "
+            "use std::optional<T> for an optional argument",
+            where);
+      }
+
+      // A reference member makes the aggregate non default constructible, and a
+      // command line has nothing to bind it to.
+      if(is_reference_type(type))
+      {
+        refuse_command(name, subject, "is a reference, which a command cannot bind", where);
+      }
+
+      const auto annotations = annotations_of(param);
+
+      // A sub-command is descended into and called. A function parameter is not
+      // something to descend into, so both the annotated form and the implicit
+      // one are refused instead of becoming an unreachable sub-command.
+      bool is_sub_command = annotations.empty()
+                        and is_class_type(type)
+                        and meta::has_annotation(type, ^^command);
+      for(auto a : annotations)
+      {
+        is_sub_command |= decay(type_of(constant_of(a))) == ^^command;
+      }
+      if(is_sub_command)
+      {
+        refuse_command(name, subject, "names a sub-command, and sub-commands are struct only", where);
+      }
+
+      members.push_back(
+          std::meta::data_member_spec(type, {.name = param_name, .annotations = annotations}));
+    }
+    return members;
+  }
+
+  /** @brief the command annotation carried by @p Fn, or a default one */
+  consteval auto command_annotation_of(std::meta::info Fn) -> command
+  {
+    try
+    {
+      return meta::annotation_value_of_with<command>(Fn);
+    }
+    catch(std::meta::exception const&)
+    {
+      return {};
+    }
+  }
+
+  /** @brief holder for the aggregate a function command is parsed into
+   *
+   * define_aggregate has to be evaluated from a consteval block with no scope
+   * between the block and the type it completes, which rules out completing a
+   * namespace-scope type from inside a function. A member class of the same
+   * class template as the block satisfies it, and gives the aggregate a name
+   * that varies with Fn. That last part is load bearing: reflections of the
+   * members of two same-named local classes are interchanged by
+   * define_static_array under GCC 16, so a local aggregate would let two
+   * commands declaring the same parameters read each other's members.
+   */
+  template <std::meta::info Fn> struct command_of
+  {
+    static constexpr auto function = Fn;
+
+    struct args;
+    consteval { std::meta::define_aggregate(^^args, command_member_specs<Fn>()); }
+  };
+
+  /** @brief the aggregate @p Fn is parsed into, one member per parameter */
+  template <std::meta::info Fn> using command_args = typename command_of<Fn>::args;
+
+  /** @brief the command annotation describing @p I
+   *
+   * A synthesized aggregate never carries one of its own: an annotation written
+   * on a declaration completed by define_aggregate is dropped, under GCC 16,
+   * whenever the declaration sits in a template. The holder that declared it
+   * names the function, and the function is what the user annotated.
+   */
+  consteval auto command_annotation_for(std::meta::info I) -> command
+  {
+    const auto holder = parent_of(dealias(I));
+    if(is_type(holder) and has_template_arguments(holder) and template_of(holder) == ^^command_of)
+    {
+      return command_annotation_of(extract<std::meta::info>(template_arguments_of(holder)[0]));
+    }
+    return command_annotation_of(I);
+  }
+
   template <std::meta::info I, bool include_install_completion = true> constexpr auto raw_parse()
   {
     std::vector<std::meta::info> arguments;
@@ -313,7 +465,7 @@ REFLEX_EXPORT namespace reflex::cli
   template <std::meta::info I, bool include_install_completion = true>
   void usage_of(std::string_view program)
   {
-    static constexpr auto command              = command_info{I};
+    static constexpr auto description          = command_annotation_for(I);
     static constexpr auto [args, opts, s_cmds] = parse<I, include_install_completion>();
 
     static constexpr std::size_t min_id_size = 16;
@@ -325,7 +477,7 @@ REFLEX_EXPORT namespace reflex::cli
 
     std::println("USAGE: {} [OPTIONS...] ARGUMENTS...", program);
 
-    if constexpr(constexpr auto help = command.help(); not help->empty())
+    if constexpr(constexpr auto help = description.help; not help->empty())
     {
       std::println();
       std::println("{}", *help);
