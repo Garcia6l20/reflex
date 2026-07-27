@@ -531,3 +531,38 @@ TEST_CASE("reflex::core::bson file roundtrip")
 
   std::filesystem::remove(bson_path);
 }
+
+// BSON is the one backend with no borrowed read to offer. Its payload is decoded
+// through a byte cursor into a local, and on a non-contiguous input there is no
+// buffer to point at, so a destination that owns no storage is refused outright:
+//
+//   struct V { std::string_view text; };
+//   bson::deserializer{bytes}.load<V>();
+//
+//   error: static assertion failed: std::basic_string_view<char> cannot be a BSON
+//   string destination: it does not own writable storage (expected std::string,
+//   reflex::heapless::string<N> or std::array<char, N>). BSON does not offer a
+//   borrowed read
+//
+// Before the refusal this compiled and read back the freed bytes of that local,
+// with no diagnostic and no throw.
+static_assert(not serde::detail::string_sink_c<std::string_view>);
+static_assert(serde::detail::string_sink_c<std::string>);
+
+TEST_CASE("reflex::serde::bson: an owning string destination is unaffected")
+{
+  struct Owned
+  {
+    std::string         text;
+    heapless::string<8> small;
+
+    bool operator==(Owned const& other) const = default;
+  };
+
+  const Owned            expected{"hello there", "abc"};
+  std::vector<std::byte> out;
+  bson::serializer       ser{out};
+  ser.dump(expected);
+
+  CHECK_EQ(bson::deserializer{out}.load<Owned>(), expected);
+}

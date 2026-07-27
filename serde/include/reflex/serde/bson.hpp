@@ -662,6 +662,21 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON string type");
         }
+        // The destination must own the bytes. Asked before the assignment rather
+        // than through it: a std::string_view is assignable from a std::string,
+        // through the conversion operator, so probing with the assignment accepts
+        // a view and then hands back a view of the local below.
+        //
+        // Unlike the character backends, BSON has no borrowing case to offer
+        // instead. Its payload is decoded through a byte cursor into `decoded`,
+        // and on a non-contiguous input there is no buffer to point at at all.
+        static_assert(
+            serde::detail::string_sink_c<value_t>,
+            std::string(display_string_of(dealias(^^value_t)))
+                + " cannot be a BSON string destination: it does not own writable storage"
+                  " (expected std::string, reflex::heapless::string<N> or std::array<char, N>)."
+                  " BSON does not offer a borrowed read");
+
         auto decoded = cursor_.template read<std::string, true>();
         // Probe with the assignment that is actually performed, so the decoded string
         // is moved into the member rather than copied.
