@@ -62,6 +62,23 @@ REFLEX_EXPORT namespace reflex::serde::detail
   template <typename S>
   concept string_sink_c = growable_string_sink_c<S> or fixed_string_sink_c<S>;
 
+  // The other half: a destination that owns nothing but can be pointed at bytes
+  // someone else owns, std::string_view being the one that turns up. Choosing it
+  // as the member type is the opt-in to a borrowed read, and to the lifetime
+  // contract that comes with one.
+  //
+  // A backend that offers a borrowed read hands back a view of the input it was
+  // given. That view is valid only while that input is alive and unmodified, and
+  // nothing in the type system enforces it: deserializing from a temporary
+  // std::string leaves every borrowed member dangling. It is spelled out at every
+  // site that can produce one.
+  //
+  // char const* is deliberately not one of these. It is not constructible from a
+  // pointer and a length, and a run inside the input is not null-terminated.
+  template <typename S>
+  concept borrowed_string_sink_c =
+      (not string_sink_c<S>) and std::constructible_from<S, char const*, std::size_t>;
+
   // A back_insert_iterator exposes its container type but not the container, so
   // the bulk-append fast path needs the container captured at construction. This
   // detects an output iterator whose container can take a whole run at once;

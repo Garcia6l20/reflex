@@ -562,8 +562,15 @@ REFLEX_EXPORT namespace reflex::serde::json
     // Reads an object key and hands back a view of it.
     //
     // The view points into the input buffer, not into anything the parse owns,
-    // so advancing the cursor does not invalidate it. Nothing borrowed escapes
-    // the deserializer: object_visit copies what it needs into the target.
+    // so advancing the cursor does not invalidate it. A key borrowed here never
+    // reaches the caller: object_visit copies what it needs into the target, and
+    // the fallback below parks a decoded key in key_buf_, which the next key
+    // overwrites.
+    //
+    // Values are a different matter. A std::string_view member does hand a borrow
+    // to the caller, deliberately, and carries the input-lifetime contract with
+    // it. That is the string reader's business, not this one's, and it is why
+    // the fallback here can keep using a buffer the next call reuses.
     //
     // The fast path is a key with no escape on a contiguous cursor, which is
     // every key in practice. It borrows. Everything else, an escaped key or a
@@ -657,9 +664,51 @@ REFLEX_EXPORT namespace reflex::serde::json
       throw std::runtime_error("Unterminated JSON string");
     }
 
-    // A string destination that owns none of the storage the decoded bytes would
-    // go into, a std::string_view member being the one that turns up. It is
-    // refused here rather than left to the fill path below, which is written
+    // Borrowed read. A std::string_view destination is handed a view of the input
+    // rather than a copy, and choosing that member type is the opt-in.
+    //
+    // LIFETIME: the view is valid only while the input this deserializer was given
+    // stays alive and unmodified. Nothing in the type system enforces that, so
+    // `json::deserializer{std::string{...}}.load<T>()` leaves every borrowed
+    // member dangling. Deserialize from an lvalue that outlives the result, or
+    // from serde::mmap_input_stream.
+    //
+    // An escaped value has no borrowed form: the decoded bytes are not a run of
+    // the input, and there is nowhere to put them that outlives the parse. It
+    // throws. Whether a value carries an escape is the producer's choice rather
+    // than the schema's, so this is the caller's risk to take, deliberately.
+    //
+    // The escape is found before a single byte is emitted, not partway through:
+    // find_terminator bounds the body first, then one scan decides. So there is
+    // no partial write to unwind, and the throw leaves the cursor untouched.
+    template <str_c Str>
+      requires serde::detail::borrowed_string_sink_c<Str> and deserializer<InputIt>::bulk_scan
+    friend Str
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    {
+      if(de.advance() != '"')
+      {
+        throw std::runtime_error("Expected '\"' at start of JSON string");
+      }
+
+      const std::string_view sv   = de.rest();
+      const std::string_view span = sv.substr(0, find_terminator(sv));
+      if(span.find('\\') != std::string_view::npos)
+      {
+        throw std::runtime_error(
+            "JSON: a borrowed string destination cannot hold an escaped value");
+      }
+      de.skip(span.size() + 1);
+      return Str{span.data(), span.size()};
+    }
+
+    // A string destination that neither owns the storage the decoded bytes would
+    // go into nor can be pointed at the input. Two shapes reach here: a type that
+    // owns nothing and cannot be built from a run, char const* being one, and a
+    // std::string_view on the streaming cursor, where there is no buffer to point
+    // at because the input arrives a character at a time.
+    //
+    // Refused here rather than left to the fill path below, which is written
     // against iterators and so accepts a view syntactically, then fails on the
     // assignment with a message naming neither the type nor the member.
     //
@@ -669,14 +718,28 @@ REFLEX_EXPORT namespace reflex::serde::json
     // reason, so the caller does not then report a void conversion on top.
     template <str_c Str>
       requires(not serde::detail::string_sink_c<Str>)
+              and (not(serde::detail::borrowed_string_sink_c<Str>
+                       and deserializer<InputIt>::bulk_scan))
     friend Str
         tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
     {
-      static_assert(
-          false,
-          std::string(display_string_of(^^Str))
-              + " cannot be a JSON string destination: it does not own writable storage"
-                " (expected std::string, reflex::heapless::string<N> or std::array<char, N>)");
+      if constexpr(serde::detail::borrowed_string_sink_c<Str>)
+      {
+        static_assert(
+            false,
+            std::string(display_string_of(dealias(^^Str)))
+                + " cannot be a JSON string destination on this cursor: a borrowed read needs a"
+                  " contiguous input to point at, and this deserializer reads a character at a"
+                  " time (use std::string, or deserialize from a contiguous input)");
+      }
+      else
+      {
+        static_assert(
+            false,
+            std::string(display_string_of(dealias(^^Str)))
+                + " cannot be a JSON string destination: it does not own writable storage"
+                  " (expected std::string, reflex::heapless::string<N> or std::array<char, N>)");
+      }
       std::unreachable();
     }
 

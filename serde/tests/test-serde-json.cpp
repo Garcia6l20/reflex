@@ -937,20 +937,43 @@ static_assert(not serde::detail::fixed_string_sink_c<std::string_view>);
 static_assert(serde::detail::fixed_string_sink_c<std::array<char, 5>>);
 static_assert(not serde::detail::growable_string_sink_c<std::array<char, 5>>);
 
-// A std::string_view member owns nothing, so it cannot be a destination. There
-// is no way to spell that as a running check, since it is a compile error:
+// A std::string_view owns nothing, so it is not a sink. It is the borrowed
+// destination instead, and reads a view of the input. char const* is neither: it
+// cannot be built from a pointer and a length, and a run of the input carries no
+// terminator. It is a compile error naming the type:
 //
-//   json::deserializer{R"("abc")"sv}.load<std::string_view>();
+//   error: static assertion failed: const char* cannot be a JSON string
+//   destination: it does not own writable storage (expected std::string,
+//   reflex::heapless::string<N> or std::array<char, N>)
+static_assert(not serde::detail::string_sink_c<std::string_view>);
+static_assert(serde::detail::borrowed_string_sink_c<std::string_view>);
+static_assert(not serde::detail::string_sink_c<char const*>);
+static_assert(not serde::detail::borrowed_string_sink_c<char const*>);
+
+// A sink is never also a borrowed destination, so no string type can reach both
+// readers.
+static_assert(not serde::detail::borrowed_string_sink_c<std::string>);
+static_assert(not serde::detail::borrowed_string_sink_c<std::array<char, 5>>);
+static_assert(not serde::detail::borrowed_string_sink_c<heapless::string<8>>);
+
+// The borrowed read exists only where there is a buffer to point at. On the
+// streaming cursor the input arrives a character at a time, so the same member
+// is a compile error:
 //
-// which is refused by name:
+//   json::deserializer{std::istringstream{...}}.load<std::string_view>();
 //
 //   error: static assertion failed: std::basic_string_view<char> cannot be a
-//   JSON string destination: it does not own writable storage (expected
-//   std::string, reflex::heapless::string<N> or std::array<char, N>)
-//
-// Writing a view member out is unaffected and still works.
-static_assert(not serde::detail::string_sink_c<std::string_view>);
-static_assert(not serde::detail::string_sink_c<char const*>);
+//   JSON string destination on this cursor: a borrowed read needs a contiguous
+//   input to point at, and this deserializer reads a character at a time (use
+//   std::string, or deserialize from a contiguous input)
+static_assert(json::deserializer<std::string_view::const_iterator>::bulk_scan);
+static_assert(not json::deserializer<std::istreambuf_iterator<char>>::bulk_scan);
+
+struct Borrowed
+{
+  std::string_view text;
+  int              n;
+};
 
 TEST_CASE("reflex::serde::json: a string destination that owns its storage")
 {
@@ -977,11 +1000,76 @@ TEST_CASE("reflex::serde::json: a string destination that owns its storage")
 
   SUBCASE("a non-owning member still serializes")
   {
-    struct Borrowed
+    CHECK_EQ(json_dump(Borrowed{"abc", 1}), JSON({"text":"abc","n":1}));
+  }
+}
+
+TEST_CASE("reflex::serde::json: a borrowed string destination")
+{
+  // Held by name, not as a temporary: the views read out of it point into it.
+  const std::string in = JSON({"text":"hello there","n":7});
+
+  SUBCASE("points into the input rather than copying it")
+  {
+    const auto v = json::deserializer{std::string_view{in}}.load<Borrowed>();
+    CHECK_EQ(v.text, "hello there"sv);
+    CHECK_EQ(v.n, 7);
+
+    // The point of the whole exercise. Comparing content would pass for a copy
+    // too, so the check is on the address: the member must alias the input.
+    const char* const lo = in.data();
+    const char* const hi = in.data() + in.size();
+    CHECK(v.text.data() >= lo);
+    CHECK(v.text.data() + v.text.size() <= hi);
+    CHECK_EQ(v.text.data(), in.data() + in.find("hello there"));
+  }
+
+  SUBCASE("borrows from an owning string input too")
+  {
+    const auto v = json::deserializer{in}.load<Borrowed>();
+    CHECK_EQ(v.text.data(), in.data() + in.find("hello there"));
+  }
+
+  SUBCASE("an escaped value throws rather than copying or dangling")
+  {
+    const std::string esc = JSON({"text":"a\nb","n":7});
+    CHECK_THROWS_AS(
+        (json::deserializer{std::string_view{esc}}.load<Borrowed>()), std::runtime_error);
+  }
+
+  SUBCASE("an escape anywhere in the value is enough")
+  {
+    // A doubled quote, a doubled backslash, an escape in the middle, a unicode
+    // escape and one at the very end. None of these is a run of the input.
+    const std::array<std::string_view, 5> bodies{
+        "\\\"", "\\\\", "x\\ty", "\\u0041", "tail\\n"};
+    for(const std::string_view body : bodies)
     {
-      std::string_view text;
-    };
-    CHECK_EQ(json_dump(Borrowed{"abc"}), JSON({"text":"abc"}));
+      const std::string doc = "{\"text\":\"" + std::string{body} + "\",\"n\":7}";
+      CHECK_THROWS_AS(
+          (json::deserializer{std::string_view{doc}}.load<Borrowed>()), std::runtime_error);
+    }
+  }
+
+  SUBCASE("an empty value borrows nothing and is fine")
+  {
+    const std::string empty = JSON({"text":"","n":7});
+    const auto        v     = json::deserializer{std::string_view{empty}}.load<Borrowed>();
+    CHECK(v.text.empty());
+    CHECK_EQ(v.n, 7);
+  }
+
+  SUBCASE("an unterminated value still throws")
+  {
+    CHECK_THROWS((json::deserializer{R"({"text":"abc)"sv}.load<Borrowed>()));
+  }
+
+  SUBCASE("a bare view, no aggregate around it")
+  {
+    const std::string doc = R"("just a string")";
+    const auto        v   = json::deserializer{std::string_view{doc}}.load<std::string_view>();
+    CHECK_EQ(v, "just a string"sv);
+    CHECK_EQ(v.data(), doc.data() + 1);
   }
 }
 
