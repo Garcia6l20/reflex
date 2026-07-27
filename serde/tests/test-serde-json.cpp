@@ -950,6 +950,24 @@ static_assert(serde::detail::borrowed_string_sink_c<std::string_view>);
 static_assert(not serde::detail::string_sink_c<char const*>);
 static_assert(not serde::detail::borrowed_string_sink_c<char const*>);
 
+// A str_c type that copies the run it is built from is still accepted. It rides
+// the borrowed path, which is safe for a type that copies, rather than being
+// refused for lacking push_back.
+struct CopyingString
+{
+  std::string held;
+
+  explicit CopyingString(std::string_view s) : held{s}
+  {}
+  operator std::string_view() const
+  {
+    return held;
+  }
+};
+static_assert(str_c<CopyingString>);
+static_assert(not serde::detail::string_sink_c<CopyingString>);
+static_assert(serde::detail::borrowed_string_sink_c<CopyingString>);
+
 // A sink is never also a borrowed destination, so no string type can reach both
 // readers.
 static_assert(not serde::detail::borrowed_string_sink_c<std::string>);

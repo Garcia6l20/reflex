@@ -73,11 +73,17 @@ REFLEX_EXPORT namespace reflex::serde::detail
   // std::string leaves every borrowed member dangling. It is spelled out at every
   // site that can produce one.
   //
-  // char const* is deliberately not one of these. It is not constructible from a
-  // pointer and a length, and a run inside the input is not null-terminated.
+  // Spelled as construction from a whole run, which is how the character backends
+  // have always built a string destination that is not a sink. Any type that used
+  // to be built that way still is, so widening the guard does not narrow what
+  // compiles: a type that copies the run is simply carried along a path built for
+  // one that does not, and copying is safe on either.
+  //
+  // char const* is deliberately not one of these. A run inside the input carries
+  // no terminator.
   template <typename S>
   concept borrowed_string_sink_c =
-      (not string_sink_c<S>) and std::constructible_from<S, char const*, std::size_t>;
+      (not string_sink_c<S>) and std::constructible_from<S, std::string_view>;
 
   // A back_insert_iterator exposes its container type but not the container, so
   // the bulk-append fast path needs the container captured at construction. This

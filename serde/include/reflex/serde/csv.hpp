@@ -228,7 +228,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
       {
         throw std::runtime_error("CSV: a borrowed string destination cannot hold a decoded cell");
       }
-      return F{cell.data(), cell.size()};
+      return F{cell};
     }
     else if constexpr(str_c<F>)
     {

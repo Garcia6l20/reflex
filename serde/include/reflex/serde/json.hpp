@@ -699,7 +699,7 @@ REFLEX_EXPORT namespace reflex::serde::json
             "JSON: a borrowed string destination cannot hold an escaped value");
       }
       de.skip(span.size() + 1);
-      return Str{span.data(), span.size()};
+      return Str{span};
     }
 
     // A string destination that neither owns the storage the decoded bytes would

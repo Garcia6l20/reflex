@@ -607,7 +607,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
         throw std::runtime_error(
             "XML: a borrowed string destination cannot hold a decoded value");
       }
-      return F{text.data(), text.size()};
+      return F{text};
     }
     else if constexpr(str_c<F>)
     {
