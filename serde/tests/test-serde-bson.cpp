@@ -6,6 +6,7 @@ import std;
 
 using namespace reflex;
 using namespace reflex::serde;
+using namespace std::literals;
 
 struct[[= serde::naming::camel_case]] S
 {
@@ -532,22 +533,129 @@ TEST_CASE("reflex::core::bson file roundtrip")
   std::filesystem::remove(bson_path);
 }
 
-// BSON is the one backend with no borrowed read to offer. Its payload is decoded
-// through a byte cursor into a local, and on a non-contiguous input there is no
-// buffer to point at, so a destination that owns no storage is refused outright:
+// A std::string_view member reads a run of the input instead of a copy.
 //
-//   struct V { std::string_view text; };
-//   bson::deserializer{bytes}.load<V>();
+// BSON is the one backend where that borrow is unconditional. It carries a string
+// as its bytes with a count in front, so there is no escape and no decode, and
+// every payload on a contiguous input is already a run of it. There is no value
+// this has to refuse and so no runtime throw, which is not true of the three
+// character backends.
+//
+// On a non-contiguous input there is nothing to point at and it is a compile
+// error:
+//
+//   bson::deserializer{some_istream}.load<BorrowedValue>();
 //
 //   error: static assertion failed: std::basic_string_view<char> cannot be a BSON
-//   string destination: it does not own writable storage (expected std::string,
-//   reflex::heapless::string<N> or std::array<char, N>). BSON does not offer a
-//   borrowed read
+//   string destination on this cursor: a borrowed read needs a contiguous input to
+//   point at, and this deserializer reads a byte at a time (use std::string, or
+//   deserialize from a contiguous input)
 //
-// Before the refusal this compiled and read back the freed bytes of that local,
-// with no diagnostic and no throw.
+// Before this, the same member compiled and read back the freed bytes of the local
+// the payload had been decoded into, with no diagnostic and no throw.
 static_assert(not serde::detail::string_sink_c<std::string_view>);
+static_assert(serde::detail::borrowed_string_sink_c<std::string_view>);
 static_assert(serde::detail::string_sink_c<std::string>);
+static_assert(not serde::detail::borrowed_string_sink_c<std::string>);
+
+namespace
+{
+  struct BorrowedValue
+  {
+    std::string_view text;
+    std::int32_t     n;
+  };
+
+  // Where `needle` starts inside `haystack`, as a pointer, so a borrow can be
+  // checked by address rather than by content.
+  const char* find_bytes(std::span<const std::byte> haystack, std::string_view needle)
+  {
+    const auto* const first = reinterpret_cast<char const*>(haystack.data());
+    const std::string_view all{first, haystack.size()};
+    const auto             at = all.find(needle);
+    REQUIRE(at != std::string_view::npos);
+    return first + at;
+  }
+
+  std::vector<std::byte> bson_bytes(auto const& value)
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(value);
+    return out;
+  }
+} // namespace
+
+TEST_CASE("reflex::serde::bson: a borrowed string destination")
+{
+  SUBCASE("points into the input rather than copying it")
+  {
+    // Held by name: the view read out of it points into it.
+    const auto in = bson_bytes(BorrowedValue{"hello there", 7});
+    const auto v  = bson::deserializer{in}.load<BorrowedValue>();
+
+    CHECK_EQ(v.text, "hello there"sv);
+    CHECK_EQ(v.n, 7);
+    // Address, not content: comparing bytes would pass for a copy too, and the
+    // dangling read this replaces had the right length.
+    CHECK_EQ(v.text.data(), find_bytes(in, "hello there"));
+  }
+
+  SUBCASE("the view excludes the terminator the length counts")
+  {
+    // The off-by-one that content-based checks miss: a view one byte too long
+    // still compares equal to the expected text under most spellings, because
+    // the stray byte is a null.
+    const auto in = bson_bytes(BorrowedValue{"abcd", 1});
+    const auto v  = bson::deserializer{in}.load<BorrowedValue>();
+
+    CHECK_EQ(v.text.size(), 4u);
+    CHECK_EQ(v.text.back(), 'd');
+    CHECK_EQ(*(v.text.data() + v.text.size()), '\0'); // the terminator, just past the view
+  }
+
+  SUBCASE("an embedded null survives")
+  {
+    // The case that tells a length-prefixed read apart from one that stopped at
+    // the terminator. A BSON string may hold a null and a view represents it.
+    const auto with_null = "a\0b"sv;
+    REQUIRE_EQ(with_null.size(), 3u);
+
+    const auto in = bson_bytes(BorrowedValue{with_null, 2});
+    const auto v  = bson::deserializer{in}.load<BorrowedValue>();
+
+    CHECK_EQ(v.text.size(), 3u);
+    CHECK_EQ(v.text, with_null);
+    CHECK_EQ(v.n, 2);
+  }
+
+  SUBCASE("an empty value is fine")
+  {
+    const auto in = bson_bytes(BorrowedValue{"", 3});
+    const auto v  = bson::deserializer{in}.load<BorrowedValue>();
+    CHECK(v.text.empty());
+    CHECK_EQ(v.n, 3);
+  }
+
+  SUBCASE("a truncated document still throws")
+  {
+    auto in = bson_bytes(BorrowedValue{"hello there", 7});
+    in.resize(in.size() / 2);
+    CHECK_THROWS((bson::deserializer{in}.load<BorrowedValue>()));
+  }
+
+  SUBCASE("borrows from a char input as well as a byte one")
+  {
+    // contiguous_byte_or_char covers std::byte, char and unsigned char, and the
+    // payload is read through char const* in every case.
+    const auto        bytes = bson_bytes(BorrowedValue{"hello there", 7});
+    const std::string in{reinterpret_cast<char const*>(bytes.data()), bytes.size()};
+
+    const auto v = bson::deserializer{in}.load<BorrowedValue>();
+    CHECK_EQ(v.text, "hello there"sv);
+    CHECK_EQ(v.text.data(), in.data() + in.find("hello there"));
+  }
+}
 
 TEST_CASE("reflex::serde::bson: an owning string destination is unaffected")
 {
