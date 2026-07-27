@@ -185,13 +185,16 @@ REFLEX_EXPORT namespace reflex::serde::csv
     write_record<Row>(ser, [&row]<auto member>(Ser& s) { write_field(s, row.[:member:]); });
   }
 
-  template <typename F> F parse_field(std::string_view cell)
+  // `borrowed` says whether `cell` is a run of the deserializer's input rather
+  // than of the pool read_record decodes into. Only a borrowed destination looks
+  // at it, and the caller is the one that can answer it.
+  template <typename F> F parse_field(std::string_view cell, bool borrowed = false)
   {
     if constexpr(optional_c<F>)
     {
       using U = typename field_value<F>::type;
       if(cell.empty()) return std::nullopt;
-      return parse_field<U>(cell);
+      return parse_field<U>(cell, borrowed);
     }
     else if constexpr(array_of_c<F>) // std::array<char, N>
     {
@@ -200,9 +203,41 @@ REFLEX_EXPORT namespace reflex::serde::csv
       std::ranges::copy_n(cell.begin(), n, arr.begin());
       return arr;
     }
-    else if constexpr(str_c<F>)
+    else if constexpr(serde::detail::string_sink_c<F>)
     {
       return F{cell};
+    }
+    else if constexpr(serde::detail::borrowed_string_sink_c<F>)
+    {
+      // A std::string_view member is handed a view of the input rather than a
+      // copy, and choosing that member type is the opt-in.
+      //
+      // LIFETIME: the view is valid only while the input the deserializer was
+      // given stays alive and unmodified. Nothing in the type system enforces
+      // that, so `csv::deserializer{std::string{...}}.load<T>()` leaves every
+      // borrowed member dangling. Deserialize from an lvalue that outlives the
+      // result, or from serde::mmap_input_stream.
+      //
+      // A cell that needed decoding, which for CSV means a doubled quote, is not
+      // a run of the input. read_record parks those in a pool it clears on the
+      // next record, so handing out a view of one would go stale a record later
+      // rather than at any boundary the caller can see. It throws instead.
+      // Whether a cell is quoted is the producer's choice rather than the
+      // schema's, so this is the caller's risk to take, deliberately.
+      if(not borrowed and not cell.empty())
+      {
+        throw std::runtime_error("CSV: a borrowed string destination cannot hold a decoded cell");
+      }
+      return F{cell.data(), cell.size()};
+    }
+    else if constexpr(str_c<F>)
+    {
+      static_assert(
+          false,
+          std::string(display_string_of(dealias(^^F)))
+              + " cannot be a CSV string destination: it neither owns writable storage nor can"
+                " be pointed at a run of the input (expected std::string,"
+                " reflex::heapless::string<N>, std::array<char, N> or std::string_view)");
     }
     else if constexpr(std::same_as<F, bool>)
     {
@@ -282,11 +317,32 @@ REFLEX_EXPORT namespace reflex::serde::csv
     return map;
   }
 
+  // Whether a cell's bytes are the input's. An un-decoded cell is a run of the
+  // input and stays valid as long as it does. A decoded one points into the
+  // deserializer's pool, which the next read_record clears, so it is not
+  // borrowable however long the input lives. Always false on the streaming
+  // cursor, where every cell is accumulated into a string of its own.
+  template <typename De> bool borrows_cell(De const& de, std::string_view cell)
+  {
+    if constexpr(De::bulk_scan)
+    {
+      return de.borrows_input(cell);
+    }
+    else
+    {
+      return false;
+    }
+  }
+
   // One integer compare per member per row. The cells span is what read_record
   // hands out, which on contiguous input is a view into the input buffer, so
   // Cell is deduced.
-  template <csv_row_c Row, typename Cell>
-  void assign_row(Row& row, header_map<Row> const& map, std::span<const Cell> cells)
+  //
+  // The deserializer comes along because a cell that read_record had to decode
+  // points into its pool rather than into the input, and a borrowed destination
+  // has to be able to tell the two apart.
+  template <csv_row_c Row, typename Cell, typename De>
+  void assign_row(Row& row, header_map<Row> const& map, std::span<const Cell> cells, De const& de)
   {
     std::size_t idx = 0;
     template for(constexpr auto member : define_static_array(
@@ -297,8 +353,19 @@ REFLEX_EXPORT namespace reflex::serde::csv
       // members its missing cells would have filled at their defaults.
       if(col >= 0 and static_cast<std::size_t>(col) < cells.size())
       {
-        using F        = std::remove_cvref_t<decltype(row.[:member:])>;
-        row.[:member:] = parse_field<F>(std::string_view{cells[static_cast<std::size_t>(col)]});
+        using F = std::remove_cvref_t<decltype(row.[:member:])>;
+        using U = typename field_value<F>::type;
+        if constexpr(serde::detail::borrowed_string_sink_c<U>)
+        {
+          static_assert(
+              De::bulk_scan,
+              std::string(display_string_of(dealias(^^U)))
+                  + " cannot be a CSV string destination on this cursor: a borrowed read needs a"
+                    " contiguous input to point at, and this deserializer reads a character at a"
+                    " time (use std::string, or deserialize from a contiguous input)");
+        }
+        const std::string_view cell{cells[static_cast<std::size_t>(col)]};
+        row.[:member:] = parse_field<F>(cell, borrows_cell(de, cell));
       }
       ++idx;
     }
@@ -569,7 +636,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
       // tolerate a blank trailing line (a single empty field)
       if(record->size() == 1 and record->front().empty()) continue;
       Row row{};
-      detail::assign_row(row, map, *record);
+      detail::assign_row(row, map, *record, de);
       result.push_back(std::move(row));
     }
     return result;
@@ -588,7 +655,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
     if(not record) throw std::runtime_error("CSV: missing data row");
 
     Row row{};
-    detail::assign_row(row, map, *record);
+    detail::assign_row(row, map, *record, de);
     return row;
   }
 
