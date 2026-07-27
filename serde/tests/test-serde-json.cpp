@@ -912,6 +912,60 @@ TEST_CASE("reflex::serde::json::deserializer: string bodies")
   }
 }
 
+// The three shapes of string destination the reader accepts, side by side.
+// heapless::string grows into storage it owns, std::array<char, N> is filled
+// through its own iterators, std::string does both. All three own the bytes
+// they are written into, which is the property the reader actually needs.
+struct StringSinks
+{
+  heapless::string<8> small;
+  std::array<char, 5> chars;
+  std::string         owned;
+
+  bool operator==(StringSinks const& other) const = default;
+};
+
+// A std::string_view member owns nothing, so it cannot be a destination. There
+// is no way to spell that as a running check, since it is a compile error:
+//
+//   json::deserializer{R"("abc")"sv}.load<std::string_view>();
+//
+// It is refused, and the whole point of the refusal is which line the reader is
+// pointed at. Writing a view member out is unaffected and still works.
+
+TEST_CASE("reflex::serde::json: a string destination that owns its storage")
+{
+  const std::string_view in =
+      JSON({"small":"abc","chars":"Hello","owned":"Hello, world!"});
+
+  SUBCASE("round-trips through a contiguous cursor")
+  {
+    const auto value = load_contiguous<StringSinks>(in);
+    CHECK_EQ(std::string_view{value.small}, "abc"sv);
+    CHECK_EQ(value.chars, std::array<char, 5>{'H', 'e', 'l', 'l', 'o'});
+    CHECK_EQ(value.owned, "Hello, world!");
+  }
+
+  SUBCASE("round-trips through a streaming cursor")
+  {
+    CHECK_EQ(load_streaming<StringSinks>(in), load_contiguous<StringSinks>(in));
+  }
+
+  SUBCASE("and back out again")
+  {
+    CHECK_EQ(json_dump(load_contiguous<StringSinks>(in)), in);
+  }
+
+  SUBCASE("a non-owning member still serializes")
+  {
+    struct Borrowed
+    {
+      std::string_view text;
+    };
+    CHECK_EQ(json_dump(Borrowed{"abc"}), JSON({"text":"abc"}));
+  }
+}
+
 // An output iterator that carries its position by value. write_char advances it
 // through the postfix increment, so write_raw must assign back the iterator
 // ranges::copy returns or the bulk write is overwritten by the next byte.
