@@ -22,7 +22,9 @@ namespace meta_probe
     int                             plain   = 0;
   };
 
-  constexpr auto lambda = [](int, char) { return 0; };
+  constexpr auto lambda   = [](int, char) { return 0; };
+  constexpr auto generic  = [](auto, auto) { return 0; };
+  constexpr auto variadic = [](auto&&...) { return 0; };
 } // namespace meta_probe
 
 using namespace reflex;
@@ -49,6 +51,13 @@ TEST_CASE("reflex::meta: callables")
     static_assert(std::meta::is_function(call));
     static_assert(std::meta::parameters_of(call).size() == 2);
     static_assert(std::meta::type_of(std::meta::parameters_of(call).front()) == ^^int);
+  }
+  SUBCASE("a generic lambda yields null rather than failing to compile")
+  {
+    // Its call operator is a template, so it has no parameter types until it is
+    // substituted. Reflecting it is fine, it just does not name a function.
+    static_assert(meta::callable_function_of(^^meta_probe::generic) == meta::null);
+    static_assert(meta::callable_function_of(^^meta_probe::variadic) == meta::null);
   }
   SUBCASE("something that is not callable yields null")
   {

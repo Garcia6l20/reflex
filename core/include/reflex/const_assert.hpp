@@ -51,6 +51,13 @@ REFLEX_EXPORT namespace reflex
     }
   }
 
+  /** @warning unusable while std::format is not constexpr
+   *
+   * An assertion that fires dies inside <format> on
+   * call to non-'constexpr' function '__do_vformat_to', so the message never
+   * reaches the diagnostic. The overload above reports, at the cost of taking
+   * an already assembled string. Nothing calls this one.
+   */
   template <typename... Args>
   consteval void const_assert(bool b, std::format_string<Args...> fmt, Args&&... args)
   {

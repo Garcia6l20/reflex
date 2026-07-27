@@ -195,12 +195,17 @@ REFLEX_EXPORT namespace reflex
    * An optional says the value may be absent from the input, not that a value
    * present in the input parses into nothing. Whoever left it out never calls
    * this.
+   *
+   * The spec is taken and handed to the underlying type, so an optional is
+   * transparent to it. Without that, wrapping a type in an optional would drop
+   * the spec, and a type reachable only through one, a chrono time_point among
+   * them, would never parse.
    */
-  template <typename T>
+  template <constant_string Spec, typename T>
   constexpr parse_result<std::optional<T>> tag_invoke(
-      tag_t<Parse>, std::string_view s, std::type_identity<std::optional<T>>)
+      tag_t<Parse>, std::string_view s, std::type_identity<std::optional<T>>, constant_wrapper<Spec>)
   {
-    auto parsed = reflex::parse<T>(s);
+    auto parsed = reflex::parse<T, Spec>(s);
     if(not parsed)
     {
       return std::unexpected{parsed.error()};
