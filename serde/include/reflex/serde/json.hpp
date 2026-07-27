@@ -657,7 +657,31 @@ REFLEX_EXPORT namespace reflex::serde::json
       throw std::runtime_error("Unterminated JSON string");
     }
 
+    // A string destination that owns none of the storage the decoded bytes would
+    // go into, a std::string_view member being the one that turns up. It is
+    // refused here rather than left to the fill path below, which is written
+    // against iterators and so accepts a view syntactically, then fails on the
+    // assignment with a message naming neither the type nor the member.
+    //
+    // A separate overload rather than a static_assert inside the good one: the
+    // assert alone does not stop the body from instantiating, so the original
+    // error still followed it. It returns Str rather than auto for the same
+    // reason, so the caller does not then report a void conversion on top.
     template <str_c Str>
+      requires(not serde::detail::string_sink_c<Str>)
+    friend Str
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    {
+      static_assert(
+          false,
+          std::string(display_string_of(^^Str))
+              + " cannot be a JSON string destination: it does not own writable storage"
+                " (expected std::string, reflex::heapless::string<N> or std::array<char, N>)");
+      std::unreachable();
+    }
+
+    template <str_c Str>
+      requires serde::detail::string_sink_c<Str>
     friend auto
         tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
     {
@@ -669,7 +693,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       Str value{};
 
       auto push = [&value] {
-        if constexpr(requires { value.push_back(char{}); })
+        if constexpr(serde::detail::growable_string_sink_c<Str>)
         {
           return [&value](char c) { value.push_back(c); };
         }

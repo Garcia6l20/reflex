@@ -39,6 +39,29 @@ REFLEX_EXPORT namespace reflex::serde::detail
   concept byte_bulk_sink_c =
       requires(C& c) { c.insert_range(c.end(), std::span<std::byte const>{}); };
 
+  // A string destination a reader may fill one character at a time, in the two
+  // shapes a reader can fill: growing on demand, or writing into fixed storage
+  // through the destination's own iterators.
+  //
+  // std::string and reflex::heapless::string grow. std::array<char, N> does not
+  // and is filled through its iterators, which is what the fixed-capacity path
+  // exists for.
+  template <typename S>
+  concept growable_string_sink_c = requires(S& s) { s.push_back(char{}); };
+
+  template <typename S>
+  concept fixed_string_sink_c = requires(S& s) {
+    { std::begin(s) } -> std::output_iterator<char>;
+    { std::end(s) } -> std::sentinel_for<decltype(std::begin(s))>;
+  };
+
+  // Owns storage the reader may write through. The question a reader has to ask
+  // before it picks a fill path, and the one a non-owning destination fails: a
+  // std::string_view has no push_back and yields a pointer to const, so it
+  // satisfies neither half rather than falling into the fixed-capacity one.
+  template <typename S>
+  concept string_sink_c = growable_string_sink_c<S> or fixed_string_sink_c<S>;
+
   // A back_insert_iterator exposes its container type but not the container, so
   // the bulk-append fast path needs the container captured at construction. This
   // detects an output iterator whose container can take a whole run at once;

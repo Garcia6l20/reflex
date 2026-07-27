@@ -925,13 +925,32 @@ struct StringSinks
   bool operator==(StringSinks const& other) const = default;
 };
 
+static_assert(serde::detail::string_sink_c<heapless::string<8>>);
+static_assert(serde::detail::string_sink_c<std::array<char, 5>>);
+static_assert(serde::detail::string_sink_c<std::string>);
+
+// Which side each one comes in on. heapless::string grows through
+// inplace_vector's push_back, so it is not on the fixed-capacity path even
+// though its capacity is fixed. std::array<char, N> is the one that is.
+static_assert(serde::detail::growable_string_sink_c<heapless::string<8>>);
+static_assert(not serde::detail::fixed_string_sink_c<std::string_view>);
+static_assert(serde::detail::fixed_string_sink_c<std::array<char, 5>>);
+static_assert(not serde::detail::growable_string_sink_c<std::array<char, 5>>);
+
 // A std::string_view member owns nothing, so it cannot be a destination. There
 // is no way to spell that as a running check, since it is a compile error:
 //
 //   json::deserializer{R"("abc")"sv}.load<std::string_view>();
 //
-// It is refused, and the whole point of the refusal is which line the reader is
-// pointed at. Writing a view member out is unaffected and still works.
+// which is refused by name:
+//
+//   error: static assertion failed: std::basic_string_view<char> cannot be a
+//   JSON string destination: it does not own writable storage (expected
+//   std::string, reflex::heapless::string<N> or std::array<char, N>)
+//
+// Writing a view member out is unaffected and still works.
+static_assert(not serde::detail::string_sink_c<std::string_view>);
+static_assert(not serde::detail::string_sink_c<char const*>);
 
 TEST_CASE("reflex::serde::json: a string destination that owns its storage")
 {
