@@ -5,9 +5,11 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <charconv>
 #include <format>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #endif
 
@@ -26,18 +28,36 @@ REFLEX_EXPORT namespace reflex
   {
     if(!b)
     {
-      using namespace std::string_literals;
-      auto message = std::format(
-          "Assertion failed at: {}:{} ({})", loc.file_name(), loc.line(), loc.function_name());
+      // std::format is not usable in a constant expression under libstdc++, so
+      // the message an assertion reports has to be assembled by hand. Doing it
+      // with std::format is what an assertion that fires used to die on.
+      char line[24];
+      auto [line_end, _] = std::to_chars(line, line + sizeof(line), loc.line());
+
+      std::string message = "Assertion failed at: ";
+      message += loc.file_name();
+      message += ':';
+      message.append(line, line_end);
+      message += " (";
+      message += loc.function_name();
+      message += ')';
       if(!description.empty())
       {
-        std::format_to(std::back_inserter(message), ": {}", description);
+        message += ": ";
+        message += description;
       }
       __builtin_constexpr_diag(
           int(diags::severity::error | diags::severity::parent_location), "", message);
     }
   }
 
+  /** @warning unusable while std::format is not constexpr
+   *
+   * An assertion that fires dies inside <format> on
+   * call to non-'constexpr' function '__do_vformat_to', so the message never
+   * reaches the diagnostic. The overload above reports, at the cost of taking
+   * an already assembled string. Nothing calls this one.
+   */
   template <typename... Args>
   consteval void const_assert(bool b, std::format_string<Args...> fmt, Args&&... args)
   {

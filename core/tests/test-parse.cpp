@@ -194,3 +194,22 @@ TEST_CASE("reflex::parse_strict: the whole input must be consumed")
   CHECK_THROWS_AS(parse_strict_or_throw<int>("12abc"), parse_error);
   CHECK_EQ(parse_strict_or_else<int>("12abc", [](std::errc) { return -7; }), -7);
 }
+
+TEST_CASE("reflex::parse: an optional target holds what was parsed")
+{
+  // An optional says the value may be absent from the input. A value that is
+  // there parses into an engaged optional, not into nothing.
+  CHECK_EQ(*parse<std::optional<int>>("12"), std::optional{12});
+  CHECK_EQ(*parse_strict<std::optional<int>>("12"), std::optional{12});
+  CHECK_EQ(*parse_strict<std::optional<std::string>>("hello"), std::optional{std::string{"hello"}});
+
+  CHECK_FALSE(parse<std::optional<int>>("abc"));
+  CHECK_FALSE(parse_strict<std::optional<int>>("12abc"));
+
+  // The spec reaches the underlying type. A time_point is only reachable
+  // through one, so dropping it here would leave it unparseable.
+  using tp = std::chrono::sys_time<std::chrono::nanoseconds>;
+  static_assert(spec_parsable_c<std::optional<tp>>);
+  CHECK_EQ(*parse<std::optional<tp>, "%Y-%m-%d">("2026-07-27"),
+           std::optional{*parse<tp, "%Y-%m-%d">("2026-07-27")});
+}

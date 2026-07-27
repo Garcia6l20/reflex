@@ -29,7 +29,7 @@ compile time — fully type-safe, with zero overhead at runtime.
 
 ## Taste of the API
 
-### `reflex.cli` - annotated structs become argument parsers
+### `reflex.cli` - annotated structs and functions become argument parsers
 
 ```cpp
 import reflex.cli;
@@ -65,6 +65,37 @@ OPTIONS:
 
 COMMANDS:
   push             Push changes.
+```
+
+A command can also be a function, with its parameters annotated instead of a
+struct's members.
+
+```cpp
+[[= cli::command{"Print a line of dots."}]]
+int dots([[= cli::argument{"How many dots."}]] int count) { … }
+
+int main(int argc, const char** argv)
+{
+  return cli::run<^^dots>(argc, argv);
+}
+```
+
+A sub-command can be a member function, which reads the parent's options
+directly. It is always a leaf: a command with sub-commands of its own stays a
+nested struct.
+
+```cpp
+struct [[= cli::command{"Git-like tool."}]] git
+{
+  [[= cli::option{"-v/--verbose", "Verbosity."}.counter()]] int verbose = 0;
+
+  [[= cli::command{"Push changes."}]]
+  int push([[= cli::option{"-r/--remote", "Remote name."}]] std::string remote)
+  {
+    std::println("pushing to {} (verbose={})", remote, verbose);
+    return 0;
+  }
+};
 ```
 
 > See [cli/README.md](cli/README.md) for more details.

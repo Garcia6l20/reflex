@@ -239,6 +239,43 @@ REFLEX_EXPORT namespace reflex::meta
            });
   }
 
+  namespace detail
+  {
+  template <typename T> consteval auto call_operator() -> meta::info
+  {
+    return ^^T::operator();
+  }
+  } // namespace detail
+
+  /** @brief the function behind a callable, or meta::null
+   *
+   * Handles a function, a pointer or reference to one, and a class type with a
+   * call operator, which covers std::function and a lambda alike.
+   *
+   * A templated call operator yields null: it has no parameter types until it
+   * is substituted, the same reason a function template is not reachable
+   * through a reflection.
+   */
+  consteval auto callable_function_of(info R) -> info
+  {
+    const info type = is_type(R) ? R : type_of(R);
+    if(is_function_type(type))
+    {
+      return type;
+    }
+    const info stripped = remove_pointer(remove_reference(type));
+    if(is_function_type(stripped))
+    {
+      return stripped;
+    }
+    if(is_class_type(type) and meta::has_call_operator(type))
+    {
+      const info call = extract<info (*)()>(substitute(^^detail::call_operator, {type}))();
+      return is_function(call) ? call : meta::null;
+    }
+    return meta::null;
+  }
+
   consteval auto member_functions_annotated_with(
       info R, info A, access_context ctx = access_context::current())
   {
