@@ -1100,18 +1100,19 @@ REFLEX_EXPORT namespace reflex::cli
                   {
                     ++it;
                   }
-                  trackers.current.value_view = std::string_view{*it};
+                  // The end check comes before the dereference, not after it.
+                  // Written the other way round, `--option` as the last element
+                  // of argv read one past the end of the range and crashed, for
+                  // every option that takes a value.
                   if(it == end)
                   {
                     trackers.state = parsing_state::missing_option_value;
                     state_handler(trackers);
                     return 1;
                   }
-                  else
-                  {
-                    trackers.state = parsing_state::option_value_check;
-                    state_handler(trackers);
-                  }
+                  trackers.current.value_view = std::string_view{*it};
+                  trackers.state              = parsing_state::option_value_check;
+                  state_handler(trackers);
                   ++trackers.index;
 
                   if constexpr(seq_c<T>)

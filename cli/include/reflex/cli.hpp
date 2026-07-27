@@ -43,6 +43,11 @@ REFLEX_EXPORT namespace reflex::cli
             std::println(std::cerr, "missing required argument: {}", view);
             std::println(std::cerr);
           }
+          else if(state == parsing_state::missing_option_value)
+          {
+            std::println(std::cerr, "missing value for option: {}", view);
+            std::println(std::cerr);
+          }
           else if(state == parsing_state::invalid_option_value)
           {
             std::println(
