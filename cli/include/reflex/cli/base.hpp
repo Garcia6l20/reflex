@@ -526,8 +526,15 @@ REFLEX_EXPORT namespace reflex::cli
     // for accessible members only: a sub-command that cannot be reached needs
     // to be refused by name, and a member the walk never returns cannot be.
     // Data members keep exactly the visibility they had, which is public.
+    //
+    // Recursive through bases, so a command can inherit its options from a
+    // shared struct. The case that needs it is a command with sub-commands:
+    // an option on the parent has to be typed before the verb, which nobody
+    // does, so the options belong on every sub-command, and writing them out
+    // once per sub-command is how they drift apart. Base members come first,
+    // which puts inherited options above own ones in the help text.
     template for(constexpr auto mem :
-                 define_static_array(members_of(I, meta::access_context::unchecked())))
+                 define_static_array(meta::members_of_r(I, meta::access_context::unchecked())))
     {
       if constexpr(is_function(mem))
       {
@@ -1100,18 +1107,19 @@ REFLEX_EXPORT namespace reflex::cli
                   {
                     ++it;
                   }
-                  trackers.current.value_view = std::string_view{*it};
+                  // The end check comes before the dereference, not after it.
+                  // Written the other way round, `--option` as the last element
+                  // of argv read one past the end of the range and crashed, for
+                  // every option that takes a value.
                   if(it == end)
                   {
                     trackers.state = parsing_state::missing_option_value;
                     state_handler(trackers);
                     return 1;
                   }
-                  else
-                  {
-                    trackers.state = parsing_state::option_value_check;
-                    state_handler(trackers);
-                  }
+                  trackers.current.value_view = std::string_view{*it};
+                  trackers.state              = parsing_state::option_value_check;
+                  state_handler(trackers);
                   ++trackers.index;
 
                   if constexpr(seq_c<T>)

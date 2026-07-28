@@ -4,6 +4,7 @@
 #define REFLEX_EXPORT
 #endif
 
+#include <reflex/concepts.hpp>
 #include <reflex/constant.hpp>
 #include <reflex/exception.hpp>
 #include <reflex/tag_invoke.hpp>
@@ -237,6 +238,69 @@ REFLEX_EXPORT namespace reflex
     }
 
     return std::unexpected(std::errc::invalid_argument);
+  }
+
+  /** @brief a duration written the way a person writes one
+   *
+   * A number with an optional unit suffix: `100ms`, `1.5s`, `250us`, `2min`.
+   * The suffixes are the ones std::chrono itself prints, so a value read here
+   * and a value formatted with std::format round trip.
+   *
+   * A bare number is in the destination's own units, so `parse<milliseconds>`
+   * of "100" is 100ms and `parse<seconds>` of "100" is 100s. That is the only
+   * rule that stays consistent across destination types, and reading a bare
+   * number as seconds regardless would make `parse<nanoseconds>("5")` mean five
+   * billion.
+   *
+   * Negative durations parse. A duration is a signed quantity and refusing one
+   * here would be this parser deciding what a caller's domain allows.
+   *
+   * The arithmetic goes through a double count of nanoseconds and then one
+   * duration_cast, so `1.5ms` survives into a `duration<double, std::milli>`
+   * and truncates into a `std::chrono::milliseconds` exactly as a
+   * duration_cast anywhere else would.
+   */
+  template <duration_c Duration>
+  constexpr parse_result<Duration> tag_invoke(
+      tag_t<Parse>, std::string_view s, std::type_identity<Duration>) noexcept
+  {
+    const auto number = parse<double>(s);
+    if(not number.has_value())
+    {
+      return std::unexpected(number.error());
+    }
+
+    std::string_view suffix{number.end(), s.data() + s.size()};
+
+    // Longest match first, so "ms" is never read as "m" followed by rubbish and
+    // "min" is never read as "m".
+    struct unit
+    {
+      std::string_view name;
+      double           nanoseconds;
+    };
+    static constexpr std::array units{
+        unit{"min", 60.0 * 1e9}, unit{"ns", 1.0},  unit{"us", 1e3},
+        unit{"ms", 1e6},         unit{"h", 3600.0 * 1e9}, unit{"s", 1e9},
+    };
+
+    using target_period = typename Duration::period;
+    // A bare number is in the destination's own units, which is this ratio
+    // expressed in nanoseconds.
+    double scale = 1e9 * double(target_period::num) / double(target_period::den);
+    const char* end = number.end();
+    for(unit const& u : units)
+    {
+      if(suffix.starts_with(u.name))
+      {
+        scale = u.nanoseconds;
+        end += u.name.size();
+        break;
+      }
+    }
+
+    const std::chrono::duration<double, std::nano> nanoseconds{number.value() * scale};
+    return {std::chrono::duration_cast<Duration>(nanoseconds), end};
   }
 
   template <typename T>
