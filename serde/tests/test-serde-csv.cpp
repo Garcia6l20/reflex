@@ -243,6 +243,132 @@ struct WithVector
 {
   std::vector<int> xs;
 };
+// A std::string_view member reads a view of the input instead of a copy.
+//
+// The borrow is only offered for a cell that is a run of the input. A cell that
+// had to be decoded, which for CSV means a doubled quote, is parked in a pool
+// read_record clears on the next record, so it throws rather than handing out a
+// view that goes stale a record later. On the streaming cursor there is no
+// buffer at all and it is a compile error:
+//
+//   csv::deserializer{std::istringstream{...}}.load<BorrowedRow>();
+//
+//   error: static assertion failed: std::basic_string_view<char> cannot be a CSV
+//   string destination on this cursor: a borrowed read needs a contiguous input
+//   to point at, and this deserializer reads a character at a time (use
+//   std::string, or deserialize from a contiguous input)
+struct BorrowedRow
+{
+  std::string_view text;
+  int              n;
+};
+
+TEST_CASE("reflex::serde::csv: a borrowed string destination")
+{
+  SUBCASE("an un-decoded cell points into the input")
+  {
+    // Held by name: the view read out of it points into it.
+    const std::string in = "text,n\r\nplain,1\r\n";
+    const auto        v  = csv::deserializer{std::string_view{in}}.load<BorrowedRow>();
+    CHECK_EQ(v.text, "plain"sv);
+    CHECK_EQ(v.n, 1);
+    // Address, not content: comparing bytes would pass for a copy too.
+    CHECK_EQ(v.text.data(), in.data() + in.find("plain"));
+  }
+
+  SUBCASE("a quoted cell with nothing to decode still borrows")
+  {
+    // Quoting alone does not break the run. Only the doubled quote does, because
+    // that is what forces a byte to be dropped from the middle.
+    const std::string in = "text,n\r\n\"a,b\",1\r\n";
+    const auto        v  = csv::deserializer{std::string_view{in}}.load<BorrowedRow>();
+    CHECK_EQ(v.text, "a,b"sv);
+    CHECK_EQ(v.text.data(), in.data() + in.find("a,b"));
+  }
+
+  SUBCASE("a decoded cell throws rather than going stale")
+  {
+    const std::string in = "text,n\r\n\"qu\"\"oted\",1\r\n";
+    CHECK_THROWS_AS(
+        (csv::deserializer{std::string_view{in}}.load<BorrowedRow>()), std::runtime_error);
+  }
+
+  // The failure the throw exists to prevent, kept as the reason it is a throw and
+  // not a copy into the pool. With the guard removed, three decoded cells across
+  // three records all read back the last one: read_record clears the pool, the
+  // next decoded cell reuses the slot, and every earlier view follows it.
+  SUBCASE("decoded cells across records would otherwise alias each other")
+  {
+    const std::string in = "text,n\r\n\"aa\"\"aa\",1\r\n\"bb\"\"bb\",2\r\n\"cc\"\"cc\",3\r\n";
+    CHECK_THROWS_AS(
+        (csv::deserializer{std::string_view{in}}.load<std::vector<BorrowedRow>>()),
+        std::runtime_error);
+  }
+
+  SUBCASE("an empty cell borrows nothing and is fine")
+  {
+    const std::string in = "text,n\r\n,1\r\n";
+    const auto        v  = csv::deserializer{std::string_view{in}}.load<BorrowedRow>();
+    CHECK(v.text.empty());
+    CHECK_EQ(v.n, 1);
+  }
+
+  // The boundary that matters, asserted rather than assumed. read_record clears
+  // the pool, so a decoded cell would go stale here. An un-decoded one does not:
+  // it is the input's, and the input has not moved. Reading every row of a
+  // sequence into borrowed views is the case this has to hold for.
+  SUBCASE("a borrow survives the records that follow it")
+  {
+    const std::string in = "text,n\r\nfirst,1\r\nsecond,2\r\nthird,3\r\n";
+    const auto        rows = csv::deserializer{std::string_view{in}}.load<std::vector<BorrowedRow>>();
+    REQUIRE_EQ(rows.size(), 3u);
+    CHECK_EQ(rows[0].text, "first"sv);
+    CHECK_EQ(rows[1].text, "second"sv);
+    CHECK_EQ(rows[2].text, "third"sv);
+    CHECK_EQ(rows[0].text.data(), in.data() + in.find("first"));
+    CHECK_EQ(rows[1].text.data(), in.data() + in.find("second"));
+    CHECK_EQ(rows[2].text.data(), in.data() + in.find("third"));
+  }
+
+  SUBCASE("and one decoded cell anywhere in the sequence throws")
+  {
+    const std::string in = "text,n\r\nfirst,1\r\n\"se\"\"cond\",2\r\n";
+    CHECK_THROWS_AS(
+        (csv::deserializer{std::string_view{in}}.load<std::vector<BorrowedRow>>()),
+        std::runtime_error);
+  }
+}
+
+TEST_CASE("reflex::serde::csv: an owning string destination is unaffected")
+{
+  struct Owned
+  {
+    std::string text;
+    int         n;
+
+    bool operator==(Owned const& other) const = default;
+  };
+
+  const std::string in = "text,n\r\nplain,1\r\n\"qu\"\"oted\",2\r\n";
+
+  SUBCASE("both cells still copy and decode")
+  {
+    const auto rows = csv::deserializer{std::string_view{in}}.load<std::vector<Owned>>();
+    REQUIRE_EQ(rows.size(), 2u);
+    CHECK_EQ(rows[0].text, "plain");
+    CHECK_EQ(rows[1].text, "qu\"oted");
+    CHECK_NE(rows[0].text.data(), in.data() + in.find("plain"));
+  }
+
+  SUBCASE("and the streaming cursor agrees")
+  {
+    std::istringstream stream{in};
+    CHECK_EQ(
+        csv::deserializer{stream}.load<std::vector<Owned>>(),
+        csv::deserializer{std::string_view{in}}.load<std::vector<Owned>>());
+  }
+}
+
 static_assert(not csv::csv_row_c<Nested>);
 static_assert(not csv::csv_row_c<WithVector>);
 static_assert(csv::csv_row_c<Row>);

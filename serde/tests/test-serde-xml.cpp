@@ -1323,3 +1323,117 @@ TEST_CASE("reflex::serde::xml::deserializer: a member reads only under its seria
     CHECK_EQ(value.string_member, "");
   }
 }
+
+// A std::string_view member reads a view of the input instead of a copy.
+//
+// The borrow is only offered where the run really is the input's. A run that had
+// to be decoded, an entity or a CDATA splice, lives in a buffer of XML's own that
+// dies with the deserializer, so it throws rather than handing out a view of it.
+// On the streaming cursor there is no buffer at all and it is a compile error:
+//
+//   xml::deserializer{std::istringstream{...}}.load<BorrowedText>();
+//
+//   error: static assertion failed: std::basic_string_view<char> cannot be an XML
+//   string destination on this cursor: a borrowed read needs a contiguous input
+//   to point at, and this deserializer reads a character at a time (use
+//   std::string, or deserialize from a contiguous input)
+//
+// Before this, a plain run borrowed correctly and a decoded one silently returned
+// the freed bytes of a local.
+struct BorrowedText
+{
+  std::string_view text;
+};
+
+struct BorrowedAttr
+{
+  [[= xml::attribute]] std::string_view name;
+  std::string_view                      text;
+};
+
+TEST_CASE("reflex::serde::xml: a borrowed string destination")
+{
+  SUBCASE("a plain run points into the input")
+  {
+    // Held by name: the view read out of it points into it.
+    const std::string in = "<BorrowedText><text>hello there</text></BorrowedText>";
+    const auto        v  = xml::deserializer{std::string_view{in}}.load<BorrowedText>();
+    CHECK_EQ(v.text, "hello there"sv);
+    // Address, not content: comparing bytes would pass for a copy too.
+    CHECK_EQ(v.text.data(), in.data() + in.find("hello there"));
+  }
+
+  SUBCASE("an entity-decoded run throws rather than dangling")
+  {
+    const std::string in = "<BorrowedText><text>a&amp;b</text></BorrowedText>";
+    CHECK_THROWS_AS(
+        (xml::deserializer{std::string_view{in}}.load<BorrowedText>()), std::runtime_error);
+  }
+
+  SUBCASE("a CDATA-spliced run throws too")
+  {
+    const std::string in = "<BorrowedText><text>a<![CDATA[b]]>c</text></BorrowedText>";
+    CHECK_THROWS_AS(
+        (xml::deserializer{std::string_view{in}}.load<BorrowedText>()), std::runtime_error);
+  }
+
+  SUBCASE("an empty element borrows nothing and is fine")
+  {
+    const std::string in = "<BorrowedText><text></text></BorrowedText>";
+    const auto        v  = xml::deserializer{std::string_view{in}}.load<BorrowedText>();
+    CHECK(v.text.empty());
+  }
+
+  SUBCASE("a self-closing element is fine too")
+  {
+    const std::string in = "<BorrowedText><text/></BorrowedText>";
+    const auto        v  = xml::deserializer{std::string_view{in}}.load<BorrowedText>();
+    CHECK(v.text.empty());
+  }
+
+  SUBCASE("a plain attribute value points into the input")
+  {
+    const std::string in = R"(<BorrowedAttr name="plain"><text>body</text></BorrowedAttr>)";
+    const auto        v  = xml::deserializer{std::string_view{in}}.load<BorrowedAttr>();
+    CHECK_EQ(v.name, "plain"sv);
+    CHECK_EQ(v.name.data(), in.data() + in.find("plain"));
+    CHECK_EQ(v.text.data(), in.data() + in.find("body"));
+  }
+
+  SUBCASE("a decoded attribute value throws")
+  {
+    const std::string in = R"(<BorrowedAttr name="a&amp;b"><text>body</text></BorrowedAttr>)";
+    CHECK_THROWS_AS(
+        (xml::deserializer{std::string_view{in}}.load<BorrowedAttr>()), std::runtime_error);
+  }
+}
+
+TEST_CASE("reflex::serde::xml: an owning string destination is unaffected")
+{
+  struct Owned
+  {
+    std::string text;
+
+    bool operator==(Owned const& other) const = default;
+  };
+
+  SUBCASE("a plain run still copies")
+  {
+    const std::string in = "<Owned><text>hello there</text></Owned>";
+    const auto        v  = xml::deserializer{std::string_view{in}}.load<Owned>();
+    CHECK_EQ(v.text, "hello there");
+    CHECK_NE(v.text.data(), in.data() + in.find("hello there"));
+  }
+
+  SUBCASE("a decoded run still decodes")
+  {
+    const std::string in = "<Owned><text>a&amp;b</text></Owned>";
+    CHECK_EQ(xml::deserializer{std::string_view{in}}.load<Owned>().text, "a&b");
+  }
+
+  SUBCASE("and the streaming cursor still works")
+  {
+    std::istringstream stream{"<Owned><text>a&amp;b</text></Owned>"};
+    CHECK_EQ(xml::deserializer{stream}.load<Owned>().text, "a&b");
+  }
+}

@@ -39,6 +39,52 @@ REFLEX_EXPORT namespace reflex::serde::detail
   concept byte_bulk_sink_c =
       requires(C& c) { c.insert_range(c.end(), std::span<std::byte const>{}); };
 
+  // A string destination a reader may fill one character at a time, in the two
+  // shapes a reader can fill: growing on demand, or writing into fixed storage
+  // through the destination's own iterators.
+  //
+  // std::string and reflex::heapless::string grow. std::array<char, N> does not
+  // and is filled through its iterators, which is what the fixed-capacity path
+  // exists for.
+  template <typename S>
+  concept growable_string_sink_c = requires(S& s) { s.push_back(char{}); };
+
+  template <typename S>
+  concept fixed_string_sink_c = requires(S& s) {
+    { std::begin(s) } -> std::output_iterator<char>;
+    { std::end(s) } -> std::sentinel_for<decltype(std::begin(s))>;
+  };
+
+  // Owns storage the reader may write through. The question a reader has to ask
+  // before it picks a fill path, and the one a non-owning destination fails: a
+  // std::string_view has no push_back and yields a pointer to const, so it
+  // satisfies neither half rather than falling into the fixed-capacity one.
+  template <typename S>
+  concept string_sink_c = growable_string_sink_c<S> or fixed_string_sink_c<S>;
+
+  // The other half: a destination that owns nothing but can be pointed at bytes
+  // someone else owns, std::string_view being the one that turns up. Choosing it
+  // as the member type is the opt-in to a borrowed read, and to the lifetime
+  // contract that comes with one.
+  //
+  // A backend that offers a borrowed read hands back a view of the input it was
+  // given. That view is valid only while that input is alive and unmodified, and
+  // nothing in the type system enforces it: deserializing from a temporary
+  // std::string leaves every borrowed member dangling. It is spelled out at every
+  // site that can produce one.
+  //
+  // Spelled as construction from a whole run, which is how the character backends
+  // have always built a string destination that is not a sink. Any type that used
+  // to be built that way still is, so widening the guard does not narrow what
+  // compiles: a type that copies the run is simply carried along a path built for
+  // one that does not, and copying is safe on either.
+  //
+  // char const* is deliberately not one of these. A run inside the input carries
+  // no terminator.
+  template <typename S>
+  concept borrowed_string_sink_c =
+      (not string_sink_c<S>) and std::constructible_from<S, std::string_view>;
+
   // A back_insert_iterator exposes its container type but not the container, so
   // the bulk-append fast path needs the container captured at construction. This
   // detects an output iterator whose container can take a whole run at once;
@@ -253,11 +299,45 @@ REFLEX_EXPORT namespace reflex::serde::detail
 
   protected:
     range_cursor cursor_;
+    // Where the input started. cursor_.begin() walks forward and cursor_.end()
+    // never moves, so this is the bound that would otherwise be lost, and
+    // borrows_input() needs both.
+    InputIt first_{};
 
   public:
     bool at_end() const
     {
       return cursor_.empty();
+    }
+
+    // The whole input, consumed part included.
+    std::string_view input() const
+      requires bulk_scan
+    {
+      return {std::to_address(first_), static_cast<std::size_t>(cursor_.end() - first_)};
+    }
+
+    // True when `s` is a run of the input this deserializer was handed, rather
+    // than of a scratch buffer some decoding step owns. This is the question a
+    // borrowed read turns on.
+    //
+    // Asked by address rather than by content on purpose: a decoded run compares
+    // equal to what it decoded from often enough that content proves nothing. A
+    // backend that parks decoded runs in a pool of its own must still refuse to
+    // hand one out, because the pool dies with the deserializer and the
+    // deserializer is routinely a temporary that dies before the caller reads the
+    // member it filled.
+    //
+    // An empty run points at nothing and is always safe to hand out.
+    bool borrows_input(std::string_view s) const
+      requires bulk_scan
+    {
+      if(s.empty())
+      {
+        return true;
+      }
+      const std::string_view in = input();
+      return s.data() >= in.data() and s.data() + s.size() <= in.data() + in.size();
     }
 
     // The unconsumed input. Every scan built on this must be bounded by what it
@@ -278,7 +358,7 @@ REFLEX_EXPORT namespace reflex::serde::detail
       cursor_.advance(static_cast<std::ranges::range_difference_t<range_cursor>>(n));
     }
 
-    subrange_deserializer(InputIt begin, InputIt end) : cursor_{begin, end}
+    subrange_deserializer(InputIt begin, InputIt end) : cursor_{begin, end}, first_{begin}
     {}
 
     // A type exposing both view() and begin()/end() (mmap_input_stream does)
@@ -286,7 +366,8 @@ REFLEX_EXPORT namespace reflex::serde::detail
     // the one that carries the iterator type the cursor is built from.
     template <typename T>
       requires requires(T const& v) { v.view(); } and (not std::ranges::range<T const>)
-    subrange_deserializer(T const& v) : cursor_{v.view().begin(), v.view().end()}
+    subrange_deserializer(T const& v)
+        : cursor_{v.view().begin(), v.view().end()}, first_{v.view().begin()}
     {}
 
     template <typename T>
@@ -294,7 +375,7 @@ REFLEX_EXPORT namespace reflex::serde::detail
         v.begin();
         v.end();
       }
-    subrange_deserializer(T const& v) : cursor_{v.begin(), v.end()}
+    subrange_deserializer(T const& v) : cursor_{v.begin(), v.end()}, first_{v.begin()}
     {}
 
     template <typename T>
@@ -302,7 +383,7 @@ REFLEX_EXPORT namespace reflex::serde::detail
         InputIt{v};
         InputIt{};
       }
-    subrange_deserializer(T& v) : cursor_{InputIt{v}, InputIt{}}
+    subrange_deserializer(T& v) : cursor_{InputIt{v}, InputIt{}}, first_{cursor_.begin()}
     {}
 
     // The explicit object parameter makes `self` the derived deserializer, so the backend's

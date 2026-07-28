@@ -563,12 +563,15 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
   }
 
-  template <typename F> F parse_field(std::string_view text)
+  // `borrowed` says whether `text` is a run of the deserializer's input rather
+  // than of a buffer the parse owns. Only a borrowed destination looks at it, and
+  // the caller is the one that can answer it.
+  template <typename F> F parse_field(std::string_view text, bool borrowed = false)
   {
     if constexpr(optional_c<F>)
     {
       using U = typename field_value<F>::type;
-      return parse_field<U>(text);
+      return parse_field<U>(text, borrowed);
     }
     else if constexpr(array_of_c<F>) // std::array<char, N>
     {
@@ -577,9 +580,43 @@ REFLEX_EXPORT namespace reflex::serde::xml
       std::ranges::copy_n(text.begin(), n, arr.begin());
       return arr;
     }
-    else if constexpr(str_c<F>)
+    else if constexpr(serde::detail::string_sink_c<F>)
     {
       return F{text};
+    }
+    else if constexpr(serde::detail::borrowed_string_sink_c<F>)
+    {
+      // A std::string_view member is handed a view of the input rather than a
+      // copy, and choosing that member type is the opt-in.
+      //
+      // LIFETIME: the view is valid only while the input the deserializer was
+      // given stays alive and unmodified. Nothing in the type system enforces
+      // that, so `xml::deserializer{std::string{...}}.load<T>()` leaves every
+      // borrowed member dangling. Deserialize from an lvalue that outlives the
+      // result, or from serde::mmap_input_stream.
+      //
+      // A run that had to be decoded, an entity or a CDATA splice, is not a run
+      // of the input. XML parks those in a buffer of its own, but that buffer
+      // dies with the deserializer, which is routinely a temporary, so handing
+      // out a view of it would dangle in the ordinary calling pattern. It throws
+      // instead. Whether an element's text carries an entity is the producer's
+      // choice rather than the schema's, so this is the caller's risk to take,
+      // deliberately.
+      if(not borrowed and not text.empty())
+      {
+        throw std::runtime_error(
+            "XML: a borrowed string destination cannot hold a decoded value");
+      }
+      return F{text};
+    }
+    else if constexpr(str_c<F>)
+    {
+      static_assert(
+          false,
+          std::string(display_string_of(dealias(^^F)))
+              + " cannot be an XML string destination: it neither owns writable storage nor can"
+                " be pointed at a run of the input (expected std::string,"
+                " reflex::heapless::string<N>, std::array<char, N> or std::string_view)");
     }
     else if constexpr(std::same_as<F, bool>)
     {
@@ -1498,9 +1535,23 @@ REFLEX_EXPORT namespace reflex::serde::xml
             const bool loc   = not any_exact and serialized_name(member) == local;
             if(not matched and (exact or loc))
             {
-              using F        = std::remove_cvref_t<decltype(value.[:member:])>;
-              value.[:member:] = detail::parse_field<F>(avalue);
-              matched        = true;
+              using F  = std::remove_cvref_t<decltype(value.[:member:])>;
+              using AU = typename detail::field_value<F>::type;
+              if constexpr(serde::detail::borrowed_string_sink_c<AU>)
+              {
+                static_assert(
+                    bulk_scan,
+                    std::string(display_string_of(dealias(^^AU)))
+                        + " cannot be an XML attribute destination on this cursor: a borrowed"
+                          " read needs a contiguous input to point at, and this deserializer"
+                          " reads a character at a time (use std::string, or deserialize from a"
+                          " contiguous input)");
+              }
+              // An attribute value that needed decoding lives in attr_pool_,
+              // which outlives this call but dies with the deserializer, so it
+              // is no more borrowable than a decoded text run.
+              value.[:member:] = detail::parse_field<F>(avalue, borrows_attr(avalue));
+              matched          = true;
             }
           }
         }
@@ -1591,14 +1642,55 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     };
 
-    template <typename F> static F parse_run(text_run&& run)
+    template <typename F> F parse_run(text_run&& run)
     {
       using U = typename detail::field_value<F>::type;
       if constexpr(std::same_as<U, std::string>)
       {
         if(not run.is_borrowed) return F{std::move(run.owned)};
       }
-      return detail::parse_field<F>(run.view());
+      if constexpr(serde::detail::borrowed_string_sink_c<U>)
+      {
+        static_assert(
+            bulk_scan,
+            std::string(display_string_of(dealias(^^U)))
+                + " cannot be an XML string destination on this cursor: a borrowed read needs a"
+                  " contiguous input to point at, and this deserializer reads a character at a"
+                  " time (use std::string, or deserialize from a contiguous input)");
+      }
+      // Asked of the run that is about to be handed over, by address. A simple
+      // run is a substring of the input and a decoded one lives in text_run's own
+      // std::string, which dies with the local, so the two are told apart here
+      // rather than trusted to is_borrowed.
+      return detail::parse_field<F>(run.view(), borrows_run(run));
+    }
+
+    // Whether a run's bytes are the input's. Always false on the streaming
+    // cursor, where read_text_run only ever produces an owned run.
+    bool borrows_run(text_run const& run) const
+    {
+      if constexpr(bulk_scan)
+      {
+        return this->borrows_input(run.view());
+      }
+      else
+      {
+        return false;
+      }
+    }
+
+    // The same question for an attribute value, which carries as attr_str: a view
+    // on the bulk-scan cursor, an owned string otherwise.
+    bool borrows_attr(attr_str const& value) const
+    {
+      if constexpr(bulk_scan)
+      {
+        return this->borrows_input(value);
+      }
+      else
+      {
+        return false;
+      }
     }
 
     text_run read_text_run()

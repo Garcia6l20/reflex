@@ -397,7 +397,14 @@ REFLEX_EXPORT namespace reflex::serde::bson
       }
 
       // A null-terminated key, borrowed from the input when it is contiguous. The
-      // view is valid until the next cursor operation.
+      // view is a run of the input, so it stays valid as long as the input does,
+      // not merely until the next cursor operation. On a non-contiguous input it
+      // is a view of key_buf, which the next key overwrites.
+      //
+      // A key is a BSON cstring: terminated, no length prefix, and no embedded
+      // null. A value is a BSON string: length-prefixed, and an embedded null is
+      // allowed. read_view below is the value spelling and the two do not share
+      // an implementation, because they do not share a shape.
       constexpr std::string_view read_key()
       {
         if constexpr(contiguous_byte_or_char)
@@ -550,6 +557,46 @@ REFLEX_EXPORT namespace reflex::serde::bson
         return out;
       }
 
+      // The payload of a length-prefixed BSON string, as a run of the input.
+      //
+      // Nothing is decoded on the way: BSON carries a string as its bytes with a
+      // count in front, so the payload is already a substring of the input and
+      // the borrow is exact by construction. There is no case here that has to
+      // fall back to a copy, which is what makes this backend's borrow
+      // unconditional where the character backends' is not.
+      //
+      // `size` counts the payload plus its terminator, so the view is size - 1
+      // bytes. The terminator is consumed and checked separately and is never
+      // part of the view. An embedded null is legal in a BSON string and survives
+      // intact, since the length is what bounds the run rather than a scan.
+      constexpr std::string_view read_view()
+        requires contiguous_byte_or_char
+      {
+        const auto size = read<std::int32_t>();
+        if(size <= 0)
+        {
+          throw std::runtime_error("Invalid BSON string length");
+        }
+
+        // Both the payload and its terminator, vetted before either is touched:
+        // the view below is taken straight off this length and nothing
+        // downstream would catch an overrun.
+        require(static_cast<std::size_t>(size));
+
+        const auto* first = std::to_address(range.begin());
+        advance(static_cast<std::size_t>(size - 1));
+        if(read_byte() != std::byte{0x00})
+        {
+          throw std::runtime_error("BSON string payload must be null-terminated");
+        }
+
+        // The one cast, in the one place the payload is read. The input element
+        // is std::byte, char or unsigned char, and reading any object's bytes
+        // through char const* is what that cast is for. read<std::string> spells
+        // its copy the same way.
+        return {reinterpret_cast<char const*>(first), static_cast<std::size_t>(size - 1)};
+      }
+
     } cursor_;
 
   public:
@@ -662,17 +709,61 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON string type");
         }
-        auto decoded = cursor_.template read<std::string, true>();
-        // Probe with the assignment that is actually performed, so the decoded string
-        // is moved into the member rather than copied.
-        if constexpr(requires { value = std::move(decoded); })
+        // Which of the two the destination is, asked before anything is read. It
+        // cannot be asked through the assignment: a std::string_view is assignable
+        // from a std::string, through the conversion operator, so probing with the
+        // assignment accepts a view and then leaves it looking at the local.
+        if constexpr(serde::detail::string_sink_c<value_t>)
         {
-          value = std::move(decoded);
+          auto decoded = cursor_.template read<std::string, true>();
+          // Probe with the assignment that is actually performed, so the decoded string
+          // is moved into the member rather than copied.
+          if constexpr(requires { value = std::move(decoded); })
+          {
+            value = std::move(decoded);
+          }
+          else
+          {
+            static_assert(
+                false, "BSON string deserialization requires an assignable owning string target");
+          }
+        }
+        else if constexpr(serde::detail::borrowed_string_sink_c<value_t>)
+        {
+          // Borrowed read. A std::string_view member is handed a run of the input
+          // rather than a copy, and choosing that member type is the opt-in.
+          //
+          // LIFETIME: the view is valid only while the input this deserializer was
+          // given stays alive and unmodified. Nothing in the type system enforces
+          // that, so `bson::deserializer{std::vector<std::byte>{...}}.load<T>()`
+          // leaves every borrowed member dangling. Deserialize from an lvalue that
+          // outlives the result, or from serde::mmap_input_stream.
+          //
+          // Unlike the character backends there is no value this can refuse. BSON
+          // does not escape or decode a string, so every payload on a contiguous
+          // input is already a run of it.
+          if constexpr(not cursor_t::contiguous_byte_or_char)
+          {
+            static_assert(
+                false,
+                std::string(display_string_of(dealias(^^value_t)))
+                    + " cannot be a BSON string destination on this cursor: a borrowed read needs"
+                      " a contiguous input to point at, and this deserializer reads a byte at a"
+                      " time (use std::string, or deserialize from a contiguous input)");
+          }
+          else
+          {
+            value = value_t{cursor_.read_view()};
+          }
         }
         else
         {
           static_assert(
-              false, "BSON string deserialization requires an assignable owning string target");
+              false,
+              std::string(display_string_of(dealias(^^value_t)))
+                  + " cannot be a BSON string destination: it neither owns writable storage nor"
+                    " can be pointed at a run of the input (expected std::string,"
+                    " reflex::heapless::string<N>, std::array<char, N> or std::string_view)");
         }
       }
       else if constexpr(std::same_as<value_t, bson::int32>)
