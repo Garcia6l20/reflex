@@ -5,6 +5,7 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <chrono>
 #include <concepts>
 #include <meta>
 #endif
@@ -123,5 +124,30 @@ REFLEX_EXPORT namespace reflex
   {};
   template <typename T>
   concept optional_c = is_optional<T>::value;
+
+  template <typename T> inline constexpr bool is_chrono_duration_v = false;
+
+  template <typename Rep, typename Period>
+  inline constexpr bool is_chrono_duration_v<std::chrono::duration<Rep, Period>> = true;
+
+  /** @brief exactly std::chrono::duration<Rep, Period>, and nothing that merely
+   * looks like one
+   *
+   * A partial specialization rather than a requires-expression naming `T::rep`
+   * and `T::period`. Both forms are correct and this one is cheaper: it matches
+   * by pattern and instantiates nothing, where the requires form has to form
+   * `std::chrono::duration<T::rep, T::period>` for every candidate it is asked
+   * about.
+   *
+   * A GCC 16.1.1 segfault was once attributed to the requires form here. It was
+   * not the cause. The trigger is an inline function in a module whose body
+   * instantiates a template from a module that one imports, and this concept
+   * only ever changed how often that instantiation happened to be reached.
+   *
+   * Disjoint from parse.hpp's time_point_c either way, which asks for a `clock`
+   * a duration does not have.
+   */
+  template <typename T>
+  concept duration_c = is_chrono_duration_v<T>;
 
 } // namespace reflex

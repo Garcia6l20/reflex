@@ -4,6 +4,7 @@
 #define REFLEX_EXPORT
 #endif
 
+#include <reflex/concepts.hpp>
 #include <reflex/constant.hpp>
 #include <reflex/exception.hpp>
 #include <reflex/tag_invoke.hpp>
@@ -238,21 +239,6 @@ REFLEX_EXPORT namespace reflex
 
     return std::unexpected(std::errc::invalid_argument);
   }
-
-  /** @brief exactly std::chrono::duration<Rep, Period>, and nothing that merely
-   * looks like one
-   *
-   * The identity check on the rebuilt type is what keeps the concept from
-   * catching any class that happens to name a `rep` and a `period`, and it is
-   * disjoint from time_point_c below, which asks for a `clock` a duration does
-   * not have.
-   */
-  template <typename T>
-  concept duration_c = requires {
-    typename T::rep;
-    typename T::period;
-    requires std::same_as<T, std::chrono::duration<typename T::rep, typename T::period>>;
-  };
 
   /** @brief a duration written the way a person writes one
    *
