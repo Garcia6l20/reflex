@@ -82,6 +82,16 @@ REFLEX_EXPORT namespace reflex::py
     {}
   };
 
+  /** @brief publish this nested namespace as a submodule
+   *
+   * Binding a namespace does not recurse on its own. A nested namespace is
+   * usually an implementation detail, and skipping one by convention - anything
+   * called `detail` - would be a rule the source does not show.
+   */
+  struct submodule_t
+  {};
+  inline constexpr submodule_t submodule{};
+
   /** @brief how a member's name is spelled in Python, when it does not say */
   using naming = caseconv::naming;
 

@@ -315,6 +315,16 @@ REFLEX_EXPORT namespace reflex::py
       return constant_string{std::string{name}};
     }
 
+    /** @brief does a call to @p fn supply an object
+     *
+     * A non-static member function does. A free function and a static member do
+     * not, and neither reaches Python with an implicit first argument.
+     */
+    consteval auto takes_object(std::meta::info fn) -> bool
+    {
+      return std::meta::is_class_member(fn) and not std::meta::is_static_member(fn);
+    }
+
     /** @brief the object type a call to @p fn on a @p T takes
      *
      * A deducing this member spells its object out, so it is read off that
@@ -369,13 +379,13 @@ REFLEX_EXPORT namespace reflex::py
     consteval auto thunk_type(std::meta::info T, reflex::overload o) -> std::meta::info
     {
       std::vector<std::meta::info> targs{std::meta::reflect_constant(o.function)};
-      if(not std::meta::is_static_member(o.function))
+      if(takes_object(o.function))
       {
         targs.push_back(self_type_of(T, o.function));
       }
       targs.append_range(o.parameter_types());
       return std::meta::substitute(
-          std::meta::is_static_member(o.function) ? ^^static_thunk : ^^method_thunk, targs);
+          takes_object(o.function) ? ^^method_thunk : ^^static_thunk, targs);
     }
 
     /** @brief the names a Python caller can pass @p o's arguments under
@@ -398,7 +408,7 @@ REFLEX_EXPORT namespace reflex::py
     consteval auto argument_names(reflex::overload o) -> std::vector<char const*>
     {
       const auto skip = meta::is_explicit_object_member_function(o.function) ? 1uz : 0uz;
-      const bool takes_object = not std::meta::is_static_member(o.function);
+      const bool implicit_self = takes_object(o.function);
 
       std::vector<char const*> names;
       for(auto p : std::meta::parameters_of(o.function) | std::views::drop(skip)
@@ -410,7 +420,7 @@ REFLEX_EXPORT namespace reflex::py
         }
         const auto name = std::meta::identifier_of(p);
         REFLEX_META_CHECK(
-            not(takes_object and name == "self"),
+            not(implicit_self and name == "self"),
             "a bound method cannot have a parameter named self, nanobind names the object that",
             p);
         names.push_back(std::define_static_string(name));
@@ -954,6 +964,147 @@ REFLEX_EXPORT namespace reflex::py
       bind_nested<T>(c);
       return c;
     }
+
+    /** @brief the types declared in the namespace @p Ns that get published */
+    consteval auto bindable_namespace_types(std::meta::info Ns) -> std::vector<std::meta::info>
+    {
+      std::vector<std::meta::info> kept;
+      for(auto m : std::meta::members_of(Ns, std::meta::access_context::current()))
+      {
+        if(not std::meta::is_type(m) or is_skipped(m))
+        {
+          continue;
+        }
+        if(not std::meta::is_class_type(m) and not std::meta::is_enum_type(m))
+        {
+          continue;
+        }
+        if(not std::meta::is_complete_type(m))
+        {
+          continue;
+        }
+        kept.push_back(m);
+      }
+      return kept;
+    }
+
+    /** @brief one function per distinct free-function name in @p Ns
+     *
+     * An operator is not among them. A free operator belongs on the Python type
+     * of its left operand, not on the module, and reaching it that way is not
+     * done yet.
+     */
+    consteval auto namespace_function_groups(std::meta::info Ns) -> std::vector<std::meta::info>
+    {
+      std::vector<std::meta::info> groups;
+      for(auto m : std::meta::members_of(Ns, std::meta::access_context::current()))
+      {
+        if(std::meta::is_type(m) or std::meta::is_namespace(m) or is_data(m))
+        {
+          continue;
+        }
+        if(not is_bindable_method(m))
+        {
+          continue;
+        }
+        const auto name = meta::spelling_of(m);
+        const bool seen = std::ranges::any_of(
+            groups, [&](std::meta::info g) { return meta::spelling_of(g) == name; });
+        if(not seen)
+        {
+          groups.push_back(m);
+        }
+      }
+      return groups;
+    }
+
+    /** @brief the namespace-scope variables published as module attributes
+     *
+     * Read-only ones only. A mutable namespace variable copied into a Python
+     * attribute is two values that drift apart, which is worse than not
+     * publishing it.
+     */
+    consteval auto bindable_namespace_values(std::meta::info Ns) -> std::vector<std::meta::info>
+    {
+      std::vector<std::meta::info> kept;
+      for(auto m : std::meta::members_of(Ns, std::meta::access_context::current()))
+      {
+        if(not std::meta::is_variable(m) or is_skipped(m))
+        {
+          continue;
+        }
+        if(not std::meta::is_const_type(std::meta::type_of(m)))
+        {
+          continue;
+        }
+        if(std::meta::is_array_type(std::meta::type_of(m))
+           or not is_bindable_type(std::meta::type_of(m)))
+        {
+          continue;
+        }
+        kept.push_back(m);
+      }
+      return kept;
+    }
+
+    consteval auto bindable_submodules(std::meta::info Ns) -> std::vector<std::meta::info>
+    {
+      std::vector<std::meta::info> kept;
+      for(auto m : std::meta::members_of(Ns, std::meta::access_context::current()))
+      {
+        if(std::meta::is_namespace(m) and meta::has_annotation(m, ^^submodule_t)
+           and not is_skipped(m))
+        {
+          kept.push_back(m);
+        }
+      }
+      return kept;
+    }
+
+    template <std::meta::info Ns> void bind_namespace(nb::module_ scope)
+    {
+      // Types first. A function returning one works whenever it is called, since
+      // nanobind resolves a caster lazily, but a class naming a base does not.
+      template for(constexpr auto t : std::define_static_array(bindable_namespace_types(Ns)))
+      {
+        constexpr auto name = std::define_static_string(python_name(t).get());
+        if constexpr(std::meta::is_enum_type(t))
+        {
+          bind_enum<typename [:t:]>(scope, name);
+        }
+        else
+        {
+          bind_type<typename [:t:]>(scope, name);
+        }
+      }
+
+      template for(constexpr auto group :
+                   std::define_static_array(namespace_function_groups(Ns)))
+      {
+        constexpr auto written = std::define_static_string(meta::spelling_of(group));
+        constexpr auto name = std::define_static_string(group_python_name(Ns, written).get());
+
+        template for(constexpr auto o : std::define_static_array(bindable_overloads(Ns, written)))
+        {
+          // A free function has no object, so every parameter is counted. The
+          // rule inverts against class_::def, which counts the object itself.
+          bind_overload<void, o>(scope, name);
+        }
+      }
+
+      template for(constexpr auto v : std::define_static_array(bindable_namespace_values(Ns)))
+      {
+        constexpr auto name = std::define_static_string(python_name(v).get());
+        scope.attr(name) = nb::cast([:v:]);
+      }
+
+      template for(constexpr auto sub : std::define_static_array(bindable_submodules(Ns)))
+      {
+        constexpr auto name = std::define_static_string(python_name(sub).get());
+        auto           child = scope.def_submodule(name);
+        bind_namespace<sub>(child);
+      }
+    }
   } // namespace detail
 
   /** @brief the module being built, as the body of a REFLEX_PY_MODULE sees it */
@@ -969,6 +1120,20 @@ REFLEX_EXPORT namespace reflex::py
     template <typename T> auto bind(char const* name = nullptr) -> nb::class_<T>
     {
       return nb::borrow<nb::class_<T>>(detail::bind_type<T>(handle, name));
+    }
+
+    /** @brief publish everything in the namespace @p Ns
+     *
+     * The types it declares, its free functions, and its read-only variables.
+     * A nested namespace is only followed when it carries py::submodule: one is
+     * usually an implementation detail, and a convention over the name would be
+     * a rule the source does not show.
+     *
+     * py::skip on any of them keeps it out.
+     */
+    template <std::meta::info Ns> void bind()
+    {
+      detail::bind_namespace<Ns>(handle);
     }
 
     /** @brief publish the enumeration @p E as a Python type */
