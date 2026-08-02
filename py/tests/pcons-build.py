@@ -1,5 +1,5 @@
 from pcons import context
-from reflex_build.python import add_python_extension
+from reflex_build.python import add_python_extension, add_stub
 from reflex_build.testing import add_python_test, add_test
 
 project = context.current_project
@@ -27,4 +27,5 @@ for src in project.current_dir.glob("ext/*.cpp"):
         project.current_dir / "python" / f"test_{name}.py",
         group="py",
     )
+    add_stub(project, env, extension, name)
     print(f"-- Test added: {test.name}")

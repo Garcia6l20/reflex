@@ -20,13 +20,24 @@ FETCH_HINT = (
 )
 
 
+_imported: dict[str, tuple[ImportedTarget, Path]] = {}
+
+
 def _fetched(name: str) -> tuple[ImportedTarget, Path]:
-    """The imported target for a fetched package, and its unpacked source tree."""
+    """The imported target for a fetched package, and its unpacked source tree.
+
+    Memoized: an ImportedTarget registers itself under the package name, so a
+    second call would fail with *Target 'nanobind' already exists*.
+    """
+    if name in _imported:
+        return _imported[name]
+
     description = pkg_dir / f"{name}.pcons-pkg.toml"
     if not description.exists():
         raise RuntimeError(f"{name} package not found - {FETCH_HINT}")
     package = PackageDescription.from_toml(description)
-    return ImportedTarget.from_package(package), Path(package.prefix)
+    _imported[name] = (ImportedTarget.from_package(package), Path(package.prefix))
+    return _imported[name]
 
 
 # =============================================================================
@@ -77,6 +88,35 @@ def nanobind_library(project, env):
         ["-fPIC", "-fno-strict-aliasing", "-fvisibility=hidden"]
     )
     return lib
+
+
+def add_stub(project, env, extension, name: str):
+    """Generate a .pyi for a built extension, with nanobind's own stubgen.
+
+    Not built by default and not checked in: the output tracks the nanobind
+    version, so a golden file would churn on every bump.
+    """
+    _, prefix = _fetched("nanobind")
+    module_dir = build_dir / "py" / "tests"
+
+    stub = project.Command(
+        f"{name}-stub",
+        env,
+        target=module_dir / f"{name}.pyi",
+        command=[
+            interpreter,
+            str(prefix / "src" / "stubgen.py"),
+            "-m",
+            name,
+            "-o",
+            str(module_dir / f"{name}.pyi"),
+            "-i",
+            str(module_dir),
+        ],
+    )
+    stub.add_dependency(extension)
+    project.Alias("py-stubs", stub)
+    return stub
 
 
 def add_python_extension(project, env, name: str, sources: list, libs: list):

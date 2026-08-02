@@ -20,6 +20,20 @@ namespace
     static auto free_standing(int self) -> int;
   };
 
+  struct first_base
+  {};
+  struct second_base
+  {};
+  struct [[= py::skip]] ignored_base
+  {};
+
+  struct one_base : first_base
+  {};
+  struct two_bases : first_base, second_base
+  {};
+  struct one_kept : first_base, ignored_base
+  {};
+
   consteval auto names_of(std::meta::info fn, std::size_t arity)
   {
     return py::detail::argument_names(reflex::overload{fn, arity});
@@ -38,6 +52,22 @@ TEST_CASE("reflex::py: argument names come from the parameters")
   // a call site writes.
   static_assert(names_of(^^widget::deducing, 1).size() == 1);
   static_assert(std::string_view{names_of(^^widget::deducing, 1)[0]} == "n");
+}
+
+TEST_CASE("reflex::py: a bound class carries at most one base")
+{
+  static_assert(py::detail::bindable_base(^^one_base) == ^^first_base);
+  static_assert(py::detail::bindable_base(^^first_base) == reflex::meta::null);
+
+  consteval {
+    // nanobind's class_ carries exactly one base, and a second is refused
+    // rather than dropped: an isinstance against it would fail with nothing to
+    // point at.
+    REFLEX_CONSTEVAL_THROWS(py::detail::bindable_base(^^two_bases));
+
+    // Unless the others are skipped.
+    REFLEX_CONSTEVAL_NOTHROW(py::detail::bindable_base(^^one_kept));
+  }
 }
 
 TEST_CASE("reflex::py: a parameter named self is rejected")

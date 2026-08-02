@@ -72,6 +72,11 @@ def test_an_annotated_nested_namespace_becomes_a_submodule():
     assert library.extras.level == 9
 
 
+def test_a_free_operator_is_not_reached():
+    expect_type_error(lambda: library.point(1, 1) + library.point(2, 2))
+    assert not hasattr(library, "operator+")
+
+
 def test_a_free_function_rejects_a_bad_argument():
     expect_type_error(lambda: library.make("a", "b"))
 

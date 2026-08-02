@@ -45,6 +45,10 @@ def test_a_static_data_member_lives_on_the_class():
     members.widget.made = 5
 
 
+def test_an_array_member_is_absent():
+    assert not hasattr(members.widget(), "slots")
+
+
 def test_a_const_method():
     w = members.widget()
     w.value = 4

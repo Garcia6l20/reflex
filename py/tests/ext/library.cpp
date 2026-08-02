@@ -41,6 +41,13 @@ namespace mylib
     return point{a, b};
   }
 
+  // Not reached. A free operator belongs on the Python type of its left
+  // operand, and the namespace walk does not attach one there.
+  auto operator+(point const& a, point const& b) -> point
+  {
+    return point{a.x + b.x, a.y + b.y};
+  }
+
   auto describe(point const& p) -> std::string
   {
     return std::to_string(p.x) + "," + std::to_string(p.y);

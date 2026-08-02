@@ -68,4 +68,9 @@ def test_a_defaulted_constructor_parameter_is_reachable_at_both_arities():
     assert basic.defaulted(1, 1).sum == 2
 
 
+def test_constructor_arguments_are_positional_only():
+    # nb::init carries types, not names.
+    expect_type_error(lambda: basic.my_class(a=2, b=3))
+
+
 run(globals())

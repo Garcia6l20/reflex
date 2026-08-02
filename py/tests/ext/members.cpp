@@ -17,6 +17,10 @@ namespace
 
     static int made;
 
+    // Not published: there is no caster for an array and def_rw's setter
+    // cannot assign to one.
+    int slots[3] = {0, 0, 0};
+
     auto doubled() const -> int
     {
       return value * 2;
