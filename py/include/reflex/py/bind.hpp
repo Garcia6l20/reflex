@@ -358,27 +358,84 @@ REFLEX_EXPORT namespace reflex::py
           std::meta::is_static_member(o.function) ? ^^static_thunk : ^^method_thunk, targs);
     }
 
-    template <typename T, reflex::overload O>
-    void bind_overload(nb::class_<T>& c, char const* name)
+    /** @brief the names a Python caller can pass @p o's arguments under
+     *
+     * All of them or none: nanobind counts the nb::arg annotations against the
+     * signature, so a partly named parameter list has to fall back to
+     * positional. An unnamed parameter is ordinary C++ and appears in real code.
+     *
+     * The object is not among them, whether it is spelled out by a deducing this
+     * member or not. It is the object, not an argument, and no call site writes
+     * it.
+     */
+    consteval auto argument_names(reflex::overload o) -> std::vector<char const*>
     {
-      if constexpr(std::meta::is_static_member(O.function))
+      const auto skip = meta::is_explicit_object_member_function(o.function) ? 1uz : 0uz;
+
+      std::vector<char const*> names;
+      for(auto p : std::meta::parameters_of(o.function) | std::views::drop(skip)
+                     | std::views::take(o.arity))
       {
-        if constexpr(needs_thunk(O))
+        if(not std::meta::has_identifier(p))
         {
-          c.def_static(name, typename [:thunk_type(^^T, O):]{});
+          return {};
+        }
+        names.push_back(std::define_static_string(std::meta::identifier_of(p)));
+      }
+      return names;
+    }
+
+    /** @brief def @p f under @p name, with the argument names and the docstring
+     *
+     * One nb::arg per real argument and none for the object. class_::def sets
+     * nanobind's is_method and it asserts nargs_provided + 1 == nargs, so an
+     * nb::arg("self") is a compile error rather than a redundancy. def_static
+     * has no is_method and counts every parameter, which comes out the same
+     * here because a static member has no object to leave out.
+     */
+    template <bool Static, reflex::overload O, typename T, typename F>
+    void def_candidate(nb::class_<T>& c, char const* name, F f)
+    {
+      constexpr auto names = std::define_static_array(argument_names(O));
+
+      [&]<std::size_t... I>(std::index_sequence<I...>) {
+        // An empty docstring is not passed at all. nanobind would attach it and
+        // help() would then show a blank line where the signature belongs.
+        if constexpr(not doc_of(O.function).get().empty())
+        {
+          constexpr auto text = std::define_static_string(doc_of(O.function).get());
+          if constexpr(Static)
+          {
+            c.def_static(name, f, nb::arg(names[I])..., text);
+          }
+          else
+          {
+            c.def(name, f, nb::arg(names[I])..., text);
+          }
+        }
+        else if constexpr(Static)
+        {
+          c.def_static(name, f, nb::arg(names[I])...);
         }
         else
         {
-          c.def_static(name, &[:O.function:]);
+          c.def(name, f, nb::arg(names[I])...);
         }
-      }
-      else if constexpr(needs_thunk(O))
+      }(std::make_index_sequence<names.size()>{});
+    }
+
+    template <typename T, reflex::overload O>
+    void bind_overload(nb::class_<T>& c, char const* name)
+    {
+      constexpr bool is_static = std::meta::is_static_member(O.function);
+
+      if constexpr(needs_thunk(O))
       {
-        c.def(name, typename [:thunk_type(^^T, O):]{});
+        def_candidate<is_static, O>(c, name, typename [:thunk_type(^^T, O):]{});
       }
       else
       {
-        c.def(name, &[:O.function:]);
+        def_candidate<is_static, O>(c, name, &[:O.function:]);
       }
     }
 
@@ -387,20 +444,39 @@ REFLEX_EXPORT namespace reflex::py
       template for(constexpr auto m : std::define_static_array(bindable_data_members(^^T)))
       {
         constexpr auto name = std::define_static_string(python_name(m).get());
+        constexpr auto text = std::define_static_string(doc_of(m).get());
 
-        if constexpr(std::meta::is_nonstatic_data_member(m))
+        // A static data member splices to an ordinary pointer, which is what
+        // the _static forms take.
+        constexpr bool instance = std::meta::is_nonstatic_data_member(m);
+
+        if constexpr(not doc_of(m).get().empty())
         {
-          if constexpr(is_readonly(m))
+          if constexpr(instance and is_readonly(m))
           {
-            c.def_ro(name, &[:m:]);
+            c.def_ro(name, &[:m:], text);
+          }
+          else if constexpr(instance)
+          {
+            c.def_rw(name, &[:m:], text);
+          }
+          else if constexpr(is_readonly(m))
+          {
+            c.def_ro_static(name, &[:m:], text);
           }
           else
           {
-            c.def_rw(name, &[:m:]);
+            c.def_rw_static(name, &[:m:], text);
           }
         }
-        // A static data member splices to an ordinary pointer, which is what
-        // the _static forms take.
+        else if constexpr(instance and is_readonly(m))
+        {
+          c.def_ro(name, &[:m:]);
+        }
+        else if constexpr(instance)
+        {
+          c.def_rw(name, &[:m:]);
+        }
         else if constexpr(is_readonly(m))
         {
           c.def_ro_static(name, &[:m:]);
@@ -442,7 +518,17 @@ REFLEX_EXPORT namespace reflex::py
     {
       constexpr auto written = std::define_static_string(python_name(^^T).get());
 
-      auto c = nb::class_<T>(handle, name ? name : written);
+      auto c = [&] {
+        if constexpr(not doc_of(^^T).get().empty())
+        {
+          constexpr auto text = std::define_static_string(doc_of(^^T).get());
+          return nb::class_<T>(handle, name ? name : written, text);
+        }
+        else
+        {
+          return nb::class_<T>(handle, name ? name : written);
+        }
+      }();
       detail::bind_constructors(c);
       detail::bind_data_members(c);
       detail::bind_methods(c);
