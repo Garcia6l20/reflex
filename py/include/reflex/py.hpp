@@ -13,4 +13,5 @@
 #include <reflex/py/annotations.hpp>
 #include <reflex/py/bind.hpp>
 #include <reflex/py/nanobind.hpp>
+#include <reflex/py/operators.hpp>
 #include <reflex/py/policy.hpp>

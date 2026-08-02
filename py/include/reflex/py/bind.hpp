@@ -12,6 +12,7 @@
 #endif
 
 #include <reflex/py/nanobind.hpp>
+#include <reflex/py/operators.hpp>
 #include <reflex/py/policy.hpp>
 
 REFLEX_EXPORT namespace reflex::py
@@ -140,6 +141,13 @@ REFLEX_EXPORT namespace reflex::py
         {
           continue;
         }
+        // An array member has no caster and cannot be assigned through:
+        // def_rw's setter is `c.*p = value`, which is *invalid array
+        // assignment* rather than a missing conversion.
+        if(std::meta::is_array_type(std::meta::type_of(m)))
+        {
+          continue;
+        }
         if(is_bindable_type(std::meta::type_of(m)))
         {
           kept.push_back(m);
@@ -148,8 +156,13 @@ REFLEX_EXPORT namespace reflex::py
       return kept;
     }
 
-    /** @brief is @p m a member function this binder is willing to publish */
-    consteval auto is_bindable_method(std::meta::info m) -> bool
+    /** @brief is @p m a member function that could be published under some name
+     *
+     * What the name is does not matter here. bindable_method_groups asks for an
+     * ordinary one, operator_groups asks for an operator, and the checks that
+     * rule a function out entirely are the same for both.
+     */
+    consteval auto is_bindable_callable(std::meta::info m) -> bool
     {
       if(not std::meta::is_function(m) or is_skipped(m))
       {
@@ -157,12 +170,6 @@ REFLEX_EXPORT namespace reflex::py
       }
       if(std::meta::is_constructor(m) or std::meta::is_destructor(m)
          or std::meta::is_special_member_function(m))
-      {
-        return false;
-      }
-      // An operator has no Python name until the mapping table exists, and
-      // "operator+" as an attribute would be unreachable.
-      if(std::meta::is_operator_function(m) or std::meta::is_conversion_function(m))
       {
         return false;
       }
@@ -176,6 +183,19 @@ REFLEX_EXPORT namespace reflex::py
       // defaulted one that cannot be bound only rules out the arity that
       // supplies it, and bindable_overloads decides that per candidate.
       return is_bindable_type(std::meta::return_type_of(m));
+    }
+
+    /** @brief is @p m published under an ordinary identifier */
+    consteval auto is_bindable_method(std::meta::info m) -> bool
+    {
+      return is_bindable_callable(m) and not std::meta::is_operator_function(m)
+         and not std::meta::is_conversion_function(m);
+    }
+
+    /** @brief is @p m published under a dunder read off the operator table */
+    consteval auto is_bindable_operator(std::meta::info m) -> bool
+    {
+      return is_bindable_callable(m) and std::meta::is_operator_function(m);
     }
 
     /** @brief one member per distinct method name of @p T, in declaration order
@@ -220,7 +240,7 @@ REFLEX_EXPORT namespace reflex::py
       {
         // A data member holding a callable is reached like a method, which is
         // why overloads_of returns it. It stays a data member here.
-        if(o.is_aggregate_init() or o.is_data_member() or not is_bindable_method(o.function))
+        if(o.is_aggregate_init() or o.is_data_member() or not is_bindable_callable(o.function))
         {
           continue;
         }
@@ -406,8 +426,8 @@ REFLEX_EXPORT namespace reflex::py
      * has no is_method and counts every parameter, which comes out the same
      * here because a static member has no object to leave out.
      */
-    template <bool Static, reflex::overload O, typename C, typename F>
-    void def_candidate(C& c, char const* name, F f)
+    template <bool Static, reflex::overload O, typename C, typename F, typename... Extra>
+    void def_candidate(C& c, char const* name, F f, Extra... extra)
     {
       constexpr auto names = std::define_static_array(argument_names(O));
 
@@ -419,36 +439,36 @@ REFLEX_EXPORT namespace reflex::py
           constexpr auto text = std::define_static_string(doc_of(O.function).get());
           if constexpr(Static)
           {
-            c.def_static(name, f, nb::arg(names[I])..., text);
+            c.def_static(name, f, nb::arg(names[I])..., text, extra...);
           }
           else
           {
-            c.def(name, f, nb::arg(names[I])..., text);
+            c.def(name, f, nb::arg(names[I])..., text, extra...);
           }
         }
         else if constexpr(Static)
         {
-          c.def_static(name, f, nb::arg(names[I])...);
+          c.def_static(name, f, nb::arg(names[I])..., extra...);
         }
         else
         {
-          c.def(name, f, nb::arg(names[I])...);
+          c.def(name, f, nb::arg(names[I])..., extra...);
         }
       }(std::make_index_sequence<names.size()>{});
     }
 
-    template <typename T, reflex::overload O, typename C>
-    void bind_overload(C& c, char const* name)
+    template <typename T, reflex::overload O, typename C, typename... Extra>
+    void bind_overload(C& c, char const* name, Extra... extra)
     {
       constexpr bool is_static = std::meta::is_static_member(O.function);
 
       if constexpr(needs_thunk(O))
       {
-        def_candidate<is_static, O>(c, name, typename [:thunk_type(^^T, O):]{});
+        def_candidate<is_static, O>(c, name, typename [:thunk_type(^^T, O):]{}, extra...);
       }
       else
       {
-        def_candidate<is_static, O>(c, name, &[:O.function:]);
+        def_candidate<is_static, O>(c, name, &[:O.function:], extra...);
       }
     }
 
@@ -597,6 +617,260 @@ REFLEX_EXPORT namespace reflex::py
       }
     }
 
+    /** @brief one member per distinct operator of @p T, in declaration order */
+    consteval auto operator_groups(std::meta::info T) -> std::vector<std::meta::info>
+    {
+      std::vector<std::meta::info> groups;
+      for(auto m : std::meta::members_of(T, std::meta::access_context::current()))
+      {
+        if(is_data(m) or not is_bindable_operator(m))
+        {
+          continue;
+        }
+        const auto name = meta::spelling_of(m);
+        const bool seen = std::ranges::any_of(
+            groups, [&](std::meta::info g) { return meta::spelling_of(g) == name; });
+        if(not seen)
+        {
+          groups.push_back(m);
+        }
+      }
+      return groups;
+    }
+
+    /** @brief does @p T declare an operator== of its own
+     *
+     * A spaceship supplies all six comparisons, but an explicit equality is
+     * more specific and has to win. Emitting both would leave a class where
+     * `a == b` and `not (a != b)` can disagree.
+     */
+    consteval auto has_equality(std::meta::info T) -> bool
+    {
+      return not meta::callables_named(T, "operator==", std::meta::access_context::current())
+                     .empty();
+    }
+
+    /** @brief one comparison read off a spaceship, `(a <=> b) OP 0` */
+    template <std::meta::info Fn, typename Self, typename Other, std::size_t Which>
+    struct spaceship_thunk
+    {
+      auto operator()(Self self, Other other) const -> bool
+      {
+        const auto ordering = (self.[:Fn:])(static_cast<Other&&>(other));
+        if constexpr(Which == 0)
+        {
+          return ordering < 0;
+        }
+        else if constexpr(Which == 1)
+        {
+          return ordering <= 0;
+        }
+        else if constexpr(Which == 2)
+        {
+          return ordering == 0;
+        }
+        else if constexpr(Which == 3)
+        {
+          return ordering != 0;
+        }
+        else if constexpr(Which == 4)
+        {
+          return ordering > 0;
+        }
+        else
+        {
+          return ordering >= 0;
+        }
+      }
+    };
+
+    consteval auto spaceship_type(std::meta::info T, reflex::overload o, std::size_t which)
+        -> std::meta::info
+    {
+      return std::meta::substitute(
+          ^^spaceship_thunk,
+          {std::meta::reflect_constant(o.function), self_type_of(T, o.function),
+           o.parameter_types().front(), std::meta::reflect_constant(which)});
+    }
+
+    /** @brief assignment through a subscript, `self[key] = value` */
+    template <std::meta::info Fn, typename Self, typename Key, typename Value>
+    struct setitem_thunk
+    {
+      void operator()(Self self, Key key, Value value) const
+      {
+        (self.[:Fn:])(static_cast<Key&&>(key)) = static_cast<Value&&>(value);
+      }
+    };
+
+    /** @brief can @p o's result be assigned through, making it a __setitem__ */
+    consteval auto is_settable_subscript(reflex::overload o) -> bool
+    {
+      if(meta::spelling_of(o.function) != "operator[]" or o.arity != 1)
+      {
+        return false;
+      }
+      const auto result = std::meta::return_type_of(o.function);
+      return std::meta::is_lvalue_reference_type(result)
+         and not std::meta::is_const_type(std::meta::remove_reference(result));
+    }
+
+    consteval auto setitem_type(std::meta::info T, reflex::overload o) -> std::meta::info
+    {
+      const auto value =
+          std::meta::remove_reference(std::meta::return_type_of(o.function));
+      return std::meta::substitute(
+          ^^setitem_thunk,
+          {std::meta::reflect_constant(o.function), self_type_of(T, o.function),
+           o.parameter_types().front(), value});
+    }
+
+    template <typename T, typename C> void bind_operators(C& c)
+    {
+      template for(constexpr auto group : std::define_static_array(operator_groups(^^T)))
+      {
+        constexpr auto written = std::define_static_string(meta::spelling_of(group));
+
+        template for(constexpr auto o :
+                     std::define_static_array(bindable_overloads(^^T, written)))
+        {
+          // A py::rename reaches any operator the table declines to name, which
+          // is what it accepts a dunder for.
+          if constexpr(not meta::annotations_of_with(o.function, ^^rename).empty())
+          {
+            constexpr auto renamed = std::define_static_string(python_name(o.function).get());
+            bind_overload<T, o>(c, renamed);
+          }
+          else if constexpr(is_spaceship(written))
+          {
+            // Six names from one function. An explicit operator== is more
+            // specific, so the equality pair is left to it when there is one.
+            template for(constexpr auto which : std::define_static_array(
+                             std::array<std::size_t, 6>{0, 1, 2, 3, 4, 5}))
+            {
+              if constexpr(not(has_equality(^^T) and (which == 2 or which == 3)))
+              {
+                c.def(
+                    comparison_names[which].data(),
+                    typename [:spaceship_type(^^T, o, which):]{});
+              }
+            }
+          }
+          else if constexpr(not python_operator(written, o.arity).empty())
+          {
+            constexpr auto dunder =
+                std::define_static_string(python_operator(written, o.arity));
+
+            // `a += b` rebinds a to whatever __iadd__ returns. The default
+            // policy copies the returned reference, so a would come out a
+            // different object from the one that was mutated. rv_policy
+            // ::reference hands back the instance already registered for that
+            // address, which is the object Python started with.
+            if constexpr(is_in_place(written))
+            {
+              bind_overload<T, o>(c, dunder, nb::rv_policy::reference);
+            }
+            else
+            {
+              bind_overload<T, o>(c, dunder);
+            }
+
+            // A non-const subscript returning a reference is also the setter.
+            if constexpr(is_settable_subscript(o))
+            {
+              c.def("__setitem__", typename [:setitem_type(^^T, o):]{});
+            }
+          }
+        }
+      }
+    }
+
+    /** @brief the conversion functions of @p T that become a dunder
+     *
+     * Only an explicit one. A non-explicit conversion to an arithmetic type
+     * would make the object silently usable as a number in Python, which is a
+     * wider promise than the C++ class made. py::rename reaches the rest.
+     */
+    consteval auto conversion_name(std::meta::info m) -> std::string_view
+    {
+      if(not meta::annotations_of_with(m, ^^rename).empty())
+      {
+        return {};
+      }
+      if(not std::meta::is_explicit(m))
+      {
+        return {};
+      }
+      // dealias, not just decay: std::string is an alias for a
+      // basic_string instantiation and the two reflections do not compare equal.
+      const auto result = std::meta::dealias(std::meta::decay(std::meta::return_type_of(m)));
+      if(result == std::meta::dealias(^^bool))
+      {
+        return "__bool__";
+      }
+      if(result == std::meta::dealias(^^std::string))
+      {
+        return "__str__";
+      }
+      return {};
+    }
+
+    consteval auto bindable_conversions(std::meta::info T) -> std::vector<std::meta::info>
+    {
+      std::vector<std::meta::info> kept;
+      for(auto m : std::meta::members_of(T, std::meta::access_context::current()))
+      {
+        if(is_data(m) or not std::meta::is_function(m)
+           or not std::meta::is_conversion_function(m))
+        {
+          continue;
+        }
+        if(is_skipped(m) or not is_bindable_callable(m))
+        {
+          continue;
+        }
+        if(conversion_name(m).empty() and meta::annotations_of_with(m, ^^rename).empty())
+        {
+          continue;
+        }
+        kept.push_back(m);
+      }
+      return kept;
+    }
+
+    /** @brief a conversion, called as the dunder it maps to */
+    template <std::meta::info Fn, typename Self, typename R> struct conversion_thunk
+    {
+      auto operator()(Self self) const -> R
+      {
+        return static_cast<R>(self);
+      }
+    };
+
+    consteval auto conversion_type(std::meta::info T, std::meta::info m) -> std::meta::info
+    {
+      return std::meta::substitute(
+          ^^conversion_thunk,
+          {std::meta::reflect_constant(m), self_type_of(T, m), std::meta::return_type_of(m)});
+    }
+
+    template <typename T, typename C> void bind_conversions(C& c)
+    {
+      template for(constexpr auto m : std::define_static_array(bindable_conversions(^^T)))
+      {
+        if constexpr(not meta::annotations_of_with(m, ^^rename).empty())
+        {
+          constexpr auto renamed = std::define_static_string(python_name(m).get());
+          c.def(renamed, typename [:conversion_type(^^T, m):]{});
+        }
+        else
+        {
+          constexpr auto dunder = std::define_static_string(conversion_name(m));
+          c.def(dunder, typename [:conversion_type(^^T, m):]{});
+        }
+      }
+    }
+
     template <typename T> auto bind_type(nb::handle scope, char const* name) -> nb::object;
 
     /** @brief publish the nested types of @p T inside its own Python type */
@@ -675,6 +949,8 @@ REFLEX_EXPORT namespace reflex::py
       bind_constructors<T>(c);
       bind_data_members<T>(c);
       bind_methods<T>(c);
+      bind_operators<T>(c);
+      bind_conversions<T>(c);
       bind_nested<T>(c);
       return c;
     }
