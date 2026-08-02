@@ -20,6 +20,7 @@
 #endif
 
 #include <reflex/const_check.hpp>
+#include <reflex/py/nanobind.hpp>
 
 REFLEX_EXPORT namespace reflex::py
 {
@@ -80,6 +81,21 @@ REFLEX_EXPORT namespace reflex::py
   {
     consteval doc(std::string_view text) : constant_string{text}
     {}
+  };
+
+  /** @brief what a bound function does with the result it returns
+   *
+   * Only for the cases the return type cannot settle. A `widget*` handing back
+   * something borrowed and a `widget*` handing back a fresh allocation are the
+   * same type, and nothing in the signature tells them apart.
+   *
+   * @code
+   * [[= py::returns{py::nb::rv_policy::reference}]] widget* find(int id);
+   * @endcode
+   */
+  struct returns
+  {
+    nb::rv_policy policy;
   };
 
   /** @brief publish this nested namespace as a submodule

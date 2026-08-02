@@ -354,6 +354,37 @@ REFLEX_EXPORT namespace reflex::py
           or std::meta::is_lvalue_reference_qualified(o.function);
     }
 
+    /** @brief what a bound call does with the result it returns
+     *
+     * A py::returns wins outright. Failing that:
+     *  - an in-place operator hands back the object it mutated, so the instance
+     *    already registered for that address is returned rather than a copy
+     *  - a member returning an lvalue reference to a class hands back a view of
+     *    a subobject, kept alive by the object it came from. The default would
+     *    copy it, and a caller mutating the copy would see nothing happen.
+     *
+     * Anything else is left to nanobind: a returned pointer is taken over, a
+     * returned value is moved.
+     */
+    consteval auto return_policy_of(std::meta::info fn) -> nb::rv_policy
+    {
+      if(auto asked = meta::annotations_of_with(fn, ^^returns); not asked.empty())
+      {
+        return extract<returns>(asked.front()).policy;
+      }
+      if(std::meta::is_operator_function(fn) and is_in_place(meta::spelling_of(fn)))
+      {
+        return nb::rv_policy::reference;
+      }
+      const auto result = std::meta::return_type_of(fn);
+      if(takes_object(fn) and std::meta::is_lvalue_reference_type(result)
+         and std::meta::is_class_type(std::meta::decay(result)))
+      {
+        return nb::rv_policy::reference_internal;
+      }
+      return nb::rv_policy::automatic;
+    }
+
     /** @brief a call to a member function, with the object as a first parameter
      *
      * A lambda cannot have a parameter pack computed at compile time, and a
@@ -472,13 +503,15 @@ REFLEX_EXPORT namespace reflex::py
     {
       constexpr bool is_static = std::meta::is_static_member(O.function);
 
+      constexpr auto policy = return_policy_of(O.function);
+
       if constexpr(needs_thunk(O))
       {
-        def_candidate<is_static, O>(c, name, typename [:thunk_type(^^T, O):]{}, extra...);
+        def_candidate<is_static, O>(c, name, typename [:thunk_type(^^T, O):]{}, extra..., policy);
       }
       else
       {
-        def_candidate<is_static, O>(c, name, &[:O.function:], extra...);
+        def_candidate<is_static, O>(c, name, &[:O.function:], extra..., policy);
       }
     }
 
@@ -771,19 +804,7 @@ REFLEX_EXPORT namespace reflex::py
             constexpr auto dunder =
                 std::define_static_string(python_operator(written, o.arity));
 
-            // `a += b` rebinds a to whatever __iadd__ returns. The default
-            // policy copies the returned reference, so a would come out a
-            // different object from the one that was mutated. rv_policy
-            // ::reference hands back the instance already registered for that
-            // address, which is the object Python started with.
-            if constexpr(is_in_place(written))
-            {
-              bind_overload<T, o>(c, dunder, nb::rv_policy::reference);
-            }
-            else
-            {
-              bind_overload<T, o>(c, dunder);
-            }
+            bind_overload<T, o>(c, dunder);
 
             // A non-const subscript returning a reference is also the setter.
             if constexpr(is_settable_subscript(o))
