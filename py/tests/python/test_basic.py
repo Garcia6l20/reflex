@@ -63,4 +63,9 @@ def test_copy_is_not_exposed():
     expect_type_error(lambda: copy.copy(basic.my_class(2, 3)))
 
 
+def test_a_defaulted_constructor_parameter_is_reachable_at_both_arities():
+    assert basic.defaulted(1).sum == 4
+    assert basic.defaulted(1, 1).sum == 2
+
+
 run(globals())

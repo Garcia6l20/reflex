@@ -58,6 +58,14 @@ namespace
   {
     explicitly_named() = default;
   };
+
+  struct defaulted
+  {
+    explicit defaulted(int a, int b = 3) : sum{a + b}
+    {}
+
+    int sum;
+  };
 } // namespace
 
 REFLEX_PY_MODULE(basic, m)
@@ -68,4 +76,5 @@ REFLEX_PY_MODULE(basic, m)
   m.bind<hidden_ctor>();
   m.bind<awkward_name>();
   m.bind<explicitly_named>("given");
+  m.bind<defaulted>().def_ro("sum", &defaulted::sum);
 }
