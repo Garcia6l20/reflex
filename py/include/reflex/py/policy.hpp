@@ -59,9 +59,15 @@ REFLEX_EXPORT namespace reflex::py
       return constant_string{""};
     }
 
-    if(auto n = meta::annotations_of_with(r, ^^naming); not n.empty())
+    // A naming policy on a scope governs what is inside it, not what it is
+    // called. Without this a `[[= py::naming::pascal_case]]` meant to respell a
+    // class's members respells the class as well.
+    if(not std::meta::is_type(r) and not std::meta::is_namespace(r))
     {
-      return caseconv::to_case(written, extract<naming>(n.front()));
+      if(auto n = meta::annotations_of_with(r, ^^naming); not n.empty())
+      {
+        return caseconv::to_case(written, extract<naming>(n.front()));
+      }
     }
     if(auto n = meta::annotations_of_with(std::meta::parent_of(r), ^^naming); not n.empty())
     {

@@ -96,6 +96,10 @@ TEST_CASE("reflex::py: python_name follows the enclosing naming policy")
 
   // No policy anywhere leaves the name as written.
   static_assert(py::python_name(member(^^undecorated, "only")) == "only");
+
+  // A naming policy on a scope governs what is inside it, not what it is
+  // called. The class carrying the annotation keeps its own name.
+  static_assert(py::python_name(^^scoped) == "scoped");
 }
 
 TEST_CASE("reflex::py: doc")

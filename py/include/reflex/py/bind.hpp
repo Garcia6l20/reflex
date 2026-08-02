@@ -97,7 +97,7 @@ REFLEX_EXPORT namespace reflex::py
       return std::meta::substitute(^^nb::init, o.parameter_types());
     }
 
-    template <typename T> void bind_constructors(nb::class_<T>& c)
+    template <typename T, typename C> void bind_constructors(C& c)
     {
       template for(constexpr auto ctor : std::define_static_array(bindable_constructors(^^T)))
       {
@@ -406,8 +406,8 @@ REFLEX_EXPORT namespace reflex::py
      * has no is_method and counts every parameter, which comes out the same
      * here because a static member has no object to leave out.
      */
-    template <bool Static, reflex::overload O, typename T, typename F>
-    void def_candidate(nb::class_<T>& c, char const* name, F f)
+    template <bool Static, reflex::overload O, typename C, typename F>
+    void def_candidate(C& c, char const* name, F f)
     {
       constexpr auto names = std::define_static_array(argument_names(O));
 
@@ -437,8 +437,8 @@ REFLEX_EXPORT namespace reflex::py
       }(std::make_index_sequence<names.size()>{});
     }
 
-    template <typename T, reflex::overload O>
-    void bind_overload(nb::class_<T>& c, char const* name)
+    template <typename T, reflex::overload O, typename C>
+    void bind_overload(C& c, char const* name)
     {
       constexpr bool is_static = std::meta::is_static_member(O.function);
 
@@ -452,7 +452,103 @@ REFLEX_EXPORT namespace reflex::py
       }
     }
 
-    template <typename T> void bind_data_members(nb::class_<T>& c)
+    /** @brief the base @p T is published as deriving from, or meta::null
+     *
+     * nanobind's class_ carries exactly one base, so a second bindable one is
+     * refused rather than silently dropped: an isinstance check against it would
+     * fail with nothing to point at.
+     *
+     * A private base is not part of the interface. A virtual base is left out
+     * because nanobind has no way to express one.
+     */
+    consteval auto bindable_base(std::meta::info T) -> std::meta::info
+    {
+      std::meta::info chosen = meta::null;
+      for(auto b : std::meta::bases_of(T, std::meta::access_context::current()))
+      {
+        if(std::meta::is_virtual(b))
+        {
+          continue;
+        }
+        const auto base = std::meta::type_of(b);
+        if(is_skipped(base) or not is_bindable_type(base))
+        {
+          continue;
+        }
+        REFLEX_META_CHECK(
+            chosen == meta::null,
+            "a bound class can carry only one base, skip the others with py::skip",
+            T);
+        chosen = base;
+      }
+      return chosen;
+    }
+
+    consteval auto class_type_of(std::meta::info T, std::meta::info base) -> std::meta::info
+    {
+      return base == meta::null ? std::meta::substitute(^^nb::class_, {T})
+                                : std::meta::substitute(^^nb::class_, {T, base});
+    }
+
+    /** @brief the nested types of @p T that become an attribute of its Python type */
+    consteval auto bindable_nested(std::meta::info T) -> std::vector<std::meta::info>
+    {
+      std::vector<std::meta::info> kept;
+      for(auto m : std::meta::members_of(T, std::meta::access_context::current()))
+      {
+        if(not std::meta::is_type(m))
+        {
+          continue;
+        }
+        // The injected class name is a member of the class it names, and
+        // following it would not terminate.
+        if(std::meta::dealias(m) == std::meta::dealias(T))
+        {
+          continue;
+        }
+        if(not std::meta::is_class_type(m) and not std::meta::is_enum_type(m))
+        {
+          continue;
+        }
+        if(is_skipped(m) or not std::meta::is_complete_type(m))
+        {
+          continue;
+        }
+        kept.push_back(m);
+      }
+      return kept;
+    }
+
+    template <typename E> void bind_enum(nb::handle scope, char const* name)
+    {
+      if(nb::type<E>().is_valid())
+      {
+        return;
+      }
+
+      auto e = [&] {
+        if constexpr(not doc_of(^^E).get().empty())
+        {
+          constexpr auto text = std::define_static_string(doc_of(^^E).get());
+          return nb::enum_<E>(scope, name, text);
+        }
+        else
+        {
+          return nb::enum_<E>(scope, name);
+        }
+      }();
+
+      template for(constexpr auto v : std::define_static_array(std::meta::enumerators_of(^^E)))
+      {
+        if constexpr(not is_skipped(v))
+        {
+          constexpr auto label = std::define_static_string(python_name(v).get());
+          e.value(label, [:v:]);
+        }
+      }
+    }
+
+    template <typename T, typename C> void bind_data_members(C& c)
     {
       template for(constexpr auto m : std::define_static_array(bindable_data_members(^^T)))
       {
@@ -501,7 +597,27 @@ REFLEX_EXPORT namespace reflex::py
       }
     }
 
-    template <typename T> void bind_methods(nb::class_<T>& c)
+    template <typename T> auto bind_type(nb::handle scope, char const* name) -> nb::object;
+
+    /** @brief publish the nested types of @p T inside its own Python type */
+    template <typename T, typename C> void bind_nested(C& c)
+    {
+      template for(constexpr auto nested : std::define_static_array(bindable_nested(^^T)))
+      {
+        constexpr auto name = std::define_static_string(python_name(nested).get());
+
+        if constexpr(std::meta::is_enum_type(nested))
+        {
+          bind_enum<typename [:nested:]>(c, name);
+        }
+        else
+        {
+          bind_type<typename [:nested:]>(c, name);
+        }
+      }
+    }
+
+    template <typename T, typename C> void bind_methods(C& c)
     {
       template for(constexpr auto group : std::define_static_array(bindable_method_groups(^^T)))
       {
@@ -514,6 +630,53 @@ REFLEX_EXPORT namespace reflex::py
           bind_overload<T, o>(c, name);
         }
       }
+    }
+    /** @brief publish @p T in @p scope, and its base first if it has one
+     *
+     * Idempotent: a type already registered is returned as it stands. That is
+     * what makes a base reachable from two derived classes, and what makes
+     * binding a base the user already bound a no-op rather than a duplicate
+     * registration.
+     *
+     * The base has to exist before the derived type names it, which is the one
+     * ordering constraint nanobind does not resolve lazily. Binding it here
+     * publishes it whether the user asked for it or not; py::skip on the base
+     * is how that is refused.
+     */
+    template <typename T> auto bind_type(nb::handle scope, char const* name) -> nb::object
+    {
+      if(auto existing = nb::type<T>(); existing.is_valid())
+      {
+        return nb::borrow(existing);
+      }
+
+      constexpr auto written = std::define_static_string(python_name(^^T).get());
+      constexpr auto base    = bindable_base(^^T);
+
+      if constexpr(base != meta::null)
+      {
+        bind_type<typename [:base:]>(scope, nullptr);
+      }
+
+      using class_type = [:class_type_of(^^T, base):];
+
+      auto c = [&] {
+        if constexpr(not doc_of(^^T).get().empty())
+        {
+          constexpr auto text = std::define_static_string(doc_of(^^T).get());
+          return class_type(scope, name ? name : written, text);
+        }
+        else
+        {
+          return class_type(scope, name ? name : written);
+        }
+      }();
+
+      bind_constructors<T>(c);
+      bind_data_members<T>(c);
+      bind_methods<T>(c);
+      bind_nested<T>(c);
+      return c;
     }
   } // namespace detail
 
@@ -529,23 +692,15 @@ REFLEX_EXPORT namespace reflex::py
      */
     template <typename T> auto bind(char const* name = nullptr) -> nb::class_<T>
     {
-      constexpr auto written = std::define_static_string(python_name(^^T).get());
+      return nb::borrow<nb::class_<T>>(detail::bind_type<T>(handle, name));
+    }
 
-      auto c = [&] {
-        if constexpr(not doc_of(^^T).get().empty())
-        {
-          constexpr auto text = std::define_static_string(doc_of(^^T).get());
-          return nb::class_<T>(handle, name ? name : written, text);
-        }
-        else
-        {
-          return nb::class_<T>(handle, name ? name : written);
-        }
-      }();
-      detail::bind_constructors(c);
-      detail::bind_data_members(c);
-      detail::bind_methods(c);
-      return c;
+    /** @brief publish the enumeration @p E as a Python type */
+    template <typename E> auto bind_enum(char const* name = nullptr) -> nb::object
+    {
+      constexpr auto written = std::define_static_string(python_name(^^E).get());
+      detail::bind_enum<E>(handle, name ? name : written);
+      return nb::borrow(nb::type<E>());
     }
   };
 
