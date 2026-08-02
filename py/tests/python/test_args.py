@@ -47,16 +47,19 @@ def test_a_static_method_names_every_parameter():
     assert args.widget.twice(value=3) == 6
 
 
-def test_a_parameter_named_self_is_passed_through():
-    # `self` and `lambda` are ordinary identifiers in C++ and reach Python
-    # unmangled. Only a keyword call is affected, and `self` there collides with
-    # the bound method's own first argument.
+def test_a_python_keyword_parameter_is_passed_through():
+    # `lambda` is an ordinary identifier in C++ and reaches Python unmangled.
+    # Nothing collides with it, so it stays as written.
     w = args.widget()
-    assert w.shadowing(1, 2) == 3
-    assert w.shadowing(1, **{"lambda": 2}) == 3
-    # nanobind names its own first argument `self` too, so the signature carries
-    # it twice and a self= keyword call is not reachable.
-    assert "shadowing(self, self: int, lambda: int)" in args.widget.shadowing.__doc__
+    assert w.keyword_named(2) == 2
+    assert w.keyword_named(**{"lambda": 2}) == 2
+    assert "keyword_named(self, lambda: int)" in args.widget.keyword_named.__doc__
+
+
+def test_a_deducing_this_object_named_self_is_not_a_collision():
+    # The object parameter is dropped with its name, so the usual spelling of a
+    # deducing this member is not the rejected case.
+    assert "at(self, n: int)" in args.widget.at.__doc__
 
 
 def test_the_class_docstring():

@@ -366,11 +366,19 @@ REFLEX_EXPORT namespace reflex::py
      *
      * The object is not among them, whether it is spelled out by a deducing this
      * member or not. It is the object, not an argument, and no call site writes
-     * it.
+     * it. A deducing this member usually spells its object `self`, and that name
+     * is dropped with the parameter.
+     *
+     * An ordinary parameter named `self` is rejected. nanobind names the object
+     * `self` on every method it binds, so the generated signature would read
+     * `f(self, self: int)` and the argument would be unreachable by keyword.
+     * Rename the C++ parameter, or take the method off the surface with
+     * py::skip.
      */
     consteval auto argument_names(reflex::overload o) -> std::vector<char const*>
     {
       const auto skip = meta::is_explicit_object_member_function(o.function) ? 1uz : 0uz;
+      const bool takes_object = not std::meta::is_static_member(o.function);
 
       std::vector<char const*> names;
       for(auto p : std::meta::parameters_of(o.function) | std::views::drop(skip)
@@ -380,7 +388,12 @@ REFLEX_EXPORT namespace reflex::py
         {
           return {};
         }
-        names.push_back(std::define_static_string(std::meta::identifier_of(p)));
+        const auto name = std::meta::identifier_of(p);
+        REFLEX_META_CHECK(
+            not(takes_object and name == "self"),
+            "a bound method cannot have a parameter named self, nanobind names the object that",
+            p);
+        names.push_back(std::define_static_string(name));
       }
       return names;
     }

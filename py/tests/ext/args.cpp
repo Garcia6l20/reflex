@@ -44,11 +44,12 @@ namespace
       return by;
     }
 
-    // Ordinary identifiers in C++, awkward in Python. Passed through, so only a
-    // keyword call is affected.
-    auto shadowing(int self, int lambda) const -> int
+    // An ordinary identifier in C++, a keyword in Python. Passed through: it is
+    // reachable as **{"lambda": ...} and nothing else collides with it. Only a
+    // parameter named self is rejected, and that is the object's name.
+    auto keyword_named(int lambda) const -> int
     {
-      return self + lambda;
+      return lambda;
     }
 
     auto undocumented(int n) const -> int
