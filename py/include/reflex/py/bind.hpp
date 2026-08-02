@@ -89,6 +89,113 @@ REFLEX_EXPORT namespace reflex::py
         c.def(typename [:init_type(ctor):]{});
       }
     }
+
+    /** @brief does a call to @p fn carry only types nanobind can convert */
+    consteval auto is_bindable_function(std::meta::info fn) -> bool
+    {
+      return is_bindable_type(std::meta::return_type_of(fn)) and has_bindable_parameters(fn);
+    }
+
+    /** @brief the members of @p T that become an attribute of the Python type
+     *
+     * access_context::current() is evaluated here, outside the class, so a
+     * private member is never seen. reflex::overload_set passes unchecked()
+     * because it models what the language would do from anywhere; publishing an
+     * interface is the opposite question.
+     */
+    consteval auto bindable_members(std::meta::info T) -> std::vector<std::meta::info>
+    {
+      std::vector<std::meta::info> kept;
+      for(auto m : std::meta::members_of(T, std::meta::access_context::current()))
+      {
+        const bool data = std::meta::is_nonstatic_data_member(m) or std::meta::is_variable(m);
+        const bool function = std::meta::is_function(m);
+
+        // The kind comes first: members_of also hands back the injected class
+        // name, nested types, and member templates, and asking one of those for
+        // its annotations throws rather than answering.
+        //
+        // A member function template is among them, and it is dropped without a
+        // word. It has no parameter types until it is substituted, so there is
+        // nothing to bind, and a class not written for Python commonly has one.
+        // Refusing to bind the class over it would mean annotating every such
+        // member.
+        if(not data and not function)
+        {
+          continue;
+        }
+        if(is_skipped(m))
+        {
+          continue;
+        }
+        if(data)
+        {
+          if(is_bindable_type(std::meta::type_of(m)))
+          {
+            kept.push_back(m);
+          }
+          continue;
+        }
+        if(std::meta::is_constructor(m) or std::meta::is_destructor(m)
+           or std::meta::is_special_member_function(m))
+        {
+          continue;
+        }
+        // An operator has no Python name until the mapping table exists, and
+        // "operator+" as an attribute would be unreachable.
+        if(std::meta::is_operator_function(m) or std::meta::is_conversion_function(m))
+        {
+          continue;
+        }
+        if(not is_bindable_function(m))
+        {
+          continue;
+        }
+        kept.push_back(m);
+      }
+      return kept;
+    }
+
+    template <typename T> void bind_members(nb::class_<T>& c)
+    {
+      template for(constexpr auto m : std::define_static_array(bindable_members(^^T)))
+      {
+        constexpr auto name = std::define_static_string(python_name(m).get());
+
+        if constexpr(std::meta::is_nonstatic_data_member(m))
+        {
+          if constexpr(is_readonly(m))
+          {
+            c.def_ro(name, &[:m:]);
+          }
+          else
+          {
+            c.def_rw(name, &[:m:]);
+          }
+        }
+        else if constexpr(std::meta::is_variable(m))
+        {
+          // A static data member splices to an ordinary pointer, which is what
+          // the _static forms take.
+          if constexpr(is_readonly(m))
+          {
+            c.def_ro_static(name, &[:m:]);
+          }
+          else
+          {
+            c.def_rw_static(name, &[:m:]);
+          }
+        }
+        else if constexpr(std::meta::is_static_member(m))
+        {
+          c.def_static(name, &[:m:]);
+        }
+        else
+        {
+          c.def(name, &[:m:]);
+        }
+      }
+    }
   } // namespace detail
 
   /** @brief the module being built, as the body of a REFLEX_PY_MODULE sees it */
@@ -107,6 +214,7 @@ REFLEX_EXPORT namespace reflex::py
 
       auto c = nb::class_<T>(handle, name ? name : written);
       detail::bind_constructors(c);
+      detail::bind_members(c);
       return c;
     }
   };
