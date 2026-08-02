@@ -173,3 +173,27 @@ pcons build test-py
 `reflex_build/python.py` exposes `nanobind_library`, `add_python_extension` and
 `add_stub`. `pcons build py-stubs` writes a `.pyi` next to each extension with
 nanobind's own `stubgen`.
+
+### CMake
+
+`reflex::py` is exposed but off by default, and nothing is fetched. Point CMake
+at an existing nanobind and turn it on:
+
+```
+cmake -S . -B build -DREFLEX_PY_ENABLED=ON \
+      -Dnanobind_ROOT=$(python3 -m nanobind --cmake_dir)
+```
+
+Building an extension is nanobind's job. `reflex::py` only adds the binder:
+
+```cmake
+find_package(reflex REQUIRED)
+find_package(Python 3.9 REQUIRED COMPONENTS Interpreter Development.Module)
+find_package(nanobind CONFIG REQUIRED)
+
+nanobind_add_module(my_ext my_ext.cpp)
+target_link_libraries(my_ext PRIVATE reflex::py)
+```
+
+Find Python before nanobind: `nanobind_add_module` compiles nanobind's own
+runtime and needs `Python.h`.
