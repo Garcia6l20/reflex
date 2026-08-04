@@ -290,6 +290,11 @@ REFLEX_EXPORT namespace reflex::py
         -> std::vector<reflex::overload>
     {
       std::vector<reflex::overload> kept;
+      // Parallel to `kept`. parameter_types() rebuilds a vector every call, and
+      // the deduplication compares every candidate against every kept one, so
+      // asking each time is quadratic in vector construction.
+      std::vector<std::vector<std::meta::info>> kept_params;
+
       for(auto o : reflex::overloads_of(T, name, std::meta::access_context::current()))
       {
         // A data member holding a callable is reached like a method, which is
@@ -298,7 +303,8 @@ REFLEX_EXPORT namespace reflex::py
         {
           continue;
         }
-        if(not std::ranges::all_of(o.parameter_types(), is_bindable_type))
+        const auto params = o.parameter_types();
+        if(not std::ranges::all_of(params, is_bindable_type))
         {
           continue;
         }
@@ -306,13 +312,12 @@ REFLEX_EXPORT namespace reflex::py
         // f() and f() const are one name to a Python caller, and nanobind would
         // try them in order and never reach the second. The const one is kept:
         // it is callable on strictly more objects.
-        const auto params = o.parameter_types();
-        auto       same   = std::ranges::find_if(kept, [&](reflex::overload k) {
-          return k.parameter_types() == params;
-        });
-        if(same == kept.end())
+        const auto at   = std::ranges::find(kept_params, params);
+        auto       same = kept.begin() + (at - kept_params.begin());
+        if(at == kept_params.end())
         {
           kept.push_back(o);
+          kept_params.push_back(params);
         }
         // A settable subscript is the exception to that rule, and it has to be,
         // because __setitem__ is generated from the non-const half of the pair.
@@ -355,10 +360,24 @@ REFLEX_EXPORT namespace reflex::py
       // A plain string, not a constant_string: constant_string holds a
       // reference to static storage and cannot be reassigned.
       std::string chosen;
+      std::string fallback{name};
       bool        renamed = false;
+      bool        seen    = false;
+
+      // One walk. The naming-policy answer is the same for every overload, so it
+      // is taken from the first one seen rather than costing a second lookup.
       for(auto m : meta::callables_named(T, name, std::meta::access_context::current()))
       {
-        if(not is_bindable_method(m) or not meta::has_annotation(m, ^^rename))
+        if(not is_bindable_method(m))
+        {
+          continue;
+        }
+        if(not seen)
+        {
+          fallback = std::string{python_name(m).get()};
+          seen     = true;
+        }
+        if(not meta::has_annotation(m, ^^rename))
         {
           continue;
         }
@@ -374,20 +393,7 @@ REFLEX_EXPORT namespace reflex::py
               "two overloads of the same name ask for different Python names", m);
         }
       }
-      if(renamed)
-      {
-        return constant_string{chosen};
-      }
-      // No rename anywhere, so the naming policy decides, and every overload
-      // reads the same one off the same scope.
-      for(auto m : meta::callables_named(T, name, std::meta::access_context::current()))
-      {
-        if(is_bindable_method(m))
-        {
-          return python_name(m);
-        }
-      }
-      return constant_string{std::string{name}};
+      return constant_string{renamed ? chosen : fallback};
     }
 
 
@@ -824,10 +830,13 @@ REFLEX_EXPORT namespace reflex::py
           {
             // Six names from one function. An explicit operator== is more
             // specific, so the equality pair is left to it when there is one.
+            // Hoisted: asked inside the loop it is six identical member scans.
+            constexpr bool equality = has_equality(^^T);
+
             template for(constexpr auto which : std::define_static_array(
                              std::array<std::size_t, 6>{0, 1, 2, 3, 4, 5}))
             {
-              if constexpr(not(has_equality(^^T) and (which == 2 or which == 3)))
+              if constexpr(not(equality and (which == 2 or which == 3)))
               {
                 c.def(
                     comparison_names[which].data(),
