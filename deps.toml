@@ -1,0 +1,25 @@
+# Dependencies built from source by pcons-fetch.
+#
+#   uv run python -m pcons.packages.fetch.cli fetch deps.toml \
+#       --deps-dir build/deps --output-dir build/pkg
+#
+# nanobind is fetched as a release tarball rather than a git clone: pcons-fetch
+# clones without --recursive, which would leave ext/robin_map empty. The PyPI
+# wheel does not ship tsl/robin_map.h either, so robin-map is a package of its
+# own and its include directory is added alongside nanobind's.
+#
+# build = "none" makes the unpacked source directory the install prefix. Both
+# projects are an include/ tree, plus for nanobind a src/nb_combined.cpp that
+# reflex_build/python.py compiles itself.
+
+[packages.nanobind]
+url = "https://github.com/wjakob/nanobind/archive/refs/tags/v2.13.0.tar.gz"
+sha256 = "cb25a582ccade4b6067bc73c78b84ad9dbd0bbe0e537320711d18015ccafc4ef"
+version = "2.13.0"
+build = "none"
+
+[packages.robin-map]
+url = "https://github.com/Tessil/robin-map/archive/refs/tags/v1.4.0.tar.gz"
+sha256 = "7930dbf9634acfc02686d87f615c0f4f33135948130b8922331c16d90a03250c"
+version = "1.4.0"
+build = "none"

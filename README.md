@@ -24,6 +24,7 @@ compile time — fully type-safe, with zero overhead at runtime.
 | **reflex.cli** | Declarative command-line argument parsing + shell auto-completion | [cli/README.md](cli/README.md) |
 | **reflex.poly** | Polymorphic recursive value type (`var<Ts...>`) with object/array support | [poly/README.md](poly/README.md) |
 | **reflex.serde** | Reflection-driven serialization / deserialization (JSON, BSON, CSV, XML backends) | [serde/README.md](serde/README.md) |
+| **reflex.py** | Python bindings derived from the class declaration, on top of nanobind | [py/README.md](py/README.md) |
 
 ---
 
@@ -147,6 +148,12 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build
 ```
+
+`REFLEX_CXX_MODULES_ENABLED` is **OFF** by default, so this builds the header-only
+form of every library and nothing is compiled as a C++20 module. CMake's module
+support is not stable enough here yet. Turn it on with
+`-DREFLEX_CXX_MODULES_ENABLED=ON` to get `import reflex.core;` and the rest; the
+primary build system, pcons, always builds the modules.
 
 ---
 
