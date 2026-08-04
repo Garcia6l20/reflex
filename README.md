@@ -149,5 +149,11 @@ cmake --build build
 ctest --test-dir build
 ```
 
+`REFLEX_CXX_MODULES_ENABLED` is **OFF** by default, so this builds the header-only
+form of every library and nothing is compiled as a C++20 module. CMake's module
+support is not stable enough here yet. Turn it on with
+`-DREFLEX_CXX_MODULES_ENABLED=ON` to get `import reflex.core;` and the rest; the
+primary build system, pcons, always builds the modules.
+
 ---
 

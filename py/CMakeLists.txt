@@ -32,9 +32,11 @@ target_link_libraries(reflex.py PUBLIC reflex::core Python::Module)
 # nanobind's runtime sources, which this target does not compile.
 target_include_directories(reflex.py SYSTEM PUBLIC ${NB_DIR}/include)
 
-# The type registry is keyed on the domain, so a lookup crossing a translation
-# unit that saw a different value silently misses.
-target_compile_definitions(reflex.py PUBLIC NB_DOMAIN="reflex")
+# NB_DOMAIN is deliberately not set. It keys the type registry, so every
+# translation unit that meets another has to agree on it, and nanobind_add_module
+# builds its own runtime without seeing anything set here. The default domain is
+# the conventional choice and lets a reflex extension share types with any other
+# nanobind one.
 
 # An extension is a shared object, so anything it links has to be relocatable.
 set_target_properties(reflex.py PROPERTIES POSITION_INDEPENDENT_CODE ON)

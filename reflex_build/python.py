@@ -5,7 +5,7 @@ from pathlib import Path
 from pcons import ImportedTarget
 from pcons.packages.description import PackageDescription
 
-from reflex_build.config import build_dir
+from reflex_build.config import build_dir, project_dir
 
 # =============================================================================
 # Fetched packages
@@ -61,11 +61,27 @@ ext_suffix = sysconfig.get_config_var("EXT_SUFFIX")
 # =============================================================================
 
 
+def module_dir(project) -> Path:
+    """Where a target declared in the current subdirectory lands.
+
+    A target goes under the build directory at its source directory's relative
+    path. output_nodes would say so exactly, but the resolver fills those in
+    after the build script has run. Derived once here, because a stub written to
+    one directory and a PYTHONPATH pointing at another is a silent mismatch.
+    """
+    return Path(build_dir) / project.current_dir.relative_to(project_dir)
+
+
 def nanobind_library(project, env):
     """The amalgamated nanobind runtime, built once and shared by every extension.
 
-    NB_DOMAIN is public: the type registry is keyed on it, so a lookup crossing
-    a translation unit that saw a different value silently misses.
+    NB_DOMAIN is deliberately not set. It keys the type registry, so every
+    translation unit that meets another has to agree on it, and there is no way
+    to make a Python constant and a CMake variable agree. Under CMake the
+    runtime is built by nanobind_add_module, which we do not control, so setting
+    it here would put the two build systems - and the CMake extension and its
+    own runtime - on different keys. The default domain is the conventional
+    choice and lets a reflex extension share types with any other nanobind one.
     """
     nanobind, prefix = _fetched("nanobind")
     robin_map, _ = _fetched("robin-map")
@@ -80,7 +96,6 @@ def nanobind_library(project, env):
     # "..//usr/include/python3.14". -isystem is left alone, and it silences the
     # CPython headers' own warnings as well.
     lib.public.compile_flags.append(f"-isystem{python_include}")
-    lib.public.defines.append('NB_DOMAIN="reflex"')
     # -fPIC because the archive is linked into a shared object. Without it the
     # linker reports "failed to set dynamic section sizes: bad value", which
     # names neither the flag nor the file.
@@ -97,21 +112,21 @@ def add_stub(project, env, extension, name: str):
     version, so a golden file would churn on every bump.
     """
     _, prefix = _fetched("nanobind")
-    module_dir = build_dir / "py" / "tests"
+    out = module_dir(project)
 
     stub = project.Command(
         f"{name}-stub",
         env,
-        target=module_dir / f"{name}.pyi",
+        target=out / f"{name}.pyi",
         command=[
             interpreter,
             str(prefix / "src" / "stubgen.py"),
             "-m",
             name,
             "-o",
-            str(module_dir / f"{name}.pyi"),
+            str(out / f"{name}.pyi"),
             "-i",
-            str(module_dir),
+            str(out),
         ],
     )
     stub.add_dependency(extension)

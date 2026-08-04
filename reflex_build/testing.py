@@ -67,22 +67,17 @@ if build_testing:
         one reflex_build.python read EXT_SUFFIX and the headers from. Any other
         interpreter would fail to import what was just built.
         """
-        from reflex_build.python import interpreter
+        from reflex_build.python import interpreter, module_dir
 
         test_prefix = "reflex-test-"
         if group:
             test_prefix += f"{group}-"
 
-        # A target lands under the build directory at its source directory's
-        # relative path. output_nodes would say so exactly, but the resolver
-        # fills those in after this script has run.
-        module_dir = build_dir / project.current_dir.relative_to(project_dir)
-
         test = project.Test(
             f"{test_prefix}{name}",
             interpreter,
             args=[str(script)],
-            env={"PYTHONPATH": str(module_dir)},
+            env={"PYTHONPATH": str(module_dir(project))},
         )
         # program is an interpreter, not a Target, so the extension is not
         # pulled in by itself.
