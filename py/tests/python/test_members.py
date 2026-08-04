@@ -49,6 +49,24 @@ def test_an_array_member_is_absent():
     assert not hasattr(members.widget(), "slots")
 
 
+def test_a_bit_field_and_a_reference_member_are_absent():
+    a = members.awkward()
+    assert a.value == 0
+    assert not hasattr(a, "ready")
+    assert not hasattr(a, "alias")
+
+
+def test_a_static_const_member_is_read_only():
+    assert members.widget.limit == 10
+    assert members.widget.origin == 3
+    expect_raise(lambda: setattr(members.widget, "limit", 1), AttributeError)
+    expect_raise(lambda: setattr(members.widget, "origin", 1), AttributeError)
+
+
+def test_a_deleted_method_is_absent():
+    assert not hasattr(members.widget(), "gone")
+
+
 def test_a_const_method():
     w = members.widget()
     w.value = 4

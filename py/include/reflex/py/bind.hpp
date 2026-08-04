@@ -141,10 +141,17 @@ REFLEX_EXPORT namespace reflex::py
         {
           continue;
         }
-        // An array member has no caster and cannot be assigned through:
-        // def_rw's setter is `c.*p = value`, which is *invalid array
-        // assignment* rather than a missing conversion.
-        if(std::meta::is_array_type(std::meta::type_of(m)))
+        // Three shapes a pointer-to-member cannot be formed over, or cannot be
+        // assigned through. Each one is a hard error inside def_rw rather than a
+        // missing conversion, so each has to go before it gets there.
+        //
+        //   an array     - def_rw's setter is `c.*p = value`, which is
+        //                  *invalid array assignment*
+        //   a bit-field  - *invalid pointer to bit-field*
+        //   a reference  - *cannot create pointer to reference member*
+        if(std::meta::is_array_type(std::meta::type_of(m))
+           or std::meta::is_bit_field(m)
+           or std::meta::is_reference_type(std::meta::type_of(m)))
         {
           continue;
         }
@@ -176,6 +183,13 @@ REFLEX_EXPORT namespace reflex::py
       // Python holds the object and calls on it again, so a member that insists
       // on an rvalue has nothing to be called on.
       if(std::meta::is_rvalue_reference_qualified(m))
+      {
+        return false;
+      }
+      // A deleted function is declared and reachable, so it reaches this far and
+      // then fails inside the thunk with *use of deleted function*. Constructors
+      // were already filtered for this; nothing else was.
+      if(std::meta::is_deleted(m))
       {
         return false;
       }

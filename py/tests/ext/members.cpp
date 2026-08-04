@@ -21,6 +21,14 @@ namespace
     // cannot assign to one.
     int slots[3] = {0, 0, 0};
 
+    // Read-only, whether it says so or not. Static makes no difference.
+    static constexpr int limit = 10;
+    static int const     origin;
+
+    // Declared and reachable, so the filter has to see it rather than the
+    // thunk failing on it.
+    auto gone() const -> int = delete;
+
     auto doubled() const -> int
     {
       return value * 2;
@@ -70,6 +78,7 @@ namespace
   };
 
   int widget::made = 5;
+  int const widget::origin = 3;
 
   class guarded
   {
@@ -91,6 +100,17 @@ namespace
 
   struct bare
   {};
+
+  int shared_target = 0;
+
+  // A reference member would leave widget without a default constructor, so
+  // these two live apart rather than perturbing its construction.
+  struct awkward
+  {
+    int      value    = 0;
+    unsigned ready    : 1 = 0;
+    int&     alias    = shared_target;
+  };
 } // namespace
 
 REFLEX_PY_MODULE(members, m)
@@ -98,4 +118,5 @@ REFLEX_PY_MODULE(members, m)
   m.bind<widget>();
   m.bind<guarded>();
   m.bind<bare>();
+  m.bind<awkward>();
 }

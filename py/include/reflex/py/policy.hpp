@@ -25,16 +25,14 @@ REFLEX_EXPORT namespace reflex::py
   /** @brief is @p r exposed without a setter
    *
    * A const data member has no setter to expose, so the annotation is only one
-   * of the two ways to get here.
+   * of the two ways to get here. Static or not makes no difference: a
+   * `static constexpr int` is as unassignable as a `const int`, and asking only
+   * about the non-static kind emitted a def_rw_static over a pointer to const.
    */
   consteval auto is_readonly(std::meta::info r) -> bool
   {
-    if(meta::has_annotation(r, ^^readonly_t))
-    {
-      return true;
-    }
-    return std::meta::is_nonstatic_data_member(r)
-       and std::meta::is_const_type(std::meta::type_of(r));
+    return meta::has_annotation(r, ^^readonly_t)
+        or std::meta::is_const_type(std::meta::type_of(r));
   }
 
   /** @brief the Python name of @p r
