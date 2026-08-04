@@ -193,6 +193,14 @@ REFLEX_EXPORT namespace reflex::meta
            });
   }
 
+  /** @brief the value of @p R's annotation of type @p AnnotationType
+   *
+   * A class type comes back as a `AnnotationType const&`, which costs no copy
+   * and works for one that cannot be copied. Anything else comes back by value:
+   * an annotation whose type is an enumeration or an arithmetic type is a value
+   * and not an object, so there is nothing for a reference to bind to and
+   * extract throws *value cannot be extracted*.
+   */
   template <typename AnnotationType> consteval decltype(auto) annotation_value_of_with(info R)
   {
     auto annotations = annotations_of_with(R, ^^AnnotationType);
@@ -200,9 +208,13 @@ REFLEX_EXPORT namespace reflex::meta
     {
       throw std::meta::exception("No such annotation", R);
     }
-    else
+    else if constexpr(std::is_class_v<AnnotationType> or std::is_union_v<AnnotationType>)
     {
       return extract<AnnotationType const&>(constant_of(annotations.front()));
+    }
+    else
+    {
+      return extract<AnnotationType>(constant_of(annotations.front()));
     }
   }
 
