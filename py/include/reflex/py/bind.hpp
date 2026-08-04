@@ -212,19 +212,25 @@ REFLEX_EXPORT namespace reflex::py
       return is_bindable_callable(m) and std::meta::is_operator_function(m);
     }
 
-    /** @brief one member per distinct method name of @p T, in declaration order
+    /** @brief one member of @p scope per distinct spelling, in declaration order
      *
      * A name, not a member, is what an overload set is keyed on, and a name is
      * not structural. The first member carrying it stands in for it: spelling_of
      * on the representative recovers the name, and declaration order is
      * preserved, which is the order nanobind resolves in.
+     *
+     * @p keep decides what counts. Everything else - the walk, the access
+     * context, the ordering, the deduplication - is the same for a method, an
+     * operator and a free function.
      */
-    consteval auto bindable_method_groups(std::meta::info T) -> std::vector<std::meta::info>
+    template <typename Pred>
+    consteval auto groups_by_spelling(std::meta::info scope, Pred keep)
+        -> std::vector<std::meta::info>
     {
       std::vector<std::meta::info> groups;
-      for(auto m : std::meta::members_of(T, std::meta::access_context::current()))
+      for(auto m : std::meta::members_of(scope, std::meta::access_context::current()))
       {
-        if(is_data(m) or not is_bindable_method(m))
+        if(not keep(m))
         {
           continue;
         }
@@ -237,6 +243,13 @@ REFLEX_EXPORT namespace reflex::py
         }
       }
       return groups;
+    }
+
+    /** @brief one member per distinct method name of @p T */
+    consteval auto bindable_method_groups(std::meta::info T) -> std::vector<std::meta::info>
+    {
+      return groups_by_spelling(
+          T, [](std::meta::info m) consteval { return is_bindable_method(m); });
     }
 
     /** @brief does a call to @p fn supply an object
@@ -725,22 +738,8 @@ REFLEX_EXPORT namespace reflex::py
     /** @brief one member per distinct operator of @p T, in declaration order */
     consteval auto operator_groups(std::meta::info T) -> std::vector<std::meta::info>
     {
-      std::vector<std::meta::info> groups;
-      for(auto m : std::meta::members_of(T, std::meta::access_context::current()))
-      {
-        if(is_data(m) or not is_bindable_operator(m))
-        {
-          continue;
-        }
-        const auto name = meta::spelling_of(m);
-        const bool seen = std::ranges::any_of(
-            groups, [&](std::meta::info g) { return meta::spelling_of(g) == name; });
-        if(not seen)
-        {
-          groups.push_back(m);
-        }
-      }
-      return groups;
+      return groups_by_spelling(
+          T, [](std::meta::info m) consteval { return is_bindable_operator(m); });
     }
 
     /** @brief will @p T publish an operator== of its own
@@ -1085,26 +1084,11 @@ REFLEX_EXPORT namespace reflex::py
      */
     consteval auto namespace_function_groups(std::meta::info Ns) -> std::vector<std::meta::info>
     {
-      std::vector<std::meta::info> groups;
-      for(auto m : std::meta::members_of(Ns, std::meta::access_context::current()))
-      {
-        if(std::meta::is_type(m) or std::meta::is_namespace(m) or is_data(m))
-        {
-          continue;
-        }
-        if(not is_bindable_method(m))
-        {
-          continue;
-        }
-        const auto name = meta::spelling_of(m);
-        const bool seen = std::ranges::any_of(
-            groups, [&](std::meta::info g) { return meta::spelling_of(g) == name; });
-        if(not seen)
-        {
-          groups.push_back(m);
-        }
-      }
-      return groups;
+      // No is_type or is_namespace guard: is_bindable_method asks is_function
+      // first and short-circuits, which is also what keeps is_skipped away from
+      // a reflection that has no annotations to report.
+      return groups_by_spelling(
+          Ns, [](std::meta::info m) consteval { return is_bindable_method(m); });
     }
 
     /** @brief the namespace-scope variables published as module attributes
