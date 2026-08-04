@@ -19,8 +19,10 @@ REFLEX_EXPORT namespace reflex::jinja
   struct for_block;
   struct include_block;
   struct block_block;
+  struct set_block;
 
-  using element = std::variant<text, expression, if_block, for_block, include_block, block_block>;
+  using element =
+      std::variant<text, expression, if_block, for_block, include_block, block_block, set_block>;
 
   struct text
   {
@@ -57,6 +59,13 @@ REFLEX_EXPORT namespace reflex::jinja
   {
     std::string_view     name;
     std::vector<element> children;
+  };
+
+  // {% set name = expr %} - bind expr into the context under name.
+  struct set_block
+  {
+    std::string_view name;
+    std::string_view expr;
   };
 
   enum class block_end_kind
@@ -462,6 +471,40 @@ REFLEX_EXPORT namespace reflex::jinja
 
           children.push_back(element{std::move(block)});
         }
+        else if(trimmed.starts_with("set ") or trimmed == "set")
+        {
+          auto rest = trim(trimmed.substr(3));
+          auto eq   = rest.find('=');
+          if(eq == std::string_view::npos)
+          {
+            throw std::runtime_error("Malformed {% set %}: missing '='");
+          }
+
+          set_block block;
+          block.name = trim(rest.substr(0, eq));
+          block.expr = trim(rest.substr(eq + 1));
+
+          if(block.name.empty())
+          {
+            throw std::runtime_error("Malformed {% set %}: missing name");
+          }
+          if(std::ranges::any_of(block.name, is_trim_char))
+          {
+            throw std::runtime_error(
+                std::format("Malformed {{% set %}} name: '{}'", block.name));
+          }
+          if(block.expr.empty())
+          {
+            throw std::runtime_error("Malformed {% set %}: missing expression");
+          }
+
+          children.push_back(element{std::move(block)});
+
+          if(right_trim)
+          {
+            trim_next_text_left = true;
+          }
+        }
         else
         {
           throw std::runtime_error(std::format("Unknown block tag: '{}'", trimmed));
@@ -717,6 +760,11 @@ REFLEX_EXPORT namespace reflex::jinja
               }
             }
             return render_children_to(out, *body, ctx, state);
+          }
+          else if constexpr(decays_to_c<T, set_block>)
+          {
+            ctx.set(v.name, expr::evaluate(v.expr, ctx));
+            return out;
           }
           else if constexpr(decays_to_c<T, for_block>)
           {

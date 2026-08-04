@@ -253,6 +253,57 @@ TEST_CASE("reflex::jinja: parse")
   }
 }
 
+TEST_CASE("reflex::jinja: set block")
+{
+  basic_context ctx;
+
+  SUBCASE("basic literal")
+  {
+    auto tmpl   = jinja::parse(R"({% set greeting = "hello" %}{{ greeting }})");
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "hello");
+  }
+  SUBCASE("no spaces around =")
+  {
+    auto tmpl   = jinja::parse(R"({% set x=5 %}{{ x }})");
+    auto result = jinja::render(tmpl, ctx);
+    CHECK(result == "5");
+  }
+  SUBCASE("expression with arithmetic")
+  {
+    ctx.set("a", 3);
+    ctx.set("b", 4);
+    auto tmpl   = jinja::parse(R"({% set n = a + b %}{{ n }})");
+    auto result = jinja::render(tmpl, ctx);
+    CHECK(result == "7");
+  }
+  SUBCASE("rhs contains == (split on assignment, not equality)")
+  {
+    ctx.set("a", "x"s);
+    ctx.set("b", "x"s);
+    auto tmpl   = jinja::parse(R"({% set same = a == b %}{{ same }})");
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "true");
+  }
+  SUBCASE("value is reusable across the template")
+  {
+    ctx.set("base", 10);
+    auto tmpl = jinja::parse(
+        R"({% set doubled = base * 2 %}{{ doubled }} {% if doubled > base %}bigger{% endif %} {{ doubled }})");
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "20 bigger 20");
+  }
+  SUBCASE("whitespace trimming")
+  {
+    auto tmpl   = jinja::parse("{%- set x = 1 -%}  {{ x }}");
+    auto result = jinja::render(tmpl, ctx);
+    CHECK(result == "1");
+  }
+}
+
 TEST_CASE("reflex::jinja: for decomposition")
 {
   basic_context ctx;
