@@ -114,4 +114,11 @@ def test_a_const_subscript_is_read_only():
         raise AssertionError("expected a TypeError")
 
 
+def test_a_const_non_const_subscript_pair_keeps_the_setter():
+    t = operators.paired_table()
+    t[1] = 5
+    assert t[1] == 5
+    assert hasattr(t, "__setitem__")
+
+
 run(globals())

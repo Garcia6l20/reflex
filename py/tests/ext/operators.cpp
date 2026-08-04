@@ -140,6 +140,24 @@ namespace
     }
   };
 
+  // The idiomatic pair. The const preference in bindable_overloads has to keep
+  // the non-const half here, or __setitem__ is never generated.
+  struct paired_table
+  {
+    int slots[4] = {0, 0, 0, 0};
+
+    paired_table() = default;
+
+    auto operator[](int index) -> int&
+    {
+      return slots[index];
+    }
+    auto operator[](int index) const -> int const&
+    {
+      return slots[index];
+    }
+  };
+
   struct read_only_table
   {
     int slots[4] = {1, 2, 3, 4};
@@ -171,6 +189,7 @@ REFLEX_PY_MODULE(operators, m)
   m.bind<ordered>();
   m.bind<specific>();
   m.bind<table>();
+  m.bind<paired_table>();
   m.bind<read_only_table>();
   m.bind<named>();
 }

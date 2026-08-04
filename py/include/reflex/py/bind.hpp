@@ -246,6 +246,23 @@ REFLEX_EXPORT namespace reflex::py
      * what nanobind cannot take: an unbindable signature, and two candidates
      * differing only in the object they want.
      */
+    /** @brief does @p o hand back something a Python caller could assign into
+     *
+     * A mutable subscript is what __setitem__ is generated from, so it is not
+     * interchangeable with its const twin the way an ordinary const/non-const
+     * pair is.
+     */
+    consteval auto is_settable_subscript(reflex::overload o) -> bool
+    {
+      if(meta::spelling_of(o.function) != "operator[]" or o.arity != 1)
+      {
+        return false;
+      }
+      const auto result = std::meta::return_type_of(o.function);
+      return std::meta::is_lvalue_reference_type(result)
+         and not std::meta::is_const_type(std::meta::remove_reference(result));
+    }
+
     consteval auto bindable_overloads(std::meta::info T, std::string_view name)
         -> std::vector<reflex::overload>
     {
@@ -274,7 +291,16 @@ REFLEX_EXPORT namespace reflex::py
         {
           kept.push_back(o);
         }
-        else if(std::meta::is_const(o.function) and not std::meta::is_const(same->function))
+        // A settable subscript is the exception to that rule, and it has to be,
+        // because __setitem__ is generated from the non-const half of the pair.
+        // Nothing is lost by keeping it: Python never holds a const object, so
+        // the const twin is unreachable either way.
+        else if(is_settable_subscript(o))
+        {
+          *same = o;
+        }
+        else if(not is_settable_subscript(*same) and std::meta::is_const(o.function)
+                and not std::meta::is_const(same->function))
         {
           *same = o;
         }
@@ -761,17 +787,6 @@ REFLEX_EXPORT namespace reflex::py
     };
 
     /** @brief can @p o's result be assigned through, making it a __setitem__ */
-    consteval auto is_settable_subscript(reflex::overload o) -> bool
-    {
-      if(meta::spelling_of(o.function) != "operator[]" or o.arity != 1)
-      {
-        return false;
-      }
-      const auto result = std::meta::return_type_of(o.function);
-      return std::meta::is_lvalue_reference_type(result)
-         and not std::meta::is_const_type(std::meta::remove_reference(result));
-    }
-
     consteval auto setitem_type(std::meta::info T, reflex::overload o) -> std::meta::info
     {
       const auto value =
