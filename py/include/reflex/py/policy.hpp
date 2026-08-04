@@ -62,17 +62,14 @@ REFLEX_EXPORT namespace reflex::py
     // class's members respells the class as well.
     if(not std::meta::is_type(r) and not std::meta::is_namespace(r))
     {
-      // extract by value, not through annotation_value_of_with: that helper
-      // asks for a `T const&`, which an enumeration value cannot supply, and
-      // the extraction throws *value cannot be extracted*.
-      if(auto n = meta::annotations_of_with(r, ^^naming); not n.empty())
+      if(meta::has_annotation(r, ^^naming))
       {
-        return caseconv::to_case(written, extract<naming>(n.front()));
+        return caseconv::to_case(written, meta::annotation_value_of_with<naming>(r));
       }
     }
-    if(auto n = meta::annotations_of_with(std::meta::parent_of(r), ^^naming); not n.empty())
+    if(const auto scope = std::meta::parent_of(r); meta::has_annotation(scope, ^^naming))
     {
-      return caseconv::to_case(written, extract<naming>(n.front()));
+      return caseconv::to_case(written, meta::annotation_value_of_with<naming>(scope));
     }
     return written;
   }
