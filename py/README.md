@@ -60,7 +60,9 @@ o.method(n=7)
 | public non-virtual base | Python base class, bound first |
 | nested class or enumeration | attribute of the enclosing Python type |
 | operator | the dunder the table gives it, see below |
-| `explicit operator bool` / `std::string` | `__bool__` / `__str__` |
+| `explicit operator bool` | `__bool__` |
+| `explicit operator std::string` | `__str__` |
+| `explicit operator` an integral type | `__index__` |
 
 A private member, an inaccessible base and anything mentioning an incomplete
 type are absent. Access is read from outside the class, so what Python sees is
@@ -116,6 +118,13 @@ unless the class declares its own `operator==`, which is more specific and wins
 the equality pair. A non-const `operator[]` returning a reference also produces
 `__setitem__`.
 
+An in-place operator has to return a reference to the object. Python rebinds the
+name to whatever the dunder hands back, so a `void operator+=` would make
+`v += 3` assign `None`; it is refused at compile time instead.
+
+Only an *explicit* conversion is bound. A non-explicit one would make the object
+silently usable as a number, which is a wider promise than the C++ class made.
+
 Left unbound: `operator=`, `operator->`, unary `operator*`, `operator!`,
 `operator++`, `operator--`, `operator&&`, `operator||`, `operator,`.
 `py::rename{"__dunder__"}` reaches any of them.
@@ -145,8 +154,11 @@ type, so that case needs `py::returns`.
   through reflection.
 - **STL types need their caster included by you.** `#include <nanobind/stl/string.h>`
   and friends. Reflection cannot add an include.
-- **A C array data member is not published.** There is no caster for one and it
-  cannot be assigned through.
+- **A C array, a bit-field and a reference data member are not published.** No
+  pointer to member can be formed over a bit-field or a reference, and an array
+  has no caster and cannot be assigned through.
+- **A deleted member function is not published.** Declared is not the same as
+  callable.
 - **One base only.** nanobind's `class_` carries a single base; a second bindable
   one is a compile-time error. Use `py::skip` on the others.
 - **A free operator is not reached.** Only operators declared in the class are
@@ -157,6 +169,12 @@ type, so that case needs `py::returns`.
   nanobind names the object `self`, so the argument would be unreachable by
   keyword. A deducing-this object parameter named `self` is fine, and so is one
   on a free or static function.
+- **A name cannot carry both a static and an instance overload.** nanobind gives
+  a name one static-or-instance flag and aborts the process at import if they
+  disagree, so this is a compile-time error too.
+- **An in-place operator must return a reference to the object.** See above.
+- **A `std::shared_ptr` return without `<nanobind/stl/shared_ptr.h>`** fails
+  inside nanobind's templates rather than with a diagnostic naming the header.
 
 ## Building an extension
 
