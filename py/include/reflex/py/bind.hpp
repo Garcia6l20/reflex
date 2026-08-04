@@ -534,6 +534,25 @@ REFLEX_EXPORT namespace reflex::py
       return names;
     }
 
+    /** @brief call @p f with @p R's docstring as a trailing pack
+     *
+     * nanobind takes a docstring as one more trailing extra, so "carries none"
+     * is an empty pack rather than a second branch through every emit path.
+     * Passing "" instead would attach an empty __doc__, and help() then prints a
+     * blank line where nanobind's generated signature belongs.
+     */
+    template <std::meta::info R, typename F> decltype(auto) with_doc(F&& f)
+    {
+      if constexpr(doc_of(R).get().empty())
+      {
+        return f();
+      }
+      else
+      {
+        return f(std::define_static_string(doc_of(R).get()));
+      }
+    }
+
     /** @brief def @p f under @p name, with the argument names and the docstring
      *
      * One nb::arg per real argument and none for the object. class_::def sets
@@ -548,28 +567,16 @@ REFLEX_EXPORT namespace reflex::py
       constexpr auto names = std::define_static_array(argument_names(O));
 
       [&]<std::size_t... I>(std::index_sequence<I...>) {
-        // An empty docstring is not passed at all. nanobind would attach it and
-        // help() would then show a blank line where the signature belongs.
-        if constexpr(not doc_of(O.function).get().empty())
-        {
-          constexpr auto text = std::define_static_string(doc_of(O.function).get());
+        with_doc<O.function>([&](auto... doc) {
           if constexpr(Static)
           {
-            c.def_static(name, f, nb::arg(names[I])..., text, extra...);
+            c.def_static(name, f, nb::arg(names[I])..., doc..., extra...);
           }
           else
           {
-            c.def(name, f, nb::arg(names[I])..., text, extra...);
+            c.def(name, f, nb::arg(names[I])..., doc..., extra...);
           }
-        }
-        else if constexpr(Static)
-        {
-          c.def_static(name, f, nb::arg(names[I])..., extra...);
-        }
-        else
-        {
-          c.def(name, f, nb::arg(names[I])..., extra...);
-        }
+        });
       }(std::make_index_sequence<names.size()>{});
     }
 
@@ -664,17 +671,7 @@ REFLEX_EXPORT namespace reflex::py
         return;
       }
 
-      auto e = [&] {
-        if constexpr(not doc_of(^^E).get().empty())
-        {
-          constexpr auto text = std::define_static_string(doc_of(^^E).get());
-          return nb::enum_<E>(scope, name, text);
-        }
-        else
-        {
-          return nb::enum_<E>(scope, name);
-        }
-      }();
+      auto e = with_doc<^^E>([&](auto... doc) { return nb::enum_<E>(scope, name, doc...); });
 
       template for(constexpr auto v : std::define_static_array(std::meta::enumerators_of(^^E)))
       {
@@ -691,47 +688,33 @@ REFLEX_EXPORT namespace reflex::py
       template for(constexpr auto m : std::define_static_array(bindable_data_members(^^T)))
       {
         constexpr auto name = std::define_static_string(python_name(m).get());
-        constexpr auto text = std::define_static_string(doc_of(m).get());
 
         // A static data member splices to an ordinary pointer, which is what
         // the _static forms take.
         constexpr bool instance = std::meta::is_nonstatic_data_member(m);
+        // Hoisted, not asked inside the lambda: passing m to a function there
+        // odr-uses the capture rather than the constexpr variable, and the
+        // if constexpr then reads false.
+        constexpr bool readonly = is_readonly(m);
 
-        if constexpr(not doc_of(m).get().empty())
-        {
-          if constexpr(instance and is_readonly(m))
+        with_doc<m>([&](auto... doc) {
+          if constexpr(instance and readonly)
           {
-            c.def_ro(name, &[:m:], text);
+            c.def_ro(name, &[:m:], doc...);
           }
           else if constexpr(instance)
           {
-            c.def_rw(name, &[:m:], text);
+            c.def_rw(name, &[:m:], doc...);
           }
-          else if constexpr(is_readonly(m))
+          else if constexpr(readonly)
           {
-            c.def_ro_static(name, &[:m:], text);
+            c.def_ro_static(name, &[:m:], doc...);
           }
           else
           {
-            c.def_rw_static(name, &[:m:], text);
+            c.def_rw_static(name, &[:m:], doc...);
           }
-        }
-        else if constexpr(instance and is_readonly(m))
-        {
-          c.def_ro(name, &[:m:]);
-        }
-        else if constexpr(instance)
-        {
-          c.def_rw(name, &[:m:]);
-        }
-        else if constexpr(is_readonly(m))
-        {
-          c.def_ro_static(name, &[:m:]);
-        }
-        else
-        {
-          c.def_rw_static(name, &[:m:]);
-        }
+        });
       }
     }
 
@@ -1032,17 +1015,8 @@ REFLEX_EXPORT namespace reflex::py
 
       using class_type = [:class_type_of(^^T, base):];
 
-      auto c = [&] {
-        if constexpr(not doc_of(^^T).get().empty())
-        {
-          constexpr auto text = std::define_static_string(doc_of(^^T).get());
-          return class_type(scope, name ? name : written, text);
-        }
-        else
-        {
-          return class_type(scope, name ? name : written);
-        }
-      }();
+      auto c = with_doc<^^T>(
+          [&](auto... doc) { return class_type(scope, name ? name : written, doc...); });
 
       bind_constructors<T>(c);
       bind_data_members<T>(c);
