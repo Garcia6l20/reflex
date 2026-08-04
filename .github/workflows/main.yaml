@@ -44,6 +44,12 @@ jobs:
 
           gcc --version
 
+      # reflex.py builds a CPython extension, so the interpreter's headers have to
+      # be there. Without them the failure is a Python.h not found from inside
+      # nanobind.
+      - name: Install Python development headers
+        run: sudo apt-get install -y --no-install-recommends python3-dev
+
       - name: Install UV dependencies
         run: uv sync
 
@@ -51,6 +57,15 @@ jobs:
         run: |
           mkdir -p ~/.conan2
           printf 'compiler:\n  gcc:\n    version: ["16"]\n' > ~/.conan2/settings_user.yml
+
+      # reflex.py needs nanobind and robin-map, which are built from source rather
+      # than taken from site-packages: the nanobind wheel does not ship
+      # tsl/robin_map.h. Nothing fetches them implicitly, so configuring py/
+      # without this step fails with "nanobind package not found".
+      - name: Fetch source dependencies
+        run: |
+            uv run python -m pcons.packages.fetch.cli fetch deps.toml \
+              --deps-dir build/deps --output-dir build/pkg
 
       - name: Build and test
         run: |

@@ -51,6 +51,22 @@ interpreter = sys.executable
 
 python_include = sysconfig.get_paths()["include"]
 
+
+def _require_python_headers() -> str:
+    """The CPython include directory, or a message naming what is missing.
+
+    An interpreter without its development headers is an ordinary way for a
+    distribution to be packaged, and the failure is otherwise a Python.h not
+    found from inside nanobind, several includes deep.
+    """
+    if not (Path(python_include) / "Python.h").is_file():
+        raise RuntimeError(
+            f"Python.h not found in {python_include} - install the development"
+            f" headers for {interpreter} (python3-dev on Debian and Ubuntu)"
+        )
+    return python_include
+
+
 # ".cpython-314-x86_64-linux-gnu.so" - an extension not carrying it is invisible
 # to the import machinery.
 ext_suffix = sysconfig.get_config_var("EXT_SUFFIX")
@@ -95,7 +111,7 @@ def nanobind_library(project, env):
     # every -I as project relative, which turns an out-of-tree path into
     # "..//usr/include/python3.14". -isystem is left alone, and it silences the
     # CPython headers' own warnings as well.
-    lib.public.compile_flags.append(f"-isystem{python_include}")
+    lib.public.compile_flags.append(f"-isystem{_require_python_headers()}")
     # -fPIC because the archive is linked into a shared object. Without it the
     # linker reports "failed to set dynamic section sizes: bad value", which
     # names neither the flag nor the file.
