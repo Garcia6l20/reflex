@@ -43,13 +43,61 @@ import reflex.core;
 // Find member by name at compile time
 consteval auto mem = reflex::meta::member_named(^^MyStruct, "field_name");
 
-// Typed annotation extraction
+// Typed annotation extraction. A class type comes back as a `T const&`, anything
+// else by value: an enumeration or arithmetic annotation is a value, not an object.
 constexpr auto ann = reflex::meta::annotation_value_of_with<MyAnnotation>(mem);
 
 // Enum ↔ string
 auto s = reflex::meta::enum_to_string(MyEnum::Value); // → "Value"
 auto e = reflex::meta::string_to_enum<MyEnum>("Value"); // → std::optional<MyEnum>
 ```
+
+### `reflex::resolve` - naming an overload set
+
+`^^f` is ill-formed as soon as `f` names more than one function, so an overload set
+cannot be reflected directly. It is reached through its enclosing scope instead.
+
+```cpp
+reflex::resolve<^^ns, "f">(1);            // a free function
+reflex::resolve<^^widget>(8080, "host");  // a construction
+reflex::resolve<^^widget, "get">(w, 2.0); // a member, object first
+reflex::resolve<^^widget, "operator+">(a, b);
+
+static_assert(std::invocable<decltype(reflex::resolve<^^ns, "f">), int>);
+static_assert(reflex::overloads_of(^^ns, "f").size() == 3);
+```
+
+Overload resolution is not reimplemented. Every candidate is materialized as a type
+carrying one concrete `operator()`, they are inherited into a single type, and the
+compiler resolves the call. So invocability comes out of `std::invocable`, the return
+type out of `std::invoke_result_t`, and an ambiguous call out of an unsatisfied
+requirement rather than a hard error.
+
+`overloads_of(scope, name)` is the enumeration on its own, one `overload` per
+candidate. A defaulted parameter becomes one candidate per reachable arity, since
+reflection exposes that a parameter has a default and not what the default is.
+
+What resolves:
+
+- free functions in a namespace, the global one included
+- constructors, and an aggregate's member list, which is a construction path of its own
+- member functions, with `const`, ref qualifiers and deducing `this`
+- static member functions, with or without an object
+- data members holding a callable, reached as `obj.name(args)`
+- operators, named the way they are written
+- default arguments, as one candidate per reachable arity
+
+What does not:
+
+- **function templates and templated call operators.** `is_function` is false for a
+  template, and there are no parameter types to match against until it is
+  substituted. Nothing reports this: such a name simply yields no candidate, and the
+  call is not invocable.
+- **expression level operator lookup.** Only operators declared in the named scope are
+  candidates, so built-in operators, free operators reached by argument dependent
+  lookup from elsewhere, and the candidates rewritten from a spaceship or an equality
+  are all outside it.
+- **conversion functions**, which have no name to ask for.
 
 ### `reflex::parse<T>`
 
