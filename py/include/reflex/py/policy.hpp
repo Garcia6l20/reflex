@@ -46,9 +46,9 @@ REFLEX_EXPORT namespace reflex::py
    */
   consteval auto python_name(std::meta::info r) -> constant_string
   {
-    if(auto renamed = meta::annotations_of_with(r, ^^rename); not renamed.empty())
+    if(meta::has_annotation(r, ^^rename))
     {
-      return extract<rename>(renamed.front());
+      return meta::annotation_value_of_with<rename>(r);
     }
 
     const auto written = meta::spelling_of(r);
@@ -62,6 +62,9 @@ REFLEX_EXPORT namespace reflex::py
     // class's members respells the class as well.
     if(not std::meta::is_type(r) and not std::meta::is_namespace(r))
     {
+      // extract by value, not through annotation_value_of_with: that helper
+      // asks for a `T const&`, which an enumeration value cannot supply, and
+      // the extraction throws *value cannot be extracted*.
       if(auto n = meta::annotations_of_with(r, ^^naming); not n.empty())
       {
         return caseconv::to_case(written, extract<naming>(n.front()));
@@ -77,9 +80,9 @@ REFLEX_EXPORT namespace reflex::py
   /** @brief the docstring of @p r, empty when it carries none */
   consteval auto doc_of(std::meta::info r) -> constant_string
   {
-    if(auto d = meta::annotations_of_with(r, ^^doc); not d.empty())
+    if(meta::has_annotation(r, ^^doc))
     {
-      return extract<doc>(d.front());
+      return meta::annotation_value_of_with<doc>(r);
     }
     return constant_string{""};
   }

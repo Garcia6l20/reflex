@@ -33,22 +33,24 @@ if build_testing:
 
     group_commands = dict()
 
+    def test_name(name: str, group: str | None) -> str:
+        """The name the runner keys on. The prefix is the contract, not a label."""
+        return f"reflex-test-{group}-{name}" if group else f"reflex-test-{name}"
+
     def add_test(
         name: str, sources: list[str], libs: list, group: str | None = None
     ) -> Target:
-        test_prefix = "reflex-test-"
-        if group:
-            test_prefix += f"{group}-"
+        full = test_name(name, group)
 
         test = project.Program(
-            f"{test_prefix}{name}",
+            full,
             env,
             sources=sources,
             defined_at=get_caller_location(),
         )
         test.private.include_dirs.append(".")
         test.private.link_libs.extend([*libs, doctest_with_main])
-        project.Test(f"{test_prefix}{name}", test, defined_at=get_caller_location())
+        project.Test(full, test, defined_at=get_caller_location())
 
         if group:
             project.Alias(f"test-{group}", test)
@@ -69,12 +71,8 @@ if build_testing:
         """
         from reflex_build.python import interpreter, module_dir
 
-        test_prefix = "reflex-test-"
-        if group:
-            test_prefix += f"{group}-"
-
         test = project.Test(
-            f"{test_prefix}{name}",
+            test_name(name, group),
             interpreter,
             args=[str(script)],
             env={"PYTHONPATH": str(module_dir(project))},

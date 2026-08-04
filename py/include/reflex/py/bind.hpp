@@ -358,7 +358,7 @@ REFLEX_EXPORT namespace reflex::py
       bool        renamed = false;
       for(auto m : meta::callables_named(T, name, std::meta::access_context::current()))
       {
-        if(not is_bindable_method(m) or meta::annotations_of_with(m, ^^rename).empty())
+        if(not is_bindable_method(m) or not meta::has_annotation(m, ^^rename))
         {
           continue;
         }
@@ -434,9 +434,9 @@ REFLEX_EXPORT namespace reflex::py
      */
     consteval auto return_policy_of(std::meta::info fn) -> nb::rv_policy
     {
-      if(auto asked = meta::annotations_of_with(fn, ^^returns); not asked.empty())
+      if(meta::has_annotation(fn, ^^returns))
       {
-        return extract<returns>(asked.front()).policy;
+        return meta::annotation_value_of_with<returns>(fn).policy;
       }
       if(std::meta::is_operator_function(fn) and is_in_place(meta::spelling_of(fn)))
       {
@@ -815,7 +815,7 @@ REFLEX_EXPORT namespace reflex::py
         {
           // A py::rename reaches any operator the table declines to name, which
           // is what it accepts a dunder for.
-          if constexpr(not meta::annotations_of_with(o.function, ^^rename).empty())
+          if constexpr(meta::has_annotation(o.function, ^^rename))
           {
             constexpr auto renamed = std::define_static_string(python_name(o.function).get());
             bind_overload<T, o>(c, renamed);
@@ -858,26 +858,28 @@ REFLEX_EXPORT namespace reflex::py
      * would make the object silently usable as a number in Python, which is a
      * wider promise than the C++ class made. py::rename reaches the rest.
      */
-    consteval auto conversion_name(std::meta::info m) -> std::string_view
+    consteval auto conversion_python_name(std::meta::info m) -> constant_string
     {
-      if(not meta::annotations_of_with(m, ^^rename).empty())
+      // A rename wins, and it is the only way to publish a non-explicit
+      // conversion or one the table declines.
+      if(meta::has_annotation(m, ^^rename))
       {
-        return {};
+        return python_name(m);
       }
       if(not std::meta::is_explicit(m))
       {
-        return {};
+        return constant_string{""};
       }
       // dealias, not just decay: std::string is an alias for a
       // basic_string instantiation and the two reflections do not compare equal.
       const auto result = std::meta::dealias(std::meta::decay(std::meta::return_type_of(m)));
       if(result == std::meta::dealias(^^bool))
       {
-        return "__bool__";
+        return constant_string{"__bool__"};
       }
       if(result == std::meta::dealias(^^std::string))
       {
-        return "__str__";
+        return constant_string{"__str__"};
       }
       // An integral conversion is __index__, not __int__: __index__ is the one
       // Python requires for a value used as a subscript or a slice bound, and
@@ -891,9 +893,9 @@ REFLEX_EXPORT namespace reflex::py
          and result != std::meta::dealias(^^char32_t)
          and result != std::meta::dealias(^^wchar_t))
       {
-        return "__index__";
+        return constant_string{"__index__"};
       }
-      return {};
+      return constant_string{""};
     }
 
     consteval auto bindable_conversions(std::meta::info T) -> std::vector<std::meta::info>
@@ -901,16 +903,13 @@ REFLEX_EXPORT namespace reflex::py
       std::vector<std::meta::info> kept;
       for(auto m : std::meta::members_of(T, std::meta::access_context::current()))
       {
-        if(is_data(m) or not std::meta::is_function(m)
-           or not std::meta::is_conversion_function(m))
+        // is_bindable_callable settles the kind and the skip, and it asks
+        // is_function first, so is_conversion_function is only reached for one.
+        if(not is_bindable_callable(m) or not std::meta::is_conversion_function(m))
         {
           continue;
         }
-        if(is_skipped(m) or not is_bindable_callable(m))
-        {
-          continue;
-        }
-        if(conversion_name(m).empty() and meta::annotations_of_with(m, ^^rename).empty())
+        if(conversion_python_name(m).get().empty())
         {
           continue;
         }
@@ -939,16 +938,8 @@ REFLEX_EXPORT namespace reflex::py
     {
       template for(constexpr auto m : std::define_static_array(bindable_conversions(^^T)))
       {
-        if constexpr(not meta::annotations_of_with(m, ^^rename).empty())
-        {
-          constexpr auto renamed = std::define_static_string(python_name(m).get());
-          c.def(renamed, typename [:conversion_type(^^T, m):]{});
-        }
-        else
-        {
-          constexpr auto dunder = std::define_static_string(conversion_name(m));
-          c.def(dunder, typename [:conversion_type(^^T, m):]{});
-        }
+        constexpr auto dunder = std::define_static_string(conversion_python_name(m).get());
+        c.def(dunder, typename [:conversion_type(^^T, m):]{});
       }
     }
 
