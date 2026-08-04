@@ -239,13 +239,16 @@ REFLEX_EXPORT namespace reflex::py
       return groups;
     }
 
-    /** @brief every call to @p name on a @p T that becomes a Python overload
+    /** @brief does a call to @p fn supply an object
      *
-     * reflex::overloads_of does the enumeration, including expanding a defaulted
-     * parameter into one candidate per reachable arity. What is added here is
-     * what nanobind cannot take: an unbindable signature, and two candidates
-     * differing only in the object they want.
+     * A non-static member function does. A free function and a static member do
+     * not, and neither reaches Python with an implicit first argument.
      */
+    consteval auto takes_object(std::meta::info fn) -> bool
+    {
+      return std::meta::is_class_member(fn) and not std::meta::is_static_member(fn);
+    }
+
     /** @brief does @p o hand back something a Python caller could assign into
      *
      * A mutable subscript is what __setitem__ is generated from, so it is not
@@ -263,6 +266,13 @@ REFLEX_EXPORT namespace reflex::py
          and not std::meta::is_const_type(std::meta::remove_reference(result));
     }
 
+    /** @brief every call to @p name on a @p T that becomes a Python overload
+     *
+     * reflex::overloads_of does the enumeration, including expanding a defaulted
+     * parameter into one candidate per reachable arity. What is added here is
+     * what nanobind cannot take: an unbindable signature, and two candidates
+     * differing only in the object they want.
+     */
     consteval auto bindable_overloads(std::meta::info T, std::string_view name)
         -> std::vector<reflex::overload>
     {
@@ -304,6 +314,18 @@ REFLEX_EXPORT namespace reflex::py
         {
           *same = o;
         }
+      }
+
+      // nanobind gives a name one static-or-instance flag, and a set carrying
+      // both aborts the process at import with *mismatched static/instance
+      // method flags in function overloads* - at runtime, with no file and no
+      // line, from C++ that compiled clean. Refusing here is the whole value.
+      for(auto o : kept)
+      {
+        REFLEX_META_CHECK(
+            takes_object(o.function) == takes_object(kept.front().function),
+            "a name cannot mix static and instance overloads, nanobind gives it one flag",
+            o.function);
       }
       return kept;
     }
@@ -355,15 +377,6 @@ REFLEX_EXPORT namespace reflex::py
       return constant_string{std::string{name}};
     }
 
-    /** @brief does a call to @p fn supply an object
-     *
-     * A non-static member function does. A free function and a static member do
-     * not, and neither reaches Python with an implicit first argument.
-     */
-    consteval auto takes_object(std::meta::info fn) -> bool
-    {
-      return std::meta::is_class_member(fn) and not std::meta::is_static_member(fn);
-    }
 
     /** @brief the object type a call to @p fn on a @p T takes
      *
@@ -414,6 +427,15 @@ REFLEX_EXPORT namespace reflex::py
       }
       if(std::meta::is_operator_function(fn) and is_in_place(meta::spelling_of(fn)))
       {
+        // Python's in-place protocol rebinds the name to whatever the dunder
+        // returns, so a void one rebinds it to None and `v += 3` silently makes
+        // v None. There is nothing to warn at the call site, which is why this
+        // is refused rather than documented.
+        REFLEX_META_CHECK(
+            std::meta::is_lvalue_reference_type(std::meta::return_type_of(fn)),
+            "an in-place operator must return a reference to the object, Python rebinds the "
+            "name to whatever the dunder hands back",
+            fn);
         return nb::rv_policy::reference;
       }
       const auto result = std::meta::return_type_of(fn);

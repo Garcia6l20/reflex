@@ -34,6 +34,22 @@ namespace
   struct one_kept : first_base, ignored_base
   {};
 
+  struct mixed
+  {
+    auto        overlapping() const -> int;
+    static auto overlapping(int n) -> int;
+
+    auto separate() const -> int;
+    static auto also_separate(int n) -> int;
+  };
+
+  struct in_place
+  {
+    auto operator+=(int) -> in_place&;
+    auto operator-=(int) -> void;
+    auto operator*=(int) -> in_place;
+  };
+
   consteval auto names_of(std::meta::info fn, std::size_t arity)
   {
     return py::detail::argument_names(reflex::overload{fn, arity});
@@ -67,6 +83,30 @@ TEST_CASE("reflex::py: a bound class carries at most one base")
 
     // Unless the others are skipped.
     REFLEX_CONSTEVAL_NOTHROW(py::detail::bindable_base(^^one_kept));
+  }
+}
+
+TEST_CASE("reflex::py: a name cannot mix static and instance overloads")
+{
+  consteval {
+    REFLEX_CONSTEVAL_NOTHROW(py::detail::bindable_overloads(^^mixed, "separate"));
+    REFLEX_CONSTEVAL_NOTHROW(py::detail::bindable_overloads(^^mixed, "also_separate"));
+
+    // nanobind gives a name one static-or-instance flag. Both under one name is
+    // a process abort at import, so it is refused at compile time instead.
+    REFLEX_CONSTEVAL_THROWS(py::detail::bindable_overloads(^^mixed, "overlapping"));
+  }
+}
+
+TEST_CASE("reflex::py: an in-place operator must return a reference")
+{
+  consteval {
+    REFLEX_CONSTEVAL_NOTHROW(py::detail::return_policy_of(^^in_place::operator+=));
+
+    // Python rebinds the name to whatever the dunder returns, so a void one
+    // makes `v -= 3` assign None and a by-value one rebinds to a copy.
+    REFLEX_CONSTEVAL_THROWS(py::detail::return_policy_of(^^in_place::operator-=));
+    REFLEX_CONSTEVAL_THROWS(py::detail::return_policy_of(^^in_place::operator*=));
   }
 }
 
