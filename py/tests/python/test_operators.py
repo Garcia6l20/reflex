@@ -121,4 +121,18 @@ def test_a_const_non_const_subscript_pair_keeps_the_setter():
     assert hasattr(t, "__setitem__")
 
 
+def test_a_skipped_equality_does_not_suppress_the_spaceship():
+    a, b = operators.skipped_equality(1), operators.skipped_equality(1)
+    assert a == b
+    assert not (a != b)
+    assert a <= b
+
+
+def test_an_explicit_integral_conversion_is_index():
+    i = operators.indexable()
+    assert int(i) == 3
+    assert [10, 20, 30, 40][i] == 40
+    assert hasattr(i, "__index__")
+
+
 run(globals())

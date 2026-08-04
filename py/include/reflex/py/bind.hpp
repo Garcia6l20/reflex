@@ -743,16 +743,19 @@ REFLEX_EXPORT namespace reflex::py
       return groups;
     }
 
-    /** @brief does @p T declare an operator== of its own
+    /** @brief will @p T publish an operator== of its own
      *
      * A spaceship supplies all six comparisons, but an explicit equality is
      * more specific and has to win. Emitting both would leave a class where
      * `a == b` and `not (a != b)` can disagree.
+     *
+     * Declared is not the same as published. A skipped or otherwise unbindable
+     * operator== used to suppress the spaceship's equality pair and then not
+     * appear itself, leaving `a == b` on identity with nothing bound.
      */
     consteval auto has_equality(std::meta::info T) -> bool
     {
-      return not meta::callables_named(T, "operator==", std::meta::access_context::current())
-                     .empty();
+      return not bindable_overloads(T, "operator==").empty();
     }
 
     /** @brief one comparison read off a spaceship, `(a <=> b) OP 0` */
@@ -893,6 +896,20 @@ REFLEX_EXPORT namespace reflex::py
       if(result == std::meta::dealias(^^std::string))
       {
         return "__str__";
+      }
+      // An integral conversion is __index__, not __int__: __index__ is the one
+      // Python requires for a value used as a subscript or a slice bound, and
+      // int() goes through it. bool is already handled above, and char is a
+      // character rather than a number to a Python caller.
+      if(std::meta::is_integral_type(result) and result != std::meta::dealias(^^char)
+         and result != std::meta::dealias(^^signed char)
+         and result != std::meta::dealias(^^unsigned char)
+         and result != std::meta::dealias(^^char8_t)
+         and result != std::meta::dealias(^^char16_t)
+         and result != std::meta::dealias(^^char32_t)
+         and result != std::meta::dealias(^^wchar_t))
+      {
+        return "__index__";
       }
       return {};
     }

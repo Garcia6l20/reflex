@@ -170,6 +170,38 @@ namespace
     }
   };
 
+  // The spaceship's equality pair must not be suppressed by an operator== that
+  // never gets published.
+  struct skipped_equality
+  {
+    int value = 0;
+
+    skipped_equality() = default;
+    explicit skipped_equality(int v) : value{v}
+    {}
+
+    [[= py::skip]] auto operator==(skipped_equality const& other) const -> bool
+    {
+      return value == other.value;
+    }
+    auto operator<=>(skipped_equality const& other) const
+    {
+      return value <=> other.value;
+    }
+  };
+
+  struct indexable
+  {
+    int value = 3;
+
+    indexable() = default;
+
+    explicit operator int() const
+    {
+      return value;
+    }
+  };
+
   struct named
   {
     std::string text;
@@ -191,5 +223,7 @@ REFLEX_PY_MODULE(operators, m)
   m.bind<table>();
   m.bind<paired_table>();
   m.bind<read_only_table>();
+  m.bind<skipped_equality>();
+  m.bind<indexable>();
   m.bind<named>();
 }
