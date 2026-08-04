@@ -86,6 +86,35 @@ TEST_CASE("reflex::py: a bound class carries at most one base")
   }
 }
 
+TEST_CASE("reflex::py: the operator table tells arity apart")
+{
+  using namespace reflex::py::detail;
+
+  static_assert(python_operator("operator-", 0) == "__neg__");
+  static_assert(python_operator("operator-", 1) == "__sub__");
+
+  // A dereference has no Python counterpart, a multiplication does.
+  static_assert(python_operator("operator*", 0).empty());
+  static_assert(python_operator("operator*", 1) == "__mul__");
+
+  // A call takes whatever it takes.
+  static_assert(python_operator("operator()", 0) == "__call__");
+  static_assert(python_operator("operator()", 3) == "__call__");
+
+  static_assert(python_operator("operator=", 1).empty());
+  static_assert(python_operator("operator&&", 1).empty());
+
+  // Read off the table, so a comparison ending in `=` is not mistaken for one.
+  static_assert(is_in_place("operator+="));
+  static_assert(not is_in_place("operator=="));
+  static_assert(not is_in_place("operator<="));
+  static_assert(not is_in_place("operator<=>"));
+  static_assert(not is_in_place("operator="));
+
+  static_assert(comparison_names[0] == "__lt__");
+  static_assert(comparison_names[5] == "__ge__");
+}
+
 TEST_CASE("reflex::py: a name cannot mix static and instance overloads")
 {
   consteval {
