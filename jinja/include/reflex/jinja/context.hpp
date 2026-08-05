@@ -215,11 +215,13 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     }():];
     using object_type   = typename value_type::obj_type;
     using array_type    = typename value_type::arr_type;
-    using function_type = std::function<value_type(std::span<const value_type>)>;
+    // const-qualified on purpose: operator() is const, and std::function would have let a mutable
+    // callable change its own state through it.
+    using function_type = std::copyable_function<value_type(std::span<const value_type>) const>;
     // Non-owning, unlike function_type: a scoped function is installed by the renderer around a
     // region of the template and its callable outlives that region on the render stack, so there
     // is nothing to allocate and nothing to own. {% block %} publishes super() this way.
-    using scoped_function_type = std::function_ref<value_type(std::span<const value_type>)>;
+    using scoped_function_type = std::function_ref<value_type(std::span<const value_type>) const>;
 
     template <typename T> static constexpr bool can_hold() noexcept
     {

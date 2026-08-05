@@ -60,7 +60,7 @@ using basic_context = context<>;            // no compile-time bound types
 | Member | Purpose |
 |---|---|
 | `set(name, value)` | Bind a global variable |
-| `def(name, fn)` | Register a callable, `value_type(std::span<const value_type>)` |
+| `def(name, fn)` | Register a callable, `value_type(std::span<const value_type>) const` |
 | `operator[](name)` | Read a variable, dotted paths included |
 | `get<T>(name)` | `std::optional<T&>` on the bound object |
 | `push_locals()` | RAII scope for local variables, used by `{% for %}` |
@@ -321,7 +321,8 @@ express one. They are absent rather than approximated.
 `loader`:
 
 ```cpp
-using loader = std::function<std::optional<std::string>(std::string_view name)>;
+using loader =
+    std::copyable_function<std::optional<std::string>(std::string_view name) const>;
 ```
 
 | Factory | Behavior |
@@ -396,6 +397,11 @@ included.
 `std::function_ref` valid for the block body only, so it costs no allocation and
 a `def("super", ...)` still takes precedence. `context::push_function(name, fn)`
 exposes the same mechanism, with the caller owning the callable.
+
+A stored callable is a `std::copyable_function<... const>`, not a
+`std::function`. The signature is const-qualified because `operator()` is, so a
+callable that would mutate its own state through a const context fails to
+compile rather than doing it silently.
 
 ---
 

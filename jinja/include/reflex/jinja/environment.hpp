@@ -23,7 +23,8 @@ REFLEX_EXPORT namespace reflex::jinja
 {
   // Resolves a template name to its source text, nullopt when the template does not exist.
   // A loader never throws on a miss, `environment::get` decides whether a miss is fatal.
-  using loader = std::function<std::optional<std::string>(std::string_view name)>;
+  using loader =
+      std::copyable_function<std::optional<std::string>(std::string_view name) const>;
 
   // Loads templates from `root`. Names that would escape `root` (absolute, or climbing through
   // '..') are refused: template names reach this through {% include %}, hence from template text.
