@@ -531,10 +531,59 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     });
   }
 
+  // Case conversion, straight through reflex::caseconv. This group owns no string logic: a change
+  // to a converter in core moves these outputs.
+  //
+  // Both spellings of each name share one callable. The long form is what reflex::caseconv calls
+  // the function, and a downstream template registering `to_snake_case` by hand gets to delete the
+  // registration rather than keep it as a shadowing override.
+  template <typename ContextT> void register_case(builtin_table_type<ContextT>& t)
+  {
+    using value_type    = typename ContextT::value_type;
+    using function_type = typename ContextT::function_type;
+
+    // `name` is a string literal with static storage, so the closure may hold the view.
+    const auto converter = [](std::string_view name, auto fn) -> function_type {
+      return [name, fn](std::span<const value_type> args) -> value_type {
+        check_arity(name, args, 1, 1);
+        return fn(string_arg(name, args[0], "argument 1"));
+      };
+    };
+
+    const auto bind_pair =
+        [&t](std::string_view short_name, std::string_view alias, function_type fn) {
+          t.emplace(short_name, fn);
+          t.emplace(alias, std::move(fn));
+        };
+
+    bind_pair(
+        "snake",
+        "to_snake_case",
+        converter("snake", [](std::string_view s) { return caseconv::to_snake_case(s); }));
+    bind_pair(
+        "camel",
+        "to_camel_case",
+        converter("camel", [](std::string_view s) { return caseconv::to_camel_case(s); }));
+    bind_pair(
+        "pascal",
+        "to_pascal_case",
+        converter("pascal", [](std::string_view s) { return caseconv::to_pascal_case(s); }));
+    bind_pair(
+        "kebab",
+        "to_kebab_case",
+        converter("kebab", [](std::string_view s) { return caseconv::to_kebab_case(s); }));
+    bind_pair(
+        "upper_snake",
+        "to_upper_snake_case",
+        converter(
+            "upper_snake", [](std::string_view s) { return caseconv::to_upper_snake_case(s); }));
+  }
+
   template <typename ContextT> void register_builtins(builtin_table_type<ContextT>& t)
   {
     register_tier1<ContextT>(t);
     register_strings<ContextT>(t);
+    register_case<ContextT>(t);
   }
 
   template <typename ContextT> const builtin_table_type<ContextT>& builtin_table()

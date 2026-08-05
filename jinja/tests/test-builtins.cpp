@@ -311,7 +311,7 @@ TEST_CASE("reflex::jinja: builtins tier 2, strings")
     CHECK_THROWS_AS(expr::evaluate("truncate(1, 2)", ctx), std::runtime_error);
   }
 
-  SUBCASE("render end to end")
+  SUBCASE("render end to end strings")
   {
     ctx.set("names", array{"alpha"s, "beta"s});
     const auto tmpl = jinja::parse(
@@ -320,5 +320,77 @@ TEST_CASE("reflex::jinja: builtins tier 2, strings")
         "{% endfor %}"
         "};");
     CHECK(jinja::render(tmpl, ctx) == "struct s {\n  int ALPHA;\n  int BETA;\n};");
+  }
+}
+
+TEST_CASE("reflex::jinja: builtins tier 3, case conversion")
+{
+  basic_context ctx;
+  const auto    str = [&](std::string_view src) {
+    return std::get<std::string>(expr::evaluate(src, ctx));
+  };
+
+  SUBCASE("the five converters")
+  {
+    CHECK(str(R"(snake("myField"))") == "my_field");
+    CHECK(str(R"(camel("my_field"))") == "myField");
+    CHECK(str(R"(pascal("my_field"))") == "MyField");
+    CHECK(str(R"(kebab("myField"))") == "my-field");
+    CHECK(str(R"(upper_snake("myField"))") == "MY_FIELD");
+  }
+
+  SUBCASE("idempotent on already-converted input, as core asserts")
+  {
+    CHECK(str(R"(snake("hello_world"))") == "hello_world");
+    CHECK(str(R"(camel("helloWorld"))") == "helloWorld");
+    CHECK(str(R"(pascal("HelloWorld"))") == "HelloWorld");
+    CHECK(str(R"(kebab("hello-world"))") == "hello-world");
+    CHECK(str(R"(upper_snake("HELLO_WORLD"))") == "HELLO_WORLD");
+  }
+
+  SUBCASE("empty input returns empty")
+  {
+    CHECK(str(R"(snake(""))") == "");
+    CHECK(str(R"(camel(""))") == "");
+    CHECK(str(R"(pascal(""))") == "");
+    CHECK(str(R"(kebab(""))") == "");
+    CHECK(str(R"(upper_snake(""))") == "");
+  }
+
+  SUBCASE("the to_*_case aliases are the same function")
+  {
+    CHECK(str(R"(to_snake_case("myField"))") == str(R"(snake("myField"))"));
+    CHECK(str(R"(to_camel_case("my_field"))") == str(R"(camel("my_field"))"));
+    CHECK(str(R"(to_pascal_case("my_field"))") == str(R"(pascal("my_field"))"));
+    CHECK(str(R"(to_kebab_case("myField"))") == str(R"(kebab("myField"))"));
+    CHECK(str(R"(to_upper_snake_case("myField"))") == str(R"(upper_snake("myField"))"));
+  }
+
+  SUBCASE("as pipes")
+  {
+    CHECK(str(R"("myField" | snake)") == "my_field");
+    CHECK(str(R"("myField" | to_upper_snake_case)") == "MY_FIELD");
+  }
+
+  SUBCASE("wrong arity and wrong type")
+  {
+    CHECK_THROWS_AS(expr::evaluate("snake()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(snake("a", "b"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("camel(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("pascal(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("kebab(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("upper_snake(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("to_snake_case()", ctx), std::runtime_error);
+
+    // an alias reports the short name, since both spellings share one callable
+    CHECK_THROWS_WITH(expr::evaluate("to_snake_case()", ctx), doctest::Contains("snake"));
+  }
+
+  SUBCASE("a user def still wins")
+  {
+    ctx.def("snake", [](std::span<const value>) -> value { return "user"s; });
+    CHECK(str(R"(snake("myField"))") == "user");
+    // the alias is a separate key, so it keeps the builtin
+    CHECK(str(R"(to_snake_case("myField"))") == "my_field");
   }
 }
