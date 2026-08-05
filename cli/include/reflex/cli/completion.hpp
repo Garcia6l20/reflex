@@ -121,6 +121,14 @@ REFLEX_EXPORT namespace reflex::cli::detail
     completion_vector<config> completions{};
     using completion_value_type       = typename completion<config>::value_type;
     using completion_description_type = typename completion<config>::description_type;
+
+    auto push = [&](auto const& value, auto const& help) {
+      completions.push_back(
+          completion<config>{
+              .value       = static_cast<completion_value_type>(value),
+              .description = static_cast<completion_description_type>(help)});
+    };
+
     cli::detail::process_cmdline<false>(
         cli, identifier_of(decay(^^Cli)), identifier_of(decay(^^Cli)), words.begin(), words.end(),
         [&](auto const& trackers) {
@@ -130,16 +138,19 @@ REFLEX_EXPORT namespace reflex::cli::detail
           const auto  index      = trackers.index;
           const auto& cmd        = trackers.root;
 
+          // The word typed so far is this switch, whole. An option declaring only one of the two
+          // carries the other as an empty string, which must never match.
+          const auto typed_switch = [view](auto const& sw) {
+            return not sw->empty() and view == *sw;
+          };
+
           if(state == cli::detail::parsing_state::missing_command)
           {
             trackers.cmds_track.unused([&]<auto cmd> {
               constexpr auto dname = cmd.display_name();
               if(dname.starts_with(view))
               {
-                completions.push_back(
-                    completion<config>{
-                        .value       = static_cast<completion_value_type>(dname),
-                        .description = static_cast<completion_description_type>(cmd.help())});
+                push(dname, cmd.help());
               }
             });
           }
@@ -150,17 +161,11 @@ REFLEX_EXPORT namespace reflex::cli::detail
               constexpr auto [short_sw, long_sw] = opt.switches;
               if(not short_sw->empty() and short_sw->starts_with(view))
               {
-                completions.push_back(
-                    completion<config>{
-                        .value       = static_cast<completion_value_type>(short_sw),
-                        .description = static_cast<completion_description_type>(opt.help())});
+                push(short_sw, opt.help());
               }
               if(not long_sw->empty() and long_sw->starts_with(view))
               {
-                completions.push_back(
-                    completion<config>{
-                        .value       = static_cast<completion_value_type>(long_sw),
-                        .description = static_cast<completion_description_type>(opt.help())});
+                push(long_sw, opt.help());
               }
             });
           }
@@ -187,24 +192,17 @@ REFLEX_EXPORT namespace reflex::cli::detail
           {
             trackers.opts_track.all([&]<auto opt> {
               constexpr auto [short_sw, long_sw] = opt.switches;
-              if((not short_sw->empty() and view == *short_sw)
-                 or (not long_sw->empty() and view == *long_sw))
+              if(typed_switch(short_sw) or typed_switch(long_sw))
               {
                 if(index >= comp_point)
                 {
-                  if(not short_sw->empty() and view == *short_sw)
+                  if(typed_switch(short_sw))
                   {
-                    completions.push_back(
-                        completion<config>{
-                            .value       = static_cast<completion_value_type>(short_sw),
-                            .description = static_cast<completion_description_type>(opt.help())});
+                    push(short_sw, opt.help());
                   }
-                  else if(not long_sw->empty() and view == *long_sw)
+                  else if(typed_switch(long_sw))
                   {
-                    completions.push_back(
-                        completion<config>{
-                            .value       = static_cast<completion_value_type>(long_sw),
-                            .description = static_cast<completion_description_type>(opt.help())});
+                    push(long_sw, opt.help());
                   }
                 }
                 else
@@ -224,8 +222,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
             // may be a partial completed option
             trackers.opts_track.unused([&]<auto opt> {
               constexpr auto [short_sw, long_sw] = opt.switches;
-              if((not short_sw->empty() and view == *short_sw)
-                 or (not long_sw->empty() and view == *long_sw))
+              if(typed_switch(short_sw) or typed_switch(long_sw))
               {
                 completions.append_range(
                     arg_completer<opt, config>::complete(cmd, value_view, terminated)
@@ -247,10 +244,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
               trackers.cmds_track.all([&]<auto cmd> {
                 if(cmd.display_name().starts_with(view))
                 {
-                  completions.push_back(
-                      completion<config>{
-                          .value       = static_cast<completion_value_type>(cmd.display_name()),
-                          .description = static_cast<completion_description_type>(cmd.help())});
+                  push(cmd.display_name(), cmd.help());
                 }
               });
               return 1;
@@ -284,17 +278,11 @@ REFLEX_EXPORT namespace reflex::cli::detail
               constexpr auto [short_sw, long_sw] = opt.switches;
               if(not long_sw->empty())
               {
-                completions.push_back(
-                    completion<config>{
-                        .value       = static_cast<completion_value_type>(long_sw),
-                        .description = static_cast<completion_description_type>(opt.help())});
+                push(long_sw, opt.help());
               }
               if(not short_sw->empty())
               {
-                completions.push_back(
-                    completion<config>{
-                        .value       = static_cast<completion_value_type>(short_sw),
-                        .description = static_cast<completion_description_type>(opt.help())});
+                push(short_sw, opt.help());
               }
             });
           }
@@ -307,10 +295,7 @@ REFLEX_EXPORT namespace reflex::cli::detail
                 constexpr auto dname = cmd.display_name();
                 if(dname.starts_with(view))
                 {
-                  completions.push_back(
-                      completion<config>{
-                          .value       = static_cast<completion_value_type>(dname),
-                          .description = static_cast<completion_description_type>(cmd.help())});
+                  push(dname, cmd.help());
                 }
               });
               if(not completions.empty())
@@ -418,18 +403,25 @@ REFLEX_EXPORT namespace reflex::cli::completers
   {
     constant_string pattern{"*"};
 
+    // The shell expands the pattern itself, so a path completer always answers with exactly one
+    // entry and the whole result differs only in type, pattern and label.
+    static auto single(cli::completion_type type, auto const& value, auto const& description)
+    {
+      return std::make_tuple(
+          true, std::array{
+                    cli::completion<config>{
+                                            .type        = type,
+                                            .value       = static_cast<cli::completion<config>::value_type>(value),
+                                            .description = static_cast<cli::completion<config>::description_type>(
+                            description)}
+      });
+    }
+
     struct[[= complete{}]] dirs
     {
       auto operator()(std::string_view /* current */) const
       {
-        return std::make_tuple(
-            true, std::array{
-                      cli::completion<config>{
-                                              .type        = cli::completion_type::dir,
-                                              .value       = static_cast<cli::completion<config>::value_type>(""),
-                                              .description = static_cast<cli::completion<config>::description_type>(
-                              "Directory")}
-        });
+        return single(cli::completion_type::dir, "", "Directory");
       }
     };
 
@@ -437,27 +429,13 @@ REFLEX_EXPORT namespace reflex::cli::completers
     {
       auto operator()(std::string_view /* current */) const
       {
-        return std::make_tuple(
-            true, std::array{
-                      cli::completion<config>{
-                                              .type        = cli::completion_type::file,
-                                              .value       = static_cast<cli::completion<config>::value_type>("*"),
-                                              .description = static_cast<cli::completion<config>::description_type>(
-                              "File system path")}
-        });
+        return single(cli::completion_type::file, "*", "File system path");
       }
     };
 
     auto operator()(std::string_view /* current */) const
     {
-      return std::make_tuple(
-          true, std::array{
-                    cli::completion<config>{
-                                            .type        = cli::completion_type::file,
-                                            .value       = static_cast<cli::completion<config>::value_type>(pattern),
-                                            .description = static_cast<cli::completion<config>::description_type>(
-                            "File system path")}
-      });
+      return single(cli::completion_type::file, pattern, "File system path");
     }
   };
 
