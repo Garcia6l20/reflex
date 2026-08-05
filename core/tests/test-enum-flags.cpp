@@ -40,18 +40,10 @@ extern "C" {
 }
 
 // apply derive for external code
-
-namespace reflex {
-    template <>
-    inline constexpr bool derives_v<c_file_permissions, EnumFlags> = true;
-
-    template <>
-    inline constexpr bool derives_v<c_file_permissions, Parse> = true;
-
-    template <>
-    inline constexpr bool derives_v<c_file_permissions, Format> = true;
+consteval
+{
+  mark_derives<c_file_permissions, EnumFlags, Parse, Format>();
 }
-
 
 TEST_CASE("reflex::core::enum_flags: C enums")
 {

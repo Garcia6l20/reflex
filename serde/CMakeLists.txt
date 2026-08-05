@@ -30,6 +30,15 @@ reflex_add_cxx_module_library(reflex.serde.bson
 )
 target_link_libraries(reflex.serde.bson PUBLIC reflex::serde)
 
+reflex_add_cxx_module_library(reflex.serde.xml
+  INSTALL_TARGETS reflex-targets
+
+  modules/reflex/serde_xml.cppm
+
+  include/reflex/serde/xml.hpp
+)
+target_link_libraries(reflex.serde.xml PUBLIC reflex::serde)
+
 if(REFLEX_BUILD_TESTS)
   add_subdirectory(tests)
 endif()

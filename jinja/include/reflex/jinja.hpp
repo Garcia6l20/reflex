@@ -8,6 +8,8 @@
 
 REFLEX_EXPORT namespace reflex::jinja
 {
+  class environment;
+
   namespace detail
   {
 
@@ -15,8 +17,12 @@ REFLEX_EXPORT namespace reflex::jinja
   struct expression;
   struct if_block;
   struct for_block;
+  struct include_block;
+  struct block_block;
+  struct set_block;
 
-  using element = std::variant<text, expression, if_block, for_block>;
+  using element =
+      std::variant<text, expression, if_block, for_block, include_block, block_block, set_block>;
 
   struct text
   {
@@ -42,12 +48,33 @@ REFLEX_EXPORT namespace reflex::jinja
     std::vector<element>          children;
   };
 
+  // {% include "name" %} - resolved at render time through the environment.
+  struct include_block
+  {
+    std::string_view name;
+  };
+
+  // {% block name %}...{% endblock %} - overridable region.
+  struct block_block
+  {
+    std::string_view     name;
+    std::vector<element> children;
+  };
+
+  // {% set name = expr %} - bind expr into the context under name.
+  struct set_block
+  {
+    std::string_view name;
+    std::string_view expr;
+  };
+
   enum class block_end_kind
   {
     elif_,
     else_,
     endif_,
     endfor_,
+    endblock_,
   };
 
   struct block_end
@@ -123,6 +150,22 @@ REFLEX_EXPORT namespace reflex::jinja
     auto content = input.substr(0, pos);
     input.remove_prefix(pos + marker.size());
     return content;
+  }
+
+  // Unquotes the single argument of {% include "x" %} / {% extends 'x' %}.
+  constexpr std::string_view parse_string_literal(std::string_view arg, std::string_view tag)
+  {
+    if(arg.size() < 2 or (arg.front() != '"' and arg.front() != '\'') or arg.back() != arg.front())
+    {
+      throw std::runtime_error(std::format("'{}' expects a quoted template name", tag));
+    }
+
+    auto name = arg.substr(1, arg.size() - 2);
+    if(name.empty())
+    {
+      throw std::runtime_error(std::format("'{}' expects a non-empty template name", tag));
+    }
+    return name;
   }
 
   constexpr std::vector<std::string_view> parse_loop_vars(std::string_view vars_str)
@@ -307,6 +350,15 @@ REFLEX_EXPORT namespace reflex::jinja
           };
         }
 
+        if(trimmed == "endblock" or trimmed.starts_with("endblock "))
+        {
+          // {% endblock name %} carries the name back for validation against the open block
+          auto name = trim(trimmed.substr(8));
+          return {
+              std::move(children), block_end{block_end_kind::endblock_, name, right_trim}
+          };
+        }
+
         if(trimmed == "else")
         {
           return {
@@ -371,6 +423,88 @@ REFLEX_EXPORT namespace reflex::jinja
 
           children.push_back(element{std::move(block)});
         }
+        else if(trimmed.starts_with("include ") or trimmed == "include")
+        {
+          auto arg = trim(trimmed.substr(7));
+          children.push_back(element{include_block{parse_string_literal(arg, "include")}});
+
+          if(right_trim)
+          {
+            trim_next_text_left = true;
+          }
+        }
+        else if(trimmed.starts_with("block ") or trimmed == "block")
+        {
+          auto name = trim(trimmed.substr(5));
+          if(name.empty())
+          {
+            throw std::runtime_error("Missing name in {% block %}");
+          }
+          if(std::ranges::any_of(name, is_trim_char))
+          {
+            throw std::runtime_error(std::format("Malformed {{% block %}} name: '{}'", name));
+          }
+
+          block_block block;
+          block.name = name;
+
+          auto result    = parse_children(input, right_trim);
+          block.children = std::move(result.children);
+
+          if(not result.end_tag or result.end_tag->kind != block_end_kind::endblock_)
+          {
+            throw std::runtime_error("Unterminated {% block %} block");
+          }
+
+          if(not result.end_tag->tag_content.empty() and result.end_tag->tag_content != name)
+          {
+            throw std::runtime_error(
+                std::format(
+                    "Mismatched {{% endblock %}}: expected '{}', got '{}'", name,
+                    result.end_tag->tag_content));
+          }
+
+          if(result.end_tag->trim_next_text_left)
+          {
+            trim_next_text_left = true;
+          }
+
+          children.push_back(element{std::move(block)});
+        }
+        else if(trimmed.starts_with("set ") or trimmed == "set")
+        {
+          auto rest = trim(trimmed.substr(3));
+          auto eq   = rest.find('=');
+          if(eq == std::string_view::npos)
+          {
+            throw std::runtime_error("Malformed {% set %}: missing '='");
+          }
+
+          set_block block;
+          block.name = trim(rest.substr(0, eq));
+          block.expr = trim(rest.substr(eq + 1));
+
+          if(block.name.empty())
+          {
+            throw std::runtime_error("Malformed {% set %}: missing name");
+          }
+          if(std::ranges::any_of(block.name, is_trim_char))
+          {
+            throw std::runtime_error(
+                std::format("Malformed {{% set %}} name: '{}'", block.name));
+          }
+          if(block.expr.empty())
+          {
+            throw std::runtime_error("Malformed {% set %}: missing expression");
+          }
+
+          children.push_back(element{std::move(block)});
+
+          if(right_trim)
+          {
+            trim_next_text_left = true;
+          }
+        }
         else
         {
           throw std::runtime_error(std::format("Unknown block tag: '{}'", trimmed));
@@ -387,28 +521,253 @@ REFLEX_EXPORT namespace reflex::jinja
     return {std::move(children), std::nullopt};
   }
 
+  // name -> block body, pointing into the owning template's children. std::map is not usable
+  // here because parse() is constexpr.
+  using block_map = std::vector<std::pair<std::string_view, const std::vector<element>*>>;
+
+  constexpr void index_blocks(const std::vector<element>& children, block_map& blocks);
+
+  constexpr const std::vector<element>* find_block(const block_map& blocks, std::string_view name)
+  {
+    for(const auto& [key, body] : blocks)
+    {
+      if(key == name)
+      {
+        return body;
+      }
+    }
+    return nullptr;
+  }
+
   } // namespace detail
 
+  // A parsed template. Every node holds string_view slices into the source it was parsed from,
+  // so a template_ never outlives that source - see `environment`, which owns both.
+  // Copying is explicit through clone(): the copy still points at the same source, and `blocks`
+  // has to be re-indexed against the new children.
   struct template_
   {
-    std::vector<detail::element> children;
+    using block_map = detail::block_map;
+
+    std::vector<detail::element>    children;
+    std::optional<std::string_view> extends;
+    block_map                       blocks; // indexes `children`
+
+    constexpr template_()                            = default;
+    constexpr template_(template_&&)                 = default;
+    constexpr template_& operator=(template_&&)      = default;
+    constexpr template_(const template_&)            = delete;
+    constexpr template_& operator=(const template_&) = delete;
+
+    // Copies the tree, re-indexing the blocks. The source string is shared, not copied.
+    constexpr template_ clone() const
+    {
+      template_ result;
+      result.children = children;
+      result.extends  = extends;
+      detail::index_blocks(result.children, result.blocks);
+      return result;
+    }
   };
+
+  namespace detail
+  {
+
+  // Indexes every {% block %} of the tree, at any depth, by name.
+  constexpr void index_blocks(const std::vector<element>& children, block_map& blocks)
+  {
+    for(const auto& child : children)
+    {
+      std::visit(
+          [&]<typename T>(const T& v) {
+            if constexpr(decays_to_c<T, block_block>)
+            {
+              if(find_block(blocks, v.name) != nullptr)
+              {
+                throw std::runtime_error(std::format("Duplicate block name: '{}'", v.name));
+              }
+              blocks.emplace_back(v.name, &v.children);
+              index_blocks(v.children, blocks);
+            }
+            else if constexpr(decays_to_c<T, if_block>)
+            {
+              index_blocks(v.then_children, blocks);
+              index_blocks(v.else_children, blocks);
+            }
+            else if constexpr(decays_to_c<T, for_block>)
+            {
+              index_blocks(v.children, blocks);
+            }
+          },
+          child);
+    }
+  }
+
+  } // namespace detail
 
   constexpr template_ parse(std::string_view input)
   {
-    auto result = detail::parse_children(input);
+    template_ tmpl;
+    bool      trim_left_after_extends = false;
+
+    // {% extends "base" %} is a property of the template, and must be its first meaningful tag.
+    {
+      auto probe = input;
+      while(true)
+      {
+        detail::trim_left(probe);
+        if(!probe.starts_with("{#"))
+        {
+          break;
+        }
+        // leading comments are not meaningful tags, skip them
+        auto scan = probe;
+        scan.remove_prefix(2);
+        detail::consume_until(scan, "#}");
+        probe = scan;
+      }
+
+      if(probe.starts_with("{%"))
+      {
+        auto scan = probe;
+        scan.remove_prefix(2);
+        if(!scan.empty() and scan.front() == '-')
+        {
+          scan.remove_prefix(1);
+        }
+
+        auto tag_content = detail::consume_until(scan, "%}");
+        bool right_trim  = false;
+        if(!tag_content.empty() and tag_content.back() == '-')
+        {
+          right_trim = true;
+          tag_content.remove_suffix(1);
+        }
+
+        auto trimmed = trim(tag_content);
+        if(trimmed.starts_with("extends ") or trimmed == "extends")
+        {
+          auto arg     = trim(trimmed.substr(7));
+          tmpl.extends = detail::parse_string_literal(arg, "extends");
+
+          input                   = scan;
+          trim_left_after_extends = right_trim;
+        }
+      }
+    }
+
+    auto result = detail::parse_children(input, trim_left_after_extends);
     if(result.end_tag)
       throw std::runtime_error("Unexpected block-end tag at top level");
-    return template_{std::move(result.children)};
+
+    tmpl.children = std::move(result.children);
+    detail::index_blocks(tmpl.children, tmpl.blocks);
+    return tmpl;
   }
 
   namespace detail
   {
 
+  // Render-time state that is not carried by the context: the environment used to resolve
+  // {% include %} / {% extends %}, plus the inheritance and cycle bookkeeping.
+  struct render_state
+  {
+    environment*                  env = nullptr;
+    std::vector<std::string_view> include_stack;
+    block_map                     block_overrides;
+  };
+
+  // Builds the {{ loop }} of a {% for %} body, chaining to the enclosing loop if there is one.
+  // Call before pushing the body's scope, so "loop" still resolves to the parent.
+  template <typename ContextT> expr::loop_info make_loop_info(std::size_t length, ContextT& ctx)
+  {
+    return expr::loop_info{
+        .index0 = 0,
+        .index  = 1,
+        .first  = true,
+        .length = int(length),
+        .last   = length == 1,
+        .parent = ctx.template get<expr::loop_info>("loop"),
+    };
+  }
+
+  constexpr void advance_loop(expr::loop_info& loop)
+  {
+    ++loop.index0;
+    ++loop.index;
+    loop.first = false;
+    loop.last  = (loop.index0 == loop.length - 1);
+  }
+
   template <typename OutputIt, typename ContextT>
-  OutputIt render_children_to(OutputIt out, const std::vector<element>& children, ContextT& ctx);
+  OutputIt render_children_to(
+      OutputIt                    out,
+      const std::vector<element>& children,
+      ContextT&                   ctx,
+      render_state*               state = nullptr);
+
+  // Defined in <reflex/jinja/environment.hpp>, once `environment` is complete.
   template <typename OutputIt, typename ContextT>
-  OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx)
+  OutputIt
+      render_include_to(OutputIt out, std::string_view name, ContextT& ctx, render_state& state);
+
+  // "no level left": the body written in the template being rendered, the end of the chain.
+  inline constexpr std::size_t no_block_level = std::size_t(-1);
+
+  // Index of the first override of `name` at or after `from`, no_block_level when there is none.
+  constexpr std::size_t
+      find_block_index(const block_map& blocks, std::string_view name, std::size_t from)
+  {
+    for(auto i = from; i < blocks.size(); ++i)
+    {
+      if(blocks[i].first == name)
+      {
+        return i;
+      }
+    }
+    return no_block_level;
+  }
+
+  // Renders one level of a {% block %}. `level` indexes state->block_overrides, which holds the
+  // inheritance chain most-derived first; no_block_level means the body the block node carries,
+  // which is the base definition and the end of the chain.
+  template <typename OutputIt, typename ContextT>
+  OutputIt render_block_to(
+      OutputIt           out,
+      const block_block& node,
+      ContextT&          ctx,
+      render_state*      state,
+      std::size_t        level)
+  {
+    using value_type = typename ContextT::value_type;
+
+    const auto* body =
+        (level == no_block_level) ? &node.children : state->block_overrides[level].second;
+
+    // {{ super() }} renders the next level down. The closure lives on this frame for exactly as
+    // long as the body it is published to, which is what lets the context hold it by reference.
+    auto super = [&](std::span<const value_type> args) -> value_type {
+      if(not args.empty())
+      {
+        throw runtime_error("super(): expects no argument, got {}", args.size());
+      }
+      if(level == no_block_level)
+      {
+        throw runtime_error("super(): block '{}' has no parent definition", node.name);
+      }
+      const auto next = find_block_index(state->block_overrides, node.name, level + 1);
+
+      std::string result;
+      render_block_to(std::back_inserter(result), node, ctx, state, next);
+      return result;
+    };
+
+    auto published = ctx.push_function("super", super);
+    return render_children_to(out, *body, ctx, state);
+  }
+
+  template <typename OutputIt, typename ContextT>
+  OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx, render_state* state)
   {
     return std::visit(
         [&]<typename T>(const T& v) -> OutputIt {
@@ -434,55 +793,58 @@ REFLEX_EXPORT namespace reflex::jinja
           else if constexpr(decays_to_c<T, if_block>)
           {
             const bool cond = expr::evaluate_bool(v.condition, ctx);
-            return render_children_to(out, cond ? v.then_children : v.else_children, ctx);
+            return render_children_to(out, cond ? v.then_children : v.else_children, ctx, state);
+          }
+          else if constexpr(decays_to_c<T, include_block>)
+          {
+            if(state == nullptr or state->env == nullptr)
+            {
+              throw std::runtime_error("{% include %} requires an environment");
+            }
+            return render_include_to(out, v.name, ctx, *state);
+          }
+          else if constexpr(decays_to_c<T, block_block>)
+          {
+            const auto level = (state == nullptr)
+                                 ? no_block_level
+                                 : find_block_index(state->block_overrides, v.name, 0);
+            // A block is a scope of its own: a {% set %} in its body dies at {% endblock %}.
+            auto scope = ctx.push_locals();
+            return render_block_to(out, v, ctx, state, level);
+          }
+          else if constexpr(decays_to_c<T, set_block>)
+          {
+            ctx.set_scoped(v.name, expr::evaluate(v.expr, ctx));
+            return out;
           }
           else if constexpr(decays_to_c<T, for_block>)
           {
             // Evaluate the iterable as a full expression so filters/pipes work.
             auto iterable_val = expr::evaluate(v.iterable, ctx);
 
-            std::visit(
+            reflex::visit(
                 [&]<typename U>(U&& it) {
                   using V = std::decay_t<U>;
                   if constexpr(seq_c<V>)
                   {
                     // === sequence: {% for item in list %}
-                    auto parent = ctx.template get<expr::loop_info>("loop");
-                    auto scope  = ctx.push_locals();
-                    auto loop   = expr::loop_info{
-                        .index0 = 0,
-                        .index  = 1,
-                        .first  = true,
-                        .length = int(it.size()),
-                        .last   = it.size() == 1,
-                        .parent = parent,
-                    };
+                    auto loop  = make_loop_info(it.size(), ctx);
+                    auto scope = ctx.push_locals();
                     scope.set("loop", std::ref(loop));
-                    for(auto& item : it)
+                    for(auto&& item : it)
                     {
-                      scope.set(v.loop_vars[0], std::ref(item));
-                      out = render_children_to(out, v.children, ctx);
-                      ++loop.index0;
-                      ++loop.index;
-                      loop.first = false;
-                      loop.last  = (loop.index0 == int(it.size()) - 1);
+                      scope.set(v.loop_vars[0], item);
+                      out = render_children_to(out, v.children, ctx, state);
+                      advance_loop(loop);
                     }
                   }
                   else if constexpr(map_c<V>)
                   {
                     // === mapping: {% for k, v in obj %}
-                    auto parent = ctx.template get<expr::loop_info>("loop");
-                    auto scope  = ctx.push_locals();
-                    auto loop   = expr::loop_info{
-                        .index0 = 0,
-                        .index  = 1,
-                        .first  = true,
-                        .length = int(it.size()),
-                        .last   = it.size() == 1,
-                        .parent = parent,
-                    };
+                    auto loop  = make_loop_info(it.size(), ctx);
+                    auto scope = ctx.push_locals();
                     scope.set("loop", std::ref(loop));
-                    for(const auto& [key, val] : it)
+                    for(auto&& [key, val] : it)
                     {
                       if(v.loop_vars.size() == 1)
                       {
@@ -495,11 +857,8 @@ REFLEX_EXPORT namespace reflex::jinja
                         scope.set(v.loop_vars[0], key);
                         scope.set(v.loop_vars[1], val);
                       }
-                      out = render_children_to(out, v.children, ctx);
-                      ++loop.index0;
-                      ++loop.index;
-                      loop.first = false;
-                      loop.last  = (loop.index0 == int(it.size()) - 1);
+                      out = render_children_to(out, v.children, ctx, state);
+                      advance_loop(loop);
                     }
                   }
                   else
@@ -523,11 +882,15 @@ REFLEX_EXPORT namespace reflex::jinja
   }
 
   template <typename OutputIt, typename ContextT>
-  OutputIt render_children_to(OutputIt out, const std::vector<element>& children, ContextT& ctx)
+  OutputIt render_children_to(
+      OutputIt                    out,
+      const std::vector<element>& children,
+      ContextT&                   ctx,
+      render_state*               state)
   {
     for(const auto& child : children)
     {
-      out = render_element_to(out, child, ctx);
+      out = render_element_to(out, child, ctx, state);
     }
     return out;
   }
@@ -537,10 +900,16 @@ REFLEX_EXPORT namespace reflex::jinja
   template <typename... Ts> using context = expr::context<Ts...>;
   using basic_context                     = context<>;
 
+  // Renders without an environment: {% include %} and {% extends %} cannot be resolved, use
+  // environment::render_to for templates that need them.
   template <typename OutputIt, typename ContextT = basic_context>
   OutputIt render_to(OutputIt out, const template_& tmpl, ContextT& ctx)
   {
-    return detail::render_children_to(out, tmpl.children, ctx);
+    if(tmpl.extends)
+    {
+      throw std::runtime_error("{% extends %} requires an environment");
+    }
+    return detail::render_children_to(out, tmpl.children, ctx, nullptr);
   }
 
   template <typename ContextT = basic_context>
@@ -552,3 +921,6 @@ REFLEX_EXPORT namespace reflex::jinja
   }
 
 } // namespace reflex::jinja
+
+// Needs template_/parse/render_children_to, hence the include at the very bottom.
+#include <reflex/jinja/environment.hpp>

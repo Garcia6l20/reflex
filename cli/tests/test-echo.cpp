@@ -73,4 +73,14 @@ TEST_CASE("reflex::cli: add")
     CHECK(err.empty());
     CHECK_EQ(out, "-5\n");
   }
+  SUBCASE("a value the number does not consume whole is rejected")
+  {
+    // A mistyped value must not become a truncated number. The CLI parses
+    // strictly, unlike reflex::parse itself, which stops at the first byte it
+    // cannot use and reports where.
+    const auto [out, err] = testutils::capture_out_err(
+        [] { CHECK_NE(cli::run(add{}, {"add"sv, "2abc"sv, "3"sv}), 0); });
+    CHECK_FALSE(err.empty());
+    CHECK_EQ(out.find('5'), std::string::npos); // never reached the sum
+  }
 }

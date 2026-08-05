@@ -4,7 +4,7 @@ option(REFLEX_BUILD_PROGRAMS "Build reflex programs" ON)
 option(REFLEX_BUILD_EXAMPLES "Build reflex examples" OFF)
 option(REFLEX_BUILD_TESTS "Build reflex tests" OFF)
 
-option(REFLEX_CXX_MODULES_ENABLED "Enable Reflex CXX Modules" ON)
+option(REFLEX_CXX_MODULES_ENABLED "Enable Reflex CXX Modules" OFF) # OFF by default until CMake module support is stable
 option(REFLEX_INSTALL "Install Reflex targets" ON)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -51,6 +51,11 @@ cmake_dependent_option(REFLEX_SERDE_ENABLED "Enable Reflex Serde" ON
 cmake_dependent_option(REFLEX_JINJA_ENABLED "Enable Reflex Jinja" ON
   REFLEX_SERDE_ENABLED OFF
 )
+# Off by default: it needs the Python development files and an existing
+# nanobind, and neither is fetched. Turning it on without them is an error.
+cmake_dependent_option(REFLEX_PY_ENABLED "Enable Reflex Python bindings" OFF
+  REFLEX_CORE_ENABLED OFF
+)
 
 
 include(ReflexRequirements)
@@ -80,6 +85,9 @@ if(REFLEX_SERDE_ENABLED)
 endif()
 if(REFLEX_JINJA_ENABLED)
   add_subdirectory(jinja)
+endif()
+if(REFLEX_PY_ENABLED)
+  add_subdirectory(py)
 endif()
 
 if (REFLEX_INSTALL)

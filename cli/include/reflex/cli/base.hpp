@@ -1,3 +1,83 @@
+/** @file
+ * @brief parsing a command line into an annotated command
+ *
+ * A command is a struct whose members are annotated, or a function whose
+ * parameters are. Both are driven by `cli::run`.
+ *
+ * @code
+ * struct[[= cli::command{"Print a message."}]] echo
+ * {
+ *   [[= cli::argument{"What to print."}]] std::string message;
+ *   [[= cli::option{"-r/--repeat", "How many times."}]] int repeat = 1;
+ *
+ *   int operator()() const { ...; return 0; }
+ * };
+ *
+ * int main(int argc, const char** argv) { return cli::run(echo{}, argc, argv); }
+ * @endcode
+ *
+ * @code
+ * [[= cli::command{"Print a message."}]]
+ * int echo([[= cli::argument{"What to print."}]] std::string message,
+ *          [[= cli::option{"-r/--repeat", "How many times."}]] int repeat)
+ * { ...; return 0; }
+ *
+ * int main(int argc, const char** argv) { return cli::run<^^echo>(argc, argv); }
+ * @endcode
+ *
+ * A function command is parsed by describing its parameters as the members of a
+ * synthesized aggregate and running the ordinary parser on that, so a
+ * diagnostic naming a type nobody wrote is naming those parameters. Anything
+ * callable works the same way: a lambda, capturing or not, a function object
+ * type, and a function all reduce to one function whose parameters are read.
+ *
+ * A sub-command is a nested struct, or a member function annotated the same
+ * way. A member function is called on the command that declares it, so the
+ * parent's options are in scope without carrying a reference back to it.
+ *
+ * @code
+ * struct[[= cli::command{"Git-like tool."}]] git
+ * {
+ *   [[= cli::option{"-v/--verbose", "Verbose output."}]] int verbose = 0;
+ *
+ *   [[= cli::command{"Commit staged changes."}]]
+ *   int commit([[= cli::argument{"Commit message."}]] std::string message)
+ *   { ...; return 0; }   // verbose is readable here
+ * };
+ * @endcode
+ *
+ * **A member function sub-command is always a leaf.** Its parameters become an
+ * aggregate, and an aggregate holds no sub-commands, so a command that has
+ * sub-commands of its own has to be a nested struct. A parameter that would
+ * become a sub-command is refused rather than silently ignored.
+ *
+ * A parent's options are parsed before the descent, so they have to be written
+ * before the sub-command name: `git -v commit "msg"`, not `git commit -v "msg"`.
+ * This is what nested struct sub-commands already do and is not specific to
+ * member functions.
+ *
+ * Two further limits on a member function sub-command: it has to be public,
+ * because the parser reaches it from outside, and two annotated overloads are
+ * refused, because they would share one name and only the first could be
+ * reached. A member function *template* cannot be one at all and cannot be
+ * diagnosed either: annotations_of accepts a function but not a function
+ * template, and throws on one, so an annotated member function template is
+ * simply not seen.
+ *
+ * What a function command cannot do:
+ *  - **carry a defaulted parameter.** There is nowhere to put the default, and
+ *    it would silently become a value-initialized member. Write
+ *    `std::optional<T>`, which the parser already treats as optional.
+ *  - **take a reference parameter.** A command line has nothing to bind it to.
+ *  - **hold sub-commands.** A sub-command is a member the parser descends into
+ *    and calls, and a parameter is not something to descend into. Sub-commands
+ *    are struct only, and a parameter that would become one is refused.
+ *  - **be a generic lambda,** or anything else whose call operator is a
+ *    template. There are no parameter types to build members from until it is
+ *    substituted.
+ *  - **return something other than void or a type convertible to int.** What a
+ *    command returns is what the process returns.
+ */
 #pragma once
 
 #ifndef REFLEX_EXPORT
@@ -236,6 +316,199 @@ REFLEX_EXPORT namespace reflex::cli
     {}
   };
 
+  /** @brief refuse @p subject of command @p command, pointing at @p loc
+   *
+   * The messages are assembled rather than formatted because std::format is not
+   * available in a constant expression under libstdc++.
+   */
+  consteval void refuse_command(
+      std::string_view command, std::string_view subject, std::string_view reason,
+      std::source_location loc)
+  {
+    std::string message{command};
+    message += ": ";
+    message += subject;
+    message += ' ';
+    message += reason;
+    const_assert(false, message, loc);
+  }
+
+  /** @brief the function a command names
+   *
+   * A command may be named by a function, by a variable holding something
+   * callable, or by the type of one. All three reduce to a single function, and
+   * everything downstream reads the parameters off that.
+   */
+  consteval auto command_function_of(std::meta::info R) -> std::meta::info
+  {
+    if(std::meta::is_function(R))
+    {
+      return R;
+    }
+
+    const auto call = meta::callable_function_of(R);
+    if(call == meta::null)
+    {
+      // A generic lambda lands here: a templated call operator has no parameter
+      // types until it is substituted, so there is nothing to build members
+      // from.
+      refuse_command(
+          std::meta::identifier_of(R), "names",
+          "nothing callable with parameter types a command line could fill",
+          source_location_of(R));
+    }
+
+    // A type is named without an object, so the command has to make one.
+    if(is_type(R) and not is_default_constructible_type(R))
+    {
+      refuse_command(
+          std::meta::identifier_of(R), "names",
+          "a type the command cannot build, name an object of it instead",
+          source_location_of(R));
+    }
+    return call;
+  }
+
+  /** @brief one data member per parameter of @p Fn, carrying its annotations
+   *
+   * A command is driven off an aggregate: the parser walks the members and
+   * writes parsed values into them. Describing a function's parameters as
+   * members lets that same walk read a function without knowing it is one.
+   *
+   * Every function command goes through here, so the refusals live here too.
+   */
+  template <std::meta::info Command> consteval auto command_member_specs()
+      -> std::vector<std::meta::info>
+  {
+    const auto Fn          = command_function_of(Command);
+    const auto name        = std::meta::identifier_of(Command);
+    const auto return_type = std::meta::return_type_of(Fn);
+
+    if(not is_void_type(return_type) and not is_convertible_type(return_type, ^^int))
+    {
+      refuse_command(
+          name, "returns", "something that is neither void nor convertible to int",
+          source_location_of(Command));
+    }
+
+    std::vector<std::meta::info> members;
+    std::size_t                  position = 0;
+    for(auto param : std::meta::parameters_of(Fn))
+    {
+      ++position;
+      const auto where = source_location_of(param);
+
+      if(not has_identifier(param))
+      {
+        refuse_command(name, "an unnamed parameter", "has no member to fill", where);
+        continue;
+      }
+
+      const auto param_name = std::meta::identifier_of(param);
+      const auto type       = std::meta::type_of(param);
+
+      std::string subject{"parameter '"};
+      subject += param_name;
+      subject += '\'';
+
+      // data_member_spec carries no initializer, so a declared default would be
+      // silently replaced by value-initialization. std::optional<T> says the
+      // same thing and the parser already treats it as optional.
+      if(has_default_argument(param))
+      {
+        refuse_command(
+            name, subject,
+            "has a default argument, which a command cannot carry, "
+            "use std::optional<T> for an optional argument",
+            where);
+      }
+
+      // A reference member makes the aggregate non default constructible, and a
+      // command line has nothing to bind it to.
+      if(is_reference_type(type))
+      {
+        refuse_command(name, subject, "is a reference, which a command cannot bind", where);
+      }
+
+      const auto annotations = annotations_of(param);
+
+      // A sub-command is descended into and called. A function parameter is not
+      // something to descend into, so both the annotated form and the implicit
+      // one are refused instead of becoming an unreachable sub-command.
+      bool is_sub_command = annotations.empty()
+                        and is_class_type(type)
+                        and meta::has_annotation(type, ^^command);
+      for(auto a : annotations)
+      {
+        is_sub_command |= decay(type_of(constant_of(a))) == ^^command;
+      }
+      if(is_sub_command)
+      {
+        refuse_command(
+            name, subject,
+            "names a sub-command, which a command's parameters cannot hold, "
+            "use a nested struct for a command that has sub-commands of its own",
+            where);
+      }
+
+      members.push_back(
+          std::meta::data_member_spec(type, {.name = param_name, .annotations = annotations}));
+    }
+    return members;
+  }
+
+  /** @brief the command annotation carried by @p Fn, or a default one */
+  consteval auto command_annotation_of(std::meta::info Fn) -> command
+  {
+    try
+    {
+      return meta::annotation_value_of_with<command>(Fn);
+    }
+    catch(std::meta::exception const&)
+    {
+      return {};
+    }
+  }
+
+  /** @brief holder for the aggregate a function command is parsed into
+   *
+   * define_aggregate has to be evaluated from a consteval block with no scope
+   * between the block and the type it completes, which rules out completing a
+   * namespace-scope type from inside a function. A member class of the same
+   * class template as the block satisfies it, and gives the aggregate a name
+   * that varies with Fn. That last part is load bearing: reflections of the
+   * members of two same-named local classes are interchanged by
+   * define_static_array under GCC 16, so a local aggregate would let two
+   * commands declaring the same parameters read each other's members.
+   */
+  template <std::meta::info Fn> struct command_of
+  {
+    static constexpr auto function = Fn;
+
+    struct args;
+    consteval { std::meta::define_aggregate(^^args, command_member_specs<Fn>()); }
+  };
+
+  /** @brief the aggregate @p Fn is parsed into, one member per parameter */
+  template <std::meta::info Fn> using command_args = typename command_of<Fn>::args;
+
+  /** @brief the command annotation describing @p I
+   *
+   * A synthesized aggregate never carries one of its own: an annotation written
+   * on a declaration completed by define_aggregate is dropped, under GCC 16,
+   * whenever the declaration sits in a template. The holder that declared it
+   * names the function, and the function is what the user annotated.
+   */
+  consteval auto command_annotation_for(std::meta::info I) -> command
+  {
+    const auto holder = parent_of(dealias(I));
+    if(is_type(holder) and has_template_arguments(holder) and template_of(holder) == ^^command_of)
+    {
+      return command_annotation_of(extract<std::meta::info>(template_arguments_of(holder)[0]));
+    }
+    return command_annotation_of(I);
+  }
+
   template <std::meta::info I, bool include_install_completion = true> constexpr auto raw_parse()
   {
     std::vector<std::meta::info> arguments;
@@ -249,10 +522,54 @@ REFLEX_EXPORT namespace reflex::cli
       options.push_back(^^show_completion_option);
     }
 
+    // Walked with an unchecked context and filtered by hand rather than asking
+    // for accessible members only: a sub-command that cannot be reached needs
+    // to be refused by name, and a member the walk never returns cannot be.
+    // Data members keep exactly the visibility they had, which is public.
+    //
+    // Recursive through bases, so a command can inherit its options from a
+    // shared struct. The case that needs it is a command with sub-commands:
+    // an option on the parent has to be typed before the verb, which nobody
+    // does, so the options belong on every sub-command, and writing them out
+    // once per sub-command is how they drift apart. Base members come first,
+    // which puts inherited options above own ones in the help text.
     template for(constexpr auto mem :
-                 define_static_array(nonstatic_data_members_of(I, meta::access_context::current())))
+                 define_static_array(meta::members_of_r(I, meta::access_context::unchecked())))
     {
       if constexpr(is_function(mem))
+      {
+        // A member function is a sub-command only when it says so. Everything
+        // else a class declares, operator() included, is left alone.
+        if(meta::has_annotation(mem, ^^command))
+        {
+          const_assert(
+              is_accessible(mem, meta::access_context::current()),
+              "a sub-command must be reachable from outside its command, make it public",
+              source_location_of(mem));
+          // Two annotated overloads share one name, so only the first would
+          // ever be reachable and the rest would be dead.
+          const_assert(
+              std::ranges::none_of(
+                  sub_commands,
+                  [&](auto other) {
+                    return has_identifier(other) and identifier_of(other) == identifier_of(mem);
+                  }),
+              "two sub-commands cannot share a name, give the overload a name of its own",
+              source_location_of(mem));
+          sub_commands.push_back(mem);
+        }
+        continue;
+      }
+      // A nested type carrying the annotation is reached through the member
+      // that holds it, so only the member counts. Anything else that is not a
+      // data member has no value to parse into. A member function template is
+      // among them, and cannot even be asked: annotations_of accepts a
+      // function but not a function template, and throws on one.
+      if constexpr(not is_nonstatic_data_member(mem))
+      {
+        continue;
+      }
+      if constexpr(not is_accessible(mem, meta::access_context::current()))
       {
         continue;
       }
@@ -313,7 +630,7 @@ REFLEX_EXPORT namespace reflex::cli
   template <std::meta::info I, bool include_install_completion = true>
   void usage_of(std::string_view program)
   {
-    static constexpr auto command              = command_info{I};
+    static constexpr auto description          = command_annotation_for(I);
     static constexpr auto [args, opts, s_cmds] = parse<I, include_install_completion>();
 
     static constexpr std::size_t min_id_size = 16;
@@ -325,7 +642,7 @@ REFLEX_EXPORT namespace reflex::cli
 
     std::println("USAGE: {} [OPTIONS...] ARGUMENTS...", program);
 
-    if constexpr(constexpr auto help = command.help(); not help->empty())
+    if constexpr(constexpr auto help = description.help; not help->empty())
     {
       std::println();
       std::println("{}", *help);
@@ -539,7 +856,26 @@ REFLEX_EXPORT namespace reflex::cli
     return item_tracker<items>{};
   }
 
-  template <typename Cmd, bool include_install_completion = true> struct parse_trackers
+  /** @brief how a parsed command is run
+   *
+   * A hand written command carries its state in its members and is called with
+   * nothing. A synthesized one carries a function's arguments instead and has
+   * no call operator at all, so what it means to call it is supplied alongside
+   * it rather than found on it.
+   *
+   * The constraint is what keeps a command holding nothing but sub-commands
+   * reporting missing_command at run time instead of failing to compile.
+   */
+  inline constexpr auto default_invoker = []<typename C>(C& cli) -> decltype(auto)
+    requires requires { cli(); }
+  {
+    return cli();
+  };
+
+  template <
+      typename Cmd, bool include_install_completion = true,
+      typename Invoker = decltype(default_invoker)>
+  struct parse_trackers
   {
     static constexpr auto cmd_type = remove_cvref(^^Cmd);
 
@@ -553,6 +889,23 @@ REFLEX_EXPORT namespace reflex::cli
         command_info::from_info_range(std::get<2>(_raw)) | std::ranges::to<std::vector>();
 
     Cmd& root;
+
+    // How the command is run travels with the trackers because the state
+    // handler is what runs it, and a sub-command may be reached through an
+    // invoker the handler never saw. A member function sub-command is exactly
+    // that case: it needs the parent bound, and the handler was built before
+    // the parent existed.
+    Invoker invoker;
+
+    // A template so that an unrunnable command is a substitution failure the
+    // caller can test for. A non-template member has its declaration
+    // instantiated with the class, which would make it a hard error instead.
+    template <typename Self = Cmd>
+    constexpr auto invoke() const
+        -> decltype(std::declval<Invoker const&>()(std::declval<Self&>()))
+    {
+      return invoker(root);
+    }
 
     item_tracker<args> args_track{};
     item_tracker<opts> opts_track{};
@@ -589,7 +942,50 @@ REFLEX_EXPORT namespace reflex::cli
     }
   };
 
-  template <bool show_help = true, bool include_install_completion = true, typename Cli>
+  /** @brief call the sub-command @p Fn on the command that declares it
+   *
+   * A member function sub-command is the one shape where the parsed arguments
+   * and the object they run against live in two different places: the
+   * arguments in the synthesized aggregate, the object in the parent whose own
+   * options were parsed before the descent. Binding the parent here is what
+   * lets the sub-command read them.
+   */
+  template <std::meta::info Fn> constexpr auto member_invoker(auto& parent)
+  {
+    return [&parent](auto& cli) -> decltype(auto) {
+      return std::apply(
+          [&parent](auto&&... args) -> decltype(auto) { return (parent.[:Fn:])(args...); },
+          reflex::to_tuple(cli));
+    };
+  }
+
+  /** @brief call what @p Command names with the arguments parsed for it
+   *
+   * A function and a variable holding a callable are both spliced and called,
+   * which is what carries a capturing lambda's state to the call: the state is
+   * in the variable the user named. A type is built first, so a function object
+   * has to be default constructible to be a command.
+   */
+  template <std::meta::info Command>
+  inline constexpr auto function_invoker = [](auto& cli) -> decltype(auto) {
+    // to_tuple returns by value, so the pack binds by forwarding reference.
+    return std::apply(
+        [](auto&&... args) -> decltype(auto) {
+          if constexpr(std::meta::is_type(Command))
+          {
+            return typename[:Command:]{}(args...);
+          }
+          else
+          {
+            return [:Command:](args...);
+          }
+        },
+        reflex::to_tuple(cli));
+  };
+
+  template <
+      bool show_help = true, bool include_install_completion = true, typename Cli,
+      typename Invoker = decltype(default_invoker)>
   int process_cmdline(
       Cli&&            cli,
       std::string_view command,
@@ -597,10 +993,11 @@ REFLEX_EXPORT namespace reflex::cli
       auto             it,
       auto             end,
       auto             state_handler,
-      std::size_t      index = 1)
+      std::size_t      index   = 1,
+      Invoker          invoker = default_invoker)
   {
-    static constexpr auto                           cli_type = remove_cvref(^^Cli);
-    parse_trackers<Cli, include_install_completion> trackers{cli};
+    static constexpr auto                                    cli_type = remove_cvref(^^Cli);
+    parse_trackers<Cli, include_install_completion, Invoker> trackers{cli, invoker};
     trackers.command = command;
     trackers.program = executable.empty() ? command : executable;
     trackers.index   = index;
@@ -710,24 +1107,25 @@ REFLEX_EXPORT namespace reflex::cli
                   {
                     ++it;
                   }
-                  trackers.current.value_view = std::string_view{*it};
+                  // The end check comes before the dereference, not after it.
+                  // Written the other way round, `--option` as the last element
+                  // of argv read one past the end of the range and crashed, for
+                  // every option that takes a value.
                   if(it == end)
                   {
                     trackers.state = parsing_state::missing_option_value;
                     state_handler(trackers);
                     return 1;
                   }
-                  else
-                  {
-                    trackers.state = parsing_state::option_value_check;
-                    state_handler(trackers);
-                  }
+                  trackers.current.value_view = std::string_view{*it};
+                  trackers.state              = parsing_state::option_value_check;
+                  state_handler(trackers);
                   ++trackers.index;
 
                   if constexpr(seq_c<T>)
                   {
                     auto parsed =
-                        reflex::parse<typename T::value_type>(trackers.current.value_view);
+                        reflex::parse_strict<typename T::value_type>(trackers.current.value_view);
                     if(not parsed)
                     {
                       trackers.current.parse_error = parsed.error();
@@ -739,7 +1137,7 @@ REFLEX_EXPORT namespace reflex::cli
                   }
                   else
                   {
-                    auto parsed = reflex::parse<T>(trackers.current.value_view);
+                    auto parsed = reflex::parse_strict<T>(trackers.current.value_view);
                     if(not parsed)
                     {
                       trackers.current.parse_error = parsed.error();
@@ -813,9 +1211,22 @@ REFLEX_EXPORT namespace reflex::cli
               return 1;
             }
             ++trackers.index;
-            return process_cmdline<show_help, false>(
-                cli.[:cmd.member:], std::format("{} {}", trackers.program, trackers.current.view),
-                                  trackers.program, it, end, state_handler, trackers.index);
+            auto sub_command = std::format("{} {}", trackers.program, trackers.current.view);
+            if constexpr(is_function(cmd.member))
+            {
+              // The parameters are the sub-command, so they get an aggregate of
+              // their own and the parent is carried to the call by the invoker.
+              command_args<cmd.member> sub_args{};
+              return process_cmdline<show_help, false>(
+                  sub_args, sub_command, trackers.program, it, end, state_handler, trackers.index,
+                  member_invoker<cmd.member>(cli));
+            }
+            else
+            {
+              return process_cmdline<show_help, false>(
+                  cli.[:cmd.member:], sub_command, trackers.program, it, end, state_handler,
+                  trackers.index);
+            }
           }
         }
 
@@ -842,7 +1253,7 @@ REFLEX_EXPORT namespace reflex::cli
                 // consume all remaining arguments
                 auto view             = std::string_view(*it);
                 trackers.current.view = view;
-                auto parsed           = reflex::parse<typename T::value_type>(view);
+                auto parsed           = reflex::parse_strict<typename T::value_type>(view);
                 if(not parsed)
                 {
                   trackers.current.parse_error = parsed.error();
@@ -858,7 +1269,7 @@ REFLEX_EXPORT namespace reflex::cli
             {
               auto view             = std::string_view(*it);
               trackers.current.view = view;
-              auto parsed           = reflex::parse<T>(view);
+              auto parsed           = reflex::parse_strict<T>(view);
               if(not parsed)
               {
                 trackers.current.parse_error = parsed.error();
@@ -909,7 +1320,7 @@ REFLEX_EXPORT namespace reflex::cli
       }
     }
 
-    if constexpr(requires { cli(); })
+    if constexpr(requires { invoker(cli); })
     {
       trackers.state = parsing_state::completed;
       return state_handler(trackers);

@@ -24,3 +24,7 @@ doctest_add_test(reflex-jinja-parse-test
 doctest_add_test(reflex-jinja-expr-test
   test-expr.cpp
 )
+
+doctest_add_test(reflex-jinja-environment-test
+  test-environment.cpp
+)

@@ -15,7 +15,10 @@ REFLEX_EXPORT namespace reflex::cli
 {
   namespace detail
   {
-  template <typename Cli> int process(Cli&& cli, std::string_view executable, auto it, auto end)
+  template <typename Cli, typename Invoker = decltype(detail::default_invoker)>
+  int process(
+      Cli&& cli, std::string_view executable, auto it, auto end,
+      Invoker invoker = detail::default_invoker)
   {
     auto command = std::filesystem::path{executable}.filename().string();
     return detail::process_cmdline(
@@ -38,6 +41,11 @@ REFLEX_EXPORT namespace reflex::cli
           else if(state == parsing_state::missing_argument)
           {
             std::println(std::cerr, "missing required argument: {}", view);
+            std::println(std::cerr);
+          }
+          else if(state == parsing_state::missing_option_value)
+          {
+            std::println(std::cerr, "missing value for option: {}", view);
             std::println(std::cerr);
           }
           else if(state == parsing_state::invalid_option_value)
@@ -63,14 +71,14 @@ REFLEX_EXPORT namespace reflex::cli
           {
             // actual command execution
             if constexpr(requires {
-                           { trackers.root() } -> std::convertible_to<int>;
+                           { trackers.invoke() } -> std::convertible_to<int>;
                          })
             {
-              return trackers.root();
+              return trackers.invoke();
             }
-            else if constexpr(requires { trackers.root(); })
+            else if constexpr(requires { trackers.invoke(); })
             {
-              trackers.root();
+              trackers.invoke();
               return 0;
             }
             else
@@ -87,7 +95,7 @@ REFLEX_EXPORT namespace reflex::cli
           }
           trackers.usage();
           return 1;
-        });
+        }, 1, invoker);
   }
   } // namespace detail
 
@@ -135,6 +143,51 @@ REFLEX_EXPORT namespace reflex::cli
               | std::views::transform([](std::string_view arg) { return arg.data(); })
               | std::ranges::to<std::vector>();
     return cli::run<Cli, config>(std::forward<Cli>(cli), int(argv.size()), argv.data());
+  }
+
+  /** @brief run a plain function as a command
+   *
+   * The function's parameters are the command's arguments and options, carrying
+   * their own annotations. Nothing is written at the call site beyond the
+   * reflection of the function.
+   */
+  template <std::meta::info Fn, configuration config = {}>
+  int run(std::string_view executable, auto it, auto end)
+  {
+    detail::command_args<Fn> args{};
+
+    if constexpr(config.completion.enabled)
+    {
+      if(const auto complete_env = std::getenv("_REFLEX_COMPLETE"); complete_env != nullptr)
+      {
+        std::string_view const complete{complete_env};
+        if(not complete.empty())
+        {
+          if(complete.ends_with("complete"))
+          {
+            return detail::do_complete<config>(args);
+          }
+        }
+      }
+    }
+
+    return detail::process(args, executable, it, end, detail::function_invoker<Fn>);
+  }
+
+  template <std::meta::info Fn, configuration config = {}> int run(int argc, const char** argv)
+  {
+    return cli::run<Fn, config>(std::string_view{argv[0]}, argv + 1, argv + argc);
+  }
+
+  template <
+      std::meta::info Fn, configuration config = {},
+      std::ranges::range R = std::initializer_list<std::string_view>>
+  int run(R && args)
+  {
+    auto argv = args
+              | std::views::transform([](std::string_view arg) { return arg.data(); })
+              | std::ranges::to<std::vector>();
+    return cli::run<Fn, config>(int(argv.size()), argv.data());
   }
 
 } // namespace reflex::cli

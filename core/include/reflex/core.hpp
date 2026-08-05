@@ -11,6 +11,7 @@
 #include <reflex/meta.hpp>
 #include <reflex/meta/reg.hpp>
 #include <reflex/named_arg.hpp>
+#include <reflex/overload_set.hpp>
 #include <reflex/parse.hpp>
 #include <reflex/scope_guard.hpp>
 #include <reflex/to_tuple.hpp>

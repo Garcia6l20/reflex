@@ -12,6 +12,7 @@
 #include <reflex/parse.hpp>
 #endif
 
+#include <reflex/jinja/builtins.hpp>
 #include <reflex/jinja/context.hpp>
 
 #ifdef REFLEX_EXPR_ABORT_ON_NON_MATCHED_ELEMENT
@@ -315,36 +316,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     using id_string   = heapless::string<_max_identifier_size>;
     using args_vector = heapless::vector<value_type, _max_call_args>;
 
-    static consteval std::meta::info __integral_type()
-    {
-      if(has_template_arguments(dealias(^^value_type)))
-      {
-        for(auto t_arg : template_arguments_of(dealias(^^value_type)))
-        {
-          if(is_int_number_type(t_arg))
-          {
-            return t_arg;
-          }
-        }
-      }
-      // lookup in bases
-      for(auto base : bases_of(dealias(^^value_type), std::meta::access_context::current()))
-      {
-        if(has_template_arguments(dealias(^^base)))
-        {
-          for(auto t_arg : template_arguments_of(type_of(base)))
-          {
-            if(is_int_number_type(t_arg))
-            {
-              return t_arg;
-            }
-          }
-        }
-      }
-      return meta::null;
-    }
-    static constexpr auto integral_type_info = __integral_type();
-    using integral_type                      = typename[:integral_type_info:];
+    // The coercions live in value_ops so a builtin can reach them without instantiating a parser.
+    using ops                                = value_ops<value_type>;
+    static constexpr auto integral_type_info = ops::integral_type_info;
+    using integral_type                      = typename ops::integral_type;
 
     const context_type* ctx{nullptr};
 
@@ -487,7 +462,8 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       {
         advance();
         auto right = parse_and();
-        left       = {std::get<bool>(coerce_bool(left)) or std::get<bool>(coerce_bool(right))};
+        left =
+            {std::get<bool>(ops::coerce_bool(left)) or std::get<bool>(ops::coerce_bool(right))};
       }
       return left;
     }
@@ -499,7 +475,8 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       {
         advance();
         auto right = parse_not();
-        left       = {std::get<bool>(coerce_bool(left)) and std::get<bool>(coerce_bool(right))};
+        left =
+            {std::get<bool>(ops::coerce_bool(left)) and std::get<bool>(ops::coerce_bool(right))};
       }
       return left;
     }
@@ -509,7 +486,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       if(at(token_kind::not_))
       {
         advance();
-        return {not std::get<bool>(coerce_bool(parse_not()))};
+        return {not std::get<bool>(ops::coerce_bool(parse_not()))};
       }
       return parse_cmp();
     }
@@ -522,32 +499,32 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         case token_kind::eq:
         {
           advance();
-          return {equal(left, parse_add())};
+          return {ops::equal(left, parse_add())};
         }
         case token_kind::neq:
         {
           advance();
-          return {!equal(left, parse_add())};
+          return {!ops::equal(left, parse_add())};
         }
         case token_kind::lt:
         {
           advance();
-          return {compare(left, parse_add()) < 0};
+          return {ops::compare(left, parse_add()) < 0};
         }
         case token_kind::le:
         {
           advance();
-          return {compare(left, parse_add()) <= 0};
+          return {ops::compare(left, parse_add()) <= 0};
         }
         case token_kind::gt:
         {
           advance();
-          return {compare(left, parse_add()) > 0};
+          return {ops::compare(left, parse_add()) > 0};
         }
         case token_kind::ge:
         {
           advance();
-          return {compare(left, parse_add()) >= 0};
+          return {ops::compare(left, parse_add()) >= 0};
         }
         default:
           break;
@@ -563,7 +540,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         bool is_add = at(token_kind::plus);
         advance();
         auto right = parse_mul();
-        left       = is_add ? arith_add(left, right) : arith_sub(left, right);
+        left       = is_add ? ops::arith_add(left, right) : ops::arith_sub(left, right);
       }
       return left;
     }
@@ -579,13 +556,13 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         switch(op)
         {
           case token_kind::star:
-            left = arith_mul(left, right);
+            left = ops::arith_mul(left, right);
             break;
           case token_kind::slash:
-            left = arith_div(left, right);
+            left = ops::arith_div(left, right);
             break;
           case token_kind::percent:
-            left = arith_mod(left, right);
+            left = ops::arith_mod(left, right);
             break;
           default:
             break;
@@ -633,7 +610,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       bool       found  = false;
       value_type result = {};
 
-      serde::object_visit(key, base, [&]<typename M>(M&& member) {
+      serde::object_visit_flat(key, base, [&]<typename M>(M&& member) {
         found = true;
         if constexpr(requires { result = value_type{std::forward<M>(member)}; })
         {
@@ -642,6 +619,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         else if constexpr(requires { result = std::forward<M>(member); })
         {
           result = std::forward<M>(member);
+        }
+        else if constexpr(std::is_lvalue_reference_v<M> and requires { result = std::ref(member); })
+        {
+          result = std::ref(member);
         }
         else if constexpr(seq_c<std::decay_t<M>>)
         {
@@ -683,20 +664,24 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       }
       const auto idx = static_cast<std::size_t>(index);
 
-      return std::visit(
-          [idx]<typename T>(T const& value) -> value_type {
+      return reflex::visit(
+          [idx]<typename T>(T&& value) -> value_type {
             using U = std::decay_t<T>;
             if constexpr(seq_c<U>)
             {
               if(idx < value.size())
               {
-                if constexpr(requires { value_type{value[idx]}; })
+                if constexpr(requires { value_type{std::ref(value[idx])}; })
+                {
+                  return value_type{std::ref(value[idx])};
+                }
+                else if constexpr(requires { value_type{value[idx]}; })
                 {
                   return value_type{value[idx]};
                 }
                 else
                 {
-                  return value[idx];
+                  return {};
                 }
               }
               return {};
@@ -820,198 +805,6 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       }
     }
 
-    // value operations
-
-    static value_type coerce_bool(const value_type& v)
-    {
-      return std::visit(
-          [&]<typename T>(T const& value) -> value_type {
-            if constexpr(requires { static_cast<bool>(value); })
-            {
-              return static_cast<bool>(value);
-            }
-            else if constexpr(requires {
-                                { value.empty() } -> std::same_as<bool>;
-                              })
-            {
-              return !value.empty();
-            }
-            else
-            {
-              return false;
-            }
-          },
-          v);
-    }
-
-    static bool equal(const value_type& a, const value_type& b)
-    {
-      return std::visit(
-          [&]<typename LHS, typename RHS>(LHS const& lhs, RHS const& rhs) -> bool {
-            using DLHS = std::decay_t<LHS>;
-            using DRHS = std::decay_t<RHS>;
-            if constexpr(requires { lhs == rhs; })
-            {
-              return lhs == rhs;
-            }
-            else if constexpr(parsable_c<DLHS> and str_c<DRHS>)
-            {
-              auto parsed = parse<DLHS>(rhs);
-              return parsed and (std::move(parsed).value() == lhs);
-            }
-            else if constexpr(str_c<DLHS> and parsable_c<DRHS>)
-            {
-              auto parsed = parse<DRHS>(lhs);
-              return parsed and (rhs == std::move(parsed).value());
-            }
-            else
-            {
-              return false;
-            }
-          },
-          a, b);
-    }
-
-    // Returns negative / zero / positive like strcmp
-    static int compare(const value_type& a, const value_type& b)
-    {
-      static const auto to_double = [](const value_type& v) -> double {
-        if constexpr(integral_type_info != meta::null)
-        {
-          if(auto* i = std::get_if<integral_type>(&v))
-          {
-            return static_cast<double>(*i);
-          }
-        }
-        if(auto* d = std::get_if<double>(&v))
-        {
-          return *d;
-        }
-        throw std::runtime_error("Cannot compare non-numeric values with ordering operators");
-      };
-      const double la = to_double(a);
-      const double rb = to_double(b);
-      if(la < rb)
-      {
-        return -1;
-      }
-      if(la > rb)
-      {
-        return 1;
-      }
-      return 0;
-    }
-
-    static value_type arith_add(const value_type& a, const value_type& b)
-    {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* la = std::get_if<integral_type>(&a))
-        {
-          if(auto* rb = std::get_if<integral_type>(&b))
-          {
-            return {*la + *rb};
-          }
-        }
-      }
-      if(auto* la = std::get_if<std::string>(&a))
-      {
-        if(auto* rb = std::get_if<std::string>(&b))
-        {
-          return {*la + *rb};
-        }
-      }
-      return {to_double(a) + to_double(b)};
-    }
-
-    static value_type arith_sub(const value_type& a, const value_type& b)
-    {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* la = std::get_if<integral_type>(&a))
-        {
-          if(auto* rb = std::get_if<integral_type>(&b))
-          {
-            return {*la - *rb};
-          }
-        }
-      }
-      return {to_double(a) - to_double(b)};
-    }
-
-    static value_type arith_mul(const value_type& a, const value_type& b)
-    {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* la = std::get_if<integral_type>(&a))
-        {
-          if(auto* rb = std::get_if<integral_type>(&b))
-          {
-            return {*la * *rb};
-          }
-        }
-      }
-      return {to_double(a) * to_double(b)};
-    }
-
-    static value_type arith_div(const value_type& a, const value_type& b)
-    {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* la = std::get_if<integral_type>(&a))
-        {
-          if(auto* rb = std::get_if<integral_type>(&b))
-          {
-            if(*rb == 0)
-            {
-              throw std::runtime_error("Integer division by zero");
-            }
-            return {*la / *rb};
-          }
-        }
-      }
-      double rb = to_double(b);
-      if(rb == 0.0)
-      {
-        throw std::runtime_error("Division by zero");
-      }
-      return {to_double(a) / rb};
-    }
-
-    static value_type arith_mod(const value_type& a, const value_type& b)
-    {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* la = std::get_if<integral_type>(&a))
-        {
-          if(auto* rb = std::get_if<integral_type>(&b))
-          {
-            if(*rb == 0)
-            {
-              throw std::runtime_error("Modulo by zero");
-            }
-            return {*la % *rb};
-          }
-        }
-      }
-      throw std::runtime_error("'%' requires integer operands");
-    }
-
-    static double to_double(const value_type& v)
-    {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* i = std::get_if<integral_type>(&v))
-        {
-          return static_cast<double>(*i);
-        }
-      }
-      if(auto* d = std::get_if<double>(&v))
-      {
-        return *d;
-      }
-      throw std::runtime_error("Expected numeric value");
-    }
   };
 
   template <typename ContextT = context<>>
@@ -1027,7 +820,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   inline bool evaluate_bool(std::string_view src, const ContextT& ctx = {})
   {
     auto v = evaluate<ContextT>(src, ctx);
-    return std::get<bool>(parser<ContextT>::coerce_bool(v));
+    return std::get<bool>(value_ops<typename ContextT::value_type>::coerce_bool(v));
   }
 
 } // namespace reflex::jinja::expr

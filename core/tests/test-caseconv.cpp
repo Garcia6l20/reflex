@@ -18,6 +18,14 @@ TEST_CASE("reflex::core::caseconv: basics")
   REQUIRE(to_kebab_case("helloWorld") == "hello-world");
   REQUIRE(to_pascal_case("hello_world") == "HelloWorld");
 
+  REQUIRE(to_upper_snake_case("myField") == "MY_FIELD");
+  REQUIRE(to_upper_snake_case("hello_world") == "HELLO_WORLD");
+  REQUIRE(to_upper_snake_case("hello-world") == "HELLO_WORLD");
+  REQUIRE(to_upper_snake_case("") == "");
+
   static constexpr constant_string s1 = to_snake_case("helloWorld");
   static_assert(s1 == "hello_world");
+
+  static constexpr constant_string s2 = to_upper_snake_case("myField");
+  static_assert(s2 == "MY_FIELD");
 }

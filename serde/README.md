@@ -7,8 +7,8 @@ containers, and `reflex::poly::var` values without writing any boilerplate -
 field names, nesting, and type dispatch are all derived automatically via
 C++26 static reflection.
 
-Ships with **JSON** (`reflex.serde.json`) and **BSON** (`reflex.serde.bson`)
-backends.
+Ships with **JSON** (`reflex.serde.json`), **BSON** (`reflex.serde.bson`),
+**CSV** (`reflex.serde.csv`), and **XML** (`reflex.serde.xml`) backends.
 
 ---
 
@@ -19,6 +19,8 @@ backends.
 | `reflex.serde` | Core concepts, annotations, `object_visit` |
 | `reflex.serde.json` | JSON serializer + deserializer |
 | `reflex.serde.bson` | BSON serializer + deserializer |
+| `reflex.serde.csv` | CSV serializer + deserializer (flat aggregates) |
+| `reflex.serde.xml` | XML serializer + deserializer |
 
 ---
 
@@ -190,6 +192,91 @@ struct [[= serde::naming::camel_case]] api_response
   [[= serde::naming::kebab_case]] std::string content_type;
 };
 // JSON: {"statusCode":200,"content-type":"..."}
+```
+
+---
+
+## XML attributes
+
+Annotate a member with `xml::attribute` to serialize it as an attribute on the
+element's open tag instead of a child element. Attribute members must be scalar
+(a text type or an optional of one), `serde::rename` and naming annotations
+apply, and an empty optional attribute is omitted:
+
+```cpp
+import reflex.serde.xml;
+
+struct Price
+{
+  [[= xml::attribute]] std::string currency;
+  double                           amount;
+};
+// XML: <Price currency="USD"><amount>42.5</amount></Price>
+```
+
+On read, attributes match members by serialized name; unknown attributes are
+ignored.
+
+`xml::text` puts a member in the element's text content instead of a child
+element (attributes plus text, no child elements). An absent optional text
+member self-closes the element:
+
+```cpp
+struct Measure
+{
+  [[= xml::attribute]] std::string unit;
+  [[= xml::text]]      double       value;
+};
+// XML: <Measure unit="kg">42.5</Measure>
+```
+
+`xml::raw_content` captures an element's inner XML verbatim (escape hatch for
+mixed content). It is read and written unparsed, so the caller owns
+well-formedness:
+
+```cpp
+struct Doc
+{
+  [[= xml::attribute]]   std::string lang;
+  [[= xml::raw_content]] std::string body; // inner XML, byte-exact
+};
+```
+
+`xml::text` and `xml::raw_content` are each limited to one member, are mutually
+exclusive, and cannot coexist with child-element members.
+
+`xml::cdata` writes a `str_c` member inside a CDATA section instead of
+entity-escaping it (a `]]>` in the payload is split across two sections). CDATA
+is read transparently, so the annotation only affects serialization:
+
+```cpp
+struct Script
+{
+  std::string             name;
+  [[= xml::cdata]] std::string code;
+};
+// XML: <Script><name>s</name><code><![CDATA[if (a < b) x;]]></code></Script>
+```
+
+On read, any element's text content accepts CDATA sections, plain text, and
+entity references interchangeably (they concatenate).
+
+## XML namespaces
+
+Prefix-based, no URI resolution. Reading is tolerant by default: a prefixed name
+(`<x:name>`) matches a member by its local name when no exact qualified match
+exists (an exact match wins), and `xmlns` / `xmlns:*` declarations are ignored.
+
+Writing is opt-in. Annotate an aggregate with `xml::ns{prefix, uri}`: its element
+and child-element tags get the prefix and the open tag gets an `xmlns:prefix`
+declaration. A member-level `xml::ns` overrides the prefix for that field:
+
+```cpp
+struct[[= xml::ns{"x", "urn:example:e"}]] Env
+{
+  int a;
+};
+// XML: <x:Env xmlns:x="urn:example:e"><x:a>1</x:a></x:Env>
 ```
 
 ---

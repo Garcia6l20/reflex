@@ -18,6 +18,15 @@ using value         = basic_context::value_type;
 using object        = basic_context::object_type;
 using array         = basic_context::array_type;
 
+// function_type is const-qualified, so a callable that would mutate its own state through the
+// const context::operator() is rejected. std::function accepted one and called it anyway.
+static_assert(std::is_constructible_v<
+              basic_context::function_type,
+              decltype([](std::span<const value>) { return value{}; })>);
+static_assert(not std::is_constructible_v<
+              basic_context::function_type,
+              decltype([n = 0](std::span<const value>) mutable { return value{++n}; })>);
+
 TEST_CASE("reflex::jinja::expr: basic evaluation")
 {
   SUBCASE("literals")

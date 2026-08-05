@@ -14,6 +14,8 @@
 #include <functional>
 #endif
 
+#include <reflex/jinja/value_ops.hpp>
+
 REFLEX_EXPORT namespace reflex::jinja::expr
 {
   namespace detail
@@ -55,46 +57,77 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
       for(auto m : std::meta::nonstatic_data_members_of(agg, ctx))
       {
-        auto t = dealias(type_of(m));
-        // extract value_type from std::optional
-        if(meta::is_template_instance_of(t, ^^std::optional))
-        {
-          t = dealias(template_arguments_of(t)[0]);
-        }
-        if(meta::eval_concept(
-               ^^seq_c, {
-                            t}))
-        {
-          auto value_type = dealias(meta::member_named(t, "value_type"));
-          if(append_unique(value_type) and is_aggregate_type(value_type))
-          {
-            scan_aggregate(value_type, ctx);
-          }
-          continue;
-        }
+        scan_type(type_of(m), ctx);
+      }
+    }
 
-        if(meta::eval_concept(
-               ^^map_c, {
-                            t}))
+    // collects the types reachable from a single type: unwraps std::optional, descends into
+    // sequence and map element types, recurses into aggregates
+    consteval void scan_type(
+        std::meta::info           t,
+        std::meta::access_context ctx = std::meta::access_context::current())
+    {
+      t = dealias(t);
+      // extract value_type from std::optional
+      if(meta::is_template_instance_of(t, ^^std::optional))
+      {
+        t = dealias(template_arguments_of(t)[0]);
+      }
+      if(meta::eval_concept(
+             ^^seq_c, {
+                          t}))
+      {
+        auto value_type = dealias(meta::member_named(t, "value_type"));
+        if(append_unique(value_type) and is_aggregate_type(value_type))
         {
-          auto key_type = dealias(meta::member_named(t, "key_type"));
-          append_unique(key_type);
-
-          auto mapped_type = dealias(meta::member_named(t, "mapped_type"));
-          if(append_unique(mapped_type) and is_aggregate_type(mapped_type))
-          {
-            scan_aggregate(mapped_type, ctx);
-          }
-          continue;
+          scan_aggregate(value_type, ctx);
         }
+        return;
+      }
 
-        if(append_unique(t) and is_aggregate_type(t))
+      if(meta::eval_concept(
+             ^^map_c, {
+                          t}))
+      {
+        auto key_type = dealias(meta::member_named(t, "key_type"));
+        append_unique(key_type);
+
+        auto mapped_type = dealias(meta::member_named(t, "mapped_type"));
+        if(append_unique(mapped_type) and is_aggregate_type(mapped_type))
         {
-          scan_aggregate(t, ctx);
+          scan_aggregate(mapped_type, ctx);
         }
+        return;
+      }
+
+      if(append_unique(t) and is_aggregate_type(t))
+      {
+        scan_aggregate(t, ctx);
       }
     }
   };
+
+  // Binds by reference when the value type has a reference alternative for T, by value otherwise
+  // (scalars, strings, const elements).
+  template <typename ValueT, typename T> constexpr ValueT make_bound_value(T&& v)
+  {
+    if constexpr(std::same_as<std::remove_cvref_t<T>, ValueT>)
+    {
+      return ValueT{std::forward<T>(v)};
+    }
+    else if constexpr(std::is_lvalue_reference_v<T&&> and requires { ValueT{std::ref(v)}; })
+    {
+      return ValueT{std::ref(v)};
+    }
+    else
+    {
+      return ValueT{std::forward<T>(v)};
+    }
+  }
+
+  // Defined in <reflex/jinja/builtins.hpp>. Null when the name is not a builtin.
+  template <typename ContextT>
+  const typename ContextT::function_type* find_builtin(std::string_view name);
   } // namespace detail
 
   // scans the types of all nonstatic data members of an aggregate, including nested aggregates and
@@ -105,6 +138,24 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   {
     detail::type_scan_accumulator acc;
     acc.scan_aggregate(agg, ctx);
+    return acc.types;
+  }
+
+  // scans the types reachable from a type bound as a context variable: members for an aggregate,
+  // element types for a bound sequence or map
+  consteval auto scan_bound_types(
+      std::meta::info bound, std::meta::access_context ctx = std::meta::access_context::current())
+      -> std::vector<std::meta::info>
+  {
+    detail::type_scan_accumulator acc;
+    if(is_aggregate_type(dealias(bound)))
+    {
+      acc.scan_aggregate(bound, ctx);
+    }
+    else
+    {
+      acc.scan_type(bound, ctx);
+    }
     return acc.types;
   }
 
@@ -140,25 +191,21 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         if(!std::ranges::contains(types, t))
         {
           types.push_back(t);
-          auto dt = decay(t);
-          if(is_aggregate_type(dt))
+          for(auto nt : scan_bound_types(decay(t)))
           {
-            for(auto nt : scan_object_types(dt))
+            if(is_aggregate_type(nt))
             {
-              if(is_aggregate_type(nt))
+              auto ref_type = add_lvalue_reference(nt);
+              if(!std::ranges::contains(types, ref_type))
               {
-                auto ref_type = add_lvalue_reference(nt);
-                if(!std::ranges::contains(types, ref_type))
-                {
-                  types.push_back(ref_type);
-                }
+                types.push_back(ref_type);
               }
-              else
+            }
+            else
+            {
+              if(!std::ranges::contains(types, decay(nt)))
               {
-                if(!std::ranges::contains(types, decay(nt)))
-                {
-                  types.push_back(decay(nt));
-                }
+                types.push_back(decay(nt));
               }
             }
           }
@@ -168,7 +215,13 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     }():];
     using object_type   = typename value_type::obj_type;
     using array_type    = typename value_type::arr_type;
-    using function_type = std::function<value_type(std::span<const value_type>)>;
+    // const-qualified on purpose: operator() is const, and std::function would have let a mutable
+    // callable change its own state through it.
+    using function_type = std::copyable_function<value_type(std::span<const value_type>) const>;
+    // Non-owning, unlike function_type: a scoped function is installed by the renderer around a
+    // region of the template and its callable outlives that region on the render stack, so there
+    // is nothing to allocate and nothing to own. {% block %} publishes super() this way.
+    using scoped_function_type = std::function_ref<value_type(std::span<const value_type>) const>;
 
     template <typename T> static constexpr bool can_hold() noexcept
     {
@@ -179,10 +232,29 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     std::vector<object_type> local_vars;
 
     std::unordered_map<std::string, function_type> funcs;
+    // Stack, not a map: an inner region shadows an outer one under the same name and restores it.
+    std::vector<std::pair<std::string_view, scoped_function_type>> scoped_funcs;
 
+    // value_type overload, for braced initializer lists which cannot deduce T
     context& set(std::string_view name, value_type v)
     {
       global_vars.insert_or_assign(std::string{name}, std::move(v));
+      return *this;
+    }
+
+    template <typename T> context& set(std::string_view name, T&& v)
+    {
+      global_vars.insert_or_assign(
+          std::string{name}, detail::make_bound_value<value_type>(std::forward<T>(v)));
+      return *this;
+    }
+
+    // {% set %}: binds into the innermost active scope, so a set inside a {% for %} body dies
+    // with the loop instead of outliving the render.
+    context& set_scoped(std::string_view name, value_type v)
+    {
+      auto& scope = local_vars.empty() ? global_vars : local_vars.back();
+      scope.insert_or_assign(std::string{name}, std::move(v));
       return *this;
     }
 
@@ -194,13 +266,26 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     value_type operator()(std::string_view fname, std::span<const value_type> args) const
     {
+      // A user-registered name always wins: a builtin must never shadow a def().
       if(auto it =
              std::ranges::find_if(funcs, [fname](auto const& pair) { return pair.first == fname; });
          it != funcs.end())
       {
         return it->second(args);
       }
-      throw std::runtime_error("Context is not callable");
+      // Innermost first, so a nested {% block %} shadows the super() of its enclosing one.
+      for(auto const& [name, fn] : scoped_funcs | std::views::reverse)
+      {
+        if(name == fname)
+        {
+          return fn(args);
+        }
+      }
+      if(const auto* fn = detail::find_builtin<context>(fname))
+      {
+        return (*fn)(args);
+      }
+      throw runtime_error("Unknown function '{}'", fname);
     }
 
     decltype(auto) operator[](std::string_view name) const noexcept
@@ -216,7 +301,9 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         {
           result = std::ref(v);
         }
-        else if constexpr(seq_c<U> and requires { value_type{std::ref(v)}; })
+        else if constexpr(seq_c<U> and requires(std::ranges::range_value_t<U>& elem) {
+                            value_type{std::ref(elem)};
+                          })
         {
           result = v
                  | std::views::transform([](auto&& elem) { return std::ref(elem); })
@@ -328,6 +415,13 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         return *this;
       }
 
+      template <typename T> decltype(auto) set(std::string_view name, T&& v)
+      {
+        ctx.local_vars.at(index).insert_or_assign(
+            std::string{name}, detail::make_bound_value<value_type>(std::forward<T>(v)));
+        return *this;
+      }
+
       ~local_scope_guard()
       {
         ctx.local_vars.pop_back();
@@ -337,6 +431,34 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     local_scope_guard push_locals()
     {
       return local_scope_guard{*this};
+    }
+
+    struct [[nodiscard("the scoped function is popped as soon as the guard dies")]]
+    scoped_function_guard
+    {
+      context* ctx;
+
+      explicit scoped_function_guard(context& c) : ctx{&c}
+      {}
+
+      scoped_function_guard(const scoped_function_guard&)            = delete;
+      scoped_function_guard& operator=(const scoped_function_guard&) = delete;
+
+      ~scoped_function_guard()
+      {
+        if(ctx != nullptr)
+        {
+          ctx->scoped_funcs.pop_back();
+        }
+      }
+    };
+
+    // `fn` must outlive the guard: nothing is copied, see scoped_function_type. `name` has to be a
+    // string with static storage, it is held as a view.
+    scoped_function_guard push_function(std::string_view name, scoped_function_type fn)
+    {
+      scoped_funcs.emplace_back(name, fn);
+      return scoped_function_guard{*this};
     }
 
     void dump() const

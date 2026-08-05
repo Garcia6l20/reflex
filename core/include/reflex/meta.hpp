@@ -9,6 +9,7 @@
 #include <meta>
 #endif
 
+#include <reflex/constant.hpp>
 #include <reflex/views/cartesian_product.hpp>
 
 namespace reflex::meta::detail
@@ -192,6 +193,14 @@ REFLEX_EXPORT namespace reflex::meta
            });
   }
 
+  /** @brief the value of @p R's annotation of type @p AnnotationType
+   *
+   * A class type comes back as a `AnnotationType const&`, which costs no copy
+   * and works for one that cannot be copied. Anything else comes back by value:
+   * an annotation whose type is an enumeration or an arithmetic type is a value
+   * and not an object, so there is nothing for a reference to bind to and
+   * extract throws *value cannot be extracted*.
+   */
   template <typename AnnotationType> consteval decltype(auto) annotation_value_of_with(info R)
   {
     auto annotations = annotations_of_with(R, ^^AnnotationType);
@@ -199,9 +208,13 @@ REFLEX_EXPORT namespace reflex::meta
     {
       throw std::meta::exception("No such annotation", R);
     }
-    else
+    else if constexpr(std::is_class_v<AnnotationType> or std::is_union_v<AnnotationType>)
     {
       return extract<AnnotationType const&>(constant_of(annotations.front()));
+    }
+    else
+    {
+      return extract<AnnotationType>(constant_of(annotations.front()));
     }
   }
 
@@ -237,6 +250,247 @@ REFLEX_EXPORT namespace reflex::meta
              return not is_constructor(R)
                 and ((is_user_declared(R) and is_function(R)) or is_function_template(R));
            });
+  }
+
+  /** @brief how @p R is written at a call site
+   *
+   * The identifier for an ordinary function, and the spelled operator name for
+   * an operator, which carries no identifier of its own. Empty for anything
+   * that has neither, a constructor among them.
+   *
+   * @code
+   * spelling_of(^^std::string::size)  // "size"
+   * spelling_of(some_operator_plus)   // "operator+"
+   * spelling_of(some_operator_new)    // "operator new", the space is required
+   * @endcode
+   */
+  consteval auto spelling_of(info R) -> std::string
+  {
+    if(has_identifier(R))
+    {
+      return std::string{identifier_of(R)};
+    }
+    if(is_operator_function(R) or is_operator_function_template(R))
+    {
+      const std::string_view symbol = symbol_of(operator_of(R));
+      // new, delete and co_await are words, and a word needs separating from
+      // the keyword before it.
+      const bool word = not symbol.empty() and symbol.front() >= 'a' and symbol.front() <= 'z';
+      return std::string{"operator"} + (word ? " " : "") + std::string{symbol};
+    }
+    return {};
+  }
+
+  /** @brief every function declared in @p R under the identifier @p name
+   *
+   * @p R may be a namespace or a class type. An overloaded name cannot be
+   * reflected directly, since `^^f` is ill-formed when `f` names more than one
+   * function, so going through the enclosing scope is the only way to reach the
+   * whole set.
+   *
+   * Function templates are not returned: `is_function` is false for them, and a
+   * template has no parameter types to match against until it is substituted.
+   */
+  consteval auto functions_named(
+      info R, std::string_view name, access_context ctx = access_context::current())
+      -> std::vector<info>
+  {
+    return members_of(R, ctx)                                                //
+         | std::views::filter([](info m) { return is_function(m); })         //
+         | std::views::filter([name](info m) { return spelling_of(m) == name; }) //
+         | std::ranges::to<std::vector<info>>();
+  }
+
+  /** @brief every constructor of the class type @p R
+   *
+   * Constructor templates are absent, for the same reason function templates
+   * are absent from functions_named.
+   */
+  consteval auto constructors_of(info R, access_context ctx = access_context::current())
+      -> std::vector<info>
+  {
+    return members_of(R, ctx)                                        //
+         | std::views::filter([](info m) { return is_function(m); }) //
+         | std::views::filter(is_constructor)                        //
+         | std::ranges::to<std::vector<info>>();
+  }
+
+  namespace detail
+  {
+  template <typename T> consteval auto call_operator() -> meta::info
+  {
+    return ^^T::operator();
+  }
+
+  // Splitting a function type is a pattern match, and partial specialization is
+  // the only thing that can do one. Nothing else here is a type list: the
+  // parameters are reflections already, so they go into a vector of them, and
+  // reflex::constant is what carries a vector through a reflection.
+  template <typename> constexpr constant<std::vector<meta::info>> function_parameters{
+      std::vector<meta::info>{}};
+
+  template <typename R, typename... A>
+  constexpr constant<std::vector<meta::info>> function_parameters<R(A...)>{
+      std::vector<meta::info>{^^A...}};
+  } // namespace detail
+
+  /** @brief the parameter types of a function type
+   *
+   * parameters_of does accept a function type, but the parameters it hands back
+   * carry no type of their own, so type_of on one throws. The types have to
+   * come from taking the type apart instead.
+   *
+   * return_type_of needs none of this, it reads a function type directly.
+   */
+  consteval auto function_type_parameters(info R) -> std::vector<info>
+  {
+    // constant normalizes the vector into a span over static storage, so what
+    // comes back out is a view and gets collected here.
+    return *extract<constant<std::vector<info>>>(substitute(^^detail::function_parameters, {R})) //
+         | std::ranges::to<std::vector<info>>();
+  }
+
+  /** @brief the function behind a callable, or meta::null
+   *
+   * Handles a function, a pointer or reference to one, and a class type with a
+   * call operator, which covers std::function and a lambda alike.
+   *
+   * A templated call operator yields null: it has no parameter types until it
+   * is substituted, the same reason a function template is not reachable
+   * through a reflection.
+   */
+  consteval auto callable_function_of(info R) -> info
+  {
+    const info type = is_type(R) ? R : type_of(R);
+    if(is_function_type(type))
+    {
+      return type;
+    }
+    const info stripped = remove_pointer(remove_reference(type));
+    if(is_function_type(stripped))
+    {
+      return stripped;
+    }
+    if(is_class_type(type) and meta::has_call_operator(type))
+    {
+      const info call = extract<info (*)()>(substitute(^^detail::call_operator, {type}))();
+      return is_function(call) ? call : meta::null;
+    }
+    return meta::null;
+  }
+
+  /** @brief a member function declared with an explicit object parameter
+   *
+   * GCC 16 does not ship std::meta::is_explicit_object_member_function, so the
+   * query goes through the first parameter, which is what carries the mark.
+   */
+  consteval auto is_explicit_object_member_function(info R) -> bool
+  {
+    if(not is_function(R))
+    {
+      return false;
+    }
+    const auto params = parameters_of(R);
+    return not params.empty() and is_explicit_object_parameter(params.front());
+  }
+
+  /** @brief the object parameter of a deducing this member, or meta::null */
+  consteval auto explicit_object_type_of(info R) -> info
+  {
+    return is_explicit_object_member_function(R) ? type_of(parameters_of(R).front()) : meta::null;
+  }
+
+  /** @brief a data member holding something callable, like a std::function */
+  consteval auto is_invocable_data_member(info R) -> bool
+  {
+    return is_nonstatic_data_member(R) and callable_function_of(R) != meta::null;
+  }
+
+  /** @brief the types of the non-static data members of @p R, in declaration order */
+  consteval auto nonstatic_data_member_types_of(
+      info R, access_context ctx = access_context::current()) -> std::vector<info>
+  {
+    return nonstatic_data_members_of(R, ctx)    //
+         | std::views::transform(meta::type_of) //
+         | std::ranges::to<std::vector<info>>();
+  }
+
+  /** @brief everything in @p R that a call to @p name could reach
+   *
+   * The functions under that name, and failing those, a data member holding a
+   * callable, which is reached the same way, `obj.name(args)`. A name is never
+   * both, so the two land in one list.
+   */
+  consteval auto callables_named(
+      info R, std::string_view name, access_context ctx = access_context::current())
+      -> std::vector<info>
+  {
+    auto found = functions_named(R, name, ctx);
+    if(not found.empty() or not is_type(R))
+    {
+      return found;
+    }
+    for(auto m : nonstatic_data_members_of(R, ctx))
+    {
+      if(has_identifier(m) and identifier_of(m) == name and is_invocable_data_member(m))
+      {
+        found.push_back(m);
+      }
+    }
+    return found;
+  }
+
+  /** @brief the types a call to @p R supplies, without its return type
+   *
+   * detail::signature_of returns the return type first, which is the wrong
+   * shape whenever the parameters are what is being matched.
+   *
+   * An explicit object parameter is left out: it is the object, not an
+   * argument, and no call site writes it.
+   */
+  consteval auto parameter_types_of(info R) -> std::vector<info>
+  {
+    if(is_type(R))
+    {
+      return function_type_parameters(R);
+    }
+    return parameters_of(R)                                                        //
+         | std::views::drop(is_explicit_object_member_function(R) ? 1uz : 0uz)      //
+         | std::views::transform(meta::type_of)                                    //
+         | std::ranges::to<std::vector<info>>();
+  }
+
+  /** @brief the fewest arguments a call to @p R can supply
+   *
+   * Trailing parameters carrying a default argument may be omitted. A default
+   * cannot be followed by a non-defaulted parameter, so walking backwards from
+   * the end stops at the first parameter that must be supplied.
+   */
+  consteval auto min_arity_of(info R) -> std::size_t
+  {
+    auto params = parameters_of(R);
+    // A function type carries no default arguments, and asking one of its
+    // parameters throws, so every parameter is required.
+    if(is_type(R))
+    {
+      return params.size();
+    }
+    std::size_t n = params.size();
+    while(n > 0 and has_default_argument(params[n - 1]))
+    {
+      --n;
+    }
+    // The explicit object parameter is the object, never an argument.
+    return n - (is_explicit_object_member_function(R) ? 1 : 0);
+  }
+
+  /** @brief every argument count a call to @p R may supply, shortest first */
+  consteval auto arities_of(info R) -> std::vector<std::size_t>
+  {
+    const std::size_t total =
+        parameters_of(R).size() - (is_explicit_object_member_function(R) ? 1 : 0);
+    return std::views::iota(min_arity_of(R), total + 1) //
+         | std::ranges::to<std::vector<std::size_t>>();
   }
 
   consteval auto member_functions_annotated_with(
