@@ -92,6 +92,20 @@ template <typename OutputT = std::string> constexpr OutputT to_camel_case(std::s
   return result;
 }
 
+// SCREAMING_SNAKE. Post-processes to_snake_case in place, the way to_kebab_case does, rather than
+// composing to_upper(to_snake_case(str)) and paying a second allocation.
+template <typename OutputT = std::string>
+constexpr OutputT to_upper_snake_case(std::string_view str)
+{
+  OutputT result = to_snake_case<OutputT>(str);
+  using value_type = typename OutputT::value_type;
+  for(value_type& c : result)
+  {
+    c = value_type(reflex::to_upper(c));
+  }
+  return result;
+}
+
 template <typename OutputT = std::string> constexpr OutputT to_upper(std::string_view str)
 {
   return str | std::views::transform(reflex::to_upper) | std::ranges::to<OutputT>();
