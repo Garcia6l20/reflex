@@ -170,6 +170,27 @@ TEST_CASE("reflex::jinja: builtins tier 1")
     CHECK_THROWS_AS(expr::evaluate("format(1, 2)", ctx), std::runtime_error);
   }
 
+  SUBCASE("tojson")
+  {
+    // The exact bytes are a format contract, so a serde change is caught here.
+    ctx.set(
+        "o", {
+                 {"a", 1}
+    });
+    CHECK(std::get<std::string>(expr::evaluate("tojson(o)", ctx)) == R"({"a":1})");
+
+    ctx.set("xs", array{1, 2});
+    CHECK(std::get<std::string>(expr::evaluate("tojson(xs)", ctx)) == "[1,2]");
+
+    CHECK(std::get<std::string>(expr::evaluate(R"(tojson("a\"b"))", ctx)) == R"("a\"b")");
+    CHECK(std::get<std::string>(expr::evaluate("tojson(42)", ctx)) == "42");
+    CHECK(std::get<std::string>(expr::evaluate("tojson(true)", ctx)) == "true");
+    CHECK(std::get<std::string>(expr::evaluate("tojson(null)", ctx)) == "null");
+
+    CHECK_THROWS_AS(expr::evaluate("tojson()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("tojson(1, 2)", ctx), std::runtime_error);
+  }
+
   SUBCASE("render end to end")
   {
     CHECK(jinja::render(jinja::parse("{% for i in range(3) %}{{ i }}{% endfor %}"), ctx) == "012");

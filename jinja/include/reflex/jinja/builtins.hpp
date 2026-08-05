@@ -324,6 +324,15 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       const std::string spec = args.size() == 2 ? string_arg("format", args[1], "spec") : "{}";
       return format_value("format", args[0], spec);
     });
+
+    // tojson(v) - the serde::json encoding of the value, which already knows poly::var.
+    t.emplace("tojson", [](std::span<const value_type> args) -> value_type {
+      check_arity("tojson", args, 1, 1);
+      std::string             out;
+      serde::json::serializer ser{out};
+      ser.dump(args[0]);
+      return out;
+    });
   }
 
   template <typename ContextT> void register_builtins(builtin_table_type<ContextT>& t)
