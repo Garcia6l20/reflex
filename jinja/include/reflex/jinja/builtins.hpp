@@ -12,6 +12,7 @@
 
 #include <cmath>
 
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -173,18 +174,28 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     return {};
   }
 
-  // The integer argument of a filter that counts or indexes. Guarded on the integral alternative
-  // existing at all: a context whose value type has none must still compile.
-  template <typename ValueT>
-  std::int64_t int_arg(std::string_view name, const ValueT& v, std::string_view what)
+  // The value's integral alternative as a `To`. Empty when the value holds something else, or when
+  // the context's value type has no integral alternative at all, which must still compile.
+  template <typename To, typename ValueT> std::optional<To> integral_as(const ValueT& v)
   {
     using ops = value_ops<ValueT>;
     if constexpr(ops::integral_type_info != meta::null)
     {
       if(auto* i = try_get<typename ops::integral_type>(v))
       {
-        return static_cast<std::int64_t>(*i);
+        return static_cast<To>(*i);
       }
+    }
+    return std::nullopt;
+  }
+
+  // The integer argument of a filter that counts or indexes.
+  template <typename ValueT>
+  std::int64_t int_arg(std::string_view name, const ValueT& v, std::string_view what)
+  {
+    if(auto i = integral_as<std::int64_t>(v))
+    {
+      return *i;
     }
     builtin_error(name, std::format("{} must be an integer", what));
   }
@@ -194,13 +205,9 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   template <typename ValueT>
   double double_arg(std::string_view name, const ValueT& v, std::string_view what)
   {
-    using ops = value_ops<ValueT>;
-    if constexpr(ops::integral_type_info != meta::null)
+    if(auto i = integral_as<double>(v))
     {
-      if(auto* i = try_get<typename ops::integral_type>(v))
-      {
-        return static_cast<double>(*i);
-      }
+      return *i;
     }
     if(auto* d = try_get<double>(v))
     {
