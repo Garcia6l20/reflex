@@ -235,6 +235,15 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       return *this;
     }
 
+    // {% set %}: binds into the innermost active scope, so a set inside a {% for %} body dies
+    // with the loop instead of outliving the render.
+    context& set_scoped(std::string_view name, value_type v)
+    {
+      auto& scope = local_vars.empty() ? global_vars : local_vars.back();
+      scope.insert_or_assign(std::string{name}, std::move(v));
+      return *this;
+    }
+
     context& def(std::string name, function_type fn)
     {
       funcs.insert_or_assign(std::move(name), std::move(fn));

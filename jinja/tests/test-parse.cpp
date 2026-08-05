@@ -302,6 +302,30 @@ TEST_CASE("reflex::jinja: set block")
     auto result = jinja::render(tmpl, ctx);
     CHECK(result == "1");
   }
+  SUBCASE("a set inside a loop does not outlive it")
+  {
+    ctx.set("items", array{1, 2});
+    auto tmpl = jinja::parse(
+        R"({% for i in items %}{% set doubled = i * 2 %}{{ doubled }} {% endfor %}[{{ doubled }}])");
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "2 4 [null]");
+  }
+  SUBCASE("a set inside a loop shadows the outer binding only within it")
+  {
+    ctx.set("items", array{1, 2});
+    auto tmpl = jinja::parse(
+        R"({% set x = "outer" %}{% for i in items %}{% set x = i %}{{ x }} {% endfor %}{{ x }})");
+    auto result = jinja::render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == "1 2 outer");
+  }
+  SUBCASE("a top-level set lands in the context globals")
+  {
+    auto tmpl = jinja::parse(R"({% set top = 1 %}{{ top }})");
+    CHECK(jinja::render(tmpl, ctx) == "1");
+    CHECK(std::get<int>(ctx["top"]) == 1);
+  }
 }
 
 TEST_CASE("reflex::jinja: for decomposition")

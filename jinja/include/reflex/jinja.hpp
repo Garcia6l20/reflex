@@ -763,7 +763,7 @@ REFLEX_EXPORT namespace reflex::jinja
           }
           else if constexpr(decays_to_c<T, set_block>)
           {
-            ctx.set(v.name, expr::evaluate(v.expr, ctx));
+            ctx.set_scoped(v.name, expr::evaluate(v.expr, ctx));
             return out;
           }
           else if constexpr(decays_to_c<T, for_block>)
