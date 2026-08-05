@@ -25,9 +25,8 @@ bson::datetime
 }
 } // namespace reflex::serde::json
 
-auto input_format_completer(std::string_view current)
+auto format_completer(std::string_view current, std::string_view description)
 {
-  using namespace std::string_view_literals;
   static constexpr auto formats =
       define_static_array(reflex::serde::serializers() | std::views::transform([](auto entry) {
                             return constant_string{identifier_of(entry)};
@@ -35,26 +34,20 @@ auto input_format_completer(std::string_view current)
   return formats
        | std::views::filter(
              [current](std::string_view b) { return current.empty() or b.starts_with(current); })
-       | std::views::transform([](std::string_view b) {
+       | std::views::transform([description](std::string_view b) {
            return cli::completion<>{
-               .value = std::string(b), .description = "Available input formats"};
+               .value = std::string(b), .description = std::string(description)};
          });
+}
+
+auto input_format_completer(std::string_view current)
+{
+  return format_completer(current, "Available input formats");
 }
 
 auto output_format_completer(std::string_view current)
 {
-  using namespace std::string_view_literals;
-  static constexpr auto formats =
-      define_static_array(reflex::serde::serializers() | std::views::transform([](auto entry) {
-                            return constant_string{identifier_of(entry)};
-                          }));
-  return formats
-       | std::views::filter(
-             [current](std::string_view b) { return current.empty() or b.starts_with(current); })
-       | std::views::transform([](std::string_view b) {
-           return cli::completion<>{
-               .value = std::string(b), .description = "Available output formats"};
-         });
+  return format_completer(current, "Available output formats");
 }
 
 struct[[= cli::command("Convert file formats")]] convert_command
