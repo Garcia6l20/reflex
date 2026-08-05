@@ -25,6 +25,7 @@ compile time — fully type-safe, with zero overhead at runtime.
 | **reflex.poly** | Polymorphic recursive value type (`var<Ts...>`) with object/array support | [poly/README.md](poly/README.md) |
 | **reflex.serde** | Reflection-driven serialization / deserialization (JSON, BSON, CSV, XML backends) | [serde/README.md](serde/README.md) |
 | **reflex.py** | Python bindings derived from the class declaration, on top of nanobind | [py/README.md](py/README.md) |
+| **reflex.jinja** | Jinja-style templating over a reflection-derived context | [jinja/README.md](jinja/README.md) |
 
 ---
 
