@@ -196,3 +196,129 @@ TEST_CASE("reflex::jinja: builtins tier 1")
     CHECK(jinja::render(jinja::parse("{% for i in range(3) %}{{ i }}{% endfor %}"), ctx) == "012");
   }
 }
+
+TEST_CASE("reflex::jinja: builtins tier 2, strings")
+{
+  basic_context ctx;
+  const auto    str = [&](std::string_view src) {
+    return std::get<std::string>(expr::evaluate(src, ctx));
+  };
+
+  SUBCASE("upper and lower")
+  {
+    CHECK(str(R"(upper("aB1"))") == "AB1");
+    CHECK(str(R"(upper(""))") == "");
+    CHECK(str(R"(lower("Ab1"))") == "ab1");
+    // non-ASCII passes through unchanged
+    CHECK(str(R"(upper("é"))") == "é");
+
+    CHECK_THROWS_AS(expr::evaluate("upper()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("upper(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("lower()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("lower(1)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("capitalize")
+  {
+    CHECK(str(R"(capitalize("hELLO"))") == "Hello");
+    CHECK(str(R"(capitalize(""))") == "");
+    CHECK_THROWS_AS(expr::evaluate("capitalize()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("capitalize(1)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("trim")
+  {
+    CHECK(str(R"(trim("  x  "))") == "x");
+    CHECK(str(R"(trim("   "))") == "");
+    CHECK(str(R"(trim("xxaxx", "x"))") == "a");
+    CHECK(str(R"(trim("abc", ""))") == "abc");
+
+    CHECK_THROWS_AS(expr::evaluate("trim()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(trim("a", "b", "c"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("trim(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(trim("a", 1))", ctx), std::runtime_error);
+  }
+
+  SUBCASE("replace")
+  {
+    CHECK(str(R"(replace("aaa", "a", "b"))") == "bbb");
+    CHECK(str(R"(replace("aa", "aa", ""))") == "");
+    CHECK(str(R"(replace("abc", "z", "y"))") == "abc");
+
+    CHECK_THROWS_AS(expr::evaluate(R"(replace("a", "", "b"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(replace("a", "b"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(replace(1, "a", "b"))", ctx), std::runtime_error);
+  }
+
+  SUBCASE("split")
+  {
+    // no separator: runs of whitespace, empty fields dropped
+    CHECK(str(R"(join(split("a b  c"), "|"))") == "a|b|c");
+    CHECK(str(R"(join(split("  a  "), "|"))") == "a");
+    CHECK(std::get<int>(expr::evaluate(R"(length(split("   ")))", ctx)) == 0);
+
+    // explicit separator: exact, empty fields kept
+    CHECK(str(R"(join(split("a,,b", ","), "|"))") == "a||b");
+    CHECK(str(R"(join(split("a b  c", " "), "|"))") == "a|b||c");
+    CHECK(str(R"(join(split("abc", "-"), "|"))") == "abc");
+
+    CHECK_THROWS_AS(expr::evaluate(R"(split("a", ""))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("split()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("split(1)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("startswith and endswith")
+  {
+    CHECK(std::get<bool>(expr::evaluate(R"(startswith("abc", "ab"))", ctx)) == true);
+    CHECK(std::get<bool>(expr::evaluate(R"(startswith("abc", "bc"))", ctx)) == false);
+    CHECK(std::get<bool>(expr::evaluate(R"(endswith("abc", "bc"))", ctx)) == true);
+    CHECK(std::get<bool>(expr::evaluate(R"(endswith("abc", "ab"))", ctx)) == false);
+
+    CHECK_THROWS_AS(expr::evaluate(R"(startswith("abc"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(startswith("abc", 1))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(endswith("abc"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(endswith(1, "a"))", ctx), std::runtime_error);
+  }
+
+  SUBCASE("indent")
+  {
+    ctx.set("body", "a\nb"s);
+    CHECK(str("indent(body, 2)") == "a\n  b");
+    CHECK(str("indent(body, 2, true)") == "  a\n  b");
+
+    // a blank line is not indented, so no line gains trailing whitespace
+    ctx.set("gapped", "a\n\nb"s);
+    CHECK(str("indent(gapped, 2)") == "a\n\n  b");
+
+    ctx.set("trailing", "a\nb\n"s);
+    CHECK(str("indent(trailing, 2)") == "a\n  b\n");
+
+    CHECK_THROWS_AS(expr::evaluate("indent(body)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(indent(body, "2"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("indent(body, -1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("indent(1, 2)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("truncate")
+  {
+    CHECK(str(R"(truncate("abcdef", 5))") == "ab...");
+    CHECK(str(R"(truncate("ab", 5))") == "ab");
+    CHECK(str(R"(truncate("abcdef", 4, "!"))") == "abc!");
+
+    CHECK_THROWS_AS(expr::evaluate(R"(truncate("abcdef", 2))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(truncate("abcdef"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(truncate("abcdef", "2"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("truncate(1, 2)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("render end to end")
+  {
+    ctx.set("names", array{"alpha"s, "beta"s});
+    const auto tmpl = jinja::parse(
+        "struct s {\n"
+        "{% for n in names %}{{ format(upper(n), \"int {};\") | indent(2, true) }}\n"
+        "{% endfor %}"
+        "};");
+    CHECK(jinja::render(tmpl, ctx) == "struct s {\n  int ALPHA;\n  int BETA;\n};");
+  }
+}

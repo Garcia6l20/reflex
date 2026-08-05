@@ -5,7 +5,9 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <reflex/caseconv.hpp>
 #include <reflex/exception.hpp>
+#include <reflex/utils.hpp>
 
 #include <span>
 #include <string>
@@ -335,9 +337,204 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     });
   }
 
+  template <typename ContextT> void register_strings(builtin_table_type<ContextT>& t)
+  {
+    using value_type = typename ContextT::value_type;
+    using array_type = typename ContextT::array_type;
+
+    // ASCII only, through the locale-free helpers in reflex/utils.hpp. A UTF-8 multibyte sequence
+    // passes through case conversion unchanged, which is the safe failure.
+    t.emplace("upper", [](std::span<const value_type> args) -> value_type {
+      check_arity("upper", args, 1, 1);
+      return caseconv::to_upper(string_arg("upper", args[0], "argument 1"));
+    });
+
+    t.emplace("lower", [](std::span<const value_type> args) -> value_type {
+      check_arity("lower", args, 1, 1);
+      return caseconv::to_lower(string_arg("lower", args[0], "argument 1"));
+    });
+
+    // capitalize(s) - first byte upper, the rest lower, like Jinja.
+    t.emplace("capitalize", [](std::span<const value_type> args) -> value_type {
+      check_arity("capitalize", args, 1, 1);
+      std::string out = caseconv::to_lower(string_arg("capitalize", args[0], "argument 1"));
+      if(not out.empty())
+      {
+        out[0] = char(reflex::to_upper(out[0]));
+      }
+      return out;
+    });
+
+    // trim(s, chars = whitespace) - both ends. The one-argument form delegates to reflex::trim so
+    // the definition of whitespace stays single-sourced.
+    t.emplace("trim", [](std::span<const value_type> args) -> value_type {
+      check_arity("trim", args, 1, 2);
+      const std::string& s = string_arg("trim", args[0], "argument 1");
+      if(args.size() == 1)
+      {
+        return std::string{reflex::trim(s)};
+      }
+      const std::string& chars = string_arg("trim", args[1], "character set");
+      std::string_view   view{s};
+      while(not view.empty() and chars.find(view.front()) != std::string::npos)
+      {
+        view.remove_prefix(1);
+      }
+      while(not view.empty() and chars.find(view.back()) != std::string::npos)
+      {
+        view.remove_suffix(1);
+      }
+      return std::string{view};
+    });
+
+    // replace(s, from, to) - every occurrence. An empty `from` would loop forever.
+    t.emplace("replace", [](std::span<const value_type> args) -> value_type {
+      check_arity("replace", args, 3, 3);
+      const std::string& s    = string_arg("replace", args[0], "argument 1");
+      const std::string& from = string_arg("replace", args[1], "pattern");
+      const std::string& to   = string_arg("replace", args[2], "replacement");
+      if(from.empty())
+      {
+        builtin_error("replace", "pattern must not be empty");
+      }
+      std::string out;
+      std::size_t pos = 0;
+      while(true)
+      {
+        const auto hit = s.find(from, pos);
+        if(hit == std::string::npos)
+        {
+          out.append(s, pos, std::string::npos);
+          return out;
+        }
+        out.append(s, pos, hit - pos);
+        out += to;
+        pos = hit + from.size();
+      }
+    });
+
+    // split(s) splits on runs of whitespace and drops empty fields, like Python's str.split().
+    // split(s, sep) splits on the exact separator and keeps them, so "a,,b" yields three fields.
+    t.emplace("split", [](std::span<const value_type> args) -> value_type {
+      check_arity("split", args, 1, 2);
+      const std::string& s = string_arg("split", args[0], "argument 1");
+      array_type         out;
+      if(args.size() == 1)
+      {
+        std::size_t i = 0;
+        while(i < s.size())
+        {
+          while(i < s.size() and is_space(s[i]))
+          {
+            ++i;
+          }
+          const std::size_t start = i;
+          while(i < s.size() and not is_space(s[i]))
+          {
+            ++i;
+          }
+          if(i > start)
+          {
+            out.emplace_back(s.substr(start, i - start));
+          }
+        }
+        return out;
+      }
+      const std::string& sep = string_arg("split", args[1], "separator");
+      if(sep.empty())
+      {
+        builtin_error("split", "separator must not be empty");
+      }
+      std::size_t pos = 0;
+      while(true)
+      {
+        const auto hit = s.find(sep, pos);
+        if(hit == std::string::npos)
+        {
+          out.emplace_back(s.substr(pos));
+          return out;
+        }
+        out.emplace_back(s.substr(pos, hit - pos));
+        pos = hit + sep.size();
+      }
+    });
+
+    t.emplace("startswith", [](std::span<const value_type> args) -> value_type {
+      check_arity("startswith", args, 2, 2);
+      const std::string& s = string_arg("startswith", args[0], "argument 1");
+      return s.starts_with(string_arg("startswith", args[1], "prefix"));
+    });
+
+    t.emplace("endswith", [](std::span<const value_type> args) -> value_type {
+      check_arity("endswith", args, 2, 2);
+      const std::string& s = string_arg("endswith", args[0], "argument 1");
+      return s.ends_with(string_arg("endswith", args[1], "suffix"));
+    });
+
+    // indent(s, n, first = false) - Jinja's semantics: the first line is left alone by default,
+    // because the filter is nearly always used after text already sitting at the target column.
+    // A blank line is not indented either, so no line gains trailing whitespace.
+    t.emplace("indent", [](std::span<const value_type> args) -> value_type {
+      check_arity("indent", args, 2, 3);
+      const std::string& s = string_arg("indent", args[0], "argument 1");
+      const auto         n = int_arg("indent", args[1], "width");
+      if(n < 0)
+      {
+        builtin_error("indent", "width must not be negative");
+      }
+      bool first = false;
+      if(args.size() == 3)
+      {
+        const auto* b = std::get_if<bool>(&deref(args[2]));
+        if(b == nullptr)
+        {
+          builtin_error("indent", "first must be a boolean");
+        }
+        first = *b;
+      }
+      const auto  width = static_cast<std::size_t>(n);
+      std::string out;
+      bool        at_line_start = first;
+      for(char c : s)
+      {
+        if(at_line_start and c != '\n')
+        {
+          out.append(width, ' ');
+        }
+        at_line_start = (c == '\n');
+        out += c;
+      }
+      return out;
+    });
+
+    // truncate(s, n, end = "...") - `n` is the total length of the result, the ellipsis included.
+    t.emplace("truncate", [](std::span<const value_type> args) -> value_type {
+      check_arity("truncate", args, 2, 3);
+      const std::string& s = string_arg("truncate", args[0], "argument 1");
+      const auto         n = int_arg("truncate", args[1], "length");
+      if(n < 0)
+      {
+        builtin_error("truncate", "length must not be negative");
+      }
+      const std::string end =
+          args.size() == 3 ? string_arg("truncate", args[2], "ellipsis") : "...";
+      const auto limit = static_cast<std::size_t>(n);
+      if(s.size() <= limit)
+      {
+        return s;
+      }
+      if(limit < end.size())
+      {
+        builtin_error("truncate", "length is shorter than the ellipsis");
+      }
+      return s.substr(0, limit - end.size()) + end;
+    });
+  }
+
   template <typename ContextT> void register_builtins(builtin_table_type<ContextT>& t)
   {
     register_tier1<ContextT>(t);
+    register_strings<ContextT>(t);
   }
 
   template <typename ContextT> const builtin_table_type<ContextT>& builtin_table()
