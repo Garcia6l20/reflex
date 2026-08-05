@@ -1,0 +1,962 @@
+#pragma once
+
+#ifndef REFLEX_EXPORT
+#define REFLEX_EXPORT
+#endif
+
+#ifndef REFLEX_MODULE
+#include <reflex/caseconv.hpp>
+#include <reflex/exception.hpp>
+#include <reflex/parse.hpp>
+#include <reflex/utils.hpp>
+
+#include <cmath>
+
+#include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#endif
+
+#include <reflex/jinja/context.hpp>
+
+REFLEX_EXPORT namespace reflex::jinja::expr
+{
+  namespace detail
+  {
+
+  // === error reporting, one shape for every builtin
+
+  // range() materializes its whole array, so it refuses a size that would die in the allocator
+  // instead of a template author's typo.
+  inline constexpr std::int64_t _max_range_elements = 1'000'000;
+
+  [[noreturn]] inline void builtin_error(std::string_view name, std::string_view what)
+  {
+    throw runtime_error("{}(): {}", name, what);
+  }
+
+  template <typename ValueT>
+  void check_arity(
+      std::string_view name, std::span<const ValueT> args, std::size_t lo, std::size_t hi)
+  {
+    if(args.size() < lo or args.size() > hi)
+    {
+      if(lo == hi)
+      {
+        builtin_error(
+            name,
+            std::format("expects {} argument{}, got {}", lo, lo == 1 ? "" : "s", args.size()));
+      }
+      builtin_error(
+          name, std::format("expects {} to {} arguments, got {}", lo, hi, args.size()));
+    }
+  }
+
+  // === value accessors
+  //
+  // A value bound by reference lives in the variant as a pointer alternative, so every accessor
+  // has to look through `var*` and past the `arr_type*` / `obj_type*` forms. `std::get_if<T>` on
+  // its own only ever sees the by-value alternative, which is what strings happen to use.
+
+  template <typename ValueT> const ValueT& deref(const ValueT& v) noexcept
+  {
+    if(auto* p = std::get_if<ValueT*>(&v))
+    {
+      return **p;
+    }
+    return v;
+  }
+
+  // Probes one alternative. `std::get_if<T>` is ill-formed, not false, for a T the value type does
+  // not hold, and which alternatives exist depends on what was bound to the context, so the probe
+  // has to be a compile-time branch.
+  template <typename T, typename ValueT> const T* try_get(const ValueT& v) noexcept
+  {
+    if constexpr(ValueT::template can_hold<T>())
+    {
+      return std::get_if<T>(&deref(v));
+    }
+    else
+    {
+      return nullptr;
+    }
+  }
+
+  // Strings bind by value: `std::string&` has no alternative, so there is no pointer form here.
+  template <typename ValueT> const std::string* as_string(const ValueT& v) noexcept
+  {
+    return try_get<std::string>(v);
+  }
+
+  template <typename ValueT> const typename ValueT::arr_type* as_array(const ValueT& v) noexcept
+  {
+    using arr_type = typename ValueT::arr_type;
+    if(auto* a = try_get<arr_type>(v))
+    {
+      return a;
+    }
+    if(auto* p = try_get<arr_type*>(v))
+    {
+      return *p;
+    }
+    return nullptr;
+  }
+
+  template <typename ValueT> const typename ValueT::obj_type* as_object(const ValueT& v) noexcept
+  {
+    using obj_type = typename ValueT::obj_type;
+    if(auto* o = try_get<obj_type>(v))
+    {
+      return o;
+    }
+    if(auto* p = try_get<obj_type*>(v))
+    {
+      return *p;
+    }
+    return nullptr;
+  }
+
+  // The string argument of a filter that inspects text. Throws rather than coercing: a filter that
+  // silently accepts a number where the author meant a string is the worse failure.
+  template <typename ValueT>
+  const std::string& string_arg(std::string_view name, const ValueT& v, std::string_view what)
+  {
+    if(auto* s = as_string(v))
+    {
+      return *s;
+    }
+    builtin_error(name, std::format("{} must be a string", what));
+  }
+
+  // The scalar text of any value, for the filters that render rather than inspect. Every probe is
+  // guarded: `is<T>()` is ill-formed, not false, for a T that is not an alternative, and which
+  // alternatives exist depends on what was bound to the context.
+  template <typename ValueT> std::string as_text(const ValueT& v)
+  {
+    const auto& d = deref(v);
+    if constexpr(ValueT::template can_hold<std::string>())
+    {
+      if(d.template is<std::string>())
+      {
+        return d.template as<std::string>();
+      }
+    }
+    if constexpr(ValueT::template can_hold<bool>())
+    {
+      if(d.template is<bool>())
+      {
+        return d.template as<bool>() ? "true" : "false";
+      }
+    }
+    if constexpr(ValueT::template can_hold<int>())
+    {
+      if(d.template is<int>())
+      {
+        return std::to_string(d.template as<int>());
+      }
+    }
+    if constexpr(ValueT::template can_hold<std::int64_t>())
+    {
+      if(d.template is<std::int64_t>())
+      {
+        return std::to_string(d.template as<std::int64_t>());
+      }
+    }
+    if constexpr(ValueT::template can_hold<double>())
+    {
+      if(d.template is<double>())
+      {
+        return std::format("{}", d.template as<double>());
+      }
+    }
+    return {};
+  }
+
+  // The integer argument of a filter that counts or indexes. Guarded on the integral alternative
+  // existing at all: a context whose value type has none must still compile.
+  template <typename ValueT>
+  std::int64_t int_arg(std::string_view name, const ValueT& v, std::string_view what)
+  {
+    using ops = value_ops<ValueT>;
+    if constexpr(ops::integral_type_info != meta::null)
+    {
+      if(auto* i = try_get<typename ops::integral_type>(v))
+      {
+        return static_cast<std::int64_t>(*i);
+      }
+    }
+    builtin_error(name, std::format("{} must be an integer", what));
+  }
+
+  // The numeric argument of a filter that computes. Same promotion as value_ops::to_double, with
+  // the builtin's name in the message.
+  template <typename ValueT>
+  double double_arg(std::string_view name, const ValueT& v, std::string_view what)
+  {
+    using ops = value_ops<ValueT>;
+    if constexpr(ops::integral_type_info != meta::null)
+    {
+      if(auto* i = try_get<typename ops::integral_type>(v))
+      {
+        return static_cast<double>(*i);
+      }
+    }
+    if(auto* d = try_get<double>(v))
+    {
+      return *d;
+    }
+    builtin_error(name, std::format("{} must be a number", what));
+  }
+
+  // Renders one value through a format spec, the way {{ }} does. An aggregate bound by reference
+  // is not formattable, so the guard is a compile-time branch and the failure a runtime throw.
+  template <typename ValueT>
+  std::string format_value(std::string_view name, const ValueT& v, std::string_view spec)
+  {
+    // An array or an object is formatted whole. Visiting would format the alternative, whose
+    // formatter spells the separators differently from the one {{ }} goes through.
+    if(as_array(v) != nullptr or as_object(v) != nullptr)
+    {
+      return std::vformat(spec, std::make_format_args(v));
+    }
+
+    return reflex::visit(
+        [&]<typename T>(T&& x) -> std::string {
+          using U = std::decay_t<T>;
+          if constexpr(std::formattable<U, char>)
+          {
+            return std::vformat(spec, std::make_format_args(x));
+          }
+          else
+          {
+            builtin_error(
+                name,
+                std::format("value of type {} is not formattable", display_string_of(dealias(^^U))));
+          }
+        },
+        v);
+  }
+
+  // === the table
+  //
+  // One table per value type, built on first use. Registering from the context constructor would
+  // cost an allocation per name per context.
+
+  template <typename ContextT>
+  using builtin_table_type =
+      std::unordered_map<std::string_view, typename ContextT::function_type>;
+
+  template <typename ContextT> void register_tier1(builtin_table_type<ContextT>& t)
+  {
+    using value_type = typename ContextT::value_type;
+
+    // length(x) / count(x) - characters of a string, elements of an array, keys of an object.
+    typename ContextT::function_type length = [](std::span<const value_type> args) -> value_type {
+      check_arity("length", args, 1, 1);
+      if(auto* s = as_string(args[0]))
+      {
+        return int(s->size());
+      }
+      if(auto* a = as_array(args[0]))
+      {
+        return int(a->size());
+      }
+      if(auto* o = as_object(args[0]))
+      {
+        return int(o->size());
+      }
+      builtin_error("length", "expects a string, an array or an object");
+    };
+    t.emplace("length", length);
+    t.emplace("count", std::move(length));
+
+    // default(v, fallback) - the null-coalescing filter. Tests null, not falsiness: `x or fallback`
+    // already covers the falsy case, and two meanings behind one name is the trap.
+    t.emplace("default", [](std::span<const value_type> args) -> value_type {
+      check_arity("default", args, 2, 2);
+      return deref(args[0]).is_null() ? args[1] : args[0];
+    });
+
+    // join(seq, sep = "") - each element rendered the way {{ }} renders it.
+    t.emplace("join", [](std::span<const value_type> args) -> value_type {
+      check_arity("join", args, 1, 2);
+      const auto* a = as_array(args[0]);
+      if(a == nullptr)
+      {
+        builtin_error("join", "argument 1 must be an array");
+      }
+      const std::string sep = args.size() == 2 ? string_arg("join", args[1], "separator") : "";
+      std::string       out;
+      bool              first = true;
+      for(const auto& elem : *a)
+      {
+        if(not first)
+        {
+          out += sep;
+        }
+        first = false;
+        out += format_value("join", elem, "{}");
+      }
+      return out;
+    });
+
+    // reverse(seq) - a reversed copy. A string reverses bytes, not code points.
+    t.emplace("reverse", [](std::span<const value_type> args) -> value_type {
+      check_arity("reverse", args, 1, 1);
+      if(auto* s = as_string(args[0]))
+      {
+        return std::string{s->rbegin(), s->rend()};
+      }
+      if(auto* a = as_array(args[0]))
+      {
+        return *a | std::views::reverse | std::ranges::to<typename ContextT::array_type>();
+      }
+      builtin_error("reverse", "expects a string or an array");
+    });
+
+    // range(n) / range(lo, hi) / range(lo, hi, step) - the only way to loop a fixed count.
+    t.emplace("range", [](std::span<const value_type> args) -> value_type {
+      check_arity("range", args, 1, 3);
+      std::int64_t lo = 0;
+      std::int64_t hi = 0;
+      std::int64_t step = 1;
+      if(args.size() == 1)
+      {
+        hi = int_arg("range", args[0], "stop");
+      }
+      else
+      {
+        lo = int_arg("range", args[0], "start");
+        hi = int_arg("range", args[1], "stop");
+        if(args.size() == 3)
+        {
+          step = int_arg("range", args[2], "step");
+        }
+      }
+      if(step == 0)
+      {
+        builtin_error("range", "step must not be zero");
+      }
+      const std::int64_t span  = step > 0 ? hi - lo : lo - hi;
+      const std::int64_t mag   = step > 0 ? step : -step;
+      const std::int64_t count = span > 0 ? (span + mag - 1) / mag : 0;
+      if(count > _max_range_elements)
+      {
+        builtin_error(
+            "range", std::format("refuses to build more than {} elements", _max_range_elements));
+      }
+      typename ContextT::array_type out;
+      out.reserve(static_cast<std::size_t>(count));
+      for(std::int64_t i = 0, v = lo; i < count; ++i, v += step)
+      {
+        out.emplace_back(int(v));
+      }
+      return out;
+    });
+
+    // format(v, spec = "{}") - std::format from inside a template.
+    t.emplace("format", [](std::span<const value_type> args) -> value_type {
+      check_arity("format", args, 1, 2);
+      const std::string spec = args.size() == 2 ? string_arg("format", args[1], "spec") : "{}";
+      return format_value("format", args[0], spec);
+    });
+
+    // tojson(v) - the serde::json encoding of the value, which already knows poly::var.
+    t.emplace("tojson", [](std::span<const value_type> args) -> value_type {
+      check_arity("tojson", args, 1, 1);
+      std::string             out;
+      serde::json::serializer ser{out};
+      ser.dump(args[0]);
+      return out;
+    });
+  }
+
+  template <typename ContextT> void register_strings(builtin_table_type<ContextT>& t)
+  {
+    using value_type = typename ContextT::value_type;
+    using array_type = typename ContextT::array_type;
+
+    // ASCII only, through the locale-free helpers in reflex/utils.hpp. A UTF-8 multibyte sequence
+    // passes through case conversion unchanged, which is the safe failure.
+    t.emplace("upper", [](std::span<const value_type> args) -> value_type {
+      check_arity("upper", args, 1, 1);
+      return caseconv::to_upper(string_arg("upper", args[0], "argument 1"));
+    });
+
+    t.emplace("lower", [](std::span<const value_type> args) -> value_type {
+      check_arity("lower", args, 1, 1);
+      return caseconv::to_lower(string_arg("lower", args[0], "argument 1"));
+    });
+
+    // capitalize(s) - first byte upper, the rest lower, like Jinja.
+    t.emplace("capitalize", [](std::span<const value_type> args) -> value_type {
+      check_arity("capitalize", args, 1, 1);
+      std::string out = caseconv::to_lower(string_arg("capitalize", args[0], "argument 1"));
+      if(not out.empty())
+      {
+        out[0] = char(reflex::to_upper(out[0]));
+      }
+      return out;
+    });
+
+    // trim(s, chars = whitespace) - both ends. The one-argument form delegates to reflex::trim so
+    // the definition of whitespace stays single-sourced.
+    t.emplace("trim", [](std::span<const value_type> args) -> value_type {
+      check_arity("trim", args, 1, 2);
+      const std::string& s = string_arg("trim", args[0], "argument 1");
+      if(args.size() == 1)
+      {
+        return std::string{reflex::trim(s)};
+      }
+      const std::string& chars = string_arg("trim", args[1], "character set");
+      std::string_view   view{s};
+      while(not view.empty() and chars.find(view.front()) != std::string::npos)
+      {
+        view.remove_prefix(1);
+      }
+      while(not view.empty() and chars.find(view.back()) != std::string::npos)
+      {
+        view.remove_suffix(1);
+      }
+      return std::string{view};
+    });
+
+    // replace(s, from, to) - every occurrence. An empty `from` would loop forever.
+    t.emplace("replace", [](std::span<const value_type> args) -> value_type {
+      check_arity("replace", args, 3, 3);
+      const std::string& s    = string_arg("replace", args[0], "argument 1");
+      const std::string& from = string_arg("replace", args[1], "pattern");
+      const std::string& to   = string_arg("replace", args[2], "replacement");
+      if(from.empty())
+      {
+        builtin_error("replace", "pattern must not be empty");
+      }
+      std::string out;
+      std::size_t pos = 0;
+      while(true)
+      {
+        const auto hit = s.find(from, pos);
+        if(hit == std::string::npos)
+        {
+          out.append(s, pos, std::string::npos);
+          return out;
+        }
+        out.append(s, pos, hit - pos);
+        out += to;
+        pos = hit + from.size();
+      }
+    });
+
+    // split(s) splits on runs of whitespace and drops empty fields, like Python's str.split().
+    // split(s, sep) splits on the exact separator and keeps them, so "a,,b" yields three fields.
+    t.emplace("split", [](std::span<const value_type> args) -> value_type {
+      check_arity("split", args, 1, 2);
+      const std::string& s = string_arg("split", args[0], "argument 1");
+      array_type         out;
+      if(args.size() == 1)
+      {
+        std::size_t i = 0;
+        while(i < s.size())
+        {
+          while(i < s.size() and is_space(s[i]))
+          {
+            ++i;
+          }
+          const std::size_t start = i;
+          while(i < s.size() and not is_space(s[i]))
+          {
+            ++i;
+          }
+          if(i > start)
+          {
+            out.emplace_back(s.substr(start, i - start));
+          }
+        }
+        return out;
+      }
+      const std::string& sep = string_arg("split", args[1], "separator");
+      if(sep.empty())
+      {
+        builtin_error("split", "separator must not be empty");
+      }
+      std::size_t pos = 0;
+      while(true)
+      {
+        const auto hit = s.find(sep, pos);
+        if(hit == std::string::npos)
+        {
+          out.emplace_back(s.substr(pos));
+          return out;
+        }
+        out.emplace_back(s.substr(pos, hit - pos));
+        pos = hit + sep.size();
+      }
+    });
+
+    t.emplace("startswith", [](std::span<const value_type> args) -> value_type {
+      check_arity("startswith", args, 2, 2);
+      const std::string& s = string_arg("startswith", args[0], "argument 1");
+      return s.starts_with(string_arg("startswith", args[1], "prefix"));
+    });
+
+    t.emplace("endswith", [](std::span<const value_type> args) -> value_type {
+      check_arity("endswith", args, 2, 2);
+      const std::string& s = string_arg("endswith", args[0], "argument 1");
+      return s.ends_with(string_arg("endswith", args[1], "suffix"));
+    });
+
+    // indent(s, n, first = false) - Jinja's semantics: the first line is left alone by default,
+    // because the filter is nearly always used after text already sitting at the target column.
+    // A blank line is not indented either, so no line gains trailing whitespace.
+    t.emplace("indent", [](std::span<const value_type> args) -> value_type {
+      check_arity("indent", args, 2, 3);
+      const std::string& s = string_arg("indent", args[0], "argument 1");
+      const auto         n = int_arg("indent", args[1], "width");
+      if(n < 0)
+      {
+        builtin_error("indent", "width must not be negative");
+      }
+      bool first = false;
+      if(args.size() == 3)
+      {
+        const auto* b = std::get_if<bool>(&deref(args[2]));
+        if(b == nullptr)
+        {
+          builtin_error("indent", "first must be a boolean");
+        }
+        first = *b;
+      }
+      const auto  width = static_cast<std::size_t>(n);
+      std::string out;
+      bool        at_line_start = first;
+      for(char c : s)
+      {
+        if(at_line_start and c != '\n')
+        {
+          out.append(width, ' ');
+        }
+        at_line_start = (c == '\n');
+        out += c;
+      }
+      return out;
+    });
+
+    // truncate(s, n, end = "...") - `n` is the total length of the result, the ellipsis included.
+    t.emplace("truncate", [](std::span<const value_type> args) -> value_type {
+      check_arity("truncate", args, 2, 3);
+      const std::string& s = string_arg("truncate", args[0], "argument 1");
+      const auto         n = int_arg("truncate", args[1], "length");
+      if(n < 0)
+      {
+        builtin_error("truncate", "length must not be negative");
+      }
+      const std::string end =
+          args.size() == 3 ? string_arg("truncate", args[2], "ellipsis") : "...";
+      const auto limit = static_cast<std::size_t>(n);
+      if(s.size() <= limit)
+      {
+        return s;
+      }
+      if(limit < end.size())
+      {
+        builtin_error("truncate", "length is shorter than the ellipsis");
+      }
+      return s.substr(0, limit - end.size()) + end;
+    });
+  }
+
+  // Case conversion, straight through reflex::caseconv. This group owns no string logic: a change
+  // to a converter in core moves these outputs.
+  //
+  // Both spellings of each name share one callable. The long form is what reflex::caseconv calls
+  // the function, and a downstream template registering `to_snake_case` by hand gets to delete the
+  // registration rather than keep it as a shadowing override.
+  template <typename ContextT> void register_case(builtin_table_type<ContextT>& t)
+  {
+    using value_type    = typename ContextT::value_type;
+    using function_type = typename ContextT::function_type;
+
+    // `name` is a string literal with static storage, so the closure may hold the view.
+    const auto converter = [](std::string_view name, auto fn) -> function_type {
+      return [name, fn](std::span<const value_type> args) -> value_type {
+        check_arity(name, args, 1, 1);
+        return fn(string_arg(name, args[0], "argument 1"));
+      };
+    };
+
+    const auto bind_pair =
+        [&t](std::string_view short_name, std::string_view alias, function_type fn) {
+          t.emplace(short_name, fn);
+          t.emplace(alias, std::move(fn));
+        };
+
+    bind_pair(
+        "snake",
+        "to_snake_case",
+        converter("snake", [](std::string_view s) { return caseconv::to_snake_case(s); }));
+    bind_pair(
+        "camel",
+        "to_camel_case",
+        converter("camel", [](std::string_view s) { return caseconv::to_camel_case(s); }));
+    bind_pair(
+        "pascal",
+        "to_pascal_case",
+        converter("pascal", [](std::string_view s) { return caseconv::to_pascal_case(s); }));
+    bind_pair(
+        "kebab",
+        "to_kebab_case",
+        converter("kebab", [](std::string_view s) { return caseconv::to_kebab_case(s); }));
+    bind_pair(
+        "upper_snake",
+        "to_upper_snake_case",
+        converter(
+            "upper_snake", [](std::string_view s) { return caseconv::to_upper_snake_case(s); }));
+  }
+
+  // Numeric functions and casts. Everything that adds or orders goes through value_ops, so
+  // sum([1, 2]) and 1 + 2 promote identically.
+  template <typename ContextT> void register_numeric(builtin_table_type<ContextT>& t)
+  {
+    using value_type = typename ContextT::value_type;
+    using ops        = value_ops<value_type>;
+
+    // abs(x) - preserves the alternative, an int stays an int.
+    t.emplace("abs", [](std::span<const value_type> args) -> value_type {
+      check_arity("abs", args, 1, 1);
+      if constexpr(ops::integral_type_info != meta::null)
+      {
+        if(auto* i = try_get<typename ops::integral_type>(args[0]))
+        {
+          return *i < 0 ? -*i : *i;
+        }
+      }
+      if(auto* d = try_get<double>(args[0]))
+      {
+        return *d < 0.0 ? -*d : *d;
+      }
+      builtin_error("abs", "expects a number");
+    });
+
+    // round(x, n = 0) - always a double, so the result type never depends on the input. Ties round
+    // away from zero, which is what std::round does.
+    t.emplace("round", [](std::span<const value_type> args) -> value_type {
+      check_arity("round", args, 1, 2);
+      const double x = double_arg("round", args[0], "argument 1");
+      const auto   n = args.size() == 2 ? int_arg("round", args[1], "digits") : 0;
+      if(n == 0)
+      {
+        return std::round(x);
+      }
+      const double scale = std::pow(10.0, static_cast<double>(n));
+      return std::round(x * scale) / scale;
+    });
+
+    // int(x) - truncation toward zero for a double, a strict parse for a string.
+    t.emplace("int", [](std::span<const value_type> args) -> value_type {
+      check_arity("int", args, 1, 1);
+      if constexpr(ops::integral_type_info != meta::null)
+      {
+        if(auto* i = try_get<typename ops::integral_type>(args[0]))
+        {
+          return *i;
+        }
+      }
+      if(auto* b = try_get<bool>(args[0]))
+      {
+        return *b ? 1 : 0;
+      }
+      if(auto* d = try_get<double>(args[0]))
+      {
+        return int(std::trunc(*d));
+      }
+      if(auto* s = try_get<std::string>(args[0]))
+      {
+        // strict: "12abc" is an error, not 12. parse<int> stops at the first byte it cannot use.
+        const auto parsed = reflex::parse_strict<int>(*s);
+        if(not parsed)
+        {
+          builtin_error("int", std::format("'{}' is not an integer", *s));
+        }
+        return parsed.value();
+      }
+      builtin_error("int", "expects a number, a boolean or a string");
+    });
+
+    // float(x) - symmetric with int(x).
+    t.emplace("float", [](std::span<const value_type> args) -> value_type {
+      check_arity("float", args, 1, 1);
+      if(auto* b = try_get<bool>(args[0]))
+      {
+        return *b ? 1.0 : 0.0;
+      }
+      if(auto* s = try_get<std::string>(args[0]))
+      {
+        const auto parsed = reflex::parse_strict<double>(*s);
+        if(not parsed)
+        {
+          builtin_error("float", std::format("'{}' is not a number", *s));
+        }
+        return parsed.value();
+      }
+      return double_arg("float", args[0], "argument 1");
+    });
+
+    // string(x) - the value rendered the way {{ }} renders it.
+    t.emplace("string", [](std::span<const value_type> args) -> value_type {
+      check_arity("string", args, 1, 1);
+      return format_value("string", args[0], "{}");
+    });
+
+    // sum(seq) - accumulates through arith_add from an integer zero, so an empty sequence is 0 and
+    // a mixed int/double sequence promotes exactly like a chain of `+`. Overflow is silent.
+    t.emplace("sum", [](std::span<const value_type> args) -> value_type {
+      check_arity("sum", args, 1, 1);
+      const auto* a = as_array(args[0]);
+      if(a == nullptr)
+      {
+        builtin_error("sum", "expects an array");
+      }
+      value_type acc{0};
+      for(const auto& elem : *a)
+      {
+        acc = ops::arith_add(acc, elem);
+      }
+      return acc;
+    });
+
+    // min(seq) / max(seq) - a sequence, never varargs: argument 0 of a pipe is the piped value, so
+    // {{ a | max(b) }} could not read as max([a, b]) from the same signature.
+    //
+    // Ordering is value_ops::compare, which is numeric only, so min(["a", "b"]) throws rather than
+    // silently comparing something. That is deliberate, see 00_context.md.
+    const auto extremum = [](std::string_view name, bool want_max) ->
+        typename ContextT::function_type {
+          return [name, want_max](std::span<const value_type> args) -> value_type {
+            check_arity(name, args, 1, 1);
+            const auto* a = as_array(args[0]);
+            if(a == nullptr)
+            {
+              builtin_error(name, "expects an array");
+            }
+            if(a->empty())
+            {
+              builtin_error(name, "expects a non-empty array");
+            }
+            // Nothing is compared against a single element, so it has to be checked on its own.
+            (void)double_arg(name, a->front(), "element 1");
+            const value_type* best = &a->front();
+            for(const auto& elem : *a | std::views::drop(1))
+            {
+              const int c = ops::compare(elem, *best);
+              if(want_max ? c > 0 : c < 0)
+              {
+                best = &elem;
+              }
+            }
+            return *best;
+          };
+        };
+
+    t.emplace("min", extremum("min", false));
+    t.emplace("max", extremum("max", true));
+  }
+
+  // Sequence and object functions.
+  template <typename ContextT> void register_sequence(builtin_table_type<ContextT>& t)
+  {
+    using value_type = typename ContextT::value_type;
+    using array_type = typename ContextT::array_type;
+    using ops        = value_ops<value_type>;
+
+    // first(seq) / last(seq) - an empty sequence throws, so neither composes with default():
+    // `xs | first | default("none")` throws before default() sees anything.
+    const auto edge = [](std::string_view name, bool want_last) ->
+        typename ContextT::function_type {
+          return [name, want_last](std::span<const value_type> args) -> value_type {
+            check_arity(name, args, 1, 1);
+            if(auto* s = as_string(args[0]))
+            {
+              if(s->empty())
+              {
+                builtin_error(name, "expects a non-empty string");
+              }
+              return std::string(1, want_last ? s->back() : s->front());
+            }
+            if(auto* a = as_array(args[0]))
+            {
+              if(a->empty())
+              {
+                builtin_error(name, "expects a non-empty array");
+              }
+              return want_last ? a->back() : a->front();
+            }
+            builtin_error(name, "expects a string or an array");
+          };
+        };
+
+    t.emplace("first", edge("first", false));
+    t.emplace("last", edge("last", true));
+
+    // keys(obj) / values(obj) - object_type is a std::map, so both come out sorted by key and the
+    // two align element for element. Insertion order is not preserved and is not promised.
+    t.emplace("keys", [](std::span<const value_type> args) -> value_type {
+      check_arity("keys", args, 1, 1);
+      const auto* o = as_object(args[0]);
+      if(o == nullptr)
+      {
+        builtin_error("keys", "expects an object");
+      }
+      array_type out;
+      out.reserve(o->size());
+      for(const auto& [k, v] : *o)
+      {
+        out.emplace_back(k);
+      }
+      return out;
+    });
+
+    t.emplace("values", [](std::span<const value_type> args) -> value_type {
+      check_arity("values", args, 1, 1);
+      const auto* o = as_object(args[0]);
+      if(o == nullptr)
+      {
+        builtin_error("values", "expects an object");
+      }
+      array_type out;
+      out.reserve(o->size());
+      for(const auto& [k, v] : *o)
+      {
+        out.emplace_back(v);
+      }
+      return out;
+    });
+
+    // items(obj) - one two-element array per entry, read with pair[0]/pair[1] or first()/last().
+    t.emplace("items", [](std::span<const value_type> args) -> value_type {
+      check_arity("items", args, 1, 1);
+      const auto* o = as_object(args[0]);
+      if(o == nullptr)
+      {
+        builtin_error("items", "expects an object");
+      }
+      array_type out;
+      out.reserve(o->size());
+      for(const auto& [k, v] : *o)
+      {
+        array_type pair;
+        pair.reserve(2);
+        pair.emplace_back(k);
+        pair.emplace_back(v);
+        out.emplace_back(std::move(pair));
+      }
+      return out;
+    });
+
+    // unique(seq) - order preserving, first occurrence wins. O(n^2) through value_ops::equal,
+    // which is right for template-sized data and needs no hash for a poly::var.
+    t.emplace("unique", [](std::span<const value_type> args) -> value_type {
+      check_arity("unique", args, 1, 1);
+      const auto* a = as_array(args[0]);
+      if(a == nullptr)
+      {
+        builtin_error("unique", "expects an array");
+      }
+      array_type out;
+      for(const auto& elem : *a)
+      {
+        const bool seen = std::ranges::any_of(
+            out, [&elem](const value_type& kept) { return ops::equal(kept, elem); });
+        if(not seen)
+        {
+          out.push_back(elem);
+        }
+      }
+      return out;
+    });
+
+    // sort(seq) - numbers by value, strings lexicographically, a mix throws.
+    //
+    // This is deliberately NOT value_ops::compare, which is numeric only. Teaching compare about
+    // strings would silently change what `a < b` means in every existing template, so the library
+    // carries two orderings: `<` numeric only, sort() numeric or string.
+    t.emplace("sort", [](std::span<const value_type> args) -> value_type {
+      check_arity("sort", args, 1, 1);
+      const auto* a = as_array(args[0]);
+      if(a == nullptr)
+      {
+        builtin_error("sort", "expects an array");
+      }
+      array_type out = *a;
+      bool       all_text = true;
+      for(const auto& elem : out)
+      {
+        if(as_string(elem) == nullptr)
+        {
+          all_text = false;
+          break;
+        }
+      }
+      if(all_text)
+      {
+        std::ranges::sort(out, [](const value_type& x, const value_type& y) {
+          return *as_string(x) < *as_string(y);
+        });
+        return out;
+      }
+      // Not all strings, so every element has to be a number. double_arg names the offender.
+      for(const auto& elem : out)
+      {
+        (void)double_arg("sort", elem, "every element");
+      }
+      std::ranges::sort(out, [](const value_type& x, const value_type& y) {
+        return ops::compare(x, y) < 0;
+      });
+      return out;
+    });
+
+    // natsort(seq) - natural order over the scalar text of each element, so "PA2" precedes "PA10".
+    t.emplace("natsort", [](std::span<const value_type> args) -> value_type {
+      check_arity("natsort", args, 1, 1);
+      const auto* a = as_array(args[0]);
+      if(a == nullptr)
+      {
+        builtin_error("natsort", "expects an array");
+      }
+      array_type out = *a;
+      std::ranges::sort(out, [](const value_type& x, const value_type& y) {
+        return reflex::natural_less(as_text(x), as_text(y));
+      });
+      return out;
+    });
+  }
+
+  template <typename ContextT> void register_builtins(builtin_table_type<ContextT>& t)
+  {
+    register_tier1<ContextT>(t);
+    register_strings<ContextT>(t);
+    register_case<ContextT>(t);
+    register_numeric<ContextT>(t);
+    register_sequence<ContextT>(t);
+  }
+
+  template <typename ContextT> const builtin_table_type<ContextT>& builtin_table()
+  {
+    static const builtin_table_type<ContextT> table = [] {
+      builtin_table_type<ContextT> t;
+      register_builtins<ContextT>(t);
+      return t;
+    }();
+    return table;
+  }
+
+  template <typename ContextT>
+  const typename ContextT::function_type* find_builtin(std::string_view name)
+  {
+    const auto& table = builtin_table<ContextT>();
+    const auto  it    = table.find(name);
+    return it == table.end() ? nullptr : &it->second;
+  }
+
+  } // namespace detail
+} // namespace reflex::jinja::expr

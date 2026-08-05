@@ -167,11 +167,11 @@ use_nttp_string(cw<"hello"s>);
 | `concepts.cppm` | `:concepts` | `seq_c`, `map_c`, `str_c`, `number_c`, … |
 | `constant_string.cppm` | `:constant_string` | Compile-time string type usable as NTTP |
 | `parse.cppm` | `:parse` | Generic `reflex::parse<T>(string_view)` |
-| `utils.cppm` | `:utils` | `ltrim`, `rtrim`, `trim`, string helpers |
+| `utils.cppm` | `:utils` | `ltrim`, `rtrim`, `trim`, `natural_less`, string helpers |
 | `formatters.cppm` | `:formatters` | `std::formatter` specialisations |
 | `named_arg.cppm` | `:named_arg` | Named-argument helpers |
 | `exception.cppm` | `:exception` | `reflex::exception` with `std::format` support |
-| `caseconv.cppm` | `:caseconv` | `snake_case` ↔ `camelCase` conversions |
+| `caseconv.cppm` | `:caseconv` | `snake_case` ↔ `camelCase` ↔ `PascalCase` ↔ `kebab-case` ↔ `UPPER_SNAKE` conversions |
 | `to_tuple.cppm` | `:to_tuple` | Aggregate → `std::tuple` via reflection |
 | `const_assert.cppm` | `:const_assert` | Improved `constexpr`-friendly assertions |
 | `views/` | `:views.*` | Custom range adaptors (cartesian product, …) |

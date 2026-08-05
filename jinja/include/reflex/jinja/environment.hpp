@@ -23,7 +23,8 @@ REFLEX_EXPORT namespace reflex::jinja
 {
   // Resolves a template name to its source text, nullopt when the template does not exist.
   // A loader never throws on a miss, `environment::get` decides whether a miss is fatal.
-  using loader = std::function<std::optional<std::string>(std::string_view name)>;
+  using loader =
+      std::copyable_function<std::optional<std::string>(std::string_view name) const>;
 
   // Loads templates from `root`. Names that would escape `root` (absolute, or climbing through
   // '..') are refused: template names reach this through {% include %}, hence from template text.
@@ -135,10 +136,9 @@ REFLEX_EXPORT namespace reflex::jinja
       {
         for(const auto& [name, body] : current->blocks)
         {
-          if(detail::find_block(state.block_overrides, name) == nullptr)
-          {
-            state.block_overrides.emplace_back(name, body);
-          }
+          // Every level is kept, most-derived first: find_block still resolves to the winner,
+          // and the entries after it are what {{ super() }} walks.
+          state.block_overrides.emplace_back(name, body);
         }
 
         auto base = *current->extends;

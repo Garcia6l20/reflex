@@ -19,8 +19,10 @@ REFLEX_EXPORT namespace reflex::jinja
   struct for_block;
   struct include_block;
   struct block_block;
+  struct set_block;
 
-  using element = std::variant<text, expression, if_block, for_block, include_block, block_block>;
+  using element =
+      std::variant<text, expression, if_block, for_block, include_block, block_block, set_block>;
 
   struct text
   {
@@ -57,6 +59,13 @@ REFLEX_EXPORT namespace reflex::jinja
   {
     std::string_view     name;
     std::vector<element> children;
+  };
+
+  // {% set name = expr %} - bind expr into the context under name.
+  struct set_block
+  {
+    std::string_view name;
+    std::string_view expr;
   };
 
   enum class block_end_kind
@@ -462,6 +471,40 @@ REFLEX_EXPORT namespace reflex::jinja
 
           children.push_back(element{std::move(block)});
         }
+        else if(trimmed.starts_with("set ") or trimmed == "set")
+        {
+          auto rest = trim(trimmed.substr(3));
+          auto eq   = rest.find('=');
+          if(eq == std::string_view::npos)
+          {
+            throw std::runtime_error("Malformed {% set %}: missing '='");
+          }
+
+          set_block block;
+          block.name = trim(rest.substr(0, eq));
+          block.expr = trim(rest.substr(eq + 1));
+
+          if(block.name.empty())
+          {
+            throw std::runtime_error("Malformed {% set %}: missing name");
+          }
+          if(std::ranges::any_of(block.name, is_trim_char))
+          {
+            throw std::runtime_error(
+                std::format("Malformed {{% set %}} name: '{}'", block.name));
+          }
+          if(block.expr.empty())
+          {
+            throw std::runtime_error("Malformed {% set %}: missing expression");
+          }
+
+          children.push_back(element{std::move(block)});
+
+          if(right_trim)
+          {
+            trim_next_text_left = true;
+          }
+        }
         else
         {
           throw std::runtime_error(std::format("Unknown block tag: '{}'", trimmed));
@@ -668,6 +711,61 @@ REFLEX_EXPORT namespace reflex::jinja
   OutputIt
       render_include_to(OutputIt out, std::string_view name, ContextT& ctx, render_state& state);
 
+  // "no level left": the body written in the template being rendered, the end of the chain.
+  inline constexpr std::size_t no_block_level = std::size_t(-1);
+
+  // Index of the first override of `name` at or after `from`, no_block_level when there is none.
+  constexpr std::size_t
+      find_block_index(const block_map& blocks, std::string_view name, std::size_t from)
+  {
+    for(auto i = from; i < blocks.size(); ++i)
+    {
+      if(blocks[i].first == name)
+      {
+        return i;
+      }
+    }
+    return no_block_level;
+  }
+
+  // Renders one level of a {% block %}. `level` indexes state->block_overrides, which holds the
+  // inheritance chain most-derived first; no_block_level means the body the block node carries,
+  // which is the base definition and the end of the chain.
+  template <typename OutputIt, typename ContextT>
+  OutputIt render_block_to(
+      OutputIt           out,
+      const block_block& node,
+      ContextT&          ctx,
+      render_state*      state,
+      std::size_t        level)
+  {
+    using value_type = typename ContextT::value_type;
+
+    const auto* body =
+        (level == no_block_level) ? &node.children : state->block_overrides[level].second;
+
+    // {{ super() }} renders the next level down. The closure lives on this frame for exactly as
+    // long as the body it is published to, which is what lets the context hold it by reference.
+    auto super = [&](std::span<const value_type> args) -> value_type {
+      if(not args.empty())
+      {
+        throw runtime_error("super(): expects no argument, got {}", args.size());
+      }
+      if(level == no_block_level)
+      {
+        throw runtime_error("super(): block '{}' has no parent definition", node.name);
+      }
+      const auto next = find_block_index(state->block_overrides, node.name, level + 1);
+
+      std::string result;
+      render_block_to(std::back_inserter(result), node, ctx, state, next);
+      return result;
+    };
+
+    auto published = ctx.push_function("super", super);
+    return render_children_to(out, *body, ctx, state);
+  }
+
   template <typename OutputIt, typename ContextT>
   OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx, render_state* state)
   {
@@ -707,16 +805,17 @@ REFLEX_EXPORT namespace reflex::jinja
           }
           else if constexpr(decays_to_c<T, block_block>)
           {
-            const auto* body = &v.children;
-            if(state != nullptr)
-            {
-              if(const auto* override_body = find_block(state->block_overrides, v.name);
-                 override_body != nullptr)
-              {
-                body = override_body;
-              }
-            }
-            return render_children_to(out, *body, ctx, state);
+            const auto level = (state == nullptr)
+                                 ? no_block_level
+                                 : find_block_index(state->block_overrides, v.name, 0);
+            // A block is a scope of its own: a {% set %} in its body dies at {% endblock %}.
+            auto scope = ctx.push_locals();
+            return render_block_to(out, v, ctx, state, level);
+          }
+          else if constexpr(decays_to_c<T, set_block>)
+          {
+            ctx.set_scoped(v.name, expr::evaluate(v.expr, ctx));
+            return out;
           }
           else if constexpr(decays_to_c<T, for_block>)
           {
