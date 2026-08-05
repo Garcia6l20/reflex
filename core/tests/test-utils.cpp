@@ -15,7 +15,7 @@ TEST_CASE("reflex::natural_less")
     CHECK(natural_less("x9y", "x10y"));
   }
 
-  SUBCASE("leading zeros are skipped, then the shorter run loses")
+  SUBCASE("leading zeros are skipped, so a01 and a1 are the same number")
   {
     CHECK(not natural_less("a01", "a1"));
     CHECK(not natural_less("a1", "a01"));
@@ -29,7 +29,7 @@ TEST_CASE("reflex::natural_less")
     CHECK(natural_less("abc", "ABD"));
   }
 
-  SUBCASE("a prefix loses")
+  SUBCASE("a prefix comes first")
   {
     CHECK(natural_less("ab", "abc"));
     CHECK(not natural_less("abc", "ab"));

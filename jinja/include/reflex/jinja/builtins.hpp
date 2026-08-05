@@ -214,6 +214,13 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   template <typename ValueT>
   std::string format_value(std::string_view name, const ValueT& v, std::string_view spec)
   {
+    // An array or an object is formatted whole. Visiting would format the alternative, whose
+    // formatter spells the separators differently from the one {{ }} goes through.
+    if(as_array(v) != nullptr or as_object(v) != nullptr)
+    {
+      return std::vformat(spec, std::make_format_args(v));
+    }
+
     return reflex::visit(
         [&]<typename T>(T&& x) -> std::string {
           using U = std::decay_t<T>;
@@ -825,9 +832,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       return out;
     });
 
-    // items(obj) - one two-element array per entry. Read a pair with first()/last()/join(), not
-    // with pair[0]: subscripting an array held by value reads freed memory, see
-    // local/projects/known_issues/jinja-subscript-of-a-by-value-array-dangles.md.
+    // items(obj) - one two-element array per entry, read with pair[0]/pair[1] or first()/last().
     t.emplace("items", [](std::span<const value_type> args) -> value_type {
       check_arity("items", args, 1, 1);
       const auto* o = as_object(args[0]);

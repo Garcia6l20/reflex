@@ -465,6 +465,28 @@ TEST_CASE("reflex::jinja: builtins tier 4, numeric")
     CHECK_THROWS_AS(expr::evaluate("string(1, 2)", ctx), std::runtime_error);
   }
 
+  SUBCASE("an array or an object formats the way {{ }} renders it")
+  {
+    ctx.set("xs", array{1, 2});
+    ctx.set(
+        "o", {
+                 {"a", 1}
+    });
+
+    // the value type formats a composite itself, and its alternative spells it differently, so
+    // every builtin that formats has to go through the same one {{ }} does
+    const auto xs = jinja::render(jinja::parse("{{ xs }}"), ctx);
+    const auto o  = jinja::render(jinja::parse("{{ o }}"), ctx);
+
+    CHECK(std::get<std::string>(expr::evaluate("string(xs)", ctx)) == xs);
+    CHECK(std::get<std::string>(expr::evaluate("string(o)", ctx)) == o);
+    CHECK(std::get<std::string>(expr::evaluate("format(xs)", ctx)) == xs);
+
+    // the grammar has no array literal, so a nested array has to be bound
+    ctx.set("nested", array{value{array{1, 2}}});
+    CHECK(std::get<std::string>(expr::evaluate(R"(join(nested, ""))", ctx)) == xs);
+  }
+
   SUBCASE("a variable may be called string")
   {
     // identifiers and calls are distinct tokens, so a builtin name is not reserved

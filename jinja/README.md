@@ -396,7 +396,10 @@ included.
 `super` is published as a `context::scoped_function_type`, a
 `std::function_ref` valid for the block body only, so it costs no allocation and
 a `def("super", ...)` still takes precedence. `context::push_function(name, fn)`
-exposes the same mechanism, with the caller owning the callable.
+exposes the same mechanism: the caller owns both the callable and the name, and
+both must outlive the returned guard, which pops the entry. Pass a string
+literal for the name, it is held as a `std::string_view`. Use `def` instead
+whenever the context should own what it calls.
 
 A stored callable is a `std::copyable_function<... const>`, not a
 `std::function`. The signature is const-qualified because `operator()` is, so a

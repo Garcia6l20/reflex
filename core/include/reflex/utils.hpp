@@ -150,7 +150,7 @@ REFLEX_EXPORT namespace reflex
 
   // Natural order: a run of digits compares as a number, everything else case-insensitively, so
   // "PA2" comes before "PA10" where a lexicographic order puts "PA10" first. When one string is a
-  // prefix of the other the shorter one loses.
+  // prefix of the other the shorter one compares less, as it does lexicographically.
   constexpr bool natural_less(std::string_view a, std::string_view b) noexcept
   {
     std::size_t i = 0;
