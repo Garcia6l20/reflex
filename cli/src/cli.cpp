@@ -175,6 +175,48 @@ std::string completion_script(path_info const& info, std::string_view shell)
   return {};
 }
 
+std::string read_file(fs::path const& path)
+{
+  if(not fs::is_regular_file(path))
+  {
+    return {};
+  }
+  std::ifstream      in{path};
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  return buffer.str();
+}
+
+void write_file(fs::path const& path, std::string_view content)
+{
+  std::filesystem::create_directories(path.parent_path());
+  std::ofstream out{path};
+  out.write(content.data(), static_cast<std::streamsize>(content.size()));
+}
+
+// Appends `line` on its own line unless `marker` is already somewhere in the file, and reports
+// whether it did. The marker is a separate argument because the zsh style line is looked up by a
+// shorter prefix than the one written out.
+bool append_rc_line(std::string& rc_content, std::string_view line, std::string_view marker)
+{
+  if(rc_content.find(marker) != std::string::npos)
+  {
+    return false;
+  }
+  if(not rc_content.empty() and rc_content.back() != '\n')
+  {
+    rc_content.push_back('\n');
+  }
+  rc_content += line;
+  rc_content.push_back('\n');
+  return true;
+}
+
+bool append_rc_line(std::string& rc_content, std::string_view line)
+{
+  return append_rc_line(rc_content, line, line);
+}
+
 fs::path install_fish(std::string_view executable)
 {
   auto const info = resolve_path(executable);
@@ -182,12 +224,7 @@ fs::path install_fish(std::string_view executable)
   auto const completion_path =
       home / ".config" / "fish" / "completions" / (std::string{info.program} + ".fish");
 
-  std::filesystem::create_directories(completion_path.parent_path());
-  {
-    std::ofstream out{completion_path};
-    auto          script = completion_script(info, "fish");
-    out.write(script.data(), static_cast<std::streamsize>(script.size()));
-  }
+  write_file(completion_path, completion_script(info, "fish"));
   return completion_path;
 }
 
@@ -197,36 +234,15 @@ fs::path install_bash(std::string_view executable)
   auto const home            = home_path();
   auto const rc_path         = home / ".bashrc";
   auto const completion_path = home / ".bash_completions" / (std::string{info.program} + ".sh");
-  auto       rc_content      = std::string{};
   auto const source_line     = std::string{"source '"} + completion_path.generic_string() + "'";
 
-  if(fs::is_regular_file(rc_path))
+  auto rc_content = read_file(rc_path);
+  if(append_rc_line(rc_content, source_line))
   {
-    std::ifstream      in{rc_path};
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    rc_content = buffer.str();
-  }
-  if(rc_content.find(source_line) == std::string::npos)
-  {
-    if(not rc_content.empty() and rc_content.back() != '\n')
-    {
-      rc_content.push_back('\n');
-    }
-    rc_content += source_line;
-    rc_content.push_back('\n');
-    std::filesystem::create_directories(rc_path.parent_path());
-    std::ofstream out{rc_path};
-    out.write(rc_content.data(), static_cast<std::streamsize>(rc_content.size()));
+    write_file(rc_path, rc_content);
   }
 
-  std::filesystem::create_directories(completion_path.parent_path());
-  {
-    std::ofstream out{completion_path};
-    auto          script = completion_script(info, "bash");
-    out.write(script.data(), static_cast<std::streamsize>(script.size()));
-    out.put('\n');
-  }
+  write_file(completion_path, completion_script(info, "bash") + "\n");
   return completion_path;
 }
 
@@ -238,45 +254,13 @@ fs::path install_zsh(std::string_view executable)
   auto const completion_path = home / ".zfunc" / (std::string{"_"} + std::string{info.program});
   auto const completion_line = std::string{"fpath+=~/.zfunc; autoload -Uz compinit; compinit"};
   auto const style_line      = std::string{"zstyle ':completion:*' menu select"};
-  auto       rc_content      = std::string{};
 
-  if(fs::is_regular_file(rc_path))
-  {
-    std::ifstream      in{rc_path};
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    rc_content = buffer.str();
-  }
-  if(rc_content.find(completion_line) == std::string::npos)
-  {
-    if(not rc_content.empty() and rc_content.back() != '\n')
-    {
-      rc_content.push_back('\n');
-    }
-    rc_content += completion_line;
-    rc_content.push_back('\n');
-  }
-  if(rc_content.find("zstyle") == std::string::npos)
-  {
-    if(not rc_content.empty() and rc_content.back() != '\n')
-    {
-      rc_content.push_back('\n');
-    }
-    rc_content += style_line;
-    rc_content.push_back('\n');
-  }
-  std::filesystem::create_directories(rc_path.parent_path());
-  {
-    std::ofstream out{rc_path};
-    out.write(rc_content.data(), static_cast<std::streamsize>(rc_content.size()));
-  }
+  auto rc_content = read_file(rc_path);
+  append_rc_line(rc_content, completion_line);
+  append_rc_line(rc_content, style_line, "zstyle");
+  write_file(rc_path, rc_content);
 
-  std::filesystem::create_directories(completion_path.parent_path());
-  {
-    std::ofstream out{completion_path};
-    auto          script = completion_script(info, "zsh");
-    out.write(script.data(), static_cast<std::streamsize>(script.size()));
-  }
+  write_file(completion_path, completion_script(info, "zsh"));
   return completion_path;
 }
 } // namespace
