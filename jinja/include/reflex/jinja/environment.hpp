@@ -135,10 +135,9 @@ REFLEX_EXPORT namespace reflex::jinja
       {
         for(const auto& [name, body] : current->blocks)
         {
-          if(detail::find_block(state.block_overrides, name) == nullptr)
-          {
-            state.block_overrides.emplace_back(name, body);
-          }
+          // Every level is kept, most-derived first: find_block still resolves to the winner,
+          // and the entries after it are what {{ super() }} walks.
+          state.block_overrides.emplace_back(name, body);
         }
 
         auto base = *current->extends;

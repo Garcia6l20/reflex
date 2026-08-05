@@ -711,6 +711,61 @@ REFLEX_EXPORT namespace reflex::jinja
   OutputIt
       render_include_to(OutputIt out, std::string_view name, ContextT& ctx, render_state& state);
 
+  // "no level left": the body written in the template being rendered, the end of the chain.
+  inline constexpr std::size_t no_block_level = std::size_t(-1);
+
+  // Index of the first override of `name` at or after `from`, no_block_level when there is none.
+  constexpr std::size_t
+      find_block_index(const block_map& blocks, std::string_view name, std::size_t from)
+  {
+    for(auto i = from; i < blocks.size(); ++i)
+    {
+      if(blocks[i].first == name)
+      {
+        return i;
+      }
+    }
+    return no_block_level;
+  }
+
+  // Renders one level of a {% block %}. `level` indexes state->block_overrides, which holds the
+  // inheritance chain most-derived first; no_block_level means the body the block node carries,
+  // which is the base definition and the end of the chain.
+  template <typename OutputIt, typename ContextT>
+  OutputIt render_block_to(
+      OutputIt           out,
+      const block_block& node,
+      ContextT&          ctx,
+      render_state*      state,
+      std::size_t        level)
+  {
+    using value_type = typename ContextT::value_type;
+
+    const auto* body =
+        (level == no_block_level) ? &node.children : state->block_overrides[level].second;
+
+    // {{ super() }} renders the next level down. The closure lives on this frame for exactly as
+    // long as the body it is published to, which is what lets the context hold it by reference.
+    auto super = [&](std::span<const value_type> args) -> value_type {
+      if(not args.empty())
+      {
+        throw runtime_error("super(): expects no argument, got {}", args.size());
+      }
+      if(level == no_block_level)
+      {
+        throw runtime_error("super(): block '{}' has no parent definition", node.name);
+      }
+      const auto next = find_block_index(state->block_overrides, node.name, level + 1);
+
+      std::string result;
+      render_block_to(std::back_inserter(result), node, ctx, state, next);
+      return result;
+    };
+
+    auto published = ctx.push_function("super", super);
+    return render_children_to(out, *body, ctx, state);
+  }
+
   template <typename OutputIt, typename ContextT>
   OutputIt render_element_to(OutputIt out, const element& elem, ContextT& ctx, render_state* state)
   {
@@ -750,18 +805,12 @@ REFLEX_EXPORT namespace reflex::jinja
           }
           else if constexpr(decays_to_c<T, block_block>)
           {
-            const auto* body = &v.children;
-            if(state != nullptr)
-            {
-              if(const auto* override_body = find_block(state->block_overrides, v.name);
-                 override_body != nullptr)
-              {
-                body = override_body;
-              }
-            }
+            const auto level = (state == nullptr)
+                                 ? no_block_level
+                                 : find_block_index(state->block_overrides, v.name, 0);
             // A block is a scope of its own: a {% set %} in its body dies at {% endblock %}.
             auto scope = ctx.push_locals();
-            return render_children_to(out, *body, ctx, state);
+            return render_block_to(out, v, ctx, state, level);
           }
           else if constexpr(decays_to_c<T, set_block>)
           {

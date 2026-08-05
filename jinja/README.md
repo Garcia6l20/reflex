@@ -64,6 +64,7 @@ using basic_context = context<>;            // no compile-time bound types
 | `operator[](name)` | Read a variable, dotted paths included |
 | `get<T>(name)` | `std::optional<T&>` on the bound object |
 | `push_locals()` | RAII scope for local variables, used by `{% for %}` |
+| `push_function(name, fn)` | RAII scope for a non-owning function, used by `super()` |
 | `value_type` | The derived `poly::var<...>` |
 | `object_type` / `array_type` | `obj<...>` / `arr<...>` of `value_type` |
 
@@ -94,7 +95,7 @@ itself.
 | `{% set name = expr %}` | Binds `expr` under `name`, in the innermost scope |
 | `{% include "name" %}` | Needs an `environment`, shares the caller's context |
 | `{% extends "base" %}` | Needs an `environment`, must be the first meaningful tag |
-| `{% block name %}` / `{% endblock %}` | `{% endblock name %}` is checked against the opening tag |
+| `{% block name %}` / `{% endblock %}` | `{% endblock name %}` is checked against the opening tag. `super()` is callable in the body |
 
 A `{` that starts none of these is literal text.
 
@@ -177,8 +178,9 @@ ctx.def("format", jinja_format<value>)
 
 Pipes are usable anywhere an expression is: `{% for item in items | reverse() %}`.
 
-A call resolves against the context's own functions first and the builtin table
-below second, so a `def` of the same name always wins. That is what lets a
+A call resolves against the context's own functions first, the scoped functions
+the renderer publishes second (`super()` is the only one), and the builtin table
+below last, so a `def` of the same name always wins. That is what lets a
 template override `format` or `sort` without renaming anything.
 
 ---
@@ -363,11 +365,42 @@ env.render("child", ctx);   // "[hi there]"
 An `{% include %}` shares the context, including loop locals, but not the
 includer's block overrides. Cyclic includes throw.
 
+### `super()`
+
+Inside an overriding block, `super()` returns the text of the definition it
+overrides, one level down the chain per call:
+
+```cpp
+jinja::environment env{jinja::map_loader({
+    {"c", "{% block body %}c{% endblock %}"},
+    {"b", "{% extends 'c' %}{% block body %}b({{ super() }}){% endblock %}"},
+    {"a", "{% extends 'b' %}{% block body %}a[{{ super() }}]{% endblock %}"},
+})};
+
+env.render("a", ctx);   // "a[b(c)]"
+```
+
+A level that does not override the block is skipped, and `super()` throws once
+there is nothing left below, so it is an error in a base definition and outside
+a block. It is an ordinary expression, so it composes:
+
+```jinja
+{{ super() | indent(4) }}
+{% set parent = super() %}{{ parent }}{{ parent }}
+```
+
+The body it renders sees the context as it stands at the call, loop variables
+included.
+
+`super` is published as a `context::scoped_function_type`, a
+`std::function_ref` valid for the block body only, so it costs no allocation and
+a `def("super", ...)` still takes precedence. `context::push_function(name, fn)`
+exposes the same mechanism, with the caller owning the callable.
+
 ---
 
 ## Limits
 
-- `{{ super() }}` is not supported.
 - No `{% macro %}`, `{% import %}`, `{% raw %}`, `{% filter %}` or `is` tests.
 - No autoescaping.
 - No `select`, `reject`, `map`, `groupby` or `batch`. Each needs a callable

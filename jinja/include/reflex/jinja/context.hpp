@@ -216,6 +216,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     using object_type   = typename value_type::obj_type;
     using array_type    = typename value_type::arr_type;
     using function_type = std::function<value_type(std::span<const value_type>)>;
+    // Non-owning, unlike function_type: a scoped function is installed by the renderer around a
+    // region of the template and its callable outlives that region on the render stack, so there
+    // is nothing to allocate and nothing to own. {% block %} publishes super() this way.
+    using scoped_function_type = std::function_ref<value_type(std::span<const value_type>)>;
 
     template <typename T> static constexpr bool can_hold() noexcept
     {
@@ -226,6 +230,8 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     std::vector<object_type> local_vars;
 
     std::unordered_map<std::string, function_type> funcs;
+    // Stack, not a map: an inner region shadows an outer one under the same name and restores it.
+    std::vector<std::pair<std::string_view, scoped_function_type>> scoped_funcs;
 
     // value_type overload, for braced initializer lists which cannot deduce T
     context& set(std::string_view name, value_type v)
@@ -264,6 +270,14 @@ REFLEX_EXPORT namespace reflex::jinja::expr
          it != funcs.end())
       {
         return it->second(args);
+      }
+      // Innermost first, so a nested {% block %} shadows the super() of its enclosing one.
+      for(auto const& [name, fn] : scoped_funcs | std::views::reverse)
+      {
+        if(name == fname)
+        {
+          return fn(args);
+        }
       }
       if(const auto* fn = detail::find_builtin<context>(fname))
       {
@@ -415,6 +429,34 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     local_scope_guard push_locals()
     {
       return local_scope_guard{*this};
+    }
+
+    struct [[nodiscard("the scoped function is popped as soon as the guard dies")]]
+    scoped_function_guard
+    {
+      context* ctx;
+
+      explicit scoped_function_guard(context& c) : ctx{&c}
+      {}
+
+      scoped_function_guard(const scoped_function_guard&)            = delete;
+      scoped_function_guard& operator=(const scoped_function_guard&) = delete;
+
+      ~scoped_function_guard()
+      {
+        if(ctx != nullptr)
+        {
+          ctx->scoped_funcs.pop_back();
+        }
+      }
+    };
+
+    // `fn` must outlive the guard: nothing is copied, see scoped_function_type. `name` has to be a
+    // string with static storage, it is held as a view.
+    scoped_function_guard push_function(std::string_view name, scoped_function_type fn)
+    {
+      scoped_funcs.emplace_back(name, fn);
+      return scoped_function_guard{*this};
     }
 
     void dump() const

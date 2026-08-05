@@ -454,6 +454,115 @@ TEST_CASE("reflex::jinja: extends / block")
     CHECK(env.render("child", ctx) == "[2]null");
   }
 
+  SUBCASE("super() renders the definition it overrides")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"base", "[{% block body %}base{% endblock %}]"},
+                           {"child", "{% extends 'base' %}{% block body %}<{{ super() }}>{% endblock %}"},
+                           }
+        )
+    };
+
+    CHECK(env.render("child", ctx) == "[<base>]");
+  }
+
+  SUBCASE("super() walks one level per call in a chain")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"c", "{% block body %}c{% endblock %}"},
+                           {"b", "{% extends 'c' %}{% block body %}b({{ super() }}){% endblock %}"},
+                           {"a", "{% extends 'b' %}{% block body %}a[{{ super() }}]{% endblock %}"},
+                           }
+        )
+    };
+
+    CHECK(env.render("a", ctx) == "a[b(c)]");
+    CHECK(env.render("b", ctx) == "b(c)");
+  }
+
+  SUBCASE("a level that does not override is skipped")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"c", "{% block body %}c{% endblock %}"},
+                           {"b", "{% extends 'c' %}"},
+                           {"a", "{% extends 'b' %}{% block body %}a[{{ super() }}]{% endblock %}"},
+                           }
+        )
+    };
+
+    CHECK(env.render("a", ctx) == "a[c]");
+  }
+
+  SUBCASE("super() is an expression, not a tag")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"base", "{% block body %}base{% endblock %}"},
+                           {"child", "{% extends 'base' %}{% block body %}{{ super() | upper }}{% endblock %}"},
+                           {"stored", "{% extends 'base' %}{% block body %}{% set p = super() %}{{ p }}{{ p }}{% endblock %}"},
+                           }
+        )
+    };
+
+    CHECK(env.render("child", ctx) == "BASE");
+    CHECK(env.render("stored", ctx) == "basebase");
+  }
+
+  SUBCASE("super() sees the context, including loop locals")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"base", "{% block body %}{{ x }}{% endblock %}"},
+                           {"child", "{% extends 'base' %}{% block body %}{% for x in xs %}{{ super() }}{% endfor %}{% endblock %}"},
+                           }
+        )
+    };
+
+    ctx.set("xs", array{1, 2});
+    CHECK(env.render("child", ctx) == "12");
+  }
+
+  SUBCASE("a nested block gets its own super()")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"base", "{% block outer %}O({% block inner %}i{% endblock %}){% endblock %}"},
+                           {"child", "{% extends 'base' %}{% block inner %}[{{ super() }}]{% endblock %}"},
+                           }
+        )
+    };
+
+    CHECK(env.render("child", ctx) == "O([i])");
+  }
+
+  SUBCASE("super() throws where there is no parent definition")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"base", "{% block body %}{{ super() }}{% endblock %}"},
+                           {"child", "{% extends 'base' %}{% block body %}{{ super() }}{% endblock %}"},
+                           }
+        )
+    };
+
+    // the base's own body is the end of the chain, whether it is reached directly or through the
+    // child's super()
+    CHECK_THROWS_AS(env.render("base", ctx), std::runtime_error);
+    CHECK_THROWS_AS(env.render("child", ctx), std::runtime_error);
+
+    // and outside a block there is nothing to publish it
+    CHECK_THROWS_AS(jinja::render(jinja::parse("{{ super() }}"), ctx), std::runtime_error);
+  }
+
+  SUBCASE("super() takes no argument")
+  {
+    auto tmpl = jinja::parse("{% block body %}{{ super(1) }}{% endblock %}");
+    CHECK_THROWS_AS(jinja::render(tmpl, ctx), std::runtime_error);
+  }
+
   SUBCASE("a grandchild overrides a block nested in another block")
   {
     jinja::environment env{
