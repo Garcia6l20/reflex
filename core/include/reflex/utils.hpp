@@ -148,6 +148,60 @@ REFLEX_EXPORT namespace reflex
     return s;
   }
 
+  // Natural order: a run of digits compares as a number, everything else case-insensitively, so
+  // "PA2" comes before "PA10" where a lexicographic order puts "PA10" first. When one string is a
+  // prefix of the other the shorter one loses.
+  constexpr bool natural_less(std::string_view a, std::string_view b) noexcept
+  {
+    std::size_t i = 0;
+    std::size_t j = 0;
+    while(i < a.size() and j < b.size())
+    {
+      if(is_digit(a[i]) and is_digit(b[j]))
+      {
+        // Compare digit runs numerically, skipping leading zeros.
+        std::size_t ia = i;
+        std::size_t jb = j;
+        while(ia < a.size() and is_digit(a[ia]))
+        {
+          ++ia;
+        }
+        while(jb < b.size() and is_digit(b[jb]))
+        {
+          ++jb;
+        }
+        auto       na = a.substr(i, ia - i);
+        auto       nb = b.substr(j, jb - j);
+        const auto za = na.find_first_not_of('0');
+        const auto zb = nb.find_first_not_of('0');
+        na.remove_prefix(za == std::string_view::npos ? na.size() : za);
+        nb.remove_prefix(zb == std::string_view::npos ? nb.size() : zb);
+        if(na.size() != nb.size())
+        {
+          return na.size() < nb.size();
+        }
+        if(na != nb)
+        {
+          return na < nb;
+        }
+        i = ia;
+        j = jb;
+      }
+      else
+      {
+        const auto ca = to_lower(a[i]);
+        const auto cb = to_lower(b[j]);
+        if(ca != cb)
+        {
+          return ca < cb;
+        }
+        ++i;
+        ++j;
+      }
+    }
+    return (a.size() - i) < (b.size() - j);
+  }
+
 } // namespace reflex
 
 REFLEX_EXPORT namespace std
