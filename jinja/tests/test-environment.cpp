@@ -429,6 +429,31 @@ TEST_CASE("reflex::jinja: extends / block")
     CHECK(env.render("page", ctx) == "<[frag]>");
   }
 
+  SUBCASE("a block is a scope of its own")
+  {
+    auto tmpl = jinja::parse("{% block body %}{% set x = 1 %}{{ x }}{% endblock %}[{{ x }}]");
+    CHECK(jinja::render(tmpl, ctx) == "1[null]");
+  }
+
+  SUBCASE("a block scope does not hide the enclosing bindings")
+  {
+    auto tmpl = jinja::parse("{% set x = 1 %}{% block body %}{{ x }}{% endblock %}");
+    CHECK(jinja::render(tmpl, ctx) == "1");
+  }
+
+  SUBCASE("a set in an overriding block dies with it")
+  {
+    jinja::environment env{
+        jinja::map_loader({
+                           {"base", "[{% block body %}b{% endblock %}]{{ x }}"},
+                           {"child", "{% extends 'base' %}{% block body %}{% set x = 2 %}{{ x }}{% endblock %}"},
+                           }
+        )
+    };
+
+    CHECK(env.render("child", ctx) == "[2]null");
+  }
+
   SUBCASE("a grandchild overrides a block nested in another block")
   {
     jinja::environment env{

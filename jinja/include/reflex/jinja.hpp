@@ -759,6 +759,8 @@ REFLEX_EXPORT namespace reflex::jinja
                 body = override_body;
               }
             }
+            // A block is a scope of its own: a {% set %} in its body dies at {% endblock %}.
+            auto scope = ctx.push_locals();
             return render_children_to(out, *body, ctx, state);
           }
           else if constexpr(decays_to_c<T, set_block>)
