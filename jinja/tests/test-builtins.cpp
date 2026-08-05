@@ -579,8 +579,10 @@ TEST_CASE("reflex::jinja: builtins tier 4, sequences and objects")
     CHECK_THROWS_AS(expr::evaluate("items(1)", ctx), std::runtime_error);
     CHECK_THROWS_AS(expr::evaluate("items()", ctx), std::runtime_error);
 
-    // A pair is read with first()/last()/join(), not with p[0]: subscripting an array held by
-    // value reads freed memory, which is a pre-existing parser bug recorded in known_issues.
+    CHECK(
+        jinja::render(
+            jinja::parse(R"({% for p in items(o) %}{{ p[0] }}={{ p[1] }};{% endfor %})"), ctx)
+        == "a=2;b=1;");
     CHECK(
         jinja::render(
             jinja::parse(R"({% for p in items(o) %}{{ first(p) }}={{ last(p) }};{% endfor %})"),
