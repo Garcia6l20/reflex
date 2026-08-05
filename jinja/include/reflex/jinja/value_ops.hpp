@@ -106,22 +106,9 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     // would silently change what `a < b` means in a template.
     static int compare(const value_type& a, const value_type& b)
     {
-      static const auto to_double = [](const value_type& v) -> double {
-        if constexpr(integral_type_info != meta::null)
-        {
-          if(auto* i = std::get_if<integral_type>(&v))
-          {
-            return static_cast<double>(*i);
-          }
-        }
-        if(auto* d = std::get_if<double>(&v))
-        {
-          return *d;
-        }
-        throw std::runtime_error("Cannot compare non-numeric values with ordering operators");
-      };
-      const double la = to_double(a);
-      const double rb = to_double(b);
+      constexpr auto what = "Cannot compare non-numeric values with ordering operators";
+      const double   la   = to_double(a, what);
+      const double   rb   = to_double(b, what);
       if(la < rb)
       {
         return -1;
@@ -133,7 +120,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       return 0;
     }
 
-    static value_type arith_add(const value_type& a, const value_type& b)
+    // Applies `int_op` when both operands hold the integral alternative, `fallback` otherwise. One
+    // copy of that dispatch is what keeps every operator promoting the same way.
+    static value_type
+        arith_binary(const value_type& a, const value_type& b, auto int_op, auto fallback)
     {
       if constexpr(integral_type_info != meta::null)
       {
@@ -141,94 +131,85 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         {
           if(auto* rb = std::get_if<integral_type>(&b))
           {
-            return {*la + *rb};
+            return int_op(*la, *rb);
           }
         }
       }
-      if(auto* la = std::get_if<std::string>(&a))
-      {
-        if(auto* rb = std::get_if<std::string>(&b))
-        {
-          return {*la + *rb};
-        }
-      }
-      return {to_double(a) + to_double(b)};
+      return fallback(a, b);
+    }
+
+    static value_type arith_add(const value_type& a, const value_type& b)
+    {
+      return arith_binary(
+          a, b, [](auto l, auto r) -> value_type { return {l + r}; },
+          [](const value_type& l, const value_type& r) -> value_type {
+            if(auto* ls = std::get_if<std::string>(&l))
+            {
+              if(auto* rs = std::get_if<std::string>(&r))
+              {
+                return {*ls + *rs};
+              }
+            }
+            return {to_double(l) + to_double(r)};
+          });
     }
 
     static value_type arith_sub(const value_type& a, const value_type& b)
     {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* la = std::get_if<integral_type>(&a))
-        {
-          if(auto* rb = std::get_if<integral_type>(&b))
-          {
-            return {*la - *rb};
-          }
-        }
-      }
-      return {to_double(a) - to_double(b)};
+      return arith_binary(
+          a, b, [](auto l, auto r) -> value_type { return {l - r}; },
+          [](const value_type& l, const value_type& r) -> value_type {
+            return {to_double(l) - to_double(r)};
+          });
     }
 
     static value_type arith_mul(const value_type& a, const value_type& b)
     {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* la = std::get_if<integral_type>(&a))
-        {
-          if(auto* rb = std::get_if<integral_type>(&b))
-          {
-            return {*la * *rb};
-          }
-        }
-      }
-      return {to_double(a) * to_double(b)};
+      return arith_binary(
+          a, b, [](auto l, auto r) -> value_type { return {l * r}; },
+          [](const value_type& l, const value_type& r) -> value_type {
+            return {to_double(l) * to_double(r)};
+          });
     }
 
     static value_type arith_div(const value_type& a, const value_type& b)
     {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* la = std::get_if<integral_type>(&a))
-        {
-          if(auto* rb = std::get_if<integral_type>(&b))
-          {
-            if(*rb == 0)
+      return arith_binary(
+          a, b,
+          [](auto l, auto r) -> value_type {
+            if(r == 0)
             {
               throw std::runtime_error("Integer division by zero");
             }
-            return {*la / *rb};
-          }
-        }
-      }
-      double rb = to_double(b);
-      if(rb == 0.0)
-      {
-        throw std::runtime_error("Division by zero");
-      }
-      return {to_double(a) / rb};
+            return {l / r};
+          },
+          [](const value_type& l, const value_type& r) -> value_type {
+            const double rd = to_double(r);
+            if(rd == 0.0)
+            {
+              throw std::runtime_error("Division by zero");
+            }
+            return {to_double(l) / rd};
+          });
     }
 
     static value_type arith_mod(const value_type& a, const value_type& b)
     {
-      if constexpr(integral_type_info != meta::null)
-      {
-        if(auto* la = std::get_if<integral_type>(&a))
-        {
-          if(auto* rb = std::get_if<integral_type>(&b))
-          {
-            if(*rb == 0)
+      return arith_binary(
+          a, b,
+          [](auto l, auto r) -> value_type {
+            if(r == 0)
             {
               throw std::runtime_error("Modulo by zero");
             }
-            return {*la % *rb};
-          }
-        }
-      }
-      throw std::runtime_error("'%' requires integer operands");
+            return {l % r};
+          },
+          [](const value_type&, const value_type&) -> value_type {
+            throw std::runtime_error("'%' requires integer operands");
+          });
     }
 
-    static double to_double(const value_type& v)
+    static double to_double(const value_type& v, std::string_view what = "Expected numeric value")
     {
       if constexpr(integral_type_info != meta::null)
       {
@@ -241,7 +222,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       {
         return *d;
       }
-      throw std::runtime_error("Expected numeric value");
+      throw std::runtime_error(std::string(what));
     }
   };
 } // namespace reflex::jinja::expr
