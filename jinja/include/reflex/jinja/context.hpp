@@ -124,6 +124,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       return ValueT{std::forward<T>(v)};
     }
   }
+
+  // Defined in <reflex/jinja/builtins.hpp>. Null when the name is not a builtin.
+  template <typename ContextT>
+  const typename ContextT::function_type* find_builtin(std::string_view name);
   } // namespace detail
 
   // scans the types of all nonstatic data members of an aggregate, including nested aggregates and
@@ -254,13 +258,18 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     value_type operator()(std::string_view fname, std::span<const value_type> args) const
     {
+      // A user-registered name always wins: a builtin must never shadow a def().
       if(auto it =
              std::ranges::find_if(funcs, [fname](auto const& pair) { return pair.first == fname; });
          it != funcs.end())
       {
         return it->second(args);
       }
-      throw std::runtime_error("Context is not callable");
+      if(const auto* fn = detail::find_builtin<context>(fname))
+      {
+        return (*fn)(args);
+      }
+      throw runtime_error("Unknown function '{}'", fname);
     }
 
     decltype(auto) operator[](std::string_view name) const noexcept

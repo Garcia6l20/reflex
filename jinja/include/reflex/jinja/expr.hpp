@@ -12,6 +12,7 @@
 #include <reflex/parse.hpp>
 #endif
 
+#include <reflex/jinja/builtins.hpp>
 #include <reflex/jinja/context.hpp>
 
 #ifdef REFLEX_EXPR_ABORT_ON_NON_MATCHED_ELEMENT
