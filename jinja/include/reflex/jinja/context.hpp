@@ -14,6 +14,8 @@
 #include <functional>
 #endif
 
+#include <reflex/jinja/value_ops.hpp>
+
 REFLEX_EXPORT namespace reflex::jinja::expr
 {
   namespace detail
