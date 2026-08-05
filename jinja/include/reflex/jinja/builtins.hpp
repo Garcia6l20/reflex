@@ -7,7 +7,10 @@
 #ifndef REFLEX_MODULE
 #include <reflex/caseconv.hpp>
 #include <reflex/exception.hpp>
+#include <reflex/parse.hpp>
 #include <reflex/utils.hpp>
+
+#include <cmath>
 
 #include <span>
 #include <string>
@@ -65,12 +68,14 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     return v;
   }
 
-  // Strings bind by value: `std::string&` has no alternative, so there is no pointer form here.
-  template <typename ValueT> const std::string* as_string(const ValueT& v) noexcept
+  // Probes one alternative. `std::get_if<T>` is ill-formed, not false, for a T the value type does
+  // not hold, and which alternatives exist depends on what was bound to the context, so the probe
+  // has to be a compile-time branch.
+  template <typename T, typename ValueT> const T* try_get(const ValueT& v) noexcept
   {
-    if constexpr(ValueT::template can_hold<std::string>())
+    if constexpr(ValueT::template can_hold<T>())
     {
-      return std::get_if<std::string>(&deref(v));
+      return std::get_if<T>(&deref(v));
     }
     else
     {
@@ -78,15 +83,20 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     }
   }
 
+  // Strings bind by value: `std::string&` has no alternative, so there is no pointer form here.
+  template <typename ValueT> const std::string* as_string(const ValueT& v) noexcept
+  {
+    return try_get<std::string>(v);
+  }
+
   template <typename ValueT> const typename ValueT::arr_type* as_array(const ValueT& v) noexcept
   {
     using arr_type = typename ValueT::arr_type;
-    const auto& d  = deref(v);
-    if(auto* a = std::get_if<arr_type>(&d))
+    if(auto* a = try_get<arr_type>(v))
     {
       return a;
     }
-    if(auto* p = std::get_if<arr_type*>(&d))
+    if(auto* p = try_get<arr_type*>(v))
     {
       return *p;
     }
@@ -96,12 +106,11 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   template <typename ValueT> const typename ValueT::obj_type* as_object(const ValueT& v) noexcept
   {
     using obj_type = typename ValueT::obj_type;
-    const auto& d  = deref(v);
-    if(auto* o = std::get_if<obj_type>(&d))
+    if(auto* o = try_get<obj_type>(v))
     {
       return o;
     }
-    if(auto* p = std::get_if<obj_type*>(&d))
+    if(auto* p = try_get<obj_type*>(v))
     {
       return *p;
     }
@@ -169,16 +178,35 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   template <typename ValueT>
   std::int64_t int_arg(std::string_view name, const ValueT& v, std::string_view what)
   {
-    using ops     = value_ops<ValueT>;
-    const auto& d = deref(v);
+    using ops = value_ops<ValueT>;
     if constexpr(ops::integral_type_info != meta::null)
     {
-      if(auto* i = std::get_if<typename ops::integral_type>(&d))
+      if(auto* i = try_get<typename ops::integral_type>(v))
       {
         return static_cast<std::int64_t>(*i);
       }
     }
     builtin_error(name, std::format("{} must be an integer", what));
+  }
+
+  // The numeric argument of a filter that computes. Same promotion as value_ops::to_double, with
+  // the builtin's name in the message.
+  template <typename ValueT>
+  double double_arg(std::string_view name, const ValueT& v, std::string_view what)
+  {
+    using ops = value_ops<ValueT>;
+    if constexpr(ops::integral_type_info != meta::null)
+    {
+      if(auto* i = try_get<typename ops::integral_type>(v))
+      {
+        return static_cast<double>(*i);
+      }
+    }
+    if(auto* d = try_get<double>(v))
+    {
+      return *d;
+    }
+    builtin_error(name, std::format("{} must be a number", what));
   }
 
   // Renders one value through a format spec, the way {{ }} does. An aggregate bound by reference
@@ -579,11 +607,160 @@ REFLEX_EXPORT namespace reflex::jinja::expr
             "upper_snake", [](std::string_view s) { return caseconv::to_upper_snake_case(s); }));
   }
 
+  // Numeric functions and casts. Everything that adds or orders goes through value_ops, so
+  // sum([1, 2]) and 1 + 2 promote identically.
+  template <typename ContextT> void register_numeric(builtin_table_type<ContextT>& t)
+  {
+    using value_type = typename ContextT::value_type;
+    using ops        = value_ops<value_type>;
+
+    // abs(x) - preserves the alternative, an int stays an int.
+    t.emplace("abs", [](std::span<const value_type> args) -> value_type {
+      check_arity("abs", args, 1, 1);
+      if constexpr(ops::integral_type_info != meta::null)
+      {
+        if(auto* i = try_get<typename ops::integral_type>(args[0]))
+        {
+          return *i < 0 ? -*i : *i;
+        }
+      }
+      if(auto* d = try_get<double>(args[0]))
+      {
+        return *d < 0.0 ? -*d : *d;
+      }
+      builtin_error("abs", "expects a number");
+    });
+
+    // round(x, n = 0) - always a double, so the result type never depends on the input. Ties round
+    // away from zero, which is what std::round does.
+    t.emplace("round", [](std::span<const value_type> args) -> value_type {
+      check_arity("round", args, 1, 2);
+      const double x = double_arg("round", args[0], "argument 1");
+      const auto   n = args.size() == 2 ? int_arg("round", args[1], "digits") : 0;
+      if(n == 0)
+      {
+        return std::round(x);
+      }
+      const double scale = std::pow(10.0, static_cast<double>(n));
+      return std::round(x * scale) / scale;
+    });
+
+    // int(x) - truncation toward zero for a double, a strict parse for a string.
+    t.emplace("int", [](std::span<const value_type> args) -> value_type {
+      check_arity("int", args, 1, 1);
+      if constexpr(ops::integral_type_info != meta::null)
+      {
+        if(auto* i = try_get<typename ops::integral_type>(args[0]))
+        {
+          return *i;
+        }
+      }
+      if(auto* b = try_get<bool>(args[0]))
+      {
+        return *b ? 1 : 0;
+      }
+      if(auto* d = try_get<double>(args[0]))
+      {
+        return int(std::trunc(*d));
+      }
+      if(auto* s = try_get<std::string>(args[0]))
+      {
+        // strict: "12abc" is an error, not 12. parse<int> stops at the first byte it cannot use.
+        const auto parsed = reflex::parse_strict<int>(*s);
+        if(not parsed)
+        {
+          builtin_error("int", std::format("'{}' is not an integer", *s));
+        }
+        return parsed.value();
+      }
+      builtin_error("int", "expects a number, a boolean or a string");
+    });
+
+    // float(x) - symmetric with int(x).
+    t.emplace("float", [](std::span<const value_type> args) -> value_type {
+      check_arity("float", args, 1, 1);
+      if(auto* b = try_get<bool>(args[0]))
+      {
+        return *b ? 1.0 : 0.0;
+      }
+      if(auto* s = try_get<std::string>(args[0]))
+      {
+        const auto parsed = reflex::parse_strict<double>(*s);
+        if(not parsed)
+        {
+          builtin_error("float", std::format("'{}' is not a number", *s));
+        }
+        return parsed.value();
+      }
+      return double_arg("float", args[0], "argument 1");
+    });
+
+    // string(x) - the value rendered the way {{ }} renders it.
+    t.emplace("string", [](std::span<const value_type> args) -> value_type {
+      check_arity("string", args, 1, 1);
+      return format_value("string", args[0], "{}");
+    });
+
+    // sum(seq) - accumulates through arith_add from an integer zero, so an empty sequence is 0 and
+    // a mixed int/double sequence promotes exactly like a chain of `+`. Overflow is silent.
+    t.emplace("sum", [](std::span<const value_type> args) -> value_type {
+      check_arity("sum", args, 1, 1);
+      const auto* a = as_array(args[0]);
+      if(a == nullptr)
+      {
+        builtin_error("sum", "expects an array");
+      }
+      value_type acc{0};
+      for(const auto& elem : *a)
+      {
+        acc = ops::arith_add(acc, elem);
+      }
+      return acc;
+    });
+
+    // min(seq) / max(seq) - a sequence, never varargs: argument 0 of a pipe is the piped value, so
+    // {{ a | max(b) }} could not read as max([a, b]) from the same signature.
+    //
+    // Ordering is value_ops::compare, which is numeric only, so min(["a", "b"]) throws rather than
+    // silently comparing something. That is deliberate, see 00_context.md.
+    const auto extremum = [](std::string_view name, bool want_max) ->
+        typename ContextT::function_type {
+          return [name, want_max](std::span<const value_type> args) -> value_type {
+            check_arity(name, args, 1, 1);
+            const auto* a = as_array(args[0]);
+            if(a == nullptr)
+            {
+              builtin_error(name, "expects an array");
+            }
+            if(a->empty())
+            {
+              builtin_error(name, "expects a non-empty array");
+            }
+            // Nothing is compared against a single element, so it has to be checked on its own.
+            (void)double_arg(name, a->front(), "element 1");
+            const value_type* best = &a->front();
+            for(const auto& elem : *a | std::views::drop(1))
+            {
+              const int c = ops::compare(elem, *best);
+              if(want_max ? c > 0 : c < 0)
+              {
+                best = &elem;
+              }
+            }
+            return *best;
+          };
+        };
+
+    t.emplace("min", extremum("min", false));
+    t.emplace("max", extremum("max", true));
+  }
+
   template <typename ContextT> void register_builtins(builtin_table_type<ContextT>& t)
   {
     register_tier1<ContextT>(t);
     register_strings<ContextT>(t);
     register_case<ContextT>(t);
+    register_numeric<ContextT>(t);
   }
 
   template <typename ContextT> const builtin_table_type<ContextT>& builtin_table()

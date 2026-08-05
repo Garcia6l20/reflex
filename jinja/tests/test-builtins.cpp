@@ -394,3 +394,129 @@ TEST_CASE("reflex::jinja: builtins tier 3, case conversion")
     CHECK(str(R"(to_snake_case("myField"))") == "my_field");
   }
 }
+
+TEST_CASE("reflex::jinja: builtins tier 4, numeric")
+{
+  basic_context ctx;
+
+  SUBCASE("abs preserves the alternative")
+  {
+    CHECK(std::get<int>(expr::evaluate("abs(-7)", ctx)) == 7);
+    CHECK(std::get<int>(expr::evaluate("abs(7)", ctx)) == 7);
+    CHECK(std::get<double>(expr::evaluate("abs(-1.5)", ctx)) == doctest::Approx(1.5));
+
+    CHECK_THROWS_AS(expr::evaluate("abs()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("abs(1, 2)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(abs("x"))", ctx), std::runtime_error);
+  }
+
+  SUBCASE("round always returns a double")
+  {
+    CHECK(std::get<double>(expr::evaluate("round(3.14159, 2)", ctx)) == doctest::Approx(3.14));
+    // ties round away from zero, which is what std::round does
+    CHECK(std::get<double>(expr::evaluate("round(2.5)", ctx)) == doctest::Approx(3.0));
+    CHECK(std::get<double>(expr::evaluate("round(-2.5)", ctx)) == doctest::Approx(-3.0));
+    CHECK(std::get<double>(expr::evaluate("round(7)", ctx)) == doctest::Approx(7.0));
+
+    CHECK_THROWS_AS(expr::evaluate("round()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("round(1, 2, 3)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(round("x"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(round(1.5, "2"))", ctx), std::runtime_error);
+  }
+
+  SUBCASE("int")
+  {
+    CHECK(std::get<int>(expr::evaluate(R"(int("42"))", ctx)) == 42);
+    CHECK(std::get<int>(expr::evaluate("int(3.9)", ctx)) == 3);
+    CHECK(std::get<int>(expr::evaluate("int(-3.9)", ctx)) == -3);
+    CHECK(std::get<int>(expr::evaluate("int(true)", ctx)) == 1);
+    CHECK(std::get<int>(expr::evaluate("int(false)", ctx)) == 0);
+    CHECK(std::get<int>(expr::evaluate("int(7)", ctx)) == 7);
+
+    // a strict parse: trailing junk is an error, not a prefix
+    CHECK_THROWS_AS(expr::evaluate(R"(int("x"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(int("12abc"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("int(null)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("int()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("int(1, 2)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("float")
+  {
+    CHECK(std::get<double>(expr::evaluate(R"(float("1.5"))", ctx)) == doctest::Approx(1.5));
+    CHECK(std::get<double>(expr::evaluate("float(2)", ctx)) == doctest::Approx(2.0));
+    CHECK(std::get<double>(expr::evaluate("float(1.5)", ctx)) == doctest::Approx(1.5));
+    CHECK(std::get<double>(expr::evaluate("float(true)", ctx)) == doctest::Approx(1.0));
+
+    CHECK_THROWS_AS(expr::evaluate(R"(float("x"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(float("1.5x"))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("float(null)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("float()", ctx), std::runtime_error);
+  }
+
+  SUBCASE("string")
+  {
+    CHECK(std::get<std::string>(expr::evaluate("string(42)", ctx)) == "42");
+    CHECK(std::get<std::string>(expr::evaluate("string(true)", ctx)) == "true");
+    CHECK(std::get<std::string>(expr::evaluate(R"(string("a"))", ctx)) == "a");
+    CHECK(std::get<std::string>(expr::evaluate("string(null)", ctx)) == "null");
+
+    CHECK_THROWS_AS(expr::evaluate("string()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("string(1, 2)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("a variable may be called string")
+  {
+    // identifiers and calls are distinct tokens, so a builtin name is not reserved
+    ctx.set("string", 7);
+    CHECK(std::get<int>(expr::evaluate("string", ctx)) == 7);
+    CHECK(std::get<std::string>(expr::evaluate("string(1)", ctx)) == "1");
+  }
+
+  SUBCASE("sum")
+  {
+    ctx.set("empty", array{});
+    CHECK(std::get<int>(expr::evaluate("sum(empty)", ctx)) == 0);
+
+    ctx.set("ints", array{1, 2});
+    CHECK(std::get<int>(expr::evaluate("sum(ints)", ctx)) == 3);
+
+    ctx.set("mixed", array{1, 2.5});
+    CHECK(std::get<double>(expr::evaluate("sum(mixed)", ctx)) == doctest::Approx(3.5));
+
+    ctx.set("strs", array{"a"s});
+    CHECK_THROWS_AS(expr::evaluate("sum(strs)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("sum(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("sum()", ctx), std::runtime_error);
+  }
+
+  SUBCASE("min and max take a sequence")
+  {
+    ctx.set("xs", array{3, 1, 2});
+    CHECK(std::get<int>(expr::evaluate("min(xs)", ctx)) == 1);
+    CHECK(std::get<int>(expr::evaluate("max(xs)", ctx)) == 3);
+    CHECK(std::get<int>(expr::evaluate("xs | max", ctx)) == 3);
+
+    ctx.set("empty", array{});
+    CHECK_THROWS_AS(expr::evaluate("min(empty)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("max(empty)", ctx), std::runtime_error);
+
+    // numeric only, including the single-element case
+    ctx.set("one_str", array{"a"s});
+    CHECK_THROWS_AS(expr::evaluate("min(one_str)", ctx), std::runtime_error);
+    ctx.set("strs", array{"a"s, "b"s});
+    CHECK_THROWS_AS(expr::evaluate("max(strs)", ctx), std::runtime_error);
+
+    CHECK_THROWS_AS(expr::evaluate("min(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("min(xs, 1)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("render end to end")
+  {
+    ctx.set("xs", array{1, 2, 3, 4});
+    // `/` on two ints is integer division, so the average needs the float() cast
+    CHECK(jinja::render(jinja::parse("{{ sum(xs) / length(xs) }}"), ctx) == "2");
+    CHECK(
+        jinja::render(jinja::parse("{{ round(float(sum(xs)) / length(xs), 2) }}"), ctx) == "2.5");
+  }
+}
