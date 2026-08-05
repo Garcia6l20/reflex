@@ -511,12 +511,80 @@ TEST_CASE("reflex::jinja: builtins tier 4, numeric")
     CHECK_THROWS_AS(expr::evaluate("min(xs, 1)", ctx), std::runtime_error);
   }
 
-  SUBCASE("render end to end")
+  SUBCASE("render end to end numeric")
   {
     ctx.set("xs", array{1, 2, 3, 4});
     // `/` on two ints is integer division, so the average needs the float() cast
     CHECK(jinja::render(jinja::parse("{{ sum(xs) / length(xs) }}"), ctx) == "2");
     CHECK(
         jinja::render(jinja::parse("{{ round(float(sum(xs)) / length(xs), 2) }}"), ctx) == "2.5");
+  }
+}
+
+TEST_CASE("reflex::jinja: builtins tier 4, sequences and objects")
+{
+  basic_context ctx;
+  const auto    str = [&](std::string_view src) {
+    return std::get<std::string>(expr::evaluate(src, ctx));
+  };
+
+  SUBCASE("first and last")
+  {
+    ctx.set("xs", array{1, 2});
+    CHECK(std::get<int>(expr::evaluate("first(xs)", ctx)) == 1);
+    CHECK(std::get<int>(expr::evaluate("last(xs)", ctx)) == 2);
+    CHECK(str(R"(first("ab"))") == "a");
+    CHECK(str(R"(last("ab"))") == "b");
+
+    ctx.set("empty", array{});
+    CHECK_THROWS_AS(expr::evaluate("first(empty)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("last(empty)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate(R"(first(""))", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("first(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("first()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("first(xs, 1)", ctx), std::runtime_error);
+
+    // first() throws before default() ever runs, so the two do not compose
+    CHECK_THROWS_AS(expr::evaluate(R"(empty | first | default("none"))", ctx), std::runtime_error);
+  }
+
+  SUBCASE("keys and values are key-sorted and aligned")
+  {
+    ctx.set(
+        "o", {
+                 {"b", 1},
+                 {"a", 2}
+    });
+    CHECK(str(R"(join(keys(o), ","))") == "a,b");
+    CHECK(str(R"(join(values(o), ","))") == "2,1");
+    CHECK(std::get<int>(expr::evaluate("length(keys(o))", ctx)) == 2);
+
+    CHECK_THROWS_AS(expr::evaluate("keys(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("values(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("keys()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("values(o, 1)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("items")
+  {
+    ctx.set(
+        "o", {
+                 {"b", 1},
+                 {"a", 2}
+    });
+    CHECK(std::get<int>(expr::evaluate("length(items(o))", ctx)) == 2);
+    CHECK(str(R"(join(first(items(o)), "="))") == "a=2");
+    CHECK(str(R"(join(last(items(o)), "="))") == "b=1");
+
+    CHECK_THROWS_AS(expr::evaluate("items(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("items()", ctx), std::runtime_error);
+
+    // A pair is read with first()/last()/join(), not with p[0]: subscripting an array held by
+    // value reads freed memory, which is a pre-existing parser bug recorded in known_issues.
+    CHECK(
+        jinja::render(
+            jinja::parse(R"({% for p in items(o) %}{{ first(p) }}={{ last(p) }};{% endfor %})"),
+            ctx)
+        == "a=2;b=1;");
   }
 }

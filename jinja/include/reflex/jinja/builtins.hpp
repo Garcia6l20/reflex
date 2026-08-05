@@ -755,12 +755,106 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     t.emplace("max", extremum("max", true));
   }
 
+  // Sequence and object functions.
+  template <typename ContextT> void register_sequence(builtin_table_type<ContextT>& t)
+  {
+    using value_type = typename ContextT::value_type;
+    using array_type = typename ContextT::array_type;
+
+    // first(seq) / last(seq) - an empty sequence throws, so neither composes with default():
+    // `xs | first | default("none")` throws before default() sees anything.
+    const auto edge = [](std::string_view name, bool want_last) ->
+        typename ContextT::function_type {
+          return [name, want_last](std::span<const value_type> args) -> value_type {
+            check_arity(name, args, 1, 1);
+            if(auto* s = as_string(args[0]))
+            {
+              if(s->empty())
+              {
+                builtin_error(name, "expects a non-empty string");
+              }
+              return std::string(1, want_last ? s->back() : s->front());
+            }
+            if(auto* a = as_array(args[0]))
+            {
+              if(a->empty())
+              {
+                builtin_error(name, "expects a non-empty array");
+              }
+              return want_last ? a->back() : a->front();
+            }
+            builtin_error(name, "expects a string or an array");
+          };
+        };
+
+    t.emplace("first", edge("first", false));
+    t.emplace("last", edge("last", true));
+
+    // keys(obj) / values(obj) - object_type is a std::map, so both come out sorted by key and the
+    // two align element for element. Insertion order is not preserved and is not promised.
+    t.emplace("keys", [](std::span<const value_type> args) -> value_type {
+      check_arity("keys", args, 1, 1);
+      const auto* o = as_object(args[0]);
+      if(o == nullptr)
+      {
+        builtin_error("keys", "expects an object");
+      }
+      array_type out;
+      out.reserve(o->size());
+      for(const auto& [k, v] : *o)
+      {
+        out.emplace_back(k);
+      }
+      return out;
+    });
+
+    t.emplace("values", [](std::span<const value_type> args) -> value_type {
+      check_arity("values", args, 1, 1);
+      const auto* o = as_object(args[0]);
+      if(o == nullptr)
+      {
+        builtin_error("values", "expects an object");
+      }
+      array_type out;
+      out.reserve(o->size());
+      for(const auto& [k, v] : *o)
+      {
+        out.emplace_back(v);
+      }
+      return out;
+    });
+
+    // items(obj) - one two-element array per entry. Read a pair with first()/last()/join(), not
+    // with pair[0]: subscripting an array held by value reads freed memory, see
+    // local/projects/known_issues/jinja-subscript-of-a-by-value-array-dangles.md.
+    t.emplace("items", [](std::span<const value_type> args) -> value_type {
+      check_arity("items", args, 1, 1);
+      const auto* o = as_object(args[0]);
+      if(o == nullptr)
+      {
+        builtin_error("items", "expects an object");
+      }
+      array_type out;
+      out.reserve(o->size());
+      for(const auto& [k, v] : *o)
+      {
+        array_type pair;
+        pair.reserve(2);
+        pair.emplace_back(k);
+        pair.emplace_back(v);
+        out.emplace_back(std::move(pair));
+      }
+      return out;
+    });
+  }
+
   template <typename ContextT> void register_builtins(builtin_table_type<ContextT>& t)
   {
     register_tier1<ContextT>(t);
     register_strings<ContextT>(t);
     register_case<ContextT>(t);
     register_numeric<ContextT>(t);
+    register_sequence<ContextT>(t);
   }
 
   template <typename ContextT> const builtin_table_type<ContextT>& builtin_table()
