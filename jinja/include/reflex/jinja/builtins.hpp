@@ -760,6 +760,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   {
     using value_type = typename ContextT::value_type;
     using array_type = typename ContextT::array_type;
+    using ops        = value_ops<value_type>;
 
     // first(seq) / last(seq) - an empty sequence throws, so neither composes with default():
     // `xs | first | default("none")` throws before default() sees anything.
@@ -844,6 +845,83 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         pair.emplace_back(v);
         out.emplace_back(std::move(pair));
       }
+      return out;
+    });
+
+    // unique(seq) - order preserving, first occurrence wins. O(n^2) through value_ops::equal,
+    // which is right for template-sized data and needs no hash for a poly::var.
+    t.emplace("unique", [](std::span<const value_type> args) -> value_type {
+      check_arity("unique", args, 1, 1);
+      const auto* a = as_array(args[0]);
+      if(a == nullptr)
+      {
+        builtin_error("unique", "expects an array");
+      }
+      array_type out;
+      for(const auto& elem : *a)
+      {
+        const bool seen = std::ranges::any_of(
+            out, [&elem](const value_type& kept) { return ops::equal(kept, elem); });
+        if(not seen)
+        {
+          out.push_back(elem);
+        }
+      }
+      return out;
+    });
+
+    // sort(seq) - numbers by value, strings lexicographically, a mix throws.
+    //
+    // This is deliberately NOT value_ops::compare, which is numeric only. Teaching compare about
+    // strings would silently change what `a < b` means in every existing template, so the library
+    // carries two orderings: `<` numeric only, sort() numeric or string.
+    t.emplace("sort", [](std::span<const value_type> args) -> value_type {
+      check_arity("sort", args, 1, 1);
+      const auto* a = as_array(args[0]);
+      if(a == nullptr)
+      {
+        builtin_error("sort", "expects an array");
+      }
+      array_type out = *a;
+      bool       all_text = true;
+      for(const auto& elem : out)
+      {
+        if(as_string(elem) == nullptr)
+        {
+          all_text = false;
+          break;
+        }
+      }
+      if(all_text)
+      {
+        std::ranges::sort(out, [](const value_type& x, const value_type& y) {
+          return *as_string(x) < *as_string(y);
+        });
+        return out;
+      }
+      // Not all strings, so every element has to be a number. double_arg names the offender.
+      for(const auto& elem : out)
+      {
+        (void)double_arg("sort", elem, "every element");
+      }
+      std::ranges::sort(out, [](const value_type& x, const value_type& y) {
+        return ops::compare(x, y) < 0;
+      });
+      return out;
+    });
+
+    // natsort(seq) - natural order over the scalar text of each element, so "PA2" precedes "PA10".
+    t.emplace("natsort", [](std::span<const value_type> args) -> value_type {
+      check_arity("natsort", args, 1, 1);
+      const auto* a = as_array(args[0]);
+      if(a == nullptr)
+      {
+        builtin_error("natsort", "expects an array");
+      }
+      array_type out = *a;
+      std::ranges::sort(out, [](const value_type& x, const value_type& y) {
+        return reflex::natural_less(as_text(x), as_text(y));
+      });
       return out;
     });
   }

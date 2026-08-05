@@ -587,4 +587,70 @@ TEST_CASE("reflex::jinja: builtins tier 4, sequences and objects")
             ctx)
         == "a=2;b=1;");
   }
+
+  SUBCASE("unique preserves order, first occurrence wins")
+  {
+    ctx.set("xs", array{1, 1, 2, 1});
+    CHECK(str(R"(join(unique(xs), ","))") == "1,2");
+
+    ctx.set("strs", array{"a"s, "a"s});
+    CHECK(str(R"(join(unique(strs), ","))") == "a");
+
+    ctx.set("empty", array{});
+    CHECK(std::get<int>(expr::evaluate("length(unique(empty))", ctx)) == 0);
+
+    CHECK_THROWS_AS(expr::evaluate("unique(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("unique()", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("unique(xs, 1)", ctx), std::runtime_error);
+  }
+
+  SUBCASE("sort orders numbers and strings, never a mix")
+  {
+    ctx.set("nums", array{3, 1, 2});
+    CHECK(str(R"(join(sort(nums), ","))") == "1,2,3");
+
+    ctx.set("mixed_nums", array{3, 1.5});
+    CHECK(str(R"(join(sort(mixed_nums), ","))") == "1.5,3");
+
+    ctx.set("strs", array{"b"s, "a"s});
+    CHECK(str(R"(join(sort(strs), ","))") == "a,b");
+
+    ctx.set("empty", array{});
+    CHECK(std::get<int>(expr::evaluate("length(sort(empty))", ctx)) == 0);
+
+    ctx.set("mix", array{1, "a"s});
+    CHECK_THROWS_AS(expr::evaluate("sort(mix)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("sort(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("sort()", ctx), std::runtime_error);
+  }
+
+  SUBCASE("natsort orders digit runs numerically")
+  {
+    // the case the whole filter exists for: lexicographic order puts PA10 first
+    ctx.set("pins", array{"PA10"s, "PA2"s});
+    CHECK(str(R"(join(natsort(pins), ","))") == "PA2,PA10");
+    CHECK(str(R"(join(sort(pins), ","))") == "PA10,PA2");
+
+    // case-insensitive
+    ctx.set("cased", array{"X10"s, "x2"s});
+    CHECK(str(R"(join(natsort(cased), ","))") == "x2,X10");
+
+    // leading zeros: the runs compare equal after stripping, so the order is left as found
+    ctx.set("zeros", array{"a01"s, "a1"s});
+    CHECK(str(R"(join(natsort(zeros), ","))") == "a01,a1");
+
+    ctx.set("empty", array{});
+    CHECK(std::get<int>(expr::evaluate("length(natsort(empty))", ctx)) == 0);
+
+    CHECK_THROWS_AS(expr::evaluate("natsort(1)", ctx), std::runtime_error);
+    CHECK_THROWS_AS(expr::evaluate("natsort()", ctx), std::runtime_error);
+  }
+
+  SUBCASE("render end to end")
+  {
+    ctx.set("pins", array{"PA10"s, "PA2"s, "PA2"s});
+    CHECK(
+        jinja::render(jinja::parse("{% for p in natsort(unique(pins)) %}{{ p }};{% endfor %}"), ctx)
+        == "PA2;PA10;");
+  }
 }
