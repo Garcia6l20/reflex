@@ -1,5 +1,6 @@
 from pcons import add_subdirectory, context
-from reflex_build.testing import build_testing
+
+from reflex_build.config import build_programs, build_testing
 
 project = context.current_project
 env = project.default_environment
@@ -49,6 +50,9 @@ serde_xml = project.StaticLibrary(
     ],
 )
 serde_xml.public.link_libs.append(serde)
+
+if build_programs:
+    add_subdirectory("programs")
 
 if build_testing:
     add_subdirectory("tests")

@@ -6,6 +6,7 @@
 
 #ifndef REFLEX_MODULE
 #include <filesystem>
+#include <optional>
 #endif
 
 #include <reflex/cli/base.hpp>
@@ -97,26 +98,35 @@ REFLEX_EXPORT namespace reflex::cli
           return 1;
         }, 1, invoker);
   }
+
+  /** @brief answer the shell instead of running the command
+   *
+   * Empty unless the completion protocol is active, in which case the returned
+   * value is what the program must exit with.
+   */
+  template <configuration config> std::optional<int> try_complete(auto& cmd)
+  {
+    if constexpr(config.completion.enabled)
+    {
+      if(const auto complete_env = std::getenv("_REFLEX_COMPLETE"); complete_env != nullptr)
+      {
+        std::string_view const complete{complete_env};
+        if(not complete.empty() and complete.ends_with("complete"))
+        {
+          return detail::do_complete<config>(cmd);
+        }
+      }
+    }
+    return std::nullopt;
+  }
   } // namespace detail
 
   template <typename Cli, configuration config = {}>
   int run(Cli && cli, std::string_view executable, auto it, auto end)
   {
-    // constexpr auto cli_type = decay(type_of(^^cli));
-    if constexpr(config.completion.enabled)
+    if(const auto rc = detail::try_complete<config>(cli))
     {
-      // Completion management
-      if(const auto complete_env = std::getenv("_REFLEX_COMPLETE"); complete_env != nullptr)
-      {
-        std::string_view const complete{complete_env};
-        if(not complete.empty())
-        {
-          if(complete.ends_with("complete"))
-          {
-            return detail::do_complete<config>(cli);
-          }
-        }
-      }
+      return *rc;
     }
 
     return detail::process(cli, executable, it, end);
@@ -156,19 +166,9 @@ REFLEX_EXPORT namespace reflex::cli
   {
     detail::command_args<Fn> args{};
 
-    if constexpr(config.completion.enabled)
+    if(const auto rc = detail::try_complete<config>(args))
     {
-      if(const auto complete_env = std::getenv("_REFLEX_COMPLETE"); complete_env != nullptr)
-      {
-        std::string_view const complete{complete_env};
-        if(not complete.empty())
-        {
-          if(complete.ends_with("complete"))
-          {
-            return detail::do_complete<config>(args);
-          }
-        }
-      }
+      return *rc;
     }
 
     return detail::process(args, executable, it, end, detail::function_invoker<Fn>);

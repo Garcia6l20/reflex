@@ -37,11 +37,12 @@ class Option:
 
     def __bool__(self):
         if self.enabled_in_env is not None:
-            return self.enabled_in_env
+            return bool(self.enabled_in_env)
         return self.enabled_in_config
 
 
 build_testing = Option("REFLEX_BUILD_TESTS", default=False)
+build_programs = Option("REFLEX_BUILD_PROGRAMS", default=False)
 
 should_reconfigure = (
     not config.get("configured")
