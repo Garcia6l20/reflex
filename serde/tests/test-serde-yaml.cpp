@@ -181,3 +181,131 @@ TEST_CASE("reflex::serde::yaml: a Format-derived enum renders through its format
 {
   CHECK(dump(Color::Green) == "Green");
 }
+
+struct[[= serde::naming::camel_case, = derive(Debug)]] Basic
+{
+  int                                    int_member;
+  std::string                            string_member;
+  [[= serde::naming::kebab_case]] double double_member;
+
+  constexpr bool operator==(Basic const& other) const = default;
+};
+
+struct[[= derive(Debug)]] Inner
+{
+  int         a;
+  std::string b;
+
+  constexpr bool operator==(Inner const& other) const = default;
+};
+
+struct[[= derive(Debug)]] Outer
+{
+  int   before;
+  Inner inner;
+  int   after;
+
+  constexpr bool operator==(Outer const& other) const = default;
+};
+
+struct[[= derive(Debug)]] Deep
+{
+  Outer outer;
+
+  constexpr bool operator==(Deep const& other) const = default;
+};
+
+struct Empty
+{
+  constexpr bool operator==(Empty const&) const = default;
+};
+
+struct[[= derive(Debug)]] WithEmpty
+{
+  int   a;
+  Empty e;
+  int   b;
+
+  constexpr bool operator==(WithEmpty const& other) const = default;
+};
+
+struct[[= derive(Debug)]] Renamed
+{
+  [[= serde::rename{"a: b"}]] int awkward;
+  [[= serde::rename{"it's"}]] int quoted;
+
+  constexpr bool operator==(Renamed const& other) const = default;
+};
+
+struct[[= derive(Debug)]] OptAggregate
+{
+  std::optional<Inner> inner;
+  int                  after;
+
+  constexpr bool operator==(OptAggregate const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::yaml: a flat aggregate is a block mapping with no trailing newline")
+{
+  CHECK(dump(Inner{1, "two"}) == "a: 1\nb: two");
+}
+
+TEST_CASE("reflex::serde::yaml: member names go through serialized_name")
+{
+  CHECK(dump(Basic{1, "x", 2.5}) == "intMember: 1\nstringMember: x\ndouble-member: 2.5");
+}
+
+TEST_CASE("reflex::serde::yaml: a nested aggregate opens an indented block")
+{
+  CHECK(dump(Outer{1, {2, "two"}, 3}) == "before: 1\ninner:\n  a: 2\n  b: two\nafter: 3");
+}
+
+TEST_CASE("reflex::serde::yaml: nesting indents by two columns per level")
+{
+  CHECK(
+      dump(Deep{{1, {2, "two"}, 3}})
+      == "outer:\n  before: 1\n  inner:\n    a: 2\n    b: two\n  after: 3");
+}
+
+TEST_CASE("reflex::serde::yaml: an aggregate with no members is {}")
+{
+  CHECK(dump(Empty{}) == "{}");
+  CHECK(dump(WithEmpty{1, {}, 2}) == "a: 1\ne: {}\nb: 2");
+}
+
+TEST_CASE("reflex::serde::yaml: a renamed key is quoted when a plain form would not read back")
+{
+  CHECK(dump(Renamed{1, 2}) == "'a: b': 1\nit's: 2");
+}
+
+TEST_CASE("reflex::serde::yaml: an optional member")
+{
+  CHECK(dump(Opt{"x", 3}) == "name: x\ncount: 3");
+  CHECK(dump(Opt{"x", std::nullopt}) == "name: x\ncount: null");
+}
+
+// std::optional is not itself a block node, so the separator decision has to
+// see through it or an engaged optional of an aggregate starts on the key's
+// line and produces a broken document.
+TEST_CASE("reflex::serde::yaml: an optional aggregate member still opens a block")
+{
+  CHECK(dump(OptAggregate{Inner{1, "two"}, 3}) == "inner:\n  a: 1\n  b: two\nafter: 3");
+  CHECK(dump(OptAggregate{std::nullopt, 3}) == "inner: null\nafter: 3");
+}
+
+// The depth counter must return to zero after every nested value, or the next
+// sibling is written one level too deep. The unwind-through-a-throw half of the
+// guard's contract is untested: the yaml serializer has no runtime throw path
+// at all - YAML has a literal for every value the other backends reject, and a
+// heapless::string overflow is a compile-time assert, not an exception.
+TEST_CASE("reflex::serde::yaml: the depth counter returns to zero after a nested value")
+{
+  CHECK(dump(Outer{1, {2, "two"}, 3}).ends_with("\nafter: 3"));
+
+  std::string      out;
+  yaml::serializer ser{out};
+  ser.dump(Deep{{1, {2, "two"}, 3}});
+  out.clear();
+  ser.dump(Inner{1, "two"});
+  CHECK(out == "a: 1\nb: two"); // same serializer, depth back at 0
+}

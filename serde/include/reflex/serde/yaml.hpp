@@ -348,6 +348,73 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     write_backslash_quoted<'"'>(ser, text);
   }
 
+  // A value that occupies lines of its own, rather than sitting after "key: ".
+  // The compile-time half of the separator decision.
+  //
+  // std::array<char, N> is an aggregate and a str_c, and it is a scalar here, so
+  // the str_c guard is load-bearing rather than defensive.
+  template <typename T>
+  concept block_node_c = (aggregate_c<std::remove_cvref_t<T>> or seq_c<std::remove_cvref_t<T>>
+                          or map_c<std::remove_cvref_t<T>>)
+                     and not str_c<std::remove_cvref_t<T>>;
+
+  template <typename T> consteval std::size_t member_count()
+  {
+    return nonstatic_data_members_of(^^T, std::meta::access_context::current()).size();
+  }
+
+  // The runtime half. A collection with no entries has no lines to indent, so it
+  // goes inline as [] or {} - which is also the only way YAML can spell one.
+  template <typename T> bool is_inline_empty(T const& value)
+  {
+    if constexpr(seq_c<T> or map_c<T>)
+    {
+      return value.empty();
+    }
+    else if constexpr(aggregate_c<T>)
+    {
+      return member_count<T>() == 0;
+    }
+    else
+    {
+      return false;
+    }
+  }
+
+  // "name:", built once at compile time and promoted to static storage.
+  //
+  // The key is checked here rather than escaped at runtime. An identifier can
+  // never need quoting, but a serde::rename can carry an arbitrary string, and
+  // annotations.hpp only bars a dot, a quote, a backslash and control characters
+  // - not a colon, a leading dash, or a name that resolves as a boolean. So the
+  // same predicate the scalar writer uses runs here too, which is why it and
+  // everything under it are constexpr.
+  template <std::meta::info Member> consteval std::string_view plain_key()
+  {
+    constexpr std::string_view name = serialized_name(Member);
+    std::string                s;
+    s.reserve(name.size() + 3);
+    if(needs_quoting(name))
+    {
+      s += '\'';
+      for(char c : name)
+      {
+        s += c;
+        if(c == '\'')
+        {
+          s += c;
+        }
+      }
+      s += '\'';
+    }
+    else
+    {
+      s += name;
+    }
+    s += ':';
+    return {std::define_static_string(s), s.size()};
+  }
+
   // A std::array<char, N> is a fixed buffer, trimmed at the first NUL.
   template <typename Str> std::string_view string_view_of(Str const& value)
   {
@@ -364,11 +431,142 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
   template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
   {
+    int depth_ = 0;
+
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
 
     static constexpr std::string_view format_name = "YAML";
 
+    // Fixed, not an option. A configurable width would have to be threaded
+    // through every tag_invoke, and no serde backend carries an options object.
+    // If it is ever wanted it becomes a template parameter on this class.
+    static constexpr int indent_width = 2;
+
+    // THE INVARIANT, which the whole block writer rests on:
+    //
+    //   A block-node writer never emits the indent for its own first line, and
+    //   never emits a trailing newline. Before every line after the first it
+    //   emits '\n' followed by indent(depth).
+    //
+    // The parent is therefore what positions the cursor, which it already does
+    // by having just written "key: " or "- ". Three things fall out: the
+    // document has no leading or trailing newline, so a round trip is
+    // byte-exact; the compact notations "- - 1" and "- key: v" need no special
+    // case; and no writer ever needs to know what column it is at, only what
+    // depth it was handed.
+    //
+    // The opposite arrangement - a block node emitting its own indent - forces
+    // every parent to strip that first indent back off, and then every nesting
+    // form needs its own case.
+    void newline()
+    {
+      this->write_char('\n');
+      for(int i = 0; i < depth_ * indent_width; ++i)
+      {
+        this->write_char(' ');
+      }
+    }
+
+    // RAII so a throwing member cannot leave the depth wrong. [[nodiscard]] on
+    // push() so `ser.push();` as a statement, which would pop immediately, does
+    // not compile.
+    class indent_guard
+    {
+      serializer* s_;
+
+    public:
+      explicit indent_guard(serializer& s) : s_{&s}
+      {
+        ++s_->depth_;
+      }
+      indent_guard(indent_guard const&)            = delete;
+      indent_guard& operator=(indent_guard const&) = delete;
+      ~indent_guard()
+      {
+        --s_->depth_;
+      }
+    };
+
+    [[nodiscard]] indent_guard push()
+    {
+      return indent_guard{*this};
+    }
+
+    // The separator decision, for a value that follows "key:".
+    //
+    // A scalar goes on the same line after a space. A non-empty block node goes
+    // on the next line, one level deeper. An empty one goes back on the same
+    // line, because [] and {} are the only spelling YAML has for it.
+    //
+    // reflex::visit on a non-variant is the identity call, so this one spelling
+    // covers a plain member and a poly::var member alike.
+    template <typename T> void write_member(T const& value)
+    {
+      reflex::visit([this](auto const& v) { this->write_value<true>(v); }, value);
+    }
+
+    // The same decision for a sequence entry, which has just written "- ". No
+    // leading space (the "- " supplied it) and no line break before a block
+    // child: the child starts right there, which is the compact notation. That
+    // one difference is the whole of it.
+    template <typename T> void write_element(T const& value)
+    {
+      reflex::visit([this](auto const& v) { this->write_value<false>(v); }, value);
+    }
+
+  private:
+    template <bool BreakBefore, typename T> void write_value(T const& value)
+    {
+      // An engaged optional of an aggregate is a block node, but std::optional
+      // is not itself one, so the test has to see through it. Unwrapping here
+      // rather than widening block_node_c keeps a disengaged optional inline as
+      // "null", which is what it must be.
+      if constexpr(meta::is_template_instance_of(^^T, ^^std::optional))
+      {
+        if(not value.has_value())
+        {
+          if constexpr(BreakBefore)
+          {
+            this->write_char(' ');
+          }
+          this->write_raw("null");
+          return;
+        }
+        this->write_value<BreakBefore>(*value);
+        return;
+      }
+      else if constexpr(detail::block_node_c<T>)
+      {
+        if(not detail::is_inline_empty(value))
+        {
+          auto guard = this->push();
+          if constexpr(BreakBefore)
+          {
+            this->newline();
+          }
+          serialize(*this, value);
+          return;
+        }
+        if constexpr(BreakBefore)
+        {
+          this->write_char(' ');
+        }
+        serialize(*this, value);
+        return;
+      }
+      else
+      {
+        if constexpr(BreakBefore)
+        {
+          this->write_char(' ');
+        }
+        serialize(*this, value);
+        return;
+      }
+    }
+
+  public:
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, null_t const&)
     {
       ser.write_raw("null");
@@ -461,6 +659,40 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+
+  // A block mapping, one "key: value" per line at this node's depth. No braces,
+  // no separators: the extent of the mapping is its indentation.
+  template <typename OutputIt, aggregate_c Agg>
+    requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char, N> is an aggregate
+  OutputIt tag_invoke(
+      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value)
+  {
+    static constexpr auto type = decay(type_of(^^value));
+
+    if constexpr(detail::member_count<Agg>() == 0)
+    {
+      ser.write_raw("{}");
+      return ser.out();
+    }
+    else
+    {
+      bool first = true;
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(type, std::meta::access_context::current())))
+      {
+        if(not first)
+        {
+          ser.newline();
+        }
+        first = false;
+
+        static constexpr std::string_view key_token = detail::plain_key<member>();
+        ser.write_raw(key_token);
+        ser.write_member(value.[:member:]);
+      }
+      return ser.out();
+    }
+  }
 
   template <std::input_iterator InputIt>
   class deserializer : public serde::detail::subrange_deserializer<InputIt>
