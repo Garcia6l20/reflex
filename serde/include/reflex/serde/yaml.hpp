@@ -353,9 +353,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   //
   // std::array<char, N> is an aggregate and a str_c, and it is a scalar here, so
   // the str_c guard is load-bearing rather than defensive.
+  //
+  // pair_c is in here because a standalone pair is written as a one-entry block
+  // mapping. Leaving it out puts "k: v" after the parent's own "key: " and
+  // produces "outer: k: v", which is not a document.
   template <typename T>
   concept block_node_c = (aggregate_c<std::remove_cvref_t<T>> or seq_c<std::remove_cvref_t<T>>
-                          or map_c<std::remove_cvref_t<T>>)
+                          or map_c<std::remove_cvref_t<T>> or pair_c<std::remove_cvref_t<T>>)
                      and not str_c<std::remove_cvref_t<T>>;
 
   template <typename T> consteval std::size_t member_count()
@@ -632,6 +636,91 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     {
       ser.write_raw(value ? "true" : "false");
       return ser.out();
+    }
+
+    // One "- " per element at this node's depth. The element goes through the
+    // same decision as a mapping value, minus the leading space the "- "
+    // already supplied and minus the line break: a block child starts right
+    // after the dash, which is YAML's compact notation.
+    //
+    // The indent works out with no special case. "- " occupies two columns at
+    // depth*2, so the child's continuation lines belong at depth*2 + 2, which is
+    // exactly (depth+1)*2 - what the guard already produces.
+    template <seq_c Seq>
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Seq const& value)
+    {
+      if(value.empty())
+      {
+        ser.write_raw("[]");
+        return ser.out();
+      }
+
+      bool first = true;
+      for(auto const& elem : value)
+      {
+        if(not first)
+        {
+          ser.newline();
+        }
+        first = false;
+        ser.write_raw("- ");
+        ser.write_element(elem);
+      }
+      return ser.out();
+    }
+
+    // A block mapping with runtime keys. The key is serialized rather than
+    // rendered and re-quoted: that way an int key stays plain so it resolves
+    // back to an int, while a std::string key goes through the scalar writer
+    // and picks up quotes only when a plain form would change its type.
+    template <map_c Map>
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Map const& value)
+    {
+      static_assert(
+          not detail::block_node_c<typename Map::key_type>,
+          std::string(display_string_of(dealias(^^typename Map::key_type)))
+              + " cannot be a YAML mapping key: a composite key needs the explicit-key syntax"
+                " ('? '), which this backend does not support");
+
+      if(value.empty())
+      {
+        ser.write_raw("{}");
+        return ser.out();
+      }
+
+      bool first = true;
+      for(auto const& [key, val] : value)
+      {
+        if(not first)
+        {
+          ser.newline();
+        }
+        first = false;
+        serialize(ser, key);
+        ser.write_char(':');
+        ser.write_member(val);
+      }
+      return ser.out();
+    }
+
+    // A standalone pair is a one-entry mapping. block_node_c names pair_c for
+    // this reason.
+    template <pair_c Pair>
+    friend OutputIt
+        tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Pair const& value)
+    {
+      serialize(ser, value.first);
+      ser.write_char(':');
+      ser.write_member(value.second);
+      return ser.out();
+    }
+
+    // A poly::var reached directly, rather than as a member. write_member and
+    // write_element already visit, so this is the top-level entry point.
+    template <visitable_c T>
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    {
+      return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
     }
 
     template <derives_c<derive_t<Format>> T>

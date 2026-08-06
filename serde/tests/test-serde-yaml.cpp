@@ -293,6 +293,142 @@ TEST_CASE("reflex::serde::yaml: an optional aggregate member still opens a block
   CHECK(dump(OptAggregate{std::nullopt, 3}) == "inner: null\nafter: 3");
 }
 
+struct[[= derive(Debug)]] WithSeq
+{
+  std::string      name;
+  std::vector<int> values;
+
+  constexpr bool operator==(WithSeq const& other) const = default;
+};
+
+struct[[= derive(Debug)]] WithMap
+{
+  std::string                        name;
+  std::map<std::string, int>         m;
+
+  bool operator==(WithMap const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::yaml: a sequence is one '- ' per element")
+{
+  CHECK(dump(std::vector<int>{1, 2, 3}) == "- 1\n- 2\n- 3");
+  CHECK(dump(std::vector<int>{}) == "[]");
+  CHECK(dump(std::vector<std::string>{"a", "null"}) == "- a\n- 'null'");
+}
+
+TEST_CASE("reflex::serde::yaml: a sequence member is indented under its key")
+{
+  CHECK(dump(WithSeq{"x", {1, 2}}) == "name: x\nvalues:\n  - 1\n  - 2");
+  CHECK(dump(WithSeq{"x", {}}) == "name: x\nvalues: []");
+}
+
+// The compact notation: a block child starts right after the "- ", and its
+// continuation lines line up under it. No special case produces this - it is
+// what the indent invariant already does.
+TEST_CASE("reflex::serde::yaml: a sequence of sequences uses the compact notation")
+{
+  CHECK(dump(std::vector<std::vector<int>>{{1, 2}, {3}}) == "- - 1\n  - 2\n- - 3");
+  CHECK(dump(std::vector<std::vector<int>>{{}, {1}}) == "- []\n- - 1");
+}
+
+TEST_CASE("reflex::serde::yaml: a sequence of mappings uses the compact notation")
+{
+  CHECK(
+      dump(std::vector<Inner>{{1, "two"}, {2, "three"}})
+      == "- a: 1\n  b: two\n- a: 2\n  b: three");
+}
+
+TEST_CASE("reflex::serde::yaml: three levels of nesting")
+{
+  // "y" comes out quoted: it is a YAML 1.1 boolean, and step 02 quotes those on
+  // purpose so the document reads the same to a 1.1 parser. Kept as the fixture
+  // value rather than swapped for a neutral one, since it is worth seeing the
+  // rule fire somewhere other than its own test.
+  CHECK(
+      dump(std::vector<WithSeq>{{"x", {1, 2}}, {"y", {}}})
+      == "- name: x\n  values:\n    - 1\n    - 2\n- name: 'y'\n  values: []");
+}
+
+TEST_CASE("reflex::serde::yaml: a std::array of scalars is a sequence, not an aggregate")
+{
+  CHECK(dump(std::array<int, 3>{1, 2, 3}) == "- 1\n- 2\n- 3");
+}
+
+// A std::array<char, N> satisfies both str_c and seq_c. It is a scalar.
+TEST_CASE("reflex::serde::yaml: a char array inside a sequence stays a scalar")
+{
+  std::array<char, 4> a{};
+  a[0] = 'a';
+  a[1] = 'b';
+  CHECK(dump(std::vector<std::array<char, 4>>{a}) == "- ab");
+}
+
+TEST_CASE("reflex::serde::yaml: mappings with runtime keys")
+{
+  CHECK(dump(std::map<std::string, int>{{"a", 1}, {"b", 2}}) == "a: 1\nb: 2");
+  CHECK(dump(std::map<std::string, int>{}) == "{}");
+  CHECK(dump(WithMap{"x", {{"a", 1}}}) == "name: x\nm:\n  a: 1");
+  CHECK(dump(WithMap{"x", {}}) == "name: x\nm: {}");
+}
+
+// An int key stays plain so it resolves back to an int; a string key that would
+// resolve as something else gets quoted.
+TEST_CASE("reflex::serde::yaml: a mapping key is serialized, not re-quoted")
+{
+  CHECK(dump(std::map<int, std::string>{{1, "one"}, {2, "two"}}) == "1: one\n2: two");
+  CHECK(dump(std::map<std::string, int>{{"a: b", 1}}) == "'a: b': 1");
+  CHECK(dump(std::map<std::string, int>{{"1", 1}}) == "'1': 1");
+}
+
+TEST_CASE("reflex::serde::yaml: a mapping of composite values")
+{
+  CHECK(dump(std::map<std::string, Inner>{{"k", {1, "two"}}}) == "k:\n  a: 1\n  b: two");
+  CHECK(
+      dump(std::map<std::string, std::vector<int>>{{"k", {1, 2}}}) == "k:\n  - 1\n  - 2");
+}
+
+TEST_CASE("reflex::serde::yaml: a standalone pair is a one-entry mapping")
+{
+  CHECK(dump(std::pair<std::string, int>{"a", 1}) == "a: 1");
+  CHECK(dump(std::vector<std::pair<std::string, int>>{{"a", 1}, {"b", 2}}) == "- a: 1\n- b: 2");
+}
+
+TEST_CASE("reflex::serde::yaml: poly::var")
+{
+  using var = yaml::value;
+
+  CHECK(dump(var{}) == "null");
+  CHECK(dump(var{true}) == "true");
+  CHECK(dump(var{1.5}) == "1.5");
+  CHECK(dump(var{"x"s}) == "x");
+  CHECK(dump(var{"true"s}) == "'true'");
+
+  yaml::array arr;
+  arr.push_back(var{1.0});
+  arr.push_back(var{"x"s});
+  CHECK(dump(var{arr}) == "- 1\n- x");
+
+  yaml::object obj;
+  obj.emplace("a", var{1.0});
+  CHECK(dump(var{obj}) == "a: 1");
+}
+
+TEST_CASE("reflex::serde::yaml: a poly::var member opens a block when it holds a collection")
+{
+  struct[[= derive(Debug)]] Holder
+  {
+    yaml::value v;
+    int         after;
+  };
+
+  yaml::array arr;
+  arr.push_back(yaml::value{1.0});
+  arr.push_back(yaml::value{2.0});
+  CHECK(dump(Holder{yaml::value{arr}, 3}) == "v:\n  - 1\n  - 2\nafter: 3");
+  CHECK(dump(Holder{yaml::value{"x"s}, 3}) == "v: x\nafter: 3");
+  CHECK(dump(Holder{yaml::value{}, 3}) == "v: null\nafter: 3");
+}
+
 // The depth counter must return to zero after every nested value, or the next
 // sibling is written one level too deep. The unwind-through-a-throw half of the
 // guard's contract is untested: the yaml serializer has no runtime throw path
