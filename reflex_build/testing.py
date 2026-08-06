@@ -31,27 +31,39 @@ if build_testing:
     doctest_with_main.public.link_libs.append(doctest_pkg)
     doctest_with_main.private.defines.append("DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN")
 
-    group_commands = dict()
+    def binary_name(name: str, group: str | None) -> str:
+        """Target names are flat across the project, so the group is part of it.
+
+        Two directories both holding a test-basic.cpp would otherwise collide.
+        """
+        return f"reflex-test-{group}-{name}" if group else f"reflex-test-{name}"
 
     def test_name(name: str, group: str | None) -> str:
-        """The name the runner keys on. The prefix is the contract, not a label."""
-        return f"reflex-test-{group}-{name}" if group else f"reflex-test-{name}"
+        """What the runner prints and what -R filters on."""
+        return f"{group}.{name}" if group else name
 
     def add_test(
         name: str, sources: list[str], libs: list, group: str | None = None
     ) -> Target:
-        full = test_name(name, group)
-
         test = project.Program(
-            full,
+            binary_name(name, group),
             env,
             sources=sources,
             defined_at=get_caller_location(),
         )
         test.private.include_dirs.append(".")
         test.private.link_libs.extend([*libs, doctest_with_main])
-        project.Test(full, test, defined_at=get_caller_location())
+        # discover: the runner lists the binary's cases and runs each one
+        # separately, so a failure names the case rather than the binary.
+        project.Test(
+            test_name(name, group),
+            test,
+            labels=[group] if group else [],
+            discover="doctest",
+            defined_at=get_caller_location(),
+        )
 
+        # The label filters what runs; the alias builds a group on its own.
         if group:
             project.Alias(f"test-{group}", test)
 
@@ -76,6 +88,7 @@ if build_testing:
             interpreter,
             args=[str(script)],
             env={"PYTHONPATH": str(module_dir(project))},
+            labels=[group] if group else [],
         )
         # program is an interpreter, not a Target, so the extension is not
         # pulled in by itself.
