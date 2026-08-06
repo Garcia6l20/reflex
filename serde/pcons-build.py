@@ -51,6 +51,15 @@ serde_xml = project.StaticLibrary(
 )
 serde_xml.public.link_libs.append(serde)
 
+serde_yaml = project.StaticLibrary(
+    "reflex.serde.yaml",
+    env,
+    sources=[
+        "modules/reflex/serde_yaml.cppm",
+    ],
+)
+serde_yaml.public.link_libs.append(serde)
+
 if build_programs:
     add_subdirectory("programs")
 
