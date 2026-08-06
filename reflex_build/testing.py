@@ -43,8 +43,18 @@ if build_testing:
         return f"{group}.{name}" if group else name
 
     def add_test(
-        name: str, sources: list[str], libs: list, group: str | None = None
+        name: str,
+        sources: list[str],
+        libs: list,
+        group: str | None = None,
+        discover: str | None = "doctest",
     ) -> Target:
+        """Build a test binary and declare it.
+
+        @p discover is None for a test whose assertions are all static_asserts:
+        compiling it is the test, and asking a binary with no case for its cases
+        yields nothing to run.
+        """
         test = project.Program(
             binary_name(name, group),
             env,
@@ -59,7 +69,7 @@ if build_testing:
             test_name(name, group),
             test,
             labels=[group] if group else [],
-            discover="doctest",
+            discover=discover,
             defined_at=get_caller_location(),
         )
 
