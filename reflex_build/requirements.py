@@ -1,7 +1,7 @@
 from pcons import context
 from pcons.packages.finders import ConanFinder
 
-from reflex_build.config import project_dir, build_dir, config, toolchain, VARIANT
+from reflex_build.config import VARIANT, build_dir, config, project_dir, toolchain
 
 # =============================================================================
 # Find Conan packages

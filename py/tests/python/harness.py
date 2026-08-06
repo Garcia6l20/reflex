@@ -22,7 +22,7 @@ def run(namespace: dict[str, Any]) -> None:
     for name, fn in tests:
         try:
             fn()
-        except Exception:
+        except Exception:  # noqa: BLE001  a test runner reports every failure, it never picks
             failures += 1
             print(f"FAIL {name}", file=sys.stderr)
             traceback.print_exc()

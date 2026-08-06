@@ -1,9 +1,6 @@
-from pcons import (
-    add_subdirectory,
-    Project,
-)
+from pcons import Project, add_subdirectory
 
-from reflex_build.config import project_dir, build_dir, toolchain, VARIANT
+from reflex_build.config import VARIANT, build_dir, project_dir, toolchain
 
 # =============================================================================
 # Setup

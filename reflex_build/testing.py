@@ -2,8 +2,8 @@ from pcons import context, write_file
 from pcons.core.target import Target
 from pcons.util.source_location import get_caller_location
 
-from reflex_build.config import build_dir, build_testing, project_dir
 from reflex_build import requirements  # noqa: F401  (registers the Conan finder)
+from reflex_build.config import build_dir, build_testing
 
 if build_testing:
     print("Tests enabled - building test utilities")
@@ -59,7 +59,7 @@ if build_testing:
             binary_name(name, group),
             env,
             sources=sources,
-            defined_at=get_caller_location(),
+            defined_at=get_caller_location(), # type: ignore
         )
         test.private.include_dirs.append(".")
         test.private.link_libs.extend([*libs, doctest_with_main])
@@ -70,7 +70,7 @@ if build_testing:
             test,
             labels=[group] if group else [],
             discover=discover,
-            defined_at=get_caller_location(),
+            defined_at=get_caller_location(), # type: ignore
         )
 
         # The label filters what runs; the alias builds a group on its own.

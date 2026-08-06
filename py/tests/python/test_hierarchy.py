@@ -3,8 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import hierarchy  # noqa: E402
-from harness import run  # noqa: E402
+import hierarchy
+from harness import run
 
 
 def test_a_base_is_published_with_its_derived_class():

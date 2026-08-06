@@ -3,8 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import operators  # noqa: E402
-from harness import run  # noqa: E402
+import operators
+from harness import run
 
 
 def n(value):
@@ -92,7 +92,7 @@ def test_an_explicit_equality_wins_over_the_spaceship():
     a = operators.specific(1, 10)
     b = operators.specific(1, 20)
     assert not (a < b)
-    assert not (a == b)
+    assert not (a == b)  # noqa: SIM201  the point is what __eq__ returns, a != b is the next line
     assert a != b
     assert a == operators.specific(1, 10)
 
@@ -124,7 +124,7 @@ def test_a_const_non_const_subscript_pair_keeps_the_setter():
 def test_a_skipped_equality_does_not_suppress_the_spaceship():
     a, b = operators.skipped_equality(1), operators.skipped_equality(1)
     assert a == b
-    assert not (a != b)
+    assert not (a != b)  # noqa: SIM202  the point is what __ne__ returns, a == b is the line above
     assert a <= b
 
 
