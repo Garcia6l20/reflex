@@ -182,6 +182,158 @@ TEST_CASE("reflex::serde::yaml: a Format-derived enum renders through its format
   CHECK(dump(Color::Green) == "Green");
 }
 
+namespace
+{
+  // Every cursor case runs twice: once over a contiguous buffer, once through a
+  // stream cursor that has bulk_scan off. The parser is one implementation, so
+  // the two must agree exactly - and if a bulk fast path is ever added, this is
+  // what proves it equivalent rather than merely faster.
+  template <typename Fn> void both_cursors(std::string_view text, Fn&& fn)
+  {
+    {
+      yaml::deserializer de{text};
+      fn(de);
+    }
+    {
+      std::istringstream in{std::string{text}};
+      yaml::deserializer de{in};
+      fn(de);
+    }
+  }
+} // namespace
+
+TEST_CASE("reflex::serde::yaml::deserializer: lines and columns")
+{
+  both_cursors("ab\ncd", [](auto& de) {
+    CHECK(de.column() == 0);
+    CHECK(de.advance() == 'a');
+    CHECK(de.column() == 1);
+    CHECK(de.advance() == 'b');
+    CHECK(de.at_line_end());
+    CHECK(de.next_line());
+    CHECK(de.column() == 0);
+    CHECK(de.peek() == 'c');
+  });
+}
+
+// advance() refuses a line break: a reader that runs past a line end has lost
+// the column, and every column after it would be wrong.
+TEST_CASE("reflex::serde::yaml::deserializer: advance refuses a line break")
+{
+  both_cursors("a\nb", [](auto& de) {
+    CHECK(de.advance() == 'a');
+    CHECK_THROWS(de.advance());
+  });
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: CRLF is one break")
+{
+  both_cursors("ab\r\ncd", [](auto& de) {
+    de.advance();
+    de.advance();
+    CHECK(de.at_line_end());
+    CHECK(de.next_line());
+    CHECK(de.column() == 0);
+    CHECK(de.peek() == 'c');
+  });
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: end of input without a trailing break")
+{
+  both_cursors("a", [](auto& de) {
+    CHECK(de.advance() == 'a');
+    CHECK(de.at_end());
+    CHECK(not de.next_line());
+  });
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: indentation")
+{
+  both_cursors("  a", [](auto& de) {
+    CHECK(de.skip_indent() == 2);
+    CHECK(de.column() == 2);
+    CHECK(de.peek() == 'a');
+  });
+  both_cursors("\ta", [](auto& de) { CHECK_THROWS(de.skip_indent()); });
+  // A tab on a line carrying no node is not an indentation error.
+  both_cursors("\t\na", [](auto& de) { CHECK_NOTHROW(de.skip_indent()); });
+  both_cursors("\t# c\na", [](auto& de) { CHECK_NOTHROW(de.skip_indent()); });
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: next_content_line skips blanks and comments")
+{
+  both_cursors("\n\n  # c\n  a", [](auto& de) {
+    CHECK(de.next_content_line() == 2);
+    CHECK(de.peek() == 'a');
+  });
+  both_cursors("a", [](auto& de) {
+    CHECK(de.next_content_line() == 0);
+    CHECK(de.peek() == 'a');
+  });
+  both_cursors("# only a comment", [](auto& de) { CHECK(de.next_content_line() == de.npos); });
+  both_cursors("", [](auto& de) { CHECK(de.next_content_line() == de.npos); });
+}
+
+// A nested block stops on the first line it does not own, and its parent then
+// asks about that same line. Without idempotence the parent skips a key.
+TEST_CASE("reflex::serde::yaml::deserializer: next_content_line is idempotent on a node")
+{
+  both_cursors("  a\n  b", [](auto& de) {
+    CHECK(de.next_content_line() == 2);
+    CHECK(de.next_content_line() == 2);
+    CHECK(de.peek() == 'a');
+    de.advance();
+    CHECK(de.next_content_line() == 2);
+    CHECK(de.peek() == 'b');
+  });
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: a comment needs whitespace before it")
+{
+  both_cursors("a # c\nb", [](auto& de) {
+    CHECK(de.advance() == 'a');
+    CHECK(de.next_content_line() == 0);
+    CHECK(de.peek() == 'b');
+  });
+  // '#' with a non-space before it is scalar content, not a comment.
+  both_cursors("a#b\nc", [](auto& de) {
+    CHECK(de.advance() == 'a');
+    CHECK(de.peek() == '#');
+  });
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: trailing content after a value is an error")
+{
+  both_cursors("a b\nc", [](auto& de) {
+    CHECK(de.advance() == 'a');
+    CHECK_THROWS(de.finish_line());
+  });
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: document markers")
+{
+  both_cursors("---\na: 1", [](auto& de) {
+    CHECK(de.next_content_line() == 0);
+    CHECK(de.peek() == 'a');
+  });
+  both_cursors("a: 1\n...\nb", [](auto& de) {
+    CHECK(de.next_content_line() == 0);
+    de.skip_to_line_end();
+    CHECK(de.next_content_line() == de.npos);
+  });
+  both_cursors("---\na: 1\n---\nb: 2", [](auto& de) {
+    CHECK(de.next_content_line() == 0);
+    de.skip_to_line_end();
+    CHECK_THROWS(de.next_content_line());
+  });
+  both_cursors("%YAML 1.2\na: 1", [](auto& de) { CHECK_THROWS(de.next_content_line()); });
+  // "---" only marks a document at column 0 and as a whole token.
+  both_cursors("---foo", [](auto& de) {
+    CHECK(de.next_content_line() == 0);
+    CHECK(de.peek() == '-');
+  });
+}
+
 struct[[= serde::naming::camel_case, = derive(Debug)]] Basic
 {
   int                                    int_member;
