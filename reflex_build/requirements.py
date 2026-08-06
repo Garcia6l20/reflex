@@ -1,4 +1,4 @@
-from pcons import ImportedTarget
+from pcons import context
 from pcons.packages.finders import ConanFinder
 
 from reflex_build.config import project_dir, build_dir, config, toolchain, VARIANT
@@ -18,4 +18,8 @@ conan = ConanFinder(
 conan.sync_profile(toolchain, build_type=VARIANT.capitalize())
 
 # Install packages - cmake_layout subfolders are auto-searched
-packages = {name: ImportedTarget.from_package(desc) for name, desc in conan.install().items()}
+conan.install()
+
+# Ahead of the pkg-config and system finders pcons chains by default, so
+# project.find_package() answers from Conan first.
+context.current_project.add_package_finder(conan)

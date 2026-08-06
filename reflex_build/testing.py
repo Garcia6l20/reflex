@@ -3,13 +3,16 @@ from pcons.core.target import Target
 from pcons.util.source_location import get_caller_location
 
 from reflex_build.config import build_dir, build_testing, project_dir
-from reflex_build.requirements import packages
+from reflex_build import requirements  # noqa: F401  (registers the Conan finder)
 
 if build_testing:
     print("Tests enabled - building test utilities")
 
+    project = context.current_project
+    env = project.default_environment
+
     # Get doctest package
-    doctest_pkg = packages.get("doctest")
+    doctest_pkg = project.find_package("doctest", required=False)
     if not doctest_pkg:
         raise RuntimeError(
             "doctest package not found - try running:\n"
@@ -21,9 +24,6 @@ if build_testing:
     doctest_lib_impl_src = write_file(
         build_dir / "doctest/impl.cpp", "#include <doctest/doctest.h>\n"
     )
-
-    project = context.current_project
-    env = project.default_environment
 
     doctest_with_main = project.StaticLibrary(
         "doctest-with-main", env, sources=[doctest_lib_impl_src]
