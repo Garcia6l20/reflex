@@ -15,10 +15,11 @@ if project.is_top_level:
 
     abi_version = 21
 
+    # -fmodules is not here: the toolchain adds it to every translation unit
+    # taking part in the module pass.
     env.cxx.flags.extend(
         [
             "-std=gnu++26",
-            "-fmodules",
             "-fimplicit-constexpr",
             "-freflection",
             f"-Wabi={abi_version}",
@@ -26,14 +27,15 @@ if project.is_top_level:
             "-fmax-errors=5",
         ]
     )
-else:
-    env = project.top_level().default_environment
-    project._environments.append(env)
 
-if VARIANT == "debug":
-    env.cxx.flags.extend(["-g", "-O0"])
-elif VARIANT == "release":
-    env.cxx.flags.append("-O3")
+    env.set_variant(VARIANT)
+    if VARIANT == "release":
+        # After the variant, so it wins over the preset's -O2.
+        env.cxx.flags.append("-O3")
+else:
+    # A sub-project with no environment of its own inherits the enclosing
+    # project's, so there is nothing to register here.
+    env = project.default_environment
 
 add_subdirectory("core")
 add_subdirectory("cli")
