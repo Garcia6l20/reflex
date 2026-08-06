@@ -107,11 +107,10 @@ def nanobind_library(project, env):
         "nanobind.runtime", env, sources=[prefix / "src" / "nb_combined.cpp"]
     )
     lib.public.link_libs.extend([nanobind, robin_map])
-    # -isystem, not an include_dir and not -I: the module scan command rewrites
-    # every -I as project relative, which turns an out-of-tree path into
-    # "..//usr/include/python3.14". -isystem is left alone, and it silences the
-    # CPython headers' own warnings as well.
-    lib.public.compile_flags.append(f"-isystem{_require_python_headers()}")
+    # A system include dir, not an include_dir: the CPython headers are not
+    # ours to fix, so their warnings are silenced, and the toolchain spells it
+    # the way each compiler wants (-isystem, /external:I).
+    lib.public.system_include_dirs.append(_require_python_headers())
     # -fPIC because the archive is linked into a shared object. Without it the
     # linker reports "failed to set dynamic section sizes: bad value", which
     # names neither the flag nor the file.

@@ -1,4 +1,4 @@
-from pcons import context
+from pcons import context, write_file
 from pcons.core.target import Target
 from pcons.util.source_location import get_caller_location
 
@@ -16,11 +16,11 @@ if build_testing:
             "  conan install . --output-folder=build/conan --build=missing"
         )
 
-    # Create a linkable library
-    doctest_lib_impl_src = build_dir / "doctest/impl.cpp"
-    if not doctest_lib_impl_src.exists():
-        doctest_lib_impl_src.parent.mkdir(parents=True, exist_ok=True)
-        doctest_lib_impl_src.write_text("#include <doctest/doctest.h>\n")
+    # Create a linkable library. write_file leaves the timestamp alone when the
+    # content has not changed, so nothing downstream rebuilds.
+    doctest_lib_impl_src = write_file(
+        build_dir / "doctest/impl.cpp", "#include <doctest/doctest.h>\n"
+    )
 
     project = context.current_project
     env = project.default_environment
