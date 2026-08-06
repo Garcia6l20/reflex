@@ -334,6 +334,157 @@ TEST_CASE("reflex::serde::yaml::deserializer: document markers")
   });
 }
 
+namespace
+{
+  // Both cursors, one answer. Every load case below runs through this.
+  template <typename T> void check_load(std::string_view text, T const& expected)
+  {
+    CHECK(yaml::deserializer{text}.template load<T>() == expected);
+    std::istringstream in{std::string{text}};
+    CHECK(yaml::deserializer{in}.template load<T>() == expected);
+  }
+
+  template <typename T> void check_load_throws(std::string_view text)
+  {
+    CHECK_THROWS(yaml::deserializer{text}.template load<T>());
+    std::istringstream in{std::string{text}};
+    CHECK_THROWS(yaml::deserializer{in}.template load<T>());
+  }
+} // namespace
+
+TEST_CASE("reflex::serde::yaml::deserializer: plain scalars")
+{
+  check_load<std::string>("hello", "hello");
+  check_load<std::string>("hello world", "hello world");
+  check_load<std::string>("a:b", "a:b");
+  check_load<std::string>("a#b", "a#b");
+  check_load<std::string>("http://x#y", "http://x#y");
+  check_load<std::string>("1.2.3-rc1", "1.2.3-rc1");
+  check_load<std::string>("a,b", "a,b"); // ',' is only structural in flow context
+  // Trailing whitespace is not part of a plain scalar, interior space is.
+  check_load<std::string>("hello   ", "hello");
+  check_load<std::string>("a  b", "a  b");
+  check_load<std::string>("a #c", "a");
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: quoted scalars")
+{
+  check_load<std::string>("'it''s'", "it's");
+  check_load<std::string>("''", "");
+  check_load<std::string>("'a: b'", "a: b");
+  check_load<std::string>("'null'", "null");
+  check_load<std::string>("\"a\\nb\"", "a\nb");
+  check_load<std::string>("\"a\\tb\"", "a\tb");
+  check_load<std::string>("\"\\x41\"", "A");
+  check_load<std::string>("\"\\u0041\"", "A");
+  check_load<std::string>("\"\\e[0m\"", "\x1B[0m");
+  check_load<std::string>("\"a\\\"b\"", "a\"b");
+  check_load<std::string>("\"a\\\\b\"", "a\\b");
+  check_load_throws<std::string>("'unterminated");
+  check_load_throws<std::string>("\"unterminated");
+  check_load_throws<std::string>("\"\\q\"");
+  check_load_throws<std::string>("\"\\u00e9\""); // above 0x7F, not implemented
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: literal block scalars")
+{
+  check_load<std::string>("|\n  one\n  two", "one\ntwo\n");
+  check_load<std::string>("|-\n  one\n  two", "one\ntwo");
+  check_load<std::string>("|+\n  one\n  two\n\n", "one\ntwo\n\n");
+  check_load<std::string>("|\n  one\n\n  two", "one\n\ntwo\n");
+  check_load<std::string>("|\n  one\n    deeper", "one\n  deeper\n");
+  check_load<std::string>("|2\n  one\n  two", "one\ntwo\n");
+  check_load<std::string>("|\n  # not a comment", "# not a comment\n");
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: folded block scalars")
+{
+  check_load<std::string>(">\n  one\n  two", "one two\n");
+  check_load<std::string>(">-\n  one\n  two", "one two");
+  check_load<std::string>(">\n  one\n\n  two", "one\ntwo\n");
+  check_load<std::string>(">\n  one", "one\n");
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: numbers")
+{
+  check_load<int>("42", 42);
+  check_load<int>("-7", -7);
+  check_load<int>("+7", 7);
+  check_load<int>("0x1F", 31);
+  check_load<int>("0o17", 15);
+  check_load<double>("1.5", 1.5);
+  check_load<double>("-0.5", -0.5);
+  check_load<double>("1e10", 1e10);
+  check_load<double>(".inf", std::numeric_limits<double>::infinity());
+  check_load<double>("-.inf", -std::numeric_limits<double>::infinity());
+  CHECK(std::isnan(yaml::deserializer{".nan"sv}.load<double>()));
+
+  check_load_throws<int>("1.5");
+  check_load_throws<int>("42abc");
+  check_load_throws<double>("1.2.3");
+  check_load_throws<unsigned>("-1");
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: booleans")
+{
+  check_load<bool>("true", true);
+  check_load<bool>("True", true);
+  check_load<bool>("TRUE", true);
+  check_load<bool>("false", false);
+  check_load<bool>("False", false);
+  // A 1.1 boolean is a string in 1.2, so guessing would make the value depend
+  // on the reader. Named error instead.
+  check_load_throws<bool>("yes");
+  check_load_throws<bool>("off");
+  check_load_throws<bool>("y");
+  check_load_throws<bool>("maybe");
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: null and optional")
+{
+  check_load<std::optional<int>>("3", std::optional<int>{3});
+  check_load<std::optional<int>>("null", std::nullopt);
+  check_load<std::optional<int>>("Null", std::nullopt);
+  check_load<std::optional<int>>("NULL", std::nullopt);
+  check_load<std::optional<int>>("~", std::nullopt);
+  check_load<std::optional<int>>("", std::nullopt);
+  // "nullify" starts with "null" but is not one.
+  check_load<std::optional<std::string>>("nullify", std::optional<std::string>{"nullify"});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: string sinks")
+{
+  check_load<reflex::heapless::string<8>>("ab", reflex::heapless::string<8>{"ab"});
+  check_load_throws<reflex::heapless::string<2>>("abcdef");
+
+  std::array<char, 4> expected{};
+  expected[0] = 'a';
+  expected[1] = 'b';
+  check_load<std::array<char, 4>>("ab", expected);
+  check_load_throws<std::array<char, 2>>("abcdef");
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: a Parse-derived type")
+{
+  check_load<Color>("Green", Color::Green);
+  check_load_throws<Color>("Mauve");
+}
+
+// Whether a plain scalar needs quoting on the way out and whether it survives a
+// plain read on the way back are two halves of one rule. This is what keeps
+// them from drifting.
+TEST_CASE("reflex::serde::yaml: an unquoted scalar reads back as itself")
+{
+  static constexpr std::string_view plain[] = {
+      "hello", "hello world", "a:b", "a#b", "/a/b", "1.2.3-rc1", "-1a", "a,b", "it's", "héllo"};
+  for(std::string_view s : plain)
+  {
+    CAPTURE(s);
+    CHECK(dump(std::string{s}) == s); // the writer leaves it plain
+    check_load<std::string>(s, std::string{s});
+  }
+}
+
 struct[[= serde::naming::camel_case, = derive(Debug)]] Basic
 {
   int                                    int_member;

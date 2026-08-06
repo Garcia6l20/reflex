@@ -419,6 +419,113 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     return {std::define_static_string(s), s.size()};
   }
 
+  // Where a plain scalar ends. In block context it runs to the end of the line;
+  // inside a flow collection the flow indicators terminate it too.
+  //
+  // JSON bakes its terminator set into a constant (json.hpp:237-240). YAML
+  // cannot: "version: 1.2.3-rc1" is one plain scalar in block context, and
+  // "[1.2.3-rc1]" is one in flow context, and applying the flow set in block
+  // context truncates the first at the dot.
+  enum class scan_context
+  {
+    block,
+    flow,
+  };
+
+  constexpr bool is_flow_indicator(char c)
+  {
+    return c == ',' or c == '[' or c == ']' or c == '{' or c == '}';
+  }
+
+  constexpr bool is_null_text(std::string_view s)
+  {
+    return s.empty() or s == "~" or s == "null" or s == "Null" or s == "NULL";
+  }
+
+  // A scalar as read, plus whether it was quoted or came from a block header.
+  //
+  // The flag is what makes the round trip work: quoting defeats resolution, so
+  // '42' is the string "42" and 42 is the number. Step 10 turns on it.
+  struct scalar
+  {
+    std::string text;
+    bool        quoted = false;
+  };
+
+  template <typename Num> Num parse_number(std::string_view text)
+  {
+    if constexpr(std::floating_point<Num>)
+    {
+      if(iequals(text, ".nan"))
+      {
+        return std::numeric_limits<Num>::quiet_NaN();
+      }
+      if(iequals(text, ".inf") or iequals(text, "+.inf"))
+      {
+        return std::numeric_limits<Num>::infinity();
+      }
+      if(iequals(text, "-.inf"))
+      {
+        return -std::numeric_limits<Num>::infinity();
+      }
+      Num        value{};
+      const auto last = text.data() + text.size();
+      auto [ptr, ec]  = std::from_chars(text.data(), last, value);
+      if(ec != std::errc{} or ptr != last)
+      {
+        throw std::runtime_error(std::format("YAML: '{}' is not a number", text));
+      }
+      return value;
+    }
+    else
+    {
+      // from_chars takes neither a '+' nor a "0x"/"0o" prefix, so the sign and
+      // the base come off here and the digits go in bare.
+      std::string_view body = text;
+      bool             neg  = false;
+      if(body.starts_with('-'))
+      {
+        neg = true;
+        body.remove_prefix(1);
+      }
+      else if(body.starts_with('+'))
+      {
+        body.remove_prefix(1);
+      }
+      int base = 10;
+      if(body.starts_with("0x"))
+      {
+        base = 16;
+        body.remove_prefix(2);
+      }
+      else if(body.starts_with("0o"))
+      {
+        base = 8;
+        body.remove_prefix(2);
+      }
+      Num        value{};
+      const auto last = body.data() + body.size();
+      auto [ptr, ec]  = std::from_chars(body.data(), last, value, base);
+      if(ec != std::errc{} or ptr != last)
+      {
+        throw std::runtime_error(std::format("YAML: '{}' is not an integer", text));
+      }
+      if(neg)
+      {
+        if constexpr(std::is_signed_v<Num>)
+        {
+          value = static_cast<Num>(-value);
+        }
+        else
+        {
+          throw std::runtime_error(
+              std::format("YAML: '{}' is negative and the destination is unsigned", text));
+        }
+      }
+      return value;
+    }
+  }
+
   // A std::array<char, N> is a fixed buffer, trimmed at the first NUL.
   template <typename Str> std::string_view string_view_of(Str const& value)
   {
@@ -1095,6 +1202,614 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       const char after = peek_at(3);
       return after == '\0' or after == ' ' or after == '\t' or is_break(after);
+    }
+
+  public:
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<null_t>)
+    {
+      const auto s = de.read_scalar();
+      if(s.quoted or not detail::is_null_text(s.text))
+      {
+        throw std::runtime_error(std::format("YAML: expected a null, got '{}'", s.text));
+      }
+      return null;
+    }
+
+    template <typename T>
+    friend std::optional<T> tag_invoke(
+        tag_t<serde::deserialize>,
+        deserializer<InputIt>& de,
+        std::type_identity<std::optional<T>>)
+    {
+      if(de.at_null())
+      {
+        de.read_scalar();
+        return std::nullopt;
+      }
+      return de.template load<T>();
+    }
+
+    friend auto tag_invoke(
+        tag_t<serde::deserialize>,
+        deserializer<InputIt>& de,
+        std::type_identity<boolean>)
+    {
+      const auto s = de.read_scalar();
+      if(s.text == "true" or s.text == "True" or s.text == "TRUE")
+      {
+        return true;
+      }
+      if(s.text == "false" or s.text == "False" or s.text == "FALSE")
+      {
+        return false;
+      }
+      // Accepting these would make the value depend on which YAML version the
+      // reader implements. The serializer quotes them for the same reason, so
+      // this library never writes what it then refuses.
+      if(detail::iequals_any(s.text, {"yes", "no", "on", "off", "y", "n"}))
+      {
+        throw std::runtime_error(
+            std::format(
+                "YAML: '{}' is a boolean in YAML 1.1 but a string in 1.2; write true or false",
+                s.text));
+      }
+      throw std::runtime_error(std::format("YAML: expected a boolean, got '{}'", s.text));
+    }
+
+    template <number_c Num>
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
+    {
+      return detail::parse_number<Num>(de.read_scalar().text);
+    }
+
+    template <std::same_as<char> Char>
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Char>)
+    {
+      const auto s = de.read_scalar();
+      if(s.text.size() != 1)
+      {
+        throw std::runtime_error(
+            std::format("YAML: expected a single character, got '{}'", s.text));
+      }
+      return s.text.front();
+    }
+
+    // A string destination that neither owns writable storage nor can be
+    // pointed at the input.
+    //
+    // Refused here rather than left to the fill path below, which is written
+    // against iterators and would accept a std::string_view syntactically and
+    // then fail on the assignment with a message naming neither the type nor
+    // the member. A separate overload rather than a static_assert inside the
+    // good one: the assert alone does not stop the body instantiating, so the
+    // original error still follows it.
+    template <str_c Str>
+      requires(not serde::detail::string_sink_c<Str>)
+    friend Str
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    {
+      if constexpr(serde::detail::borrowed_string_sink_c<Str>)
+      {
+        static_assert(
+            false,
+            std::string(display_string_of(dealias(^^Str)))
+                + " cannot be a YAML string destination: this backend does not offer a borrowed"
+                  " read, because a scalar is decoded rather than pointed at (use std::string)");
+      }
+      else
+      {
+        static_assert(
+            false,
+            std::string(display_string_of(dealias(^^Str)))
+                + " cannot be a YAML string destination: it does not own writable storage"
+                  " (expected std::string, reflex::heapless::string<N> or std::array<char, N>)");
+      }
+      std::unreachable();
+    }
+
+    template <str_c Str>
+      requires serde::detail::string_sink_c<Str>
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    {
+      const auto s = de.read_scalar();
+
+      Str value{};
+      if constexpr(requires { value.append(std::string_view{}); })
+      {
+        value.append(std::string_view{s.text});
+      }
+      else if constexpr(serde::detail::growable_string_sink_c<Str>)
+      {
+        for(const char c : s.text)
+        {
+          value.push_back(c);
+        }
+      }
+      else
+      {
+        auto it = std::begin(value);
+        for(const char c : s.text)
+        {
+          if(it == std::end(value))
+          {
+            throw std::out_of_range("String too long to fit in target type");
+          }
+          *it++ = c;
+        }
+      }
+      return value;
+    }
+
+    template <derives_c<derive_t<Parse>> T>
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<T>)
+    {
+      const auto s      = de.read_scalar();
+      auto       result = parse<std::remove_cvref_t<T>>(s.text);
+      if(!result)
+      {
+        throw std::runtime_error(
+            std::format(
+                "Failed to parse value: {}", std::generic_category().message(int(result.error()))));
+      }
+      return std::move(result).value();
+    }
+
+  private:
+    detail::scan_context ctx_ = detail::scan_context::block;
+
+    // The indent of the block being parsed. A child block must start strictly
+    // deeper. no_block is the top level, where anything is deep enough - it
+    // cannot be 0, or a top-level mapping at column 0 would reject itself.
+    std::size_t block_indent_ = no_block;
+
+  public:
+    static constexpr std::size_t no_block = std::size_t(-1);
+
+    bool deeper_than_block(std::size_t indent) const
+    {
+      return block_indent_ == no_block or indent > block_indent_;
+    }
+
+    std::size_t block_indent() const
+    {
+      return block_indent_;
+    }
+
+    // Spaces and tabs within a line. A tab may separate a key from its value
+    // even though it may not indent a node, so this is not skip_indent().
+    void skip_separation()
+    {
+      while(not at_line_end() and (peek_at(0) == ' ' or peek_at(0) == '\t'))
+      {
+        advance();
+      }
+    }
+
+    // A scalar, whichever of the five forms it is written in.
+    //
+    // The caller has already skipped the separation whitespace. An empty value
+    // - nothing between the colon and the line end - is a null, and comes back
+    // as unquoted empty text so that resolution turns it into one.
+    detail::scalar read_scalar()
+    {
+      if(at_line_end())
+      {
+        return {};
+      }
+      switch(peek_at(0))
+      {
+        case '\'':
+          return {read_single_quoted(), true};
+        case '"':
+          return {read_double_quoted(), true};
+        case '|':
+        case '>':
+          return {read_block_scalar(peek_at(0)), true};
+        default:
+          return {read_plain(), false};
+      }
+    }
+
+    // Runs to the end of the line, or to ": ", or to " #", or - in flow context
+    // only - to a flow indicator. Trailing whitespace before the terminator is
+    // not part of the scalar.
+    //
+    // A plain scalar does not continue onto the next line here. YAML allows it,
+    // but the continuation would be indented deeper than its key and the
+    // mapping reader rejects that with a named error rather than mis-reading
+    // it.
+    std::string read_plain()
+    {
+      std::string out;
+      while(not at_line_end())
+      {
+        const char c = peek_at(0);
+        if(c == ':')
+        {
+          const char next = peek_at(1);
+          if(next == '\0' or next == ' ' or next == '\t' or is_break(next)
+             or (ctx_ == detail::scan_context::flow and detail::is_flow_indicator(next)))
+          {
+            break;
+          }
+        }
+        // A '#' opens a comment only after whitespace. "http://x#y" is one URL.
+        if(c == '#' and not out.empty() and (out.back() == ' ' or out.back() == '\t'))
+        {
+          break;
+        }
+        if(ctx_ == detail::scan_context::flow and detail::is_flow_indicator(c))
+        {
+          break;
+        }
+        out.push_back(c);
+        advance();
+      }
+      while(not out.empty() and (out.back() == ' ' or out.back() == '\t'))
+      {
+        out.pop_back();
+      }
+      return out;
+    }
+
+    // Single-quoted: no backslash is special and the only escape is '' for a
+    // quote.
+    std::string read_single_quoted()
+    {
+      advance(); // the opening quote
+      std::string out;
+      while(true)
+      {
+        if(at_end())
+        {
+          throw std::runtime_error("YAML: unterminated single-quoted scalar");
+        }
+        if(at_line_end())
+        {
+          throw std::runtime_error("YAML: a multi-line single-quoted scalar is not supported");
+        }
+        const char c = advance();
+        if(c == '\'')
+        {
+          if(peek_at(0) == '\'')
+          {
+            advance();
+            out.push_back('\'');
+            continue;
+          }
+          return out;
+        }
+        out.push_back(c);
+      }
+    }
+
+    std::string read_double_quoted()
+    {
+      advance(); // the opening quote
+      std::string out;
+      while(true)
+      {
+        if(at_end())
+        {
+          throw std::runtime_error("YAML: unterminated double-quoted scalar");
+        }
+        if(at_line_end())
+        {
+          throw std::runtime_error("YAML: a multi-line double-quoted scalar is not supported");
+        }
+        const char c = advance();
+        if(c == '"')
+        {
+          return out;
+        }
+        if(c != '\\')
+        {
+          out.push_back(c);
+          continue;
+        }
+        if(at_line_end())
+        {
+          throw std::runtime_error("YAML: a line break cannot follow a backslash here");
+        }
+        decode_escape_(out);
+      }
+    }
+
+    // A '|' or '>' block scalar, header and body.
+    //
+    // Stops on the first line whose indent is below the body's, WITHOUT
+    // consuming it: the cursor is left on that line's first byte with the
+    // column correct, which is exactly the position next_content_line() treats
+    // as already-parked.
+    std::string read_block_scalar(char style)
+    {
+      advance(); // '|' or '>'
+
+      std::size_t explicit_indent = 0;
+      char        chomp           = ' '; // clip
+      while(not at_line_end())
+      {
+        const char c = peek_at(0);
+        if(c >= '1' and c <= '9')
+        {
+          explicit_indent = static_cast<std::size_t>(c - '0');
+          advance();
+          continue;
+        }
+        if(c == '-' or c == '+')
+        {
+          chomp = c;
+          advance();
+          continue;
+        }
+        break;
+      }
+      finish_line(); // only spaces or a comment may follow the header
+
+      const std::size_t base = (block_indent_ == no_block) ? 0 : block_indent_;
+      std::size_t       body_indent =
+          explicit_indent != 0 ? base + explicit_indent : std::string_view::npos;
+
+      std::vector<std::string> lines;
+      while(true)
+      {
+        if(not next_line())
+        {
+          break;
+        }
+        // A break at the very end of the input terminates the line before it,
+        // it does not open an empty one after it. Without this a document
+        // ending in a newline gains a blank body line, which "|+" then keeps.
+        if(at_end())
+        {
+          break;
+        }
+        std::size_t indent = 0;
+        while(not at_end() and peek_at(0) == ' ')
+        {
+          advance();
+          ++indent;
+        }
+        if(at_line_end())
+        {
+          lines.emplace_back(); // a blank line is body content until proven otherwise
+          continue;
+        }
+        if(body_indent == std::string_view::npos)
+        {
+          if(not deeper_than_block(indent))
+          {
+            break; // the block is empty
+          }
+          body_indent = indent;
+        }
+        if(indent < body_indent)
+        {
+          break;
+        }
+        // Indentation beyond the body's own is content.
+        std::string line(indent - body_indent, ' ');
+        while(not at_line_end())
+        {
+          line.push_back(advance());
+        }
+        lines.push_back(std::move(line));
+      }
+
+      // Trailing blank lines are the chomping indicator's business, not the
+      // body's.
+      std::size_t trailing = 0;
+      while(not lines.empty() and lines.back().empty())
+      {
+        lines.pop_back();
+        ++trailing;
+      }
+
+      std::string out;
+      if(style == '|')
+      {
+        for(auto const& line : lines)
+        {
+          out += line;
+          out.push_back('\n');
+        }
+      }
+      else
+      {
+        bool        first  = true;
+        std::size_t blanks = 0;
+        for(auto const& line : lines)
+        {
+          if(line.empty())
+          {
+            ++blanks;
+            continue;
+          }
+          if(first)
+          {
+            first = false;
+          }
+          else if(blanks == 0)
+          {
+            // A single break between two non-empty lines folds to a space.
+            out.push_back(' ');
+          }
+          else
+          {
+            // Each blank line keeps its own break, the folded one included.
+            out.append(blanks, '\n');
+          }
+          out += line;
+          blanks = 0;
+        }
+        if(not out.empty())
+        {
+          out.push_back('\n');
+        }
+      }
+      out.append(trailing, '\n');
+
+      if(chomp == '-')
+      {
+        while(out.ends_with('\n'))
+        {
+          out.pop_back();
+        }
+      }
+      else if(chomp == ' ')
+      {
+        while(out.ends_with('\n'))
+        {
+          out.pop_back();
+        }
+        if(not out.empty())
+        {
+          out.push_back('\n');
+        }
+      }
+      return out;
+    }
+
+    // True when the value about to be read is a null: an empty value, '~', or
+    // one of the "null" spellings. Decided without consuming, so an optional
+    // can fall through to its element type.
+    bool at_null()
+    {
+      if(at_line_end())
+      {
+        return true;
+      }
+      const char c = peek_at(0);
+      if(c == '~')
+      {
+        return terminates_token_(peek_at(1));
+      }
+      if(c != 'n' and c != 'N')
+      {
+        return false;
+      }
+      const char c1 = peek_at(1);
+      const char c2 = peek_at(2);
+      const char c3 = peek_at(3);
+      const bool spelled =
+          (c == 'n' and c1 == 'u' and c2 == 'l' and c3 == 'l')     // null
+          or (c == 'N' and c1 == 'u' and c2 == 'l' and c3 == 'l')  // Null
+          or (c == 'N' and c1 == 'U' and c2 == 'L' and c3 == 'L'); // NULL
+      return spelled and terminates_token_(peek_at(4));
+    }
+
+  private:
+    bool terminates_token_(char c) const
+    {
+      if(c == '\0' or c == ' ' or c == '\t' or is_break(c))
+      {
+        return true;
+      }
+      return ctx_ == detail::scan_context::flow and detail::is_flow_indicator(c);
+    }
+
+    int hex_digits_(int count)
+    {
+      int value = 0;
+      for(int i = 0; i < count; ++i)
+      {
+        if(at_line_end())
+        {
+          throw std::runtime_error("YAML: truncated hexadecimal escape");
+        }
+        const char d = advance();
+        int        n = -1;
+        if(d >= '0' and d <= '9')
+        {
+          n = d - '0';
+        }
+        else if(d >= 'a' and d <= 'f')
+        {
+          n = d - 'a' + 10;
+        }
+        else if(d >= 'A' and d <= 'F')
+        {
+          n = d - 'A' + 10;
+        }
+        else
+        {
+          throw std::runtime_error(std::format("YAML: invalid hexadecimal escape digit: {}", d));
+        }
+        value = (value << 4) | n;
+      }
+      return value;
+    }
+
+    void decode_escape_(std::string& out)
+    {
+      const char esc = advance();
+      switch(esc)
+      {
+        case '0':
+          out.push_back('\0');
+          return;
+        case 'a':
+          out.push_back('\a');
+          return;
+        case 'b':
+          out.push_back('\b');
+          return;
+        case 't':
+        case '\t':
+          out.push_back('\t');
+          return;
+        case 'n':
+          out.push_back('\n');
+          return;
+        case 'v':
+          out.push_back('\v');
+          return;
+        case 'f':
+          out.push_back('\f');
+          return;
+        case 'r':
+          out.push_back('\r');
+          return;
+        case 'e':
+          out.push_back('\x1B');
+          return;
+        case ' ':
+        case '"':
+        case '/':
+        case '\\':
+          out.push_back(esc);
+          return;
+        case 'N': // NEL, U+0085
+        case '_': // NBSP, U+00A0
+        case 'L': // LS, U+2028
+        case 'P': // PS, U+2029
+          throw std::runtime_error(
+              std::format("YAML: the \\{} escape needs a multi-byte encoding, not implemented", esc));
+        case 'x':
+        case 'u':
+        case 'U':
+        {
+          // Only the subset below 0x80 is decoded, which is exactly what the
+          // serializer emits. Anything above would need a multi-byte encoding,
+          // the same limit and the same reason as json.hpp:210-213.
+          const int count = esc == 'x' ? 2 : (esc == 'u' ? 4 : 8);
+          const int code  = hex_digits_(count);
+          if(code > 0x7F)
+          {
+            throw std::runtime_error(
+                std::format("YAML: \\{} escapes above 0x7F are not implemented", esc));
+          }
+          out.push_back(static_cast<char>(code));
+          return;
+        }
+        default:
+          throw std::runtime_error(std::format("YAML: unknown escape: \\{}", esc));
+      }
     }
   };
 
