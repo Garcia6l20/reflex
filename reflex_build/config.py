@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from pcons import get_variant, get_var, find_c_toolchain, Configure
+from pcons import Configure, find_c_toolchain, get_var, get_variant
 
 # =============================================================================
 # Configuration
@@ -15,7 +15,7 @@ build_dir = Path(os.environ.get("PCONS_BUILD_DIR", project_dir / "build"))
 config = Configure(build_dir=build_dir)
 toolchain = find_c_toolchain(prefer=["gcc"])
 
-_all_options = list()
+_all_options = []
 
 
 class Option:

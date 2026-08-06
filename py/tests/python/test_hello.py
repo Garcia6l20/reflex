@@ -3,8 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import hello  # noqa: E402
-from harness import run  # noqa: E402
+import hello
+from harness import run
 
 
 def test_add():

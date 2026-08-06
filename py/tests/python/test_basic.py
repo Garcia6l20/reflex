@@ -3,8 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import basic  # noqa: E402
-from harness import run  # noqa: E402
+import basic
+from harness import run
 
 
 def expect_type_error(call):

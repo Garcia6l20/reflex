@@ -1,29 +1,29 @@
-from pcons import context
+from pcons import context, write_file
 from pcons.core.target import Target
 from pcons.util.source_location import get_caller_location
 
-from reflex_build.config import build_dir, build_testing, project_dir
-from reflex_build.requirements import packages
+from reflex_build import requirements  # noqa: F401  (registers the Conan finder)
+from reflex_build.config import build_dir, build_testing
 
 if build_testing:
     print("Tests enabled - building test utilities")
 
+    project = context.current_project
+    env = project.default_environment
+
     # Get doctest package
-    doctest_pkg = packages.get("doctest")
+    doctest_pkg = project.find_package("doctest", required=False)
     if not doctest_pkg:
         raise RuntimeError(
             "doctest package not found - try running:\n"
             "  conan install . --output-folder=build/conan --build=missing"
         )
 
-    # Create a linkable library
-    doctest_lib_impl_src = build_dir / "doctest/impl.cpp"
-    if not doctest_lib_impl_src.exists():
-        doctest_lib_impl_src.parent.mkdir(parents=True, exist_ok=True)
-        doctest_lib_impl_src.write_text("#include <doctest/doctest.h>\n")
-
-    project = context.current_project
-    env = project.default_environment
+    # Create a linkable library. write_file leaves the timestamp alone when the
+    # content has not changed, so nothing downstream rebuilds.
+    doctest_lib_impl_src = write_file(
+        build_dir / "doctest/impl.cpp", "#include <doctest/doctest.h>\n"
+    )
 
     doctest_with_main = project.StaticLibrary(
         "doctest-with-main", env, sources=[doctest_lib_impl_src]
@@ -31,27 +31,49 @@ if build_testing:
     doctest_with_main.public.link_libs.append(doctest_pkg)
     doctest_with_main.private.defines.append("DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN")
 
-    group_commands = dict()
+    def binary_name(name: str, group: str | None) -> str:
+        """Target names are flat across the project, so the group is part of it.
 
-    def test_name(name: str, group: str | None) -> str:
-        """The name the runner keys on. The prefix is the contract, not a label."""
+        Two directories both holding a test-basic.cpp would otherwise collide.
+        """
         return f"reflex-test-{group}-{name}" if group else f"reflex-test-{name}"
 
-    def add_test(
-        name: str, sources: list[str], libs: list, group: str | None = None
-    ) -> Target:
-        full = test_name(name, group)
+    def test_name(name: str, group: str | None) -> str:
+        """What the runner prints and what -R filters on."""
+        return f"{group}.{name}" if group else name
 
+    def add_test(
+        name: str,
+        sources: list[str],
+        libs: list,
+        group: str | None = None,
+        discover: str | None = "doctest",
+    ) -> Target:
+        """Build a test binary and declare it.
+
+        @p discover is None for a test whose assertions are all static_asserts:
+        compiling it is the test, and asking a binary with no case for its cases
+        yields nothing to run.
+        """
         test = project.Program(
-            full,
+            binary_name(name, group),
             env,
             sources=sources,
-            defined_at=get_caller_location(),
+            defined_at=get_caller_location(), # type: ignore
         )
         test.private.include_dirs.append(".")
         test.private.link_libs.extend([*libs, doctest_with_main])
-        project.Test(full, test, defined_at=get_caller_location())
+        # discover: the runner lists the binary's cases and runs each one
+        # separately, so a failure names the case rather than the binary.
+        project.Test(
+            test_name(name, group),
+            test,
+            labels=[group] if group else [],
+            discover=discover,
+            defined_at=get_caller_location(), # type: ignore
+        )
 
+        # The label filters what runs; the alias builds a group on its own.
         if group:
             project.Alias(f"test-{group}", test)
 
@@ -76,6 +98,7 @@ if build_testing:
             interpreter,
             args=[str(script)],
             env={"PYTHONPATH": str(module_dir(project))},
+            labels=[group] if group else [],
         )
         # program is an interpreter, not a Target, so the extension is not
         # pulled in by itself.

@@ -4,8 +4,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import ownership  # noqa: E402
-from harness import run  # noqa: E402
+import ownership
+from harness import run
 
 
 def test_a_reference_getter_hands_back_a_view():

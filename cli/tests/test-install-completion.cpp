@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <string_view>
 
 using namespace reflex;
 using namespace testutils;
@@ -23,9 +24,11 @@ struct [[= cli::command{"Install completion test."}]] install_completion_cli
 
 namespace
 {
-fs::path temp_home()
+// One directory per shell: the cases run in separate processes, and a shared
+// directory would be wiped from under whichever case started second.
+fs::path temp_home(std::string_view shell)
 {
-  auto home = fs::temp_directory_path() / "reflex-install-completion";
+  auto home = fs::temp_directory_path() / ("reflex-install-completion-" + std::string{shell});
   fs::remove_all(home);
   fs::create_directories(home);
   return home;
@@ -45,7 +48,7 @@ std::string read_text(fs::path const& path)
 
 TEST_CASE("reflex::cli: install completion for bash")
 {
-  auto const home = temp_home();
+  auto const home = temp_home("bash");
   auto const home_str = home.string();
   set_env("HOME", home_str.c_str(), true);
   set_env("SHELL", "/bin/bash", true);
@@ -78,7 +81,7 @@ TEST_CASE("reflex::cli: install completion for bash")
 
 TEST_CASE("reflex::cli: install completion for zsh")
 {
-  auto const home = temp_home();
+  auto const home = temp_home("zsh");
   auto const home_str = home.string();
   set_env("HOME", home_str.c_str(), true);
   set_env("SHELL", "zsh", true);
@@ -110,7 +113,7 @@ TEST_CASE("reflex::cli: install completion for zsh")
 
 TEST_CASE("reflex::cli: install completion for fish")
 {
-  auto const home = temp_home();
+  auto const home = temp_home("fish");
   auto const home_str = home.string();
   set_env("HOME", home_str.c_str(), true);
   set_env("SHELL", "fish", true);
