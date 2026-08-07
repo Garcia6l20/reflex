@@ -1913,9 +1913,6 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   // indented less, and a line indented more is an error rather than a
   // continuation.
   //
-  // std::map is deliberately absent, and not by choice here: it has no
-  // object_visitor, so it satisfies neither this overload's constraint nor
-  // json's. It serializes and does not read back, in every backend.
   template <typename InputIt, object_visitable_c Map>
     requires(
         not(meta::is_template_instance_of(^^Map, ^^poly::var)

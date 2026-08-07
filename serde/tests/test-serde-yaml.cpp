@@ -806,6 +806,26 @@ TEST_CASE("reflex::serde::yaml::deserializer: an unknown key is rejected")
   check_load_throws<Inner>("a: 1\nb: two\nc: 3");
 }
 
+// A map used to serialize without reading back, in every backend, for want of
+// an object_visitor specialization. It reads back now.
+TEST_CASE("reflex::serde::yaml::deserializer: a map round-trips")
+{
+  const auto m = std::map<std::string, int>{
+      {"a", 1},
+      {"b", 2}
+  };
+  CHECK(dump(m) == "a: 1\nb: 2");
+  check_load<std::map<std::string, int>>("a: 1\nb: 2", m);
+
+  const auto nested = std::map<std::string, Inner>{
+      {"k", {1, "two"}}
+  };
+  CHECK(dump(nested) == "k:\n  a: 1\n  b: two");
+  check_load<std::map<std::string, Inner>>("k:\n  a: 1\n  b: two", nested);
+
+  check_load<WithMap>("name: x\nm:\n  a: 1", WithMap{"x", {{"a", 1}}});
+}
+
 // The depth counter must return to zero after every nested value, or the next
 // sibling is written one level too deep. The unwind-through-a-throw half of the
 // guard's contract is untested: the yaml serializer has no runtime throw path
