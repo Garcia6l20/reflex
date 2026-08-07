@@ -732,6 +732,80 @@ TEST_CASE("reflex::serde::yaml: a poly::var member opens a block when it holds a
   CHECK(dump(Holder{yaml::value{}, 3}) == "v: null\nafter: 3");
 }
 
+TEST_CASE("reflex::serde::yaml::deserializer: a flat block mapping")
+{
+  check_load<Inner>("a: 1\nb: two", Inner{1, "two"});
+  check_load<Inner>("a: 1\nb: two\n", Inner{1, "two"}); // trailing newline
+  check_load<Basic>(
+      "intMember: 1\nstringMember: x\ndouble-member: 2.5", Basic{1, "x", 2.5});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: nested block mappings")
+{
+  check_load<Outer>("before: 1\ninner:\n  a: 2\n  b: two\nafter: 3", Outer{1, {2, "two"}, 3});
+  check_load<Deep>(
+      "outer:\n  before: 1\n  inner:\n    a: 2\n    b: two\n  after: 3",
+      Deep{{1, {2, "two"}, 3}});
+}
+
+// The key after a nested block is the one next_content_line()'s idempotence
+// exists for: the nested reader stops on that line, and this loop must not
+// skip it.
+TEST_CASE("reflex::serde::yaml::deserializer: a key following a nested block is not skipped")
+{
+  check_load<Outer>("inner:\n  a: 2\n  b: two\nbefore: 1\nafter: 3", Outer{1, {2, "two"}, 3});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: quoted keys")
+{
+  check_load<Renamed>("'a: b': 1\nit's: 2", Renamed{1, 2});
+  check_load<Renamed>("\"a: b\": 1\nit's: 2", Renamed{1, 2});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: comments and blank lines between entries")
+{
+  check_load<Inner>("# leading\na: 1\n\n# between\nb: two\n# trailing", Inner{1, "two"});
+  check_load<Inner>("a: 1 # trailing on the line\nb: two", Inner{1, "two"});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: a missing key leaves the member default")
+{
+  check_load<Inner>("a: 1", Inner{1, ""});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: an empty value is a null")
+{
+  check_load<Opt>("name: x\ncount:", Opt{"x", std::nullopt});
+  check_load<Opt>("name: x\ncount: null", Opt{"x", std::nullopt});
+  check_load<Inner>("a: 1\nb:", Inner{1, ""});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: an optional aggregate member")
+{
+  check_load<OptAggregate>("inner:\n  a: 1\n  b: two\nafter: 3", OptAggregate{Inner{1, "two"}, 3});
+  check_load<OptAggregate>("inner: null\nafter: 3", OptAggregate{std::nullopt, 3});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: a block scalar as a mapping value")
+{
+  check_load<Inner>("a: 1\nb: |\n  one\n  two", Inner{1, "one\ntwo\n"});
+  check_load<Outer>("before: 1\ninner:\n  a: 2\n  b: |-\n    x\nafter: 3", Outer{1, {2, "x"}, 3});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: malformed mappings are named errors")
+{
+  check_load_throws<Inner>("a: 1\n  b: two");  // over-indented continuation
+  check_load_throws<Inner>("a: 1\nnosuchkey: 2"); // object_visitor rejects an unknown key
+  check_load_throws<Inner>("a 1");             // no colon
+}
+
+// An unknown key is an error, not a skip. That is object_visitor's behaviour
+// (object_visit.hpp:132), shared with every other backend, not a yaml choice.
+TEST_CASE("reflex::serde::yaml::deserializer: an unknown key is rejected")
+{
+  check_load_throws<Inner>("a: 1\nb: two\nc: 3");
+}
+
 // The depth counter must return to zero after every nested value, or the next
 // sibling is written one level too deep. The unwind-through-a-throw half of the
 // guard's contract is untested: the yaml serializer has no runtime throw path

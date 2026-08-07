@@ -896,6 +896,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     using base = serde::detail::subrange_deserializer<InputIt>;
     using base::cursor_;
 
+    // Backs read_key() when the key is quoted or needs trimming, which on this
+    // backend is every key: a scalar is decoded rather than pointed at. One
+    // buffer, not a pool - a key is consumed by object_visit_flat and dead
+    // before the next one is read.
+    std::string key_buf_;
+
     // Bounded pushback. YAML cannot be lexed with one byte of lookahead: "- "
     // is a sequence entry and "-1" is a number, ": " ends a plain scalar and
     // ":" does not, and "---" is a marker. A stream cursor is an input
@@ -1222,6 +1228,19 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         deserializer<InputIt>& de,
         std::type_identity<std::optional<T>>)
     {
+      // Nothing after the colon does not mean null on its own: the value may be
+      // a block on the following lines. Only the indent of the next node tells
+      // an absent value from a nested one, and next_content_line() is
+      // idempotent so asking does not disturb the enclosing loop.
+      if(de.at_line_end())
+      {
+        const std::size_t next = de.next_content_line();
+        if(next == deserializer<InputIt>::npos or not de.deeper_than_block(next))
+        {
+          return std::nullopt;
+        }
+        return de.template load<T>();
+      }
       if(de.at_null())
       {
         de.read_scalar();
@@ -1378,6 +1397,77 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     std::size_t block_indent() const
     {
       return block_indent_;
+    }
+
+    // Sets the indent of the block being parsed for the duration, restoring the
+    // enclosing one on the way out. RAII so a throwing member cannot leave a
+    // stale indent behind for the rest of the document.
+    class indent_scope
+    {
+      deserializer* d_;
+      std::size_t   saved_;
+
+    public:
+      indent_scope(deserializer& d, std::size_t indent) : d_{&d}, saved_{d.block_indent_}
+      {
+        d_->block_indent_ = indent;
+      }
+      indent_scope(indent_scope const&)            = delete;
+      indent_scope& operator=(indent_scope const&) = delete;
+      ~indent_scope()
+      {
+        d_->block_indent_ = saved_;
+      }
+    };
+
+    [[nodiscard]] indent_scope enter_block(std::size_t indent)
+    {
+      return indent_scope{*this, indent};
+    }
+
+    // A mapping key, up to but not including its ':'.
+    //
+    // The view points into key_buf_ and stays valid only until the next call.
+    // That is enough: object_visit_flat compares the key and copies whatever it
+    // needs before it invokes the callback, so the value reader - which may
+    // read another key - never runs while this one is still needed.
+    //
+    // A plain key may not contain a ':' at all, which is why the terminator
+    // here is the bare colon rather than the ": " a plain *value* stops at.
+    std::string_view read_key()
+    {
+      const char c = peek();
+      if(c == '\'')
+      {
+        key_buf_ = read_single_quoted();
+        return key_buf_;
+      }
+      if(c == '"')
+      {
+        key_buf_ = read_double_quoted();
+        return key_buf_;
+      }
+
+      key_buf_.clear();
+      while(not at_line_end())
+      {
+        const char ch = peek_at(0);
+        if(ch == ':')
+        {
+          break;
+        }
+        if(ctx_ == detail::scan_context::flow and detail::is_flow_indicator(ch))
+        {
+          break;
+        }
+        key_buf_.push_back(ch);
+        advance();
+      }
+      while(not key_buf_.empty() and (key_buf_.back() == ' ' or key_buf_.back() == '\t'))
+      {
+        key_buf_.pop_back();
+      }
+      return key_buf_;
     }
 
     // Spaces and tabs within a line. A tab may separate a key from its value
@@ -1814,6 +1904,75 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+
+  // A block mapping into an aggregate or a poly::obj.
+  //
+  // Unlike JSON's, this loop has no delimiters to steer by (json.hpp:1056-1151
+  // reads '{', ',' and '}'). The extent of a block mapping is its indentation:
+  // it starts at the column of its first key, ends at the first content line
+  // indented less, and a line indented more is an error rather than a
+  // continuation.
+  //
+  // std::map is deliberately absent, and not by choice here: it has no
+  // object_visitor, so it satisfies neither this overload's constraint nor
+  // json's. It serializes and does not read back, in every backend.
+  template <typename InputIt, object_visitable_c Map>
+    requires(
+        not(meta::is_template_instance_of(^^Map, ^^poly::var)
+            // std::array<char, N> may be considered a visitable object
+            or str_c<Map>
+            or seq_c<Map>))
+  auto tag_invoke(
+      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+  {
+    const std::size_t base = de.next_content_line();
+
+    // Nothing here, or nothing deep enough to open a block: an absent value.
+    // The cursor stays parked on whatever line ended the search, which is what
+    // the enclosing loop is about to ask about.
+    if(base == de.npos or not de.deeper_than_block(base))
+    {
+      return Map{};
+    }
+
+    if(de.peek_at(0) == '{')
+    {
+      throw std::runtime_error("YAML: flow mappings are not supported yet");
+    }
+
+    Map  value{};
+    auto scope = de.enter_block(base);
+
+    while(true)
+    {
+      const std::string_view key = de.read_key();
+      if(de.at_line_end() or de.peek_at(0) != ':')
+      {
+        throw std::runtime_error(std::format("YAML: expected ':' after the key '{}'", key));
+      }
+      de.advance(); // ':'
+      de.skip_separation();
+
+      serde::object_visit_flat(key, value, [&]<typename V>(V& v) {
+        v = de.template load<std::remove_cvref_t<V>>();
+      });
+
+      // The value reader stopped at the end of its line, or - for a nested
+      // block - on the first line it did not own. next_content_line() is
+      // idempotent on the latter, which is what keeps this loop from skipping
+      // the key that ended the nested block.
+      const std::size_t next = de.next_content_line();
+      if(next == de.npos or next < base)
+      {
+        break;
+      }
+      if(next > base)
+      {
+        throw std::runtime_error("YAML: unexpected indentation inside a mapping");
+      }
+    }
+    return value;
+  }
 
 } // namespace reflex::serde::yaml
 
