@@ -1425,6 +1425,21 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       return indent_scope{*this, indent};
     }
 
+    // A "- " opening a block sequence entry, as opposed to a '-' starting a
+    // negative number. The space is the whole difference, which is why this
+    // needs the lookahead buffer.
+    //
+    // "---" is not one: the second '-' fails the test.
+    bool at_sequence_entry()
+    {
+      if(at_line_end() or peek_at(0) != '-')
+      {
+        return false;
+      }
+      const char next = peek_at(1);
+      return next == '\0' or next == ' ' or next == '\t' or is_break(next);
+    }
+
     // A mapping key, up to but not including its ':'.
     //
     // The view points into key_buf_ and stays valid only until the next call.
@@ -1904,6 +1919,110 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+
+  // A block sequence, one "- " per entry.
+  //
+  // Two things make this harder than a block mapping.
+  //
+  // A sequence that is the value of a mapping key may sit at the key's OWN
+  // indent, not deeper - both of these are the same document:
+  //
+  //   values:        values:
+  //     - 1          - 1
+  //     - 2          - 2
+  //
+  // so the "a child block must be strictly deeper" rule has an exception here.
+  // It costs no extra state: a mapping never begins with "- ", so a sequence
+  // entry at the enclosing indent can only be the flush form.
+  //
+  // The same collapse means the sequence cannot tell its own end from the
+  // parent's next key by indent alone. A line at the sequence's indent that is
+  // not an entry ends the sequence, rather than being an error.
+  template <typename InputIt, seq_c Seq>
+  auto tag_invoke(
+      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Seq>)
+  {
+    const std::size_t base = de.next_content_line();
+    if(base == de.npos)
+    {
+      return Seq{};
+    }
+    if(de.peek_at(0) == '[')
+    {
+      throw std::runtime_error("YAML: flow sequences are not supported yet");
+    }
+    if(not de.at_sequence_entry())
+    {
+      if(not de.deeper_than_block(base))
+      {
+        return Seq{}; // an absent value, and the cursor stays parked for the parent
+      }
+      throw std::runtime_error("YAML: expected '- ' at the start of a sequence");
+    }
+
+    Seq value{};
+    using elem_type = typename std::remove_cvref_t<Seq>::value_type;
+
+    // Same split as json.hpp:984-999: grow when the destination can, otherwise
+    // fill through its own iterators and refuse to overrun.
+    auto push = [&value] {
+      if constexpr(requires { value.push_back(elem_type{}); })
+      {
+        return [&value](elem_type&& elem) { value.push_back(std::forward<elem_type>(elem)); };
+      }
+      else
+      {
+        return [it = std::begin(value), end = std::end(value)](elem_type&& elem) mutable {
+          if(it == end)
+          {
+            throw std::out_of_range("Sequence has more elements than target type can hold");
+          }
+          *it++ = std::forward<elem_type>(elem);
+        };
+      }
+    }();
+
+    auto scope = de.enter_block(base);
+
+    while(true)
+    {
+      de.advance(); // '-'
+      de.skip_separation();
+
+      if(de.at_line_end())
+      {
+        // The entry's value is on the following lines, or there is none.
+        const std::size_t inner = de.next_content_line();
+        if(inner == de.npos or inner <= base)
+        {
+          push(elem_type{});
+        }
+        else
+        {
+          push(de.template load<elem_type>());
+        }
+      }
+      else
+      {
+        push(de.template load<elem_type>()); // compact: the entry starts here
+      }
+
+      const std::size_t next = de.next_content_line();
+      if(next == de.npos or next < base)
+      {
+        break;
+      }
+      if(next > base)
+      {
+        throw std::runtime_error("YAML: unexpected indentation inside a sequence");
+      }
+      if(not de.at_sequence_entry())
+      {
+        break; // the flush form: a non-entry at this indent belongs to the parent
+      }
+    }
+    return value;
+  }
 
   // A block mapping into an aggregate or a poly::obj.
   //

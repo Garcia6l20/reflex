@@ -806,6 +806,68 @@ TEST_CASE("reflex::serde::yaml::deserializer: an unknown key is rejected")
   check_load_throws<Inner>("a: 1\nb: two\nc: 3");
 }
 
+TEST_CASE("reflex::serde::yaml::deserializer: a block sequence")
+{
+  check_load<std::vector<int>>("- 1\n- 2\n- 3", std::vector<int>{1, 2, 3});
+  check_load<std::vector<std::string>>("- a\n- 'null'", std::vector<std::string>{"a", "null"});
+  check_load<std::vector<int>>("- 1\n- 2\n", std::vector<int>{1, 2}); // trailing newline
+}
+
+// Both spellings are the same document. The serializer emits the indented one;
+// the flush one is what hand-written YAML overwhelmingly uses.
+TEST_CASE("reflex::serde::yaml::deserializer: a sequence under a key, indented or flush")
+{
+  check_load<WithSeq>("name: x\nvalues:\n  - 1\n  - 2", WithSeq{"x", {1, 2}});
+  check_load<WithSeq>("name: x\nvalues:\n- 1\n- 2", WithSeq{"x", {1, 2}});
+  // The flush form again, with a key after it: the sequence and the parent
+  // mapping share an indent, so only "this line is not an entry" ends it.
+  check_load<WithSeq>("values:\n- 1\n- 2\nname: x", WithSeq{"x", {1, 2}});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: the compact notation")
+{
+  check_load<std::vector<std::vector<int>>>(
+      "- - 1\n  - 2\n- - 3", std::vector<std::vector<int>>{{1, 2}, {3}});
+  check_load<std::vector<Inner>>(
+      "- a: 1\n  b: two\n- a: 2\n  b: three", std::vector<Inner>{{1, "two"}, {2, "three"}});
+  // The same shape with an empty "values: []" needs the flow reader and is
+  // pinned in the flow test instead.
+  check_load<std::vector<WithSeq>>(
+      "- name: x\n  values:\n    - 1\n    - 2\n- name: 'y'\n  values:\n    - 3",
+      std::vector<WithSeq>{{"x", {1, 2}}, {"y", {3}}});
+}
+
+// "- 1" is an entry and "-1" is a number. The space is the whole difference.
+TEST_CASE("reflex::serde::yaml::deserializer: a dash without a space is not an entry")
+{
+  check_load<std::vector<int>>("- -1\n- -2", std::vector<int>{-1, -2});
+  check_load<int>("-1", -1);
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: an entry with nothing after the dash is null")
+{
+  check_load<std::vector<std::optional<int>>>(
+      "-\n-", std::vector<std::optional<int>>{std::nullopt, std::nullopt});
+  check_load<std::vector<int>>("-\n- 2", std::vector<int>{0, 2});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: an entry whose value is on the following lines")
+{
+  check_load<std::vector<Inner>>("-\n  a: 1\n  b: two", std::vector<Inner>{{1, "two"}});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: a fixed-capacity sequence destination")
+{
+  check_load<std::array<int, 3>>("- 1\n- 2\n- 3", std::array<int, 3>{1, 2, 3});
+  check_load_throws<std::array<int, 2>>("- 1\n- 2\n- 3");
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: malformed sequences are named errors")
+{
+  check_load_throws<std::vector<int>>("- 1\n  - 2"); // over-indented entry
+  check_load_throws<std::vector<int>>("a: 1");       // a mapping where a sequence was asked for
+}
+
 // A map used to serialize without reading back, in every backend, for want of
 // an object_visitor specialization. It reads back now.
 TEST_CASE("reflex::serde::yaml::deserializer: a map round-trips")
