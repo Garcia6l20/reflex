@@ -944,6 +944,162 @@ TEST_CASE("reflex::serde::yaml::deserializer: a JSON document parses as YAML")
   check_load<std::vector<Inner>>(seq_out, std::vector<Inner>{{1, "two"}, {2, "three"}});
 }
 
+namespace
+{
+  // Which alternative a yaml::value ended up holding, as a name, so a failure
+  // says "string" rather than a variant index.
+  std::string held(yaml::value const& v)
+  {
+    if(v.is_null())
+    {
+      return "null";
+    }
+    if(v.is_array())
+    {
+      return "array";
+    }
+    if(v.is_object())
+    {
+      return "object";
+    }
+    return reflex::visit(
+        []<typename T>(T const&) -> std::string {
+          if constexpr(std::same_as<std::remove_cvref_t<T>, yaml::boolean>)
+          {
+            return "boolean";
+          }
+          else if constexpr(std::same_as<std::remove_cvref_t<T>, yaml::number>)
+          {
+            return "number";
+          }
+          else if constexpr(std::same_as<std::remove_cvref_t<T>, yaml::string>)
+          {
+            return "string";
+          }
+          else
+          {
+            return "other";
+          }
+        },
+        v);
+  }
+
+  void check_holds(std::string_view text, std::string_view kind)
+  {
+    CAPTURE(text);
+    CHECK(held(yaml::deserializer{text}.load<yaml::value>()) == kind);
+    std::istringstream in{std::string{text}};
+    CHECK(held(yaml::deserializer{in}.load<yaml::value>()) == kind);
+  }
+} // namespace
+
+TEST_CASE("reflex::serde::yaml: a plain scalar resolves against the core schema")
+{
+  check_holds("null", "null");
+  check_holds("~", "null");
+  check_holds("", "null");
+  check_holds("true", "boolean");
+  check_holds("False", "boolean");
+  check_holds("42", "number");
+  check_holds("-7", "number");
+  check_holds("1.5", "number");
+  check_holds(".inf", "number");
+  check_holds(".nan", "number");
+  check_holds("0x1F", "number");
+  check_holds("hello", "string");
+  check_holds("1.2.3", "string");
+  // YAML 1.2 core reads these as strings. load<bool>() refuses them instead,
+  // which is not a contradiction: see resolve_scalar.
+  check_holds("yes", "string");
+  check_holds("no", "string");
+  check_holds("on", "string");
+}
+
+// The rule the round trip depends on.
+TEST_CASE("reflex::serde::yaml: quoting defeats resolution")
+{
+  check_holds("'42'", "string");
+  check_holds("\"true\"", "string");
+  check_holds("'null'", "string");
+  check_holds("|\n  42", "string");
+  check_holds(">\n  42", "string");
+}
+
+TEST_CASE("reflex::serde::yaml: a value's structure is decided by syntax")
+{
+  check_holds("- 1\n- 2", "array");
+  check_holds("[1, a]", "array");
+  check_holds("a: 1\nb: 2", "object");
+  check_holds("{a: 1}", "object");
+  check_holds("- ", "array");
+  // "-1" is a number, not a one-element sequence. The space is the difference.
+  check_holds("-1", "number");
+  // A plain scalar containing a colon is not a mapping unless a space follows.
+  check_holds("a:b", "string");
+  check_holds("http://x", "string");
+  // A ':' inside quotes does not open a mapping either.
+  check_holds("'a: b'", "string");
+}
+
+TEST_CASE("reflex::serde::yaml: nested poly::var values")
+{
+  auto v = yaml::deserializer{"a:\n  b:\n    - 1\n    - 2"sv}.load<yaml::value>();
+  REQUIRE(v.is_object());
+  auto& inner = v["a"];
+  REQUIRE(inner.is_object());
+  REQUIRE(inner["b"].is_array());
+  CHECK(inner["b"].as_array().size() == 2);
+
+  const auto mixed = yaml::deserializer{"[1, a, true, null]"sv}.load<yaml::value>();
+  REQUIRE(mixed.is_array());
+  CHECK(held(mixed.as_array()[0]) == "number");
+  CHECK(held(mixed.as_array()[1]) == "string");
+  CHECK(held(mixed.as_array()[2]) == "boolean");
+  CHECK(held(mixed.as_array()[3]) == "null");
+}
+
+// At namespace scope, not inside the TEST_CASE. A local struct spliced through
+// reflection fails to compile here: `value.[:member:]` reports "invalid use of
+// non-static data member" on every member.
+struct[[= derive(Debug)]] VarHolder
+{
+  yaml::value v;
+  int         after;
+};
+
+TEST_CASE("reflex::serde::yaml: a poly::var member of an aggregate")
+{
+  const auto scalar = yaml::deserializer{"v: x\nafter: 3"sv}.load<VarHolder>();
+  CHECK(held(scalar.v) == "string");
+  CHECK(scalar.after == 3);
+
+  const auto seq = yaml::deserializer{"v:\n  - 1\n  - 2\nafter: 3"sv}.load<VarHolder>();
+  CHECK(held(seq.v) == "array");
+  CHECK(seq.after == 3);
+
+  const auto absent = yaml::deserializer{"v:\nafter: 3"sv}.load<VarHolder>();
+  CHECK(held(absent.v) == "null");
+  CHECK(absent.after == 3);
+}
+
+// load() with no explicit type reads a yaml::value, matching json.
+TEST_CASE("reflex::serde::yaml: load with no type reads a value")
+{
+  CHECK(held(yaml::deserializer{"a: 1"sv}.load()) == "object");
+}
+
+TEST_CASE("reflex::serde::yaml: a value round-trips through the serializer")
+{
+  static constexpr std::string_view docs[] = {
+      "a: 1\nb: two", "- 1\n- two\n- true", "a:\n  b:\n    - 1\n    - 2", "'42'", "x"};
+  for(std::string_view doc : docs)
+  {
+    CAPTURE(doc);
+    const auto v = yaml::deserializer{doc}.load<yaml::value>();
+    CHECK(dump(v) == doc);
+  }
+}
+
 // A map used to serialize without reading back, in every backend, for want of
 // an object_visitor specialization. It reads back now.
 TEST_CASE("reflex::serde::yaml::deserializer: a map round-trips")

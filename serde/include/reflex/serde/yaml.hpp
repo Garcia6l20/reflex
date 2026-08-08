@@ -902,18 +902,22 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // before the next one is read.
     std::string key_buf_;
 
-    // Bounded pushback. YAML cannot be lexed with one byte of lookahead: "- "
-    // is a sequence entry and "-1" is a number, ": " ends a plain scalar and
-    // ":" does not, and "---" is a marker. A stream cursor is an input
+    // Pushback. YAML cannot be lexed with one byte of lookahead: "- " is a
+    // sequence entry and "-1" is a number, ": " ends a plain scalar and ":"
+    // does not, "---" is a marker, and deciding whether a line is a mapping at
+    // all means scanning it for an unquoted ": ". A stream cursor is an input
     // iterator, so it cannot be copied and re-read to answer those - hence a
-    // small buffer the parser peeks through instead.
+    // buffer the parser peeks through instead.
+    //
+    // Grows on demand rather than being a fixed array: the mapping lookahead is
+    // bounded by a line, not by a constant. Reads pop by advancing ahead_pos_
+    // and the buffer is compacted once the consumed prefix dominates, which
+    // keeps a pop amortized O(1) instead of erase-from-front's O(n).
     //
     // Bytes move out of cursor_ into here, so at_end() has to account for both.
     // It is shadowed below rather than inherited for exactly that reason.
-    static constexpr std::size_t max_lookahead = 8;
-
-    std::array<char, max_lookahead> ahead_{};
-    std::size_t                     ahead_n_ = 0;
+    std::string ahead_;
+    std::size_t ahead_pos_ = 0;
 
     // 0-based column of the next byte to be read. Every block-structure
     // decision is a comparison between two of these, so it has exactly one
@@ -930,8 +934,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     char take_()
     {
       const char c = peek();
-      std::shift_left(ahead_.begin(), ahead_.begin() + ahead_n_, 1);
-      --ahead_n_;
+      ++ahead_pos_;
+      // Drop the consumed prefix once it dominates, so the buffer tracks the
+      // live lookahead rather than the whole document.
+      if(ahead_pos_ >= 64 and ahead_pos_ * 2 >= ahead_.size())
+      {
+        ahead_.erase(0, ahead_pos_);
+        ahead_pos_ = 0;
+      }
       return c;
     }
 
@@ -945,7 +955,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
     bool at_end() const
     {
-      return ahead_n_ == 0 and cursor_.empty();
+      return ahead_pos_ >= ahead_.size() and cursor_.empty();
     }
 
     // The byte `i` ahead of the cursor, or '\0' at end of input. Callers must
@@ -953,16 +963,16 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // here, which is fine because a NUL is not valid YAML.
     char peek_at(std::size_t i)
     {
-      while(ahead_n_ <= i)
+      while(ahead_.size() - ahead_pos_ <= i)
       {
         if(cursor_.empty())
         {
           return '\0';
         }
-        ahead_[ahead_n_++] = *cursor_.begin();
+        ahead_.push_back(*cursor_.begin());
         cursor_.advance(1);
       }
-      return ahead_[i];
+      return ahead_[ahead_pos_ + i];
     }
 
     char peek()
@@ -1363,6 +1373,48 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       return value;
     }
 
+    // What a poly::var holds is decided by syntax where syntax can decide it,
+    // and by the scalar's own text otherwise.
+    //
+    // JSON settles this on one byte (json.hpp:1021-1045) because its grammar
+    // makes the first byte decisive. YAML's does not: 'n' starts both null and
+    // name, a block mapping starts with whatever its first key starts with, and
+    // '-' starts both a sequence entry and a negative number. So the structural
+    // forms are tested first, each with the lookahead it needs, and everything
+    // else is read as a scalar and classified afterwards.
+    template <typename var_type>
+      requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
+    friend auto tag_invoke(
+        tag_t<serde::deserialize>,
+        deserializer<InputIt>& de,
+        std::type_identity<var_type>) -> var_type
+    {
+      const std::size_t indent = de.next_content_line();
+      if(indent == deserializer<InputIt>::npos or not de.deeper_than_block(indent))
+      {
+        return var_type{}; // an absent value; the cursor stays parked
+      }
+
+      const char c = de.peek_at(0);
+      if(c == '[')
+      {
+        return de.template load<typename var_type::arr_type>();
+      }
+      if(c == '{')
+      {
+        return de.template load<typename var_type::obj_type>();
+      }
+      if(de.at_sequence_entry())
+      {
+        return de.template load<typename var_type::arr_type>();
+      }
+      if(de.at_block_mapping())
+      {
+        return de.template load<typename var_type::obj_type>();
+      }
+      return de.template resolve_scalar<var_type>();
+    }
+
     template <derives_c<derive_t<Parse>> T>
     friend auto
         tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<T>)
@@ -1632,6 +1684,124 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       const char next = peek_at(1);
       return next == '\0' or next == ' ' or next == '\t' or is_break(next);
+    }
+
+    // Does the current line open a block mapping?
+    //
+    // The one place the parser genuinely looks ahead rather than deciding on a
+    // byte. It has to: a block mapping starts with whatever its first key
+    // starts with, so only an unquoted ':' followed by a space or the line end
+    // distinguishes "a: 1" from the plain scalar "a 1".
+    //
+    // Bounded by the line. An unbounded scan for a byte that may not be there
+    // rescans to end of input on every call and turns a linear parse quadratic
+    // - the same reasoning as detail/io.hpp:343-346.
+    bool at_block_mapping()
+    {
+      bool in_single = false;
+      bool in_double = false;
+
+      for(std::size_t i = 0;; ++i)
+      {
+        const char c = peek_at(i);
+        if(c == '\0' or is_break(c))
+        {
+          return false;
+        }
+        if(in_single)
+        {
+          // A doubled '' closes and immediately reopens, which lands on the
+          // same answer as treating it as an escape.
+          if(c == '\'')
+          {
+            in_single = false;
+          }
+          continue;
+        }
+        if(in_double)
+        {
+          if(c == '\\')
+          {
+            ++i; // whatever follows is escaped, including a quote
+            continue;
+          }
+          if(c == '"')
+          {
+            in_double = false;
+          }
+          continue;
+        }
+        if(c == '\'')
+        {
+          in_single = true;
+          continue;
+        }
+        if(c == '"')
+        {
+          in_double = true;
+          continue;
+        }
+        if(c == '#' and i > 0 and (peek_at(i - 1) == ' ' or peek_at(i - 1) == '\t'))
+        {
+          return false; // the rest of the line is a comment
+        }
+        if(c == ':')
+        {
+          const char next = peek_at(i + 1);
+          if(next == '\0' or next == ' ' or next == '\t' or is_break(next))
+          {
+            return true;
+          }
+        }
+      }
+    }
+
+    // A scalar, classified against the YAML 1.2 core schema.
+    //
+    // Quoting defeats resolution: '42' is the string and 42 is the number. That
+    // one rule is what makes a poly::var round trip, and it is why read_scalar
+    // reports whether the scalar was quoted.
+    //
+    // The number shapes are matched with the same constexpr predicates the
+    // serializer's quoting decision uses, so the writer cannot decide a scalar
+    // is safe to leave plain while the reader disagrees about what it is.
+    template <typename var_type> var_type resolve_scalar()
+    {
+      const detail::scalar s = read_scalar();
+
+      if(s.quoted)
+      {
+        return yaml::string{s.text};
+      }
+      if(detail::is_null_text(s.text))
+      {
+        return null;
+      }
+      if(s.text == "true" or s.text == "True" or s.text == "TRUE")
+      {
+        return yaml::boolean{true};
+      }
+      if(s.text == "false" or s.text == "False" or s.text == "FALSE")
+      {
+        return yaml::boolean{false};
+      }
+      // yes/no/on/off deliberately fall through to string, which is what YAML
+      // 1.2 core says they are. That differs from load<bool>(), which throws on
+      // them: asked for a bool the intent is unambiguous and a 1.1 spelling is
+      // worth an error, but asked what this *is*, 1.2 answers "a string".
+      // The hex and octal forms have to go through the integral parser and then
+      // widen: yaml::number is a double, and the floating-point branch of
+      // parse_number has no notion of a base prefix. Plain decimal integers
+      // need no such detour, std::from_chars reads them as a double directly.
+      if(s.text.starts_with("0x") or s.text.starts_with("0o"))
+      {
+        return static_cast<yaml::number>(detail::parse_number<long long>(s.text));
+      }
+      if(detail::matches_int(s.text) or detail::matches_float(s.text))
+      {
+        return detail::parse_number<yaml::number>(s.text);
+      }
+      return yaml::string{s.text};
     }
 
     // A mapping key, up to but not including its ':'.
