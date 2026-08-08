@@ -234,20 +234,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   // front and go quadratic.
   template <char Quote, typename Ser> void write_doubled_quoted(Ser& ser, std::string_view text)
   {
+    static constexpr char doubled[3]{Quote, Quote, '\0'};
+
     ser.write_char(Quote);
-    std::size_t pos = 0;
-    while(pos < text.size())
-    {
-      const std::size_t n = text.find(Quote, pos);
-      if(n == std::string_view::npos)
-      {
-        ser.write_raw(text.substr(pos));
-        break;
-      }
-      ser.write_raw(text.substr(pos, n - pos + 1)); // the run, quote included
-      ser.write_char(Quote);                        // the doubling
-      pos = n + 1;
-    }
+    serde::detail::write_with_escapes(
+        ser,
+        text,
+        [](std::string_view s, std::size_t pos) { return s.find(Quote, pos); },
+        [](Ser& out, char) { out.write_raw(doubled); });
     ser.write_char(Quote);
   }
 
@@ -300,32 +294,23 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     ser.write_raw(std::string_view{buf, sizeof(buf)});
   }
 
-  // Backslash-escaping writer, quote character parameterised. Runs of clean
-  // bytes go out whole; only a byte needing an escape is handled alone.
-  //
-  // json.hpp:121-143 is this function with Quote = '"' and a JSON escape table,
-  // and csv.hpp:84-113 is write_doubled_quoted above. Both are candidates for a
-  // shared home in detail/io.hpp; kept local until that is proposed with a diff.
+  // Backslash-escaping writer, quote character parameterised.
   template <char Quote, typename Ser> void write_backslash_quoted(Ser& ser, std::string_view text)
   {
     ser.write_char(Quote);
-    std::size_t pos = 0;
-    while(pos < text.size())
-    {
-      const auto* const first = text.data() + pos;
-      const auto* const last  = text.data() + text.size();
-      const auto*       it =
-          std::find_if(first, last, [](char c) { return is_control(c) or c == Quote or c == '\\'; });
-      if(it == last)
-      {
-        ser.write_raw(text.substr(pos));
-        break;
-      }
-      const auto n = static_cast<std::size_t>(it - first);
-      ser.write_raw(text.substr(pos, n));
-      write_escape<Quote>(ser, *it);
-      pos += n + 1;
-    }
+    serde::detail::write_with_escapes(
+        ser,
+        text,
+        [](std::string_view s, std::size_t pos) {
+          const auto* const first = s.data() + pos;
+          const auto* const last  = s.data() + s.size();
+          const auto*       it    = std::find_if(first, last, [](char c) {
+            return is_control(c) or c == Quote or c == '\\';
+          });
+          return it == last ? std::string_view::npos
+                            : pos + static_cast<std::size_t>(it - first);
+        },
+        [](Ser& out, char c) { write_escape<Quote>(out, c); });
     ser.write_char(Quote);
   }
 

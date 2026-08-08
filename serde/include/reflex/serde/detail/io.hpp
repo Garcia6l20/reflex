@@ -259,9 +259,9 @@ REFLEX_EXPORT namespace reflex::serde::detail
   //
   // Every text backend needs this and each used to spell it out: json escapes a
   // string body, csv doubles a quote inside a cell, xml replaces three or four
-  // bytes with entities and does it twice, once for text and once for an
-  // attribute value. Four copies of one loop, differing only in how the next
-  // byte of interest is found and what is emitted in its place.
+  // bytes with entities, yaml does both a backslash form and a doubling form.
+  // Six copies of one loop, differing only in how the next byte of interest is
+  // found and what is emitted in its place.
   //
   // `find_next(text, pos)` returns the ABSOLUTE index of the next byte needing
   // replacement at or after `pos`, or npos. `emit_one(ser, c)` writes the
