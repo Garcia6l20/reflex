@@ -1221,6 +1221,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
   public:
+    // deserialize(de) with no destination type. default_load_type covers
+    // load(), but a caller reaching the CPO directly - reflex-serde-convert
+    // does - needs this too.
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de)
+    {
+      return deserialize(de, std::type_identity<yaml::value>{});
+    }
+
     friend auto
         tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<null_t>)
     {

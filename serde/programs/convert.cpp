@@ -4,6 +4,7 @@ import std;
 
 import reflex.serde.json;
 import reflex.serde.bson;
+import reflex.serde.yaml;
 
 using namespace reflex;
 
@@ -24,6 +25,26 @@ bson::datetime
   return reflex::parse_or_throw<bson::datetime>(s);
 }
 } // namespace reflex::serde::json
+
+// The same two for YAML <-> BSON. A bson::datetime has no YAML representation
+// any more than it has a JSON one, and every input format is paired with every
+// output format here, so without these bson -> yaml does not compile at all.
+namespace reflex::serde::yaml
+{
+template <typename OutputIt>
+OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, bson::datetime const& dt)
+{
+  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
+}
+
+template <typename It>
+bson::datetime
+    tag_invoke(tag_t<serde::deserialize>, deserializer<It>& de, std::type_identity<bson::datetime>)
+{
+  const auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
+  return reflex::parse_or_throw<bson::datetime>(s);
+}
+} // namespace reflex::serde::yaml
 
 auto format_completer(std::string_view current, std::string_view description)
 {

@@ -1065,6 +1065,8 @@ struct[[= derive(Debug)]] VarHolder
 {
   yaml::value v;
   int         after;
+
+  bool operator==(VarHolder const& other) const = default;
 };
 
 TEST_CASE("reflex::serde::yaml: a poly::var member of an aggregate")
@@ -1098,6 +1100,160 @@ TEST_CASE("reflex::serde::yaml: a value round-trips through the serializer")
     const auto v = yaml::deserializer{doc}.load<yaml::value>();
     CHECK(dump(v) == doc);
   }
+}
+
+namespace
+{
+  // The two checks every fixture gets.
+  //
+  // Value equality is the obvious one. The stability check is stronger and
+  // cheaper than it looks: it catches a scalar that parses to the right value
+  // but re-serializes differently, which value equality cannot see.
+  template <typename T> void check_round_trip(T const& value)
+  {
+    const std::string encoded = dump(value);
+    CAPTURE(encoded);
+
+    CHECK(yaml::deserializer{encoded}.template load<T>() == value);
+
+    std::istringstream in{encoded};
+    CHECK(yaml::deserializer{in}.template load<T>() == value);
+
+    CHECK(dump(yaml::deserializer{encoded}.template load<T>()) == encoded);
+  }
+} // namespace
+
+struct[[= derive(Debug)]] AllScalars
+{
+  bool                        b;
+  char                        c;
+  std::int8_t                 i8;
+  std::int64_t                i64;
+  std::uint32_t               u32;
+  float                       f;
+  double                      d;
+  std::string                 s;
+  std::array<char, 8>         arr;
+  reflex::heapless::string<8> hs;
+  Color                       colour;
+
+  constexpr bool operator==(AllScalars const& other) const = default;
+};
+
+struct[[= derive(Debug)]] Nested2
+{
+  std::vector<std::vector<int>>  grid;
+  std::vector<Inner>             rows;
+  std::map<std::string, Inner>   named;
+  std::optional<std::vector<int>> maybe;
+
+  bool operator==(Nested2 const& other) const = default;
+};
+
+TEST_CASE("reflex::serde::yaml: round trip, scalars")
+{
+  check_round_trip(AllScalars{
+      true, 'x', -8, -9007199254740993LL, 4000000000U, 1.5f, 2.25, "text",
+      std::array<char, 8>{'a', 'b'}, reflex::heapless::string<8>{"cd"}, Color::Blue});
+  check_round_trip(AllScalars{});
+}
+
+TEST_CASE("reflex::serde::yaml: round trip, the awkward strings")
+{
+  // Every entry of the step 02 quoting table, as a value this time.
+  static constexpr std::string_view awkward[] = {
+      "",       "null",  "~",    "true",  "FALSE", "42",     "-7",   "1.5",  "1e10",
+      ".inf",   ".nan",  "0x1F", "0o17",  "---",   "yes",    "Off",  "n",    " ",
+      " x",     "x ",    "a: b", "a #b",  "a:",    "- x",    "-",    "?",    ":",
+      "#x",     "[x",    "&x",   "*x",    "%x",    "|x",     "it's", "'x",   "a:b",
+      "a#b",    "héllo", "日本",  "a\tb",  "a\nb",  "a\x01",  "a\"b", "a\\b"};
+  for(std::string_view s : awkward)
+  {
+    CAPTURE(s);
+    check_round_trip(Inner{1, std::string{s}});
+  }
+}
+
+TEST_CASE("reflex::serde::yaml: round trip, aggregates")
+{
+  check_round_trip(Inner{1, "two"});
+  check_round_trip(Basic{1, "x", 2.5});
+  check_round_trip(Outer{1, {2, "two"}, 3});
+  check_round_trip(Deep{{1, {2, "two"}, 3}});
+  check_round_trip(Empty{});
+  check_round_trip(WithEmpty{1, {}, 2});
+  check_round_trip(Renamed{1, 2});
+  check_round_trip(Enumed{"e", Color::Red});
+}
+
+TEST_CASE("reflex::serde::yaml: round trip, containers")
+{
+  check_round_trip(WithSeq{"x", {1, 2, 3}});
+  check_round_trip(WithSeq{"x", {}});
+  check_round_trip(WithMap{"x", {{"a", 1}, {"b", 2}}});
+  check_round_trip(WithMap{"x", {}});
+  check_round_trip(Opt{"x", 3});
+  check_round_trip(Opt{"x", std::nullopt});
+  check_round_trip(OptAggregate{Inner{1, "two"}, 3});
+  check_round_trip(OptAggregate{std::nullopt, 3});
+  check_round_trip(Nested2{
+      {{1, 2}, {3}},
+      {{1, "a"}, {2, "b"}},
+      {{"k", {3, "c"}}},
+      std::vector<int>{4, 5}
+  });
+  check_round_trip(Nested2{});
+}
+
+TEST_CASE("reflex::serde::yaml: round trip, a poly::var member")
+{
+  yaml::array arr;
+  arr.push_back(yaml::value{1.0});
+  arr.push_back(yaml::value{"x"s});
+
+  yaml::object obj;
+  obj.emplace("k", yaml::value{true});
+
+  // The null case compares serialized forms rather than values. A poly::var
+  // holding null never compares equal to another var, including another null
+  // var - poly::var.hpp:402 compares the held alternative against the whole
+  // right-hand var, and null_t's catch-all operator== swallows that. It is a
+  // poly bug, not a yaml one, and it is filed. Restore check_round_trip here
+  // once it is fixed.
+  {
+    const VarHolder null_var{yaml::value{}, 1};
+    const auto      encoded = dump(null_var);
+    CHECK(encoded == "v: null\nafter: 1");
+    CHECK(dump(yaml::deserializer{encoded}.load<VarHolder>()) == encoded);
+    CHECK(yaml::deserializer{encoded}.load<VarHolder>().v.is_null());
+  }
+
+  check_round_trip(VarHolder{yaml::value{true}, 2});
+  check_round_trip(VarHolder{yaml::value{1.5}, 3});
+  check_round_trip(VarHolder{yaml::value{"x"s}, 4});
+  check_round_trip(VarHolder{yaml::value{"true"s}, 5});
+  check_round_trip(VarHolder{yaml::value{arr}, 6});
+  check_round_trip(VarHolder{yaml::value{obj}, 7});
+}
+
+// The contiguous input the deduction guides exist for. No other yaml test
+// exercises this path.
+TEST_CASE("reflex::serde::yaml: deserializing from an mmap_input_stream")
+{
+  const std::filesystem::path path = "test-yaml-mmap-input-stream.yaml";
+  const Outer                 expected{1, {2, "a value comfortably past the small string limit"}, 3};
+  {
+    std::ofstream    out_file{path};
+    yaml::serializer ser{out_file};
+    ser.dump(expected);
+  }
+
+  serde::mmap_input_stream in{path};
+  auto                     de = yaml::deserializer{in};
+  static_assert(decltype(de)::bulk_scan);
+  CHECK(de.load<Outer>() == expected);
+
+  std::filesystem::remove(path);
 }
 
 // A map used to serialize without reading back, in every backend, for want of
