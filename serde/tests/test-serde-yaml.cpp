@@ -795,6 +795,145 @@ TEST_CASE("reflex::serde::yaml::deserializer: a block scalar as a mapping value"
   check_load<Outer>("before: 1\ninner:\n  a: 2\n  b: |-\n    x\nafter: 3", Outer{1, {2, "x"}, 3});
 }
 
+// A string value first, so the continuation cases below read the way the
+// documents that motivate them do - a long "description:" with a key after it.
+struct[[= derive(Debug)]] Doc
+{
+  std::string text;
+  int         after;
+
+  bool operator==(Doc const& other) const = default;
+};
+
+struct[[= derive(Debug)]] OptDoc
+{
+  std::optional<std::string> text;
+  int                        after;
+
+  bool operator==(OptDoc const& other) const = default;
+};
+
+// Multi-line plain scalars. Every expected value here was measured against
+// PyYAML 6.0.3 rather than read off the spec, including the cases that throw.
+//
+// Folding is lossy by design: the value comes back as one line, so none of these
+// documents re-serializes to itself and check_round_trip cannot be pointed at
+// them. parse(serialize(x)) still holds, which is what the round-trip suite
+// covers.
+TEST_CASE("reflex::serde::yaml::deserializer: a plain scalar continues onto deeper lines")
+{
+  check_load<Doc>("text: some long\n  continuation\nafter: 1", Doc{"some long continuation", 1});
+  check_load<Doc>("text: a\n  b\n  c\nafter: 1", Doc{"a b c", 1});
+  // The indent need only exceed the block's, not be consistent with itself.
+  check_load<Doc>("text: a\n    b\n  c\nafter: 1", Doc{"a b c", 1});
+  check_load<Doc>("text: a\n  b\n c\nafter: 1", Doc{"a b c", 1});
+  // A whole document that is one scalar: the top level has no block indent, so
+  // every following line is deep enough.
+  check_load<std::string>("a\nb", "a b");
+  check_load<std::string>("some long\n  continuation", "some long continuation");
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: a blank line inside a plain scalar keeps its break")
+{
+  check_load<Doc>("text: a\n\n  b\nafter: 1", Doc{"a\nb", 1});
+  check_load<Doc>("text: a\n\n\n  b\nafter: 1", Doc{"a\n\nb", 1});
+  check_load<Doc>("text: a\n  b\n\n  c\nafter: 1", Doc{"a b\nc", 1});
+  // A whitespace-only line is a blank one.
+  check_load<Doc>("text: a\n   \n  b\nafter: 1", Doc{"a\nb", 1});
+  // A blank line before the next key belongs to neither.
+  check_load<Doc>("text: a\n  b\n\nafter: 1", Doc{"a b", 1});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: each folded line loses its trailing whitespace")
+{
+  check_load<Doc>("text: a   \n  b   \nafter: 1", Doc{"a b", 1});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: a comment still ends a continued plain scalar")
+{
+  // The same "'#' opens a comment only after whitespace" rule, per line.
+  check_load<Doc>("text: a\n  b#c\nafter: 1", Doc{"a b#c", 1});
+  check_load<Doc>("text: a\n  b #c\nafter: 1", Doc{"a b", 1});
+  // A comment-only line ends the scalar rather than folding, and the key after
+  // it still parses.
+  check_load<Doc>("text: a\n  b\n # c\nafter: 1", Doc{"a b", 1});
+}
+
+// A "- ", a "? " and a "---" open a node only where a node may start. Inside a
+// running plain scalar they are ordinary text, which is why at_sequence_entry()
+// is not one of the conditions that break a continuation - PyYAML folds
+// "key: a" / "  - b" into "a - b".
+TEST_CASE("reflex::serde::yaml::deserializer: an indicator on a continuation line is text")
+{
+  check_load<Doc>("text: a\n  - b\nafter: 1", Doc{"a - b", 1});
+  check_load<Doc>("text: a\n  ? b\nafter: 1", Doc{"a ? b", 1});
+  check_load<Doc>("text: a\n  ---\nafter: 1", Doc{"a ---", 1});
+  check_load<Doc>("text: a\n  |\nafter: 1", Doc{"a |", 1});
+  check_load<std::vector<std::string>>("- a\n  - b", std::vector<std::string>{"a - b"});
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: a plain scalar continues inside a sequence entry")
+{
+  check_load<std::vector<std::string>>(
+      "- one long\n  continuation", std::vector<std::string>{"one long continuation"});
+  check_load<std::vector<std::string>>("- a\n  b\n  c", std::vector<std::string>{"a b c"});
+  check_load<std::vector<std::string>>("- a\n  b\n- c", std::vector<std::string>{"a b", "c"});
+  check_load<std::vector<std::string>>("- a\n\n  b", std::vector<std::string>{"a\nb"});
+  check_load<std::vector<std::vector<std::string>>>(
+      "- - a\n    b", std::vector<std::vector<std::string>>{{"a b"}});
+}
+
+// The continuation is bounded by the enclosing block, not by the document, so a
+// nested value folds only the lines deeper than its own key.
+TEST_CASE("reflex::serde::yaml::deserializer: a continuation inside a nested mapping")
+{
+  check_load<Outer>(
+      "before: 1\ninner:\n  b: x\n    y\n  a: 2\nafter: 3", Outer{1, {2, "x y"}, 3});
+  check_load<Outer>(
+      "before: 1\ninner:\n  a: 2\n  b: x\n    y\nafter: 3", Outer{1, {2, "x y"}, 3});
+}
+
+// A line that looks like a mapping is the only structural veto, because it is
+// the only ambiguity - a nested block and a continuation are written the same
+// way. PyYAML rejects every one of these too.
+TEST_CASE("reflex::serde::yaml::deserializer: a mapping on a deeper line is still an error")
+{
+  check_load_throws<Doc>("text: a\n  b: c\nafter: 1");
+  check_load_throws<Doc>("text: a\n  b:\nafter: 1"); // a trailing colon is ambiguous too
+  check_load_throws<Doc>("text: a\n  b: \nafter: 1");
+  check_load_throws<Doc>("text: a\n  b\n  c: d\nafter: 1"); // on a later line as well
+  check_load_throws<Doc>("text: a\n  b\n c: d\nafter: 1");
+  // A colon with no space after it is not a mapping, and folds.
+  check_load<Doc>("text: a\n  b:c\nafter: 1", Doc{"a b:c", 1});
+}
+
+// The highest-risk interaction in the step. "key:" with nothing after it has
+// three answers - an absent value, a nested block, and a plain scalar whose
+// first line is empty - and the string reader, the optional reader and the
+// poly::var reader have to give the same one.
+TEST_CASE("reflex::serde::yaml::deserializer: a bare key followed by deeper plain lines")
+{
+  check_load<Doc>("text:\n  a\n  b\nafter: 1", Doc{"a b", 1});
+  check_load<Doc>("text:\n  a\nafter: 1", Doc{"a", 1});
+  check_load<Doc>("text:\nafter: 1", Doc{"", 1});
+
+  check_load<OptDoc>("text:\n  a\n  b\nafter: 1", OptDoc{"a b", 1});
+  check_load<OptDoc>("text:\n  a\nafter: 1", OptDoc{"a", 1});
+  check_load<OptDoc>("text:\nafter: 1", OptDoc{std::nullopt, 1});
+
+  // A nested block must not be swallowed as text: "- " and a mapping still open
+  // a node when the first line is empty, which is exactly where they differ from
+  // a continuation line.
+  check_load<WithSeq>("name: x\nvalues:\n  - 1\n  - 2", WithSeq{"x", {1, 2}});
+  check_load<Outer>("before: 1\ninner:\n  a: 2\n  b: t\nafter: 3", Outer{1, {2, "t"}, 3});
+  check_load_throws<Doc>("text:\n  - a\nafter: 1");
+  check_load_throws<Doc>("text:\n  a: 1\nafter: 1");
+  // A quoted scalar on the following line is not a plain continuation either.
+  // PyYAML reads it as the value; this backend rejects it, which is the
+  // pre-existing single-line limit on quoted scalars rather than a fold.
+  check_load_throws<Doc>("text:\n  'a'\nafter: 1");
+}
+
 TEST_CASE("reflex::serde::yaml::deserializer: malformed mappings are named errors")
 {
   check_load_throws<Inner>("a: 1\n  b: two");  // over-indented continuation
@@ -1082,6 +1221,29 @@ TEST_CASE("reflex::serde::yaml: a poly::var member of an aggregate")
   const auto absent = yaml::deserializer{"v:\nafter: 3"sv}.load<VarHolder>();
   CHECK(held(absent.v) == "null");
   CHECK(absent.after == 3);
+}
+
+// The var reader's own answer to the three-way fork the string and optional
+// readers face. It already tested "- " and a mapping before anything else, so a
+// folded plain scalar is what is left, and the three have to agree on it.
+TEST_CASE("reflex::serde::yaml: a poly::var member folds a multi-line plain scalar")
+{
+  const auto folded = yaml::deserializer{"v: a\n  b\nafter: 3"sv}.load<VarHolder>();
+  CHECK(held(folded.v) == "string");
+  CHECK(folded.v.as<yaml::string>() == "a b");
+  CHECK(folded.after == 3);
+
+  // The empty-first-line case, where the alternative would have been null.
+  const auto bare = yaml::deserializer{"v:\n  a\n  b\nafter: 3"sv}.load<VarHolder>();
+  CHECK(held(bare.v) == "string");
+  CHECK(bare.v.as<yaml::string>() == "a b");
+  CHECK(bare.after == 3);
+
+  // Resolution runs on the folded text, so "1" and "2" on two lines are the
+  // string "1 2" and not a number - which is what PyYAML says too.
+  const auto pair = yaml::deserializer{"v: 1\n  2\nafter: 3"sv}.load<VarHolder>();
+  CHECK(held(pair.v) == "string");
+  CHECK(pair.v.as<yaml::string>() == "1 2");
 }
 
 // load() with no explicit type reads a yaml::value, matching json.

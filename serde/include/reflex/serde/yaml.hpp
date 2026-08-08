@@ -1881,6 +1881,16 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     {
       if(at_line_end())
       {
+        // Nothing after the colon is usually a null, but a plain scalar whose
+        // first line is empty looks identical until the next content line is
+        // examined: "key:" / "  a" / "  b" is "a b" in real YAML, neither a null
+        // nor a nested block. Three answers from one lookahead, and the two this
+        // reader declines leave the cursor parked where the enclosing loop
+        // expects it, because next_content_line() is idempotent there.
+        if(ctx_ == detail::scan_context::block and starts_plain_continuation_())
+        {
+          return {read_plain(), false};
+        }
         return {};
       }
       switch(peek_at(0))
@@ -1897,15 +1907,77 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
     }
 
-    // Runs to the end of the line, or to ": ", or to " #", or - in flow context
-    // only - to a flow indicator. Trailing whitespace before the terminator is
-    // not part of the scalar.
+    // A plain scalar, folded across every line it continues onto.
     //
-    // A plain scalar does not continue onto the next line here. YAML allows it,
-    // but the continuation would be indented deeper than its key and the
-    // mapping reader rejects that with a named error rather than mis-reading
-    // it.
+    // A continuation line has to be indented deeper than the enclosing block,
+    // and a line that looks like a mapping is the only thing that stops it: "  b:
+    // c" under "key: a" cannot be told from a nested block, so real YAML rejects
+    // it and so does this - by parking on the line and letting the enclosing
+    // block raise its over-indentation error. "  - b" is NOT ambiguous, it folds
+    // into the text as "a - b", which is why at_sequence_entry() is not one of
+    // the conditions here. Both measured against PyYAML rather than read off the
+    // spec.
+    //
+    // Flow context is excluded. It folds too in real YAML, but block_indent_ is
+    // neutralised there, so the indent test that bounds this loop has nothing to
+    // say and there is no other bound to put in its place.
     std::string read_plain()
+    {
+      std::string first = read_plain_line_();
+      if(ctx_ != detail::scan_context::block or not at_line_end())
+      {
+        return first; // a ": " or a comment ended it before the line did
+      }
+
+      // Empty until a continuation is actually found, so the single-line case -
+      // which is nearly every scalar - allocates nothing beyond `first`.
+      std::vector<std::string> lines;
+      std::size_t              blanks = 0;
+      while(next_line())
+      {
+        const std::size_t indent = skip_indent();
+        if(at_end())
+        {
+          break;
+        }
+        if(at_line_end())
+        {
+          ++blanks; // a blank or whitespace-only line keeps its break
+          continue;
+        }
+        // Stops ON the first line this scalar does not own, with the column
+        // correct, so next_content_line()'s idempotence lets the enclosing loop
+        // pick it up instead of skipping it. deeper_than_block() is tested
+        // before at_block_mapping() on purpose: the common case is a sibling at
+        // the same indent, and that must not pay for a line scan.
+        if(peek_at(0) == '#' or not deeper_than_block(indent)
+           or (column_ == 0 and marker_here_()) or at_block_mapping())
+        {
+          break;
+        }
+        if(lines.empty())
+        {
+          lines.push_back(std::move(first));
+        }
+        lines.insert(lines.end(), blanks, std::string{});
+        blanks = 0;
+        lines.push_back(read_plain_line_());
+        if(not at_line_end())
+        {
+          break;
+        }
+      }
+      return lines.empty() ? std::move(first) : fold_lines_(lines);
+    }
+
+    // One line of a plain scalar: to the end of the line, or to ": ", or to
+    // " #", or - in flow context only - to a flow indicator. Trailing
+    // whitespace before the terminator is not part of the scalar.
+    //
+    // A fresh string per line rather than appending into a shared one, because
+    // the " #" test looks at the byte before the '#' and the previous line's
+    // last byte is not it.
+    std::string read_plain_line_()
     {
       std::string out;
 
@@ -2161,32 +2233,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       else
       {
-        bool        first  = true;
-        std::size_t blanks = 0;
-        for(auto const& line : lines)
-        {
-          if(line.empty())
-          {
-            ++blanks;
-            continue;
-          }
-          if(first)
-          {
-            first = false;
-          }
-          else if(blanks == 0)
-          {
-            // A single break between two non-empty lines folds to a space.
-            out.push_back(' ');
-          }
-          else
-          {
-            // Each blank line keeps its own break, the folded one included.
-            out.append(blanks, '\n');
-          }
-          out += line;
-          blanks = 0;
-        }
+        out = fold_lines_(lines);
         if(not out.empty())
         {
           out.push_back('\n');
@@ -2244,6 +2291,64 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
   private:
+    // Folds line breaks the way YAML folds them: a single break between two
+    // non-empty lines becomes a space, and n blank lines between them keep n
+    // breaks, the folded one included. Shared by the '>' block scalar and the
+    // multi-line plain scalar, which fold identically - all that differs is what
+    // each does with the break that ends the last line.
+    static std::string fold_lines_(std::vector<std::string> const& lines)
+    {
+      std::string out;
+      bool        first  = true;
+      std::size_t blanks = 0;
+      for(auto const& line : lines)
+      {
+        if(line.empty())
+        {
+          ++blanks;
+          continue;
+        }
+        if(first)
+        {
+          first = false;
+        }
+        else if(blanks == 0)
+        {
+          out.push_back(' ');
+        }
+        else
+        {
+          out.append(blanks, '\n');
+        }
+        out += line;
+        blanks = 0;
+      }
+      return out;
+    }
+
+    // Does a plain scalar begin on the next content line, deeper than the
+    // enclosing block? Consumes up to that line, which is what makes it usable
+    // only where the caller is prepared to park there.
+    //
+    // Every other node form answers no and is left to the reader that owns it: a
+    // quoted or block scalar, a flow collection, an anchor, a tag. "- " and "? "
+    // are structure here too, unlike on a continuation line where a plain scalar
+    // is already running and both are ordinary text.
+    bool starts_plain_continuation_()
+    {
+      const std::size_t indent = next_content_line();
+      if(indent == npos or not deeper_than_block(indent))
+      {
+        return false;
+      }
+      const char c = peek_at(0);
+      if(detail::is_indicator(c) or at_sequence_entry() or at_block_mapping())
+      {
+        return false;
+      }
+      return not(c == '?' and terminates_token_(peek_at(1)));
+    }
+
     bool terminates_token_(char c) const
     {
       if(c == '\0' or c == ' ' or c == '\t' or is_break(c))
@@ -2449,7 +2554,16 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       if(next > base)
       {
-        throw std::runtime_error("YAML: unexpected indentation inside a sequence");
+        // Same causes as the mapping case below, minus the continuation: a plain
+        // entry folds its deeper lines in itself, so anything still reaching here
+        // is a form that cannot fold.
+        throw std::runtime_error(
+            "YAML: a line inside this sequence is indented deeper than its '- '. A plain"
+            " entry continues onto deeper lines, so this line is one of the forms that"
+            " cannot. Either it is misaligned, and belongs at the same indent as the other"
+            " entries; or it looks like a mapping of its own, which real YAML rejects here"
+            " too; or it continues a quoted scalar, which this backend reads on one line"
+            " only. Use a '|' or '>' block scalar for a value that will not fold");
       }
       if(not de.at_sequence_entry())
       {
@@ -2519,7 +2633,18 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       if(next > base)
       {
-        throw std::runtime_error("YAML: unexpected indentation inside a mapping");
+        // Several different documents land here and the message has to serve them
+        // all. A plain value now folds its own deeper lines, so what is left is a
+        // genuine misalignment, a deeper line that looks like a mapping - which
+        // real YAML rejects too, for the same ambiguity - and the quoted and flow
+        // forms this backend reads on one line only.
+        throw std::runtime_error(
+            "YAML: a line inside this mapping is indented deeper than its key. A plain"
+            " value continues onto deeper lines, so this line is one of the forms that"
+            " cannot. Either it is misaligned, and belongs at the same indent as the other"
+            " keys; or it looks like a mapping of its own, which real YAML rejects here"
+            " too; or it continues a quoted scalar, which this backend reads on one line"
+            " only. Use a '|' or '>' block scalar for a value that will not fold");
       }
     }
     return value;
