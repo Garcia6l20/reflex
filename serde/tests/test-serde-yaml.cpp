@@ -1,6 +1,9 @@
 #include <doctest/doctest.h>
 
 import reflex.serde.yaml;
+// For the superset check: a document the json backend produced has to parse
+// here, and generating it beats hand-writing one that only looks like json.
+import reflex.serde.json;
 import serde.tests.types;
 
 import std;
@@ -830,11 +833,12 @@ TEST_CASE("reflex::serde::yaml::deserializer: the compact notation")
       "- - 1\n  - 2\n- - 3", std::vector<std::vector<int>>{{1, 2}, {3}});
   check_load<std::vector<Inner>>(
       "- a: 1\n  b: two\n- a: 2\n  b: three", std::vector<Inner>{{1, "two"}, {2, "three"}});
-  // The same shape with an empty "values: []" needs the flow reader and is
-  // pinned in the flow test instead.
   check_load<std::vector<WithSeq>>(
       "- name: x\n  values:\n    - 1\n    - 2\n- name: 'y'\n  values:\n    - 3",
       std::vector<WithSeq>{{"x", {1, 2}}, {"y", {3}}});
+  check_load<std::vector<WithSeq>>(
+      "- name: x\n  values:\n    - 1\n    - 2\n- name: 'y'\n  values: []",
+      std::vector<WithSeq>{{"x", {1, 2}}, {"y", {}}});
 }
 
 // "- 1" is an entry and "-1" is a number. The space is the whole difference.
@@ -866,6 +870,78 @@ TEST_CASE("reflex::serde::yaml::deserializer: malformed sequences are named erro
 {
   check_load_throws<std::vector<int>>("- 1\n  - 2"); // over-indented entry
   check_load_throws<std::vector<int>>("a: 1");       // a mapping where a sequence was asked for
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: flow sequences")
+{
+  check_load<std::vector<int>>("[1, 2, 3]", std::vector<int>{1, 2, 3});
+  check_load<std::vector<int>>("[]", std::vector<int>{});
+  check_load<std::vector<int>>("[1, 2, ]", std::vector<int>{1, 2}); // legal in YAML, not in JSON
+  check_load<std::vector<std::string>>("[a, b]", std::vector<std::string>{"a", "b"});
+  // The flow terminator set applies here and only here: in block context this
+  // would be one scalar running to the end of the line.
+  check_load<std::vector<std::string>>("[1.2.3-rc1]", std::vector<std::string>{"1.2.3-rc1"});
+  check_load<std::vector<std::vector<int>>>(
+      "[[1, 2], [3]]", std::vector<std::vector<int>>{{1, 2}, {3}});
+  check_load_throws<std::vector<int>>("[1, 2");
+}
+
+TEST_CASE("reflex::serde::yaml::deserializer: flow mappings")
+{
+  check_load<Inner>("{a: 1, b: two}", Inner{1, "two"});
+  check_load<Inner>("{a: 1, b: two, }", Inner{1, "two"});
+  check_load<Empty>("{}", Empty{});
+  check_load<Outer>("{before: 1, inner: {a: 2, b: two}, after: 3}", Outer{1, {2, "two"}, 3});
+  check_load_throws<Inner>("{a: 1");
+}
+
+// A flow collection may span lines, and a break inside one is just whitespace.
+TEST_CASE("reflex::serde::yaml::deserializer: a flow collection spanning lines")
+{
+  check_load<std::vector<int>>("[\n  1,\n  2\n]", std::vector<int>{1, 2});
+  check_load<Inner>("{\n  a: 1,\n  b: two\n}", Inner{1, "two"});
+  check_load<std::vector<int>>("[ # a comment\n  1,\n  2\n]", std::vector<int>{1, 2});
+}
+
+// Entering and leaving flow has to restore the enclosing block indent, or the
+// block key after the flow value inherits a neutralised one.
+TEST_CASE("reflex::serde::yaml::deserializer: flow nested inside block")
+{
+  check_load<WithSeq>("name: x\nvalues: [1, 2]", WithSeq{"x", {1, 2}});
+  check_load<WithSeq>("values: [1, 2]\nname: x", WithSeq{"x", {1, 2}});
+  check_load<Outer>("before: 1\ninner: {a: 2, b: two}\nafter: 3", Outer{1, {2, "two"}, 3});
+  check_load<std::vector<WithSeq>>(
+      "- name: x\n  values: [1, 2]\n- name: 'y'\n  values: []",
+      std::vector<WithSeq>{{"x", {1, 2}}, {"y", {}}});
+}
+
+// The empty forms are the only flow style the serializer emits, so its own
+// output does not round-trip until this works.
+TEST_CASE("reflex::serde::yaml: the serializer's empty collections round-trip")
+{
+  check_load<WithSeq>(dump(WithSeq{"x", {}}), WithSeq{"x", {}});
+  check_load<WithMap>(dump(WithMap{"x", {}}), WithMap{"x", {}});
+  check_load<WithEmpty>(dump(WithEmpty{1, {}, 2}), WithEmpty{1, {}, 2});
+  check_load<Empty>(dump(Empty{}), Empty{});
+}
+
+// YAML is a JSON superset, so anything the json backend writes has to parse
+// here. Generated rather than hand-written, so it is real json output.
+TEST_CASE("reflex::serde::yaml::deserializer: a JSON document parses as YAML")
+{
+  const Outer value{1, {2, "two"}, 3};
+
+  std::string      out;
+  json::serializer ser{out};
+  ser.dump(value);
+  CHECK(out == R"({"before":1,"inner":{"a":2,"b":"two"},"after":3})");
+
+  check_load<Outer>(out, value);
+
+  std::string      seq_out;
+  json::serializer seq_ser{seq_out};
+  seq_ser.dump(std::vector<Inner>{{1, "two"}, {2, "three"}});
+  check_load<std::vector<Inner>>(seq_out, std::vector<Inner>{{1, "two"}, {2, "three"}});
 }
 
 // A map used to serialize without reading back, in every backend, for want of

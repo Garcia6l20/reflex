@@ -1425,6 +1425,200 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       return indent_scope{*this, indent};
     }
 
+    // Inside a flow collection there is no block structure: whitespace, line
+    // breaks and comments are all insignificant, and a plain scalar gains the
+    // flow indicators as terminators.
+    //
+    // Restores the enclosing block indent as well as the context, so a block
+    // node appearing after a flow one does not inherit a neutralised indent.
+    class flow_scope
+    {
+      deserializer*        d_;
+      detail::scan_context saved_ctx_;
+      std::size_t          saved_indent_;
+
+    public:
+      explicit flow_scope(deserializer& d)
+          : d_{&d}, saved_ctx_{d.ctx_}, saved_indent_{d.block_indent_}
+      {
+        d_->ctx_          = detail::scan_context::flow;
+        d_->block_indent_ = no_block;
+      }
+      flow_scope(flow_scope const&)            = delete;
+      flow_scope& operator=(flow_scope const&) = delete;
+      ~flow_scope()
+      {
+        d_->ctx_          = saved_ctx_;
+        d_->block_indent_ = saved_indent_;
+      }
+    };
+
+    [[nodiscard]] flow_scope enter_flow()
+    {
+      return flow_scope{*this};
+    }
+
+    // Whitespace, line breaks and comments, all of which a flow collection may
+    // contain freely. The line breaks go through next_line() like every other
+    // one, so column_ stays honest - this is the only place outside next_line()
+    // that crosses a line, and it is the exception the cursor's newline rule
+    // allows for.
+    void skip_flow_space()
+    {
+      while(not at_end())
+      {
+        const char c = peek_at(0);
+        if(c == ' ' or c == '\t')
+        {
+          advance();
+          continue;
+        }
+        if(is_break(c))
+        {
+          next_line();
+          continue;
+        }
+        if(c == '#')
+        {
+          skip_to_line_end();
+          continue;
+        }
+        break;
+      }
+    }
+
+    // "[a, b]". A trailing comma before the bracket is legal in YAML, unlike in
+    // JSON, which is why the loop re-tests for the closer after a separator.
+    template <typename Seq> Seq read_flow_sequence()
+    {
+      advance(); // '['
+      auto scope = enter_flow();
+
+      Seq value{};
+      using elem_type = typename std::remove_cvref_t<Seq>::value_type;
+
+      auto push = [&value] {
+        if constexpr(requires { value.push_back(elem_type{}); })
+        {
+          return [&value](elem_type&& elem) { value.push_back(std::forward<elem_type>(elem)); };
+        }
+        else
+        {
+          return [it = std::begin(value), end = std::end(value)](elem_type&& elem) mutable {
+            if(it == end)
+            {
+              throw std::out_of_range("Sequence has more elements than target type can hold");
+            }
+            *it++ = std::forward<elem_type>(elem);
+          };
+        }
+      }();
+
+      skip_flow_space();
+      if(at_end())
+      {
+        throw std::runtime_error("YAML: unterminated flow sequence");
+      }
+      if(peek_at(0) == ']')
+      {
+        advance();
+        return value;
+      }
+
+      while(true)
+      {
+        push(this->template load<elem_type>());
+        skip_flow_space();
+        if(at_end())
+        {
+          throw std::runtime_error("YAML: unterminated flow sequence");
+        }
+        const char sep = advance();
+        if(sep == ']')
+        {
+          break;
+        }
+        if(sep != ',')
+        {
+          throw std::runtime_error("YAML: expected ',' or ']' in a flow sequence");
+        }
+        skip_flow_space();
+        if(at_end())
+        {
+          throw std::runtime_error("YAML: unterminated flow sequence");
+        }
+        if(peek_at(0) == ']')
+        {
+          advance(); // a trailing comma
+          break;
+        }
+      }
+      return value;
+    }
+
+    // "{a: 1, b: 2}", which is also every JSON object.
+    template <typename Map> Map read_flow_mapping()
+    {
+      advance(); // '{'
+      auto scope = enter_flow();
+
+      Map value{};
+
+      skip_flow_space();
+      if(at_end())
+      {
+        throw std::runtime_error("YAML: unterminated flow mapping");
+      }
+      if(peek_at(0) == '}')
+      {
+        advance();
+        return value;
+      }
+
+      while(true)
+      {
+        skip_flow_space();
+        const std::string_view key = read_key();
+        skip_flow_space();
+        if(at_end() or peek_at(0) != ':')
+        {
+          throw std::runtime_error(std::format("YAML: expected ':' after the key '{}'", key));
+        }
+        advance();
+        skip_flow_space();
+
+        serde::object_visit_flat(key, value, [&]<typename V>(V& v) {
+          v = this->template load<std::remove_cvref_t<V>>();
+        });
+
+        skip_flow_space();
+        if(at_end())
+        {
+          throw std::runtime_error("YAML: unterminated flow mapping");
+        }
+        const char sep = advance();
+        if(sep == '}')
+        {
+          break;
+        }
+        if(sep != ',')
+        {
+          throw std::runtime_error("YAML: expected ',' or '}' in a flow mapping");
+        }
+        skip_flow_space();
+        if(at_end())
+        {
+          throw std::runtime_error("YAML: unterminated flow mapping");
+        }
+        if(peek_at(0) == '}')
+        {
+          advance(); // a trailing comma
+          break;
+        }
+      }
+      return value;
+    }
+
     // A "- " opening a block sequence entry, as opposed to a '-' starting a
     // negative number. The space is the whole difference, which is why this
     // needs the lookahead buffer.
@@ -1949,7 +2143,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
     if(de.peek_at(0) == '[')
     {
-      throw std::runtime_error("YAML: flow sequences are not supported yet");
+      return de.template read_flow_sequence<Seq>();
     }
     if(not de.at_sequence_entry())
     {
@@ -2053,7 +2247,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
     if(de.peek_at(0) == '{')
     {
-      throw std::runtime_error("YAML: flow mappings are not supported yet");
+      return de.template read_flow_mapping<Map>();
     }
 
     Map  value{};
