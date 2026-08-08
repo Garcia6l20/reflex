@@ -918,7 +918,21 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // the byte in the buffer, so this only ever pops.
     char take_()
     {
-      const char c = peek();
+      // Nothing buffered, which is almost every call: consume straight from the
+      // cursor and leave the buffer alone. Routing every byte through the
+      // buffer instead cost a string append and a pop per byte of input, and
+      // measured at roughly half the parser's total time.
+      if(ahead_pos_ >= ahead_.size())
+      {
+        if(cursor_.empty())
+        {
+          throw std::runtime_error("Unexpected end of YAML input");
+        }
+        const char c = *cursor_.begin();
+        cursor_.advance(1);
+        return c;
+      }
+      const char c = ahead_[ahead_pos_];
       ++ahead_pos_;
       // Drop the consumed prefix once it dominates, so the buffer tracks the
       // live lookahead rather than the whole document.
@@ -948,6 +962,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // here, which is fine because a NUL is not valid YAML.
     char peek_at(std::size_t i)
     {
+      // The zero-lookahead case, which is almost every call: read through the
+      // cursor rather than moving the byte into the buffer first. See take_().
+      if(i == 0 and ahead_pos_ >= ahead_.size())
+      {
+        return cursor_.empty() ? '\0' : *cursor_.begin();
+      }
       while(ahead_.size() - ahead_pos_ <= i)
       {
         if(cursor_.empty())
