@@ -1,6 +1,25 @@
-from pcons import Project, add_subdirectory
+from pcons import Project, add_subdirectory, get_var
 
 from reflex_build.config import VARIANT, build_dir, project_dir, toolchain
+
+# =============================================================================
+# Warnings
+# =============================================================================
+
+WARNINGS = [
+    "-Wall",
+    "-Wextra",
+    "-Wreturn-type",
+    "-Wdangling-reference",
+    "-Wformat=2",
+    "-Wimplicit-fallthrough",
+    "-Wnon-virtual-dtor",
+    "-Woverloaded-virtual",
+    "-Wcast-qual",
+]
+
+if get_var("REFLEX_WERROR", True):
+    WARNINGS.append("-Werror")
 
 # =============================================================================
 # Setup
@@ -22,6 +41,7 @@ if project.is_top_level:
             f"-Wabi={abi_version}",
             f"-fabi-version={abi_version}",
             "-fmax-errors=5",
+            *WARNINGS,
         ]
     )
 
