@@ -36,7 +36,10 @@ def _fetched(name: str) -> tuple[ImportedTarget, Path]:
     if not description.exists():
         raise RuntimeError(f"{name} package not found - {FETCH_HINT}")
     package = PackageDescription.from_toml(description)
-    _imported[name] = (ImportedTarget.from_package(package), Path(package.prefix))
+    target = ImportedTarget.from_package(package)
+    target.public.system_include_dirs.extend(target.public.include_dirs)
+    target.public.include_dirs.clear()
+    _imported[name] = (target, Path(package.prefix))
     return _imported[name]
 
 
@@ -115,7 +118,7 @@ def nanobind_library(project, env):
     # linker reports "failed to set dynamic section sizes: bad value", which
     # names neither the flag nor the file.
     lib.private.compile_flags.extend(
-        ["-fPIC", "-fno-strict-aliasing", "-fvisibility=hidden"]
+        ["-fPIC", "-fno-strict-aliasing", "-fvisibility=hidden", "-Wno-cast-qual"]
     )
     return lib
 

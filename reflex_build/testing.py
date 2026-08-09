@@ -25,6 +25,9 @@ if build_testing:
         build_dir / "doctest/impl.cpp", "#include <doctest/doctest.h>\n"
     )
 
+    doctest_pkg.public.system_include_dirs.extend(doctest_pkg.public.include_dirs)
+    doctest_pkg.public.include_dirs.clear()
+
     doctest_with_main = project.StaticLibrary(
         "doctest-with-main", env, sources=[doctest_lib_impl_src]
     )
