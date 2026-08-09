@@ -2,4 +2,4 @@
 name = "reflex-build"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["pcons", "conan"]
+dependencies = ["pcons >= 0.26", "conan"]
