@@ -3,6 +3,7 @@
 import reflex.core;
 import reflex.poly;
 import reflex.serde;
+import reflex.serde.json;
 
 import std;
 
@@ -299,6 +300,163 @@ TEST_CASE("reflex::serde::object_visit_flat: a dot is part of the name")
   }
 }
 
+// A map is read by key, so it is visitable, and a std::multimap is not: one
+// visit cannot name which of its duplicate keys to hand over. A key that no
+// document text can build keeps its map unvisitable rather than hard-erroring
+// on the first visit.
+static_assert(object_visitable_c<std::map<std::string, int>>);
+static_assert(object_visitable_c<std::unordered_map<std::string, int>>);
+static_assert(object_visitable_c<std::map<std::string, int> const&>);
+static_assert(not object_visitable_c<std::multimap<std::string, int>>);
+static_assert(not object_visitable_c<std::map<int, int>>);
+static_assert(not object_visitable_c<std::vector<int>>);
+
+struct holder
+{
+  std::string                name;
+  std::map<std::string, int> values;
+};
+
+TEST_CASE("reflex::serde::object_visit: maps")
+{
+  using map = std::map<std::string, int>;
+
+  SUBCASE("an existing key is handed over")
+  {
+    map  m{{"a", 1}, {"b", 2}};
+    bool visited = false;
+    object_visit_flat("b", m, [&visited](auto& value) {
+      CHECK_EQ(value, 2);
+      value   = 20;
+      visited = true;
+    });
+    CHECK(visited);
+    CHECK_EQ(m.at("b"), 20);
+    CHECK_EQ(m.size(), 2);
+  }
+  SUBCASE("a missing key is created")
+  {
+    map  m{{"a", 1}};
+    bool visited = false;
+    object_visit_flat("c", m, [&visited](auto& value) {
+      CHECK_EQ(value, 0);
+      value   = 3;
+      visited = true;
+    });
+    CHECK(visited);
+    CHECK_EQ(m.at("c"), 3);
+    CHECK_EQ(m.size(), 2);
+  }
+  SUBCASE("a const map cannot create the entry")
+  {
+    const map m{{"a", 1}};
+    bool      visited = false;
+    object_visit_flat("a", m, [&visited](auto& value) {
+      CHECK_EQ(value, 1);
+      visited = true;
+    });
+    CHECK(visited);
+
+    visited = false;
+    CHECK_NOTHROW(object_visit_flat("missing", m, [&visited](auto&) { visited = true; }));
+    CHECK_FALSE(visited);
+    CHECK_EQ(m.size(), 1);
+  }
+  // object_visit instantiates its callback for the whole undotted key too, so
+  // a dotted test has to say which type it means to write.
+  const auto writes = [](int written) {
+    return [written](auto& value) {
+      if constexpr(decays_to_c<decltype(value), int>)
+      {
+        value = written;
+      }
+    };
+  };
+
+  SUBCASE("a dotted key walks into a nested map")
+  {
+    std::map<std::string, map> m{
+        {"outer", {{"inner", 7}}}
+    };
+    bool visited = false;
+    object_visit("outer.inner", m, [&visited](auto& value) {
+      if constexpr(decays_to_c<decltype(value), int>)
+      {
+        CHECK_EQ(value, 7);
+        visited = true;
+      }
+    });
+    CHECK(visited);
+
+    object_visit("outer.added", m, writes(8));
+    CHECK_EQ(m.at("outer").at("added"), 8);
+    // Both segments miss, so the outer entry is created before the inner one.
+    object_visit("created.inner", m, writes(9));
+    CHECK_EQ(m.at("created").at("inner"), 9);
+  }
+  SUBCASE("a map member of an aggregate")
+  {
+    holder h{.name = "h", .values = {{"a", 1}}};
+    object_visit("values.a", h, writes(11));
+    CHECK_EQ(h.values.at("a"), 11);
+    object_visit("values.b", h, writes(12));
+    CHECK_EQ(h.values.at("b"), 12);
+  }
+}
+
+// Every backend reads an object through object_visit_flat, so a map was
+// write-only in all of them until it became visitable. json stands in for the
+// set here, the visitor being the only thing that was missing.
+TEST_CASE("reflex::serde::json: a map round-trips")
+{
+  const auto dump = [](auto const& value) {
+    std::string      out;
+    json::serializer ser{out};
+    ser.dump(value);
+    return out;
+  };
+
+  SUBCASE("a map on its own")
+  {
+    const std::map<std::string, int> expected{
+        {"a", 1},
+        {"b", 2}
+    };
+    const auto encoded = dump(expected);
+    CHECK_EQ(encoded, R"({"a":1,"b":2})");
+    CHECK_EQ(json::deserializer{encoded}.load<std::map<std::string, int>>(), expected);
+  }
+  SUBCASE("an empty map")
+  {
+    const std::map<std::string, int> expected{};
+    const auto                       encoded = dump(expected);
+    CHECK_EQ(encoded, "{}");
+    CHECK_EQ(json::deserializer{encoded}.load<std::map<std::string, int>>(), expected);
+  }
+  SUBCASE("a map of aggregates")
+  {
+    const std::map<std::string, address> expected{
+        {"home", {.city = "Wonderland", .zip = 12345}},
+        {"work", {.city = "Badlands", .zip = 666}}
+    };
+    const auto encoded = dump(expected);
+    const auto decoded = json::deserializer{encoded}.load<std::map<std::string, address>>();
+    REQUIRE_EQ(decoded.size(), 2);
+    CHECK_EQ(decoded.at("home").city, "Wonderland");
+    CHECK_EQ(decoded.at("work").zip, 666);
+  }
+  SUBCASE("a map member of an aggregate")
+  {
+    const holder expected{
+        .name = "h", .values = {{"a", 1}, {"b", 2}}
+    };
+    const auto encoded = dump(expected);
+    const auto decoded = json::deserializer{encoded}.load<holder>();
+    CHECK_EQ(decoded.name, "h");
+    CHECK_EQ(decoded.values, expected.values);
+  }
+}
+
 // The visitor picks its key-matching strategy on member count and name length,
 // so each strategy needs a shape that reaches it. Below the threshold it
 // compares names in a chain, above it rejects on a hashed key when every name
@@ -404,5 +562,66 @@ TEST_CASE("reflex::serde::object_visit: every dispatch strategy matches the same
     CHECK_THROWS_AS(object_visit_flat("r00", v, [](auto const&) {}), std::runtime_error);
     CHECK_THROWS_AS(object_visit_flat("a_rather_long_replacement", v, [](auto const&) {}),
                     std::runtime_error);
+  }
+}
+
+// A const container cannot create the entry a missed key names, so the visitor
+// leaves the callback uncalled. That answers a callback returning nothing, and
+// every callback in the tree does: the backends assign into a destination and
+// jinja writes into a captured result. A callback returning a value has no such
+// answer, and the visitor is declared decltype(auto), so control used to run off
+// the end of a non-void function. GCC said so with -Wreturn-type and the miss
+// segfaulted. Both halves of that pairing are known at compile time, so it is
+// now a static_assert and cannot be written at all.
+//
+// That refusal has no test here. static_assert is a hard error, not a
+// substitution failure, so no requires-expression can observe it and there is no
+// compile-fail harness in this suite. What is pinned is the shape that stays
+// legal.
+TEST_CASE("reflex::serde::object_visit: a const miss leaves a void callback uncalled")
+{
+  const auto returns_value = [](auto&) -> int { return 100; };
+  const auto returns_void  = [](auto&) {};
+
+  SUBCASE("a map")
+  {
+    const std::map<std::string, int> m{
+        {"a", 1}
+    };
+    bool visited = false;
+    object_visit_flat("a", m, [&visited](auto& v) {
+      CHECK_EQ(v, 1);
+      visited = true;
+    });
+    CHECK(visited);
+
+    visited = false;
+    CHECK_NOTHROW(object_visit_flat("missing", m, returns_void));
+    CHECK_FALSE(visited);
+    CHECK_EQ(m.size(), 1);
+  }
+
+  SUBCASE("a poly::obj")
+  {
+    const object o{
+        {"a", value{1.0}}
+    };
+    bool visited = false;
+    object_visit_flat("a", o, [&visited](auto&) { visited = true; });
+    CHECK(visited);
+
+    CHECK_NOTHROW(object_visit_flat("missing", o, returns_void));
+    CHECK_EQ(o.size(), 1);
+  }
+
+  // Not const, so the entry is created and there is a value to hand back. This
+  // is the case the static_assert must not reach.
+  SUBCASE("a non-const map still inserts")
+  {
+    std::map<std::string, int> m{
+        {"a", 1}
+    };
+    CHECK_EQ(object_visit_flat("missing", m, returns_value), 100);
+    CHECK_EQ(m.size(), 2);
   }
 }

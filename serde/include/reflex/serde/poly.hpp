@@ -34,6 +34,13 @@ template <typename... Ts> struct object_visitor<poly::obj<Ts...>>
         return std::forward<Fn>(fn)(
             std::forward<Obj>(obj).emplace(std::string{key}, poly::null).first->second);
       }
+      else
+      {
+        static_assert(
+            std::is_void_v<decltype(reflex::visit(std::forward<Fn>(fn), it->second))>,
+            "a const object cannot create the entry a missed key names, so there is nothing to "
+            "return: give this visit a callback returning void");
+      }
     }
   }
 };

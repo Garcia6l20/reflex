@@ -1091,6 +1091,100 @@ TEST_CASE("reflex::serde::json: a borrowed string destination")
   }
 }
 
+// A map used to serialize without reading back, for want of an object_visitor
+// specialization: the object-reading overload is constrained on
+// object_visitable_c, the object-writing one is not. Write-only, and nothing in
+// the type system said so. The gap was in the shared visitor, so it was the
+// same in xml and csv.
+struct[[= derive(Debug)]] Config
+{
+  std::string                name;
+  std::map<std::string, int> limits;
+
+  constexpr bool operator==(Config const&) const = default;
+};
+
+TEST_CASE("reflex::serde::json: a map round-trips")
+{
+  SUBCASE("a bare map")
+  {
+    const auto m = std::map<std::string, int>{
+        {"a", 1},
+        {"b", 2}
+    };
+    const auto encoded = json_dump(m);
+    CHECK_EQ(encoded, JSON({"a":1,"b":2}));
+    CHECK_EQ(json::deserializer{encoded}.load<std::map<std::string, int>>(), m);
+  }
+
+  SUBCASE("a map inside an aggregate")
+  {
+    const Config expected{
+        "x", {{"soft", 1}, {"hard", 2}}
+    };
+    const auto encoded = json_dump(expected);
+    CHECK_EQ(encoded, JSON({"name":"x","limits":{"hard":2,"soft":1}}));
+    CHECK_EQ(json::deserializer{encoded}.load<Config>(), expected);
+  }
+
+  SUBCASE("a map of aggregates")
+  {
+    const auto nested = std::map<std::string, Config>{
+        {"k", {"x", {{"soft", 1}}}}
+    };
+    const auto encoded = json_dump(nested);
+    CHECK_EQ(encoded, JSON({"k":{"name":"x","limits":{"soft":1}}}));
+    CHECK_EQ(json::deserializer{encoded}.load<std::map<std::string, Config>>(), nested);
+  }
+
+  // A key the document names and the map does not hold is created, which is the
+  // whole difference from the aggregate visitor: an aggregate cannot grow a
+  // member, so a miss there can only be an error.
+  SUBCASE("an empty map is filled from the document")
+  {
+    const std::string_view in = JSON({"a":1});
+    const auto             m  = json::deserializer{in}.load<std::map<std::string, int>>();
+    CHECK_EQ(m.size(), 1);
+    CHECK_EQ(m.at("a"), 1);
+  }
+}
+
+// Every test in this file spells its input "..."s or "..."sv, so the one thing a
+// caller reaches for first went untried: a bare literal. It used to reach the
+// stream constructor, whose end iterator is default-constructed and therefore
+// null, and the parse aborted inside ranges::advance on the first skip.
+TEST_CASE("reflex::serde::json::deserializer: a string literal is an input")
+{
+  SUBCASE("a scalar")
+  {
+    CHECK_EQ(json::deserializer{"42"}.load<int>(), 42);
+  }
+
+  SUBCASE("the trailing NUL is not part of the document")
+  {
+    json::deserializer d{"42"};
+    CHECK_EQ(d.input().size(), 2);
+    CHECK_EQ(d.input(), "42"sv);
+  }
+
+  SUBCASE("an aggregate")
+  {
+    const auto value = json::deserializer{R"({"a":1,"b":2})"}.load<std::map<std::string, int>>();
+    CHECK_EQ(value.at("a"), 1);
+    CHECK_EQ(value.at("b"), 2);
+  }
+
+  // A char buffer that was never NUL-terminated is read to its bound rather
+  // than past it. Only one trailing NUL is dropped, so a document ending in a
+  // deliberate NUL keeps the rest.
+  SUBCASE("an array with no terminator")
+  {
+    const char raw[] = {'4', '2'};
+    CHECK_EQ(json::deserializer{raw}.input().size(), 2);
+    CHECK_EQ(json::deserializer{raw}.load<int>(), 42);
+  }
+}
+
 // An output iterator that carries its position by value. write_char advances it
 // through the postfix increment, so write_raw must assign back the iterator
 // ranges::copy returns or the bulk write is overwritten by the next byte.

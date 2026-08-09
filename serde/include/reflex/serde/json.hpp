@@ -120,19 +120,14 @@ REFLEX_EXPORT namespace reflex::serde::json
   // bytes needing an escape are handled one at a time.
   template <typename Ser> void write_escaped(Ser& ser, std::string_view text)
   {
-    std::size_t pos = 0;
-    while(pos < text.size())
-    {
-      const std::size_t n = find_escapable(text.substr(pos));
-      if(n == std::string_view::npos)
-      {
-        ser.write_raw(text.substr(pos));
-        return;
-      }
-      ser.write_raw(text.substr(pos, n));
-      write_escape(ser, text[pos + n]);
-      pos += n + 1;
-    }
+    serde::detail::write_with_escapes(
+        ser,
+        text,
+        [](std::string_view s, std::size_t pos) {
+          const std::size_t n = find_escapable(s.substr(pos));
+          return n == std::string_view::npos ? n : pos + n;
+        },
+        [](Ser& out, char c) { write_escape(out, c); });
   }
 
   template <typename Ser> void write_quoted(Ser& ser, std::string_view text)

@@ -94,21 +94,13 @@ REFLEX_EXPORT namespace reflex::serde::csv
       return;
     }
     ser.write_char('"');
-    // One needle over the remainder of the cell, and the bound is cell.size(), so
-    // the doubling loop cannot restart the search from the front and go quadratic.
-    std::size_t pos = 0;
-    while(pos < cell.size())
-    {
-      const std::size_t n = cell.find('"', pos);
-      if(n == std::string_view::npos)
-      {
-        ser.write_raw(cell.substr(pos));
-        break;
-      }
-      ser.write_raw(cell.substr(pos, n - pos + 1)); // the run, quote included
-      ser.write_char('"');                          // the doubling
-      pos = n + 1;
-    }
+    // One needle over the remainder of the cell, and the search resumes past
+    // each hit, so the doubling cannot restart from the front and go quadratic.
+    serde::detail::write_with_escapes(
+        ser,
+        cell,
+        [](std::string_view s, std::size_t pos) { return s.find('"', pos); },
+        [](Ser& out, char) { out.write_raw("\"\""); });
     ser.write_char('"');
   }
 
