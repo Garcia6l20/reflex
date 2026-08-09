@@ -135,6 +135,51 @@ REFLEX_EXPORT namespace reflex::serde
     }
   };
 
+  namespace detail
+  {
+    // A key reaches the visitor as document text, so a map is only visitable
+    // when its key type can be built from that text. `try_emplace` is what
+    // insert-on-miss needs and it also keeps out std::multimap, whose
+    // duplicate keys no single visit can name.
+    template <typename T>
+    concept visitable_map_c =
+        map_c<T>
+        // A type that is both an aggregate and a map keeps being read through
+        // its members, which is what it has always been read through.
+        and not aggregate_c<T>
+        and std::constructible_from<typename T::key_type, std::string_view>
+        and requires(T& map, typename T::key_type key) {
+              map.find(key);
+              map.try_emplace(std::move(key));
+            };
+  } // namespace detail
+
+  template <detail::visitable_map_c T> struct object_visitor<T>
+  {
+    template <typename Fn, decays_to_c<T> Map>
+    static inline constexpr decltype(auto) operator()(Fn&& fn, std::string_view key, Map&& map)
+    {
+      typename T::key_type k{key};
+
+      auto it = map.find(k);
+      if(it != map.end())
+      {
+        return std::forward<Fn>(fn)(it->second);
+      }
+      else
+      {
+        // A map answers to any key, so a miss is not the error it is on an
+        // aggregate: the entry the document names is created and handed over.
+        // A const map cannot create it and reports the miss the way the
+        // poly::obj visitor does, by leaving the callback uncalled.
+        if constexpr(not std::is_const_v<std::remove_reference_t<Map>>)
+        {
+          return std::forward<Fn>(fn)(map.try_emplace(std::move(k)).first->second);
+        }
+      }
+    }
+  };
+
   template <typename T>
   concept object_visitable_c = not meta::is_template_instance_of(decay(^^T), ^^std::array)
                            and is_complete_type(^^object_visitor<std::decay_t<T>>);

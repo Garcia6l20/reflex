@@ -486,6 +486,25 @@ TEST_CASE("reflex::jinja: top-level bound containers")
     CHECK(result == "first=1 second=2 ");
   }
 
+  // A map answers to dotted access, the same as a poly::obj does. It did not
+  // always: serde::object_visitable_c had no map specialization, so expr's
+  // access_member fell through to "Cannot access key of non-object value".
+  // Pinned because the behaviour is now deliberate rather than incidental.
+  SUBCASE("map member access")
+  {
+    std::map<std::string, aggregate1> rows{
+        {"first",  {1, "one"s}},
+        {"second", {2, "two"s}}
+    };
+    auto ctx = expr::context{"rows"_na = rows};
+
+    CHECK(render(jinja::parse("{{ rows.first.a }}"), ctx) == "1");
+    CHECK(render(jinja::parse("{{ rows.second.b }}"), ctx) == "two");
+    // A key the map does not hold is null, not an error - the same answer a
+    // poly::obj gives.
+    CHECK(render(jinja::parse("{% if rows.missing %}yes{% else %}no{% endif %}"), ctx) == "no");
+  }
+
   SUBCASE("truthiness of a bound aggregate")
   {
     aggregate1 agg{0, ""s};
