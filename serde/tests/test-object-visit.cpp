@@ -564,3 +564,64 @@ TEST_CASE("reflex::serde::object_visit: every dispatch strategy matches the same
                     std::runtime_error);
   }
 }
+
+// A const container cannot create the entry a missed key names, so the visitor
+// leaves the callback uncalled. That answers a callback returning nothing, and
+// every callback in the tree does: the backends assign into a destination and
+// jinja writes into a captured result. A callback returning a value has no such
+// answer, and the visitor is declared decltype(auto), so control used to run off
+// the end of a non-void function. GCC said so with -Wreturn-type and the miss
+// segfaulted. Both halves of that pairing are known at compile time, so it is
+// now a static_assert and cannot be written at all.
+//
+// That refusal has no test here. static_assert is a hard error, not a
+// substitution failure, so no requires-expression can observe it and there is no
+// compile-fail harness in this suite. What is pinned is the shape that stays
+// legal.
+TEST_CASE("reflex::serde::object_visit: a const miss leaves a void callback uncalled")
+{
+  const auto returns_value = [](auto&) -> int { return 100; };
+  const auto returns_void  = [](auto&) {};
+
+  SUBCASE("a map")
+  {
+    const std::map<std::string, int> m{
+        {"a", 1}
+    };
+    bool visited = false;
+    object_visit_flat("a", m, [&visited](auto& v) {
+      CHECK_EQ(v, 1);
+      visited = true;
+    });
+    CHECK(visited);
+
+    visited = false;
+    CHECK_NOTHROW(object_visit_flat("missing", m, returns_void));
+    CHECK_FALSE(visited);
+    CHECK_EQ(m.size(), 1);
+  }
+
+  SUBCASE("a poly::obj")
+  {
+    const object o{
+        {"a", value{1.0}}
+    };
+    bool visited = false;
+    object_visit_flat("a", o, [&visited](auto&) { visited = true; });
+    CHECK(visited);
+
+    CHECK_NOTHROW(object_visit_flat("missing", o, returns_void));
+    CHECK_EQ(o.size(), 1);
+  }
+
+  // Not const, so the entry is created and there is a value to hand back. This
+  // is the case the static_assert must not reach.
+  SUBCASE("a non-const map still inserts")
+  {
+    std::map<std::string, int> m{
+        {"a", 1}
+    };
+    CHECK_EQ(object_visit_flat("missing", m, returns_value), 100);
+    CHECK_EQ(m.size(), 2);
+  }
+}
