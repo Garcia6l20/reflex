@@ -467,7 +467,7 @@ auto tag_invoke(
 template <typename InputIt>
 auto tag_invoke(
     tag_t<serde::deserialize>,
-    serde::json::deserializer<InputIt>& de,
+    serde::json::deserializer<InputIt>&,
     std::type_identity<test_userdefined_type>)
 {
   return test_userdefined_type{42, 3.14, "Hello, world!"};
@@ -514,7 +514,7 @@ auto tag_invoke(
 template <typename InputIt, user_defined2 T>
 auto tag_invoke(
     tag_t<serde::deserialize>,
-    serde::json::deserializer<InputIt>& de,
+    serde::json::deserializer<InputIt>&,
     std::type_identity<T>)
 {
   return T{42, 3.14, "Hello, world2!"};
