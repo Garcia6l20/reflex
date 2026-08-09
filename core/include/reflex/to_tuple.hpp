@@ -27,7 +27,7 @@ REFLEX_EXPORT namespace reflex
       return indices;
     }();
 
-    static constexpr auto [... Is] = indices;
+    [[maybe_unused]] static constexpr auto [... Is] = indices;
     return std::make_tuple(t.[:members[Is]:]...);
   }
 } // namespace reflex

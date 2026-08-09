@@ -216,7 +216,10 @@ REFLEX_EXPORT namespace reflex
     {
       constexpr auto operator()(Args... args) const -> T
       {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
         return T(std::forward<Args>(args)...);
+#pragma GCC diagnostic pop
       }
     };
 
