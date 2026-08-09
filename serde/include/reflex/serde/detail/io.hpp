@@ -416,6 +416,18 @@ REFLEX_EXPORT namespace reflex::serde::detail
     subrange_deserializer(T const& v) : cursor_{v.begin(), v.end()}, first_{v.begin()}
     {}
 
+    // A char array has no begin(), so the range constructor above does not claim
+    // it, and it decays to InputIt, so the stream constructor below did: the
+    // cursor was built with a default-constructed end, which for a pointer is
+    // null, and every length came out as `nullptr - data`. The array carries its
+    // own bound, so use it. One trailing NUL is dropped, which is what a string
+    // literal means; an array with no NUL is taken whole rather than read past.
+    template <std::size_t N>
+      requires std::same_as<InputIt, char const*>
+    subrange_deserializer(char const (&v)[N])
+        : subrange_deserializer(v, v + (N != 0 and v[N - 1] == '\0' ? N - 1 : N))
+    {}
+
     template <typename T>
       requires requires(T& v) {
         InputIt{v};

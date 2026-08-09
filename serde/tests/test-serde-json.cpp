@@ -1149,6 +1149,42 @@ TEST_CASE("reflex::serde::json: a map round-trips")
   }
 }
 
+// Every test in this file spells its input "..."s or "..."sv, so the one thing a
+// caller reaches for first went untried: a bare literal. It used to reach the
+// stream constructor, whose end iterator is default-constructed and therefore
+// null, and the parse aborted inside ranges::advance on the first skip.
+TEST_CASE("reflex::serde::json::deserializer: a string literal is an input")
+{
+  SUBCASE("a scalar")
+  {
+    CHECK_EQ(json::deserializer{"42"}.load<int>(), 42);
+  }
+
+  SUBCASE("the trailing NUL is not part of the document")
+  {
+    json::deserializer d{"42"};
+    CHECK_EQ(d.input().size(), 2);
+    CHECK_EQ(d.input(), "42"sv);
+  }
+
+  SUBCASE("an aggregate")
+  {
+    const auto value = json::deserializer{R"({"a":1,"b":2})"}.load<std::map<std::string, int>>();
+    CHECK_EQ(value.at("a"), 1);
+    CHECK_EQ(value.at("b"), 2);
+  }
+
+  // A char buffer that was never NUL-terminated is read to its bound rather
+  // than past it. Only one trailing NUL is dropped, so a document ending in a
+  // deliberate NUL keeps the rest.
+  SUBCASE("an array with no terminator")
+  {
+    const char raw[] = {'4', '2'};
+    CHECK_EQ(json::deserializer{raw}.input().size(), 2);
+    CHECK_EQ(json::deserializer{raw}.load<int>(), 42);
+  }
+}
+
 // An output iterator that carries its position by value. write_char advances it
 // through the postfix increment, so write_raw must assign back the iterator
 // ranges::copy returns or the bulk write is overwritten by the next byte.
