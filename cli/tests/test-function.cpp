@@ -12,7 +12,7 @@ int dots(
 {
   for(auto _ : std::views::iota(0, std::max(repeat, 1)))
   {
-    for(auto __ : std::views::iota(0, count))
+    for(auto _ : std::views::iota(0, count))
     {
       std::print(".");
     }
@@ -29,7 +29,7 @@ int dashes(
 {
   for(auto _ : std::views::iota(0, std::max(repeat, 1)))
   {
-    for(auto __ : std::views::iota(0, count))
+    for(auto _ : std::views::iota(0, count))
     {
       std::print("-");
     }

@@ -392,10 +392,8 @@ REFLEX_EXPORT namespace reflex::cli
     }
 
     std::vector<std::meta::info> members;
-    std::size_t                  position = 0;
     for(auto param : std::meta::parameters_of(Fn))
     {
-      ++position;
       const auto where = source_location_of(param);
 
       if(not has_identifier(param))
