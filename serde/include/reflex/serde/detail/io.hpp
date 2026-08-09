@@ -255,6 +255,44 @@ REFLEX_EXPORT namespace reflex::serde::detail
     return best;
   }
 
+  // Emit `text` with some bytes replaced, in runs.
+  //
+  // Every text backend needs this and each used to spell it out: json escapes a
+  // string body, csv doubles a quote inside a cell, xml replaces three or four
+  // bytes with entities and does it twice, once for text and once for an
+  // attribute value. Four copies of one loop, differing only in how the next
+  // byte of interest is found and what is emitted in its place.
+  //
+  // `find_next(text, pos)` returns the ABSOLUTE index of the next byte needing
+  // replacement at or after `pos`, or npos. `emit_one(ser, c)` writes the
+  // replacement for that byte. Everything between is written whole, which is
+  // the point: a run goes out in one append rather than a byte at a time.
+  //
+  // Each caller's find_next must be bounded by what is about to be consumed. A
+  // scan for a byte that is not there costs a pass over the remainder, and a
+  // caller that rescans from the front on every replacement turns a linear
+  // write quadratic. The callers below all advance past what they scanned.
+  template <typename Ser, typename Find, typename Emit>
+  void write_with_escapes(Ser& ser, std::string_view text, Find&& find_next, Emit&& emit_one)
+  {
+    std::size_t pos = 0;
+    while(pos < text.size())
+    {
+      const std::size_t n = find_next(text, pos);
+      if(n == std::string_view::npos)
+      {
+        ser.write_raw(text.substr(pos));
+        return;
+      }
+      if(n > pos)
+      {
+        ser.write_raw(text.substr(pos, n - pos));
+      }
+      emit_one(ser, text[n]);
+      pos = n + 1;
+    }
+  }
+
   // A scalar straight into the sink, no intermediate std::string. Two-argument
   // to_chars is shortest-round-trip, which is what "{}" is specified to produce,
   // so the bytes are the same.

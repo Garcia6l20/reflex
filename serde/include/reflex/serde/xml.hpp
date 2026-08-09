@@ -340,63 +340,45 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
   template <typename Ser> void write_text_escaped(Ser& ser, std::string_view text)
   {
-    std::size_t pos = 0;
-    while(pos < text.size())
-    {
-      const std::size_t n = serde::detail::find_any(text, pos, "&<>");
-      if(n == std::string_view::npos)
-      {
-        ser.write_raw(text.substr(pos));
-        return;
-      }
-      if(n > pos)
-      {
-        ser.write_raw(text.substr(pos, n - pos));
-      }
-      switch(text[n])
-      {
-        case '&':
-          ser.write_raw("&amp;");
-          break;
-        case '<':
-          ser.write_raw("&lt;");
-          break;
-        default:
-          ser.write_raw("&gt;");
-      }
-      pos = n + 1;
-    }
+    serde::detail::write_with_escapes(
+        ser,
+        text,
+        [](std::string_view s, std::size_t pos) { return serde::detail::find_any(s, pos, "&<>"); },
+        [](Ser& out, char c) {
+          switch(c)
+          {
+            case '&':
+              out.write_raw("&amp;");
+              break;
+            case '<':
+              out.write_raw("&lt;");
+              break;
+            default:
+              out.write_raw("&gt;");
+          }
+        });
   }
 
   // Attribute-value escaping: '&', '<', and the delimiting '"'.
   template <typename Ser> void write_attr_escaped(Ser& ser, std::string_view text)
   {
-    std::size_t pos = 0;
-    while(pos < text.size())
-    {
-      const std::size_t n = serde::detail::find_any(text, pos, "&<\"");
-      if(n == std::string_view::npos)
-      {
-        ser.write_raw(text.substr(pos));
-        return;
-      }
-      if(n > pos)
-      {
-        ser.write_raw(text.substr(pos, n - pos));
-      }
-      switch(text[n])
-      {
-        case '&':
-          ser.write_raw("&amp;");
-          break;
-        case '<':
-          ser.write_raw("&lt;");
-          break;
-        default:
-          ser.write_raw("&quot;");
-      }
-      pos = n + 1;
-    }
+    serde::detail::write_with_escapes(
+        ser,
+        text,
+        [](std::string_view s, std::size_t pos) { return serde::detail::find_any(s, pos, "&<\""); },
+        [](Ser& out, char c) {
+          switch(c)
+          {
+            case '&':
+              out.write_raw("&amp;");
+              break;
+            case '<':
+              out.write_raw("&lt;");
+              break;
+            default:
+              out.write_raw("&quot;");
+          }
+        });
   }
 
   template <bool Attr, typename Ser> void write_escaped(Ser& ser, std::string_view text)
