@@ -409,6 +409,7 @@ REFLEX_EXPORT namespace reflex::poly
 #pragma GCC diagnostic ignored "-Wconversion"
 #pragma GCC diagnostic ignored "-Wfloat-conversion"
 #pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wdouble-promotion"
               return s == other;
 #pragma GCC diagnostic pop
             }

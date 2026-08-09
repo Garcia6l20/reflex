@@ -2,6 +2,7 @@
 .vscode/
 .envrc
 build/
+build-*/
 .qmlls.ini
 compile_commands.json
 __pycache__/

@@ -977,7 +977,8 @@ REFLEX_EXPORT namespace reflex::py
       template for(constexpr auto group : std::define_static_array(bindable_method_groups(^^T)))
       {
         constexpr auto written = std::define_static_string(meta::spelling_of(group));
-        constexpr auto name = std::define_static_string(group_python_name(^^T, written).get());
+        [[maybe_unused]] constexpr auto name =
+            std::define_static_string(group_python_name(^^T, written).get());
 
         template for(constexpr auto o :
                      std::define_static_array(bindable_overloads(^^T, written)))

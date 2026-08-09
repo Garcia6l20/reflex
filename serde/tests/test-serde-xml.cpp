@@ -360,8 +360,8 @@ auto tag_invoke(
     serde::xml::deserializer<InputIt>& de,
     std::type_identity<Named>)
 {
-  auto [name, self_closing] = de.read_open_tag();
-  const int v               = std::stoi(de.read_text());
+  de.read_open_tag();
+  const int v = std::stoi(de.read_text());
   de.read_close_tag();
   return Named{v};
 }
