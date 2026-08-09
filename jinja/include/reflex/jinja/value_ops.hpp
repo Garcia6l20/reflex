@@ -82,7 +82,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
             using DRHS = std::decay_t<RHS>;
             if constexpr(eq_comparable_c<DLHS, DRHS>)
             {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdouble-promotion"
               return lhs == rhs;
+#pragma GCC diagnostic pop
             }
             else if constexpr(parsable_c<DLHS> and str_c<DRHS>)
             {

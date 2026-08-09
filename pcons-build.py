@@ -16,6 +16,8 @@ WARNINGS = [
     "-Wnon-virtual-dtor",
     "-Woverloaded-virtual",
     "-Wcast-qual",
+    "-Wstrict-aliasing=2",
+    "-Wdouble-promotion",
 ]
 
 if get_var("REFLEX_WERROR", True):
