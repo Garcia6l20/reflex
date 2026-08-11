@@ -194,12 +194,11 @@ void write_file(fs::path const& path, std::string_view content)
   out.write(content.data(), static_cast<std::streamsize>(content.size()));
 }
 
-// Appends `line` on its own line unless `marker` is already somewhere in the file, and reports
-// whether it did. The marker is a separate argument because the zsh style line is looked up by a
-// shorter prefix than the one written out.
-bool append_rc_line(std::string& rc_content, std::string_view line, std::string_view marker)
+// Appends `line` on its own line unless it is already somewhere in the file, and reports whether
+// it did.
+bool append_rc_line(std::string& rc_content, std::string_view line)
 {
-  if(rc_content.find(marker) != std::string::npos)
+  if(rc_content.find(line) != std::string::npos)
   {
     return false;
   }
@@ -210,11 +209,6 @@ bool append_rc_line(std::string& rc_content, std::string_view line, std::string_
   rc_content += line;
   rc_content.push_back('\n');
   return true;
-}
-
-bool append_rc_line(std::string& rc_content, std::string_view line)
-{
-  return append_rc_line(rc_content, line, line);
 }
 
 fs::path install_fish(std::string_view executable)
@@ -253,12 +247,12 @@ fs::path install_zsh(std::string_view executable)
   auto const rc_path         = home / ".zshrc";
   auto const completion_path = home / ".zfunc" / (std::string{"_"} + std::string{info.program});
   auto const completion_line = std::string{"fpath+=~/.zfunc; autoload -Uz compinit; compinit"};
-  auto const style_line      = std::string{"zstyle ':completion:*' menu select"};
 
   auto rc_content = read_file(rc_path);
-  append_rc_line(rc_content, completion_line);
-  append_rc_line(rc_content, style_line, "zstyle");
-  write_file(rc_path, rc_content);
+  if(append_rc_line(rc_content, completion_line))
+  {
+    write_file(rc_path, rc_content);
+  }
 
   write_file(completion_path, completion_script(info, "zsh"));
   return completion_path;
