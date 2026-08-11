@@ -102,9 +102,18 @@ TEST_CASE("reflex::cli: install completion for zsh")
 
   auto const rc_text = read_text(rc_path);
   CHECK(rc_text.find("fpath+=~/.zfunc; autoload -Uz compinit; compinit") != std::string::npos);
+  // The menu style belongs to the completion script, scoped to this command, not to the rc where
+  // it would apply to every command the user completes.
+  CHECK(rc_text.find("zstyle") == std::string::npos);
 
   auto const script_text = read_text(completion_path);
   CHECK(script_text.find("compdef _install_cli_completion \"install-cli\"") != std::string::npos);
+  CHECK(script_text.find("zstyle ':completion:*:*:install-cli:*' menu select") != std::string::npos);
+
+  // A second install must leave the rc untouched.
+  capture_out_err([&] { rc = cli::run(install_completion_cli{}, 3, argv); });
+  CHECK_EQ(rc, 0);
+  CHECK_EQ(read_text(rc_path), rc_text);
 
   unset_env("SHELL");
   unset_env("HOME");

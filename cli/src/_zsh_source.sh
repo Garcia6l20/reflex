@@ -1,5 +1,7 @@
 #compdef {0}
 
+zstyle ':completion:*:*:{0}:*' menu select
+
 if [[ -n "{3}" && -d "{3}" ]]; then
     case ":$PATH:" in
         *":{3}:"*) ;;
