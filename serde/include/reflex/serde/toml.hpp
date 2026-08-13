@@ -653,6 +653,9 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // One buffer, not a pool: a token is dead before the next one is read.
     std::string token_buf_;
 
+    // Separate from token_buf_: a key and its value are read one after the other.
+    std::string key_buf_;
+
   public:
     using base::base;
     using base::advance;
@@ -945,7 +948,136 @@ REFLEX_EXPORT namespace reflex::serde::toml
       throw std::runtime_error(std::format("TOML: expected a string, got '{}'", read_token()));
     }
 
+    // A bracketed, comma-separated run in 1.1's grammar, which is one rule for the
+    // array and the inline table. The serializer still writes the one-line,
+    // no-trailing-comma form both versions accept; do not make it match this.
+    template <char Open, char Close, typename Elem>
+    void read_bracketed(std::string_view what, Elem&& read_one)
+    {
+      advance(); // Open, which the caller has already looked at
+      if(not next_content_line())
+      {
+        throw std::runtime_error(std::format("TOML: unterminated {}", what));
+      }
+      if(peek_at(0) == Close)
+      {
+        advance();
+        return;
+      }
+      while(true)
+      {
+        read_one();
+        if(not next_content_line())
+        {
+          throw std::runtime_error(std::format("TOML: unterminated {}", what));
+        }
+        const char sep = advance();
+        if(sep == Close)
+        {
+          return;
+        }
+        if(sep != ',')
+        {
+          throw std::runtime_error(
+              std::format("TOML: expected ',' or '{}' in {}", Close, what));
+        }
+        if(not next_content_line())
+        {
+          throw std::runtime_error(std::format("TOML: unterminated {}", what));
+        }
+        if(peek_at(0) == Close)
+        {
+          advance(); // a trailing comma, which 1.1 allows in both forms
+          return;
+        }
+      }
+    }
+
+    // The views point into key_buf_, and are built only once the buffer is final,
+    // because appending a segment can reallocate it.
+    std::size_t read_key_path(std::span<std::string_view> out)
+    {
+      key_buf_.clear();
+      std::array<std::size_t, serde::max_key_depth> ends{};
+      std::size_t                                   count = 0;
+      while(true)
+      {
+        skip_ws();
+        if(count == out.size())
+        {
+          throw std::runtime_error("TOML: a key has more dotted segments than can be followed");
+        }
+        read_key_segment_();
+        ends[count++] = key_buf_.size();
+        skip_ws();
+        if(at_line_end() or peek_at(0) != '.')
+        {
+          break;
+        }
+        advance(); // "dot-sep = ws %x2E ws"
+      }
+      std::size_t start = 0;
+      for(std::size_t i = 0; i < count; ++i)
+      {
+        out[i] = std::string_view{key_buf_}.substr(start, ends[i] - start);
+        start  = ends[i];
+      }
+      return count;
+    }
+
+    template <typename Map> void read_inline_pair(Map& value)
+    {
+      std::array<std::string_view, serde::max_key_depth> keys{};
+      const std::size_t count = read_key_path(keys);
+
+      skip_ws();
+      if(at_line_end() or peek_at(0) != '=')
+      {
+        throw std::runtime_error(
+            std::format("TOML: expected '=' after the key '{}'", keys[count - 1]));
+      }
+      advance();
+      if(not next_content_line())
+      {
+        throw std::runtime_error("TOML: a key has no value");
+      }
+
+      serde::object_visit(std::span{keys.data(), count}, value, [&]<typename V>(V& v) {
+        v = this->template load<std::remove_cvref_t<V>>();
+      });
+    }
+
   private:
+    // "simple-key = quoted-key / unquoted-key", appended to `buf`.
+    void read_key_segment_()
+    {
+      if(at_line_end())
+      {
+        throw std::runtime_error("TOML: expected a key");
+      }
+      const char c = peek_at(0);
+      if(c == '"' or c == '\'')
+      {
+        // "quoted-key = basic-string / literal-string": the multi-line forms
+        // are not keys.
+        if(peek_at(1) == c and peek_at(2) == c)
+        {
+          throw std::runtime_error("TOML: a multi-line string cannot be a key");
+        }
+        key_buf_ += read_string();
+        return;
+      }
+      const std::size_t start = key_buf_.size();
+      while(not at_line_end() and detail::is_bare_key_char(peek_at(0)))
+      {
+        key_buf_.push_back(advance());
+      }
+      if(key_buf_.size() == start)
+      {
+        throw std::runtime_error(std::format("TOML: '{}' cannot start a key", c));
+      }
+    }
+
     void scan_token_run_()
     {
       while(not at_line_end() and not ends_token(peek_at(0)))
@@ -1219,6 +1351,54 @@ REFLEX_EXPORT namespace reflex::serde::toml
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+
+  // An array of inline tables is valid TOML from anyone else and reads through
+  // the element type like any other, and so does a mixed-element array.
+  template <typename InputIt, seq_c Seq>
+  auto tag_invoke(
+      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Seq>)
+  {
+    if(de.at_end() or de.peek_at(0) != '[')
+    {
+      throw std::runtime_error("TOML: expected '[' at the start of an array");
+    }
+
+    Seq value{};
+    using elem_type = typename std::remove_cvref_t<Seq>::value_type;
+    auto push =
+        serde::detail::make_pusher(value, "Array has more elements than target type can hold");
+
+    de.template read_bracketed<'[', ']'>("an array", [&] {
+      push(de.template load<elem_type>());
+    });
+    return value;
+  }
+
+  // "{ a = 1, b = 'x' }", and - once step 09 lands - a whole document, which is
+  // the same question asked at depth 0.
+  //
+  // Only the '{' branch exists here. The document loop, the [header] and the
+  // [[array of tables]] are step 09's, and the counter that tells a document
+  // from an inline table is that step's core problem. The throw below is
+  // deliberate, not an oversight.
+  template <typename InputIt, object_visitable_c Map>
+    requires(
+        not(meta::is_template_instance_of(^^Map, ^^poly::var)
+            // std::array<char, N> may be considered a visitable object
+            or str_c<Map>
+            or seq_c<Map>))
+  auto tag_invoke(
+      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+  {
+    if(de.at_end() or de.peek_at(0) != '{')
+    {
+      throw std::runtime_error("TOML: reading a whole document is not implemented yet");
+    }
+
+    Map value{};
+    de.template read_bracketed<'{', '}'>("an inline table", [&] { de.read_inline_pair(value); });
+    return value;
+  }
 
 } // namespace reflex::serde::toml
 

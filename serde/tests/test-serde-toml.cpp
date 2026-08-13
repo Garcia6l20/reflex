@@ -713,3 +713,123 @@ TEST_CASE("reflex::serde::toml::deserializer: TOML has no null")
   // position simply reads the payload.
   check_load<std::optional<int>>("7", std::optional<int>{7});
 }
+
+struct ab_doc
+{
+  int         a;
+  std::string b;
+  bool        operator==(ab_doc const&) const = default;
+};
+
+struct inner_doc
+{
+  int  b;
+  bool operator==(inner_doc const&) const = default;
+};
+
+struct dotted_doc
+{
+  inner_doc a;
+  bool      operator==(dotted_doc const&) const = default;
+};
+
+TEST_CASE("reflex::serde::toml::deserializer: arrays")
+{
+  check_load<std::vector<int>>("[1, 2, 3]", {1, 2, 3});
+  check_load<std::vector<int>>("[]", {});
+  check_load<std::vector<int>>("[ ]", {});
+  check_load<std::vector<std::string>>(R"(["a", 'b'])", {"a", "b"});
+
+  // A trailing comma has been legal in an array since 1.0.
+  check_load<std::vector<int>>("[1, 2, 3,]", {1, 2, 3});
+  check_load<std::vector<int>>("[1,]", {1});
+
+  check_load<std::vector<std::vector<int>>>("[[1,2],[3,4]]", {{1, 2}, {3, 4}});
+
+  // An array spans as many lines as it likes, with comments anywhere between
+  // two tokens.
+  check_load<std::vector<int>>(
+      "[\n"
+      "  1, # one\n"
+      "  2,\n"
+      "  # a whole comment line\n"
+      "  3,\n"
+      "]",
+      {1, 2, 3});
+
+  check_load<std::array<int, 3>>("[1, 2, 3]", {1, 2, 3});
+  check_load_throws<std::array<int, 2>>("[1, 2, 3]");
+
+  check_load_throws<std::vector<int>>("[1, 2");
+  check_load_throws<std::vector<int>>("[1 2]");
+  check_load_throws<std::vector<int>>("1, 2]");
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a mixed array fails on the element")
+{
+  // Mixed elements are valid TOML. Reading one into a std::vector<int> is the
+  // destination's problem, and the message has to name the format.
+  std::string message;
+  try
+  {
+    (void)toml::deserializer{R"([1, "two"])"sv}.load<std::vector<int>>();
+  }
+  catch(std::runtime_error const& e)
+  {
+    message = e.what();
+  }
+  CHECK(message.starts_with("TOML: "));
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: inline tables")
+{
+  check_load<ab_doc>(R"({ a = 1, b = "x" })", {1, "x"});
+  check_load<ab_doc>(R"({a=1,b='x'})", {1, "x"});
+  check_load<std::map<std::string, int>>("{ a = 1, b = 2 }", {{"a", 1}, {"b", 2}});
+  check_load<std::map<std::string, int>>("{}", {});
+  check_load<std::map<std::string, int>>("{ }", {});
+
+  // 1.1 allows both a line break and a trailing comma inside an inline table.
+  // 1.0 allowed neither, which is why this reader and the writer differ here.
+  check_load<ab_doc>(
+      "{\n"
+      "  a = 1, # first\n"
+      "  b = \"x\",\n"
+      "}",
+      {1, "x"});
+
+  check_load_throws<ab_doc>(R"({ a = 1, b = "x" )");
+  check_load_throws<ab_doc>(R"({ a = 1 b = "x" })");
+  check_load_throws<ab_doc>(R"({ a })");
+  check_load_throws<ab_doc>(R"({ = 1 })");
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a dotted key reaches a nested member")
+{
+  check_load<dotted_doc>("{ a.b = 1 }", {{1}});
+  // "dot-sep = ws %x2E ws": whitespace may sit on either side of the dot.
+  check_load<dotted_doc>("{ a . b = 1 }", {{1}});
+  // A quoted segment is a segment, not a name carrying a dot.
+  check_load<dotted_doc>(R"({ "a".'b' = 1 })", {{1}});
+  // The nested table written out in full means the same thing.
+  check_load<dotted_doc>("{ a = { b = 1 } }", {{1}});
+  // A multi-line string is not a key.
+  check_load_throws<dotted_doc>(R"({ """a""".b = 1 })");
+}
+
+// Step 09 owns the document loop, the [header] and the [[array of tables]]. The
+// throw is deliberate, and this pins that it is reached rather than a parse
+// going somewhere confusing.
+TEST_CASE("reflex::serde::toml::deserializer: a whole document is not read yet")
+{
+  std::string message;
+  try
+  {
+    (void)toml::deserializer{"a = 1\nb = \"x\""sv}.load<ab_doc>();
+  }
+  catch(std::runtime_error const& e)
+  {
+    message = e.what();
+  }
+  CHECK(message == "TOML: reading a whole document is not implemented yet");
+}
