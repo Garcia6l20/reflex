@@ -1142,6 +1142,126 @@ TEST_CASE("reflex::serde::toml::deserializer: a key past 32 segments is refused"
   CHECK(load_message<map_doc>(text).starts_with("TOML: "));
 }
 
+// The schema-free path: no destination type steers the read, so the shape of
+// the text decides.
+
+TEST_CASE("reflex::serde::toml: a document reads into a toml::value")
+{
+  const auto text =
+      "i = 42\n"
+      "big = 9007199254740993\n"       // 2^53 + 1, unrepresentable as a double
+      "f = 1.5\n"
+      "one = 1.0\n"
+      "b = true\n"
+      "s = \"text\"\n"
+      "when = 1979-05-27T07:32:00Z\n"
+      "list = [1, 2, \"three\"]\n"
+      "inline = { k = 1 }\n"
+      "[table]\n"
+      "n = 7\n"
+      "[[items]]\n"
+      "n = 1\n"
+      "[[items]]\n"
+      "n = 2\n"sv;
+
+  auto v = toml::deserializer{text}.load<toml::value>();
+
+  // TOML's Integer and Float are two types, not two spellings of one, so `1`
+  // and `1.0` land in different alternatives and the integer stays exact.
+  CHECK(v["i"].is<toml::integer>());
+  CHECK(v["i"] == 42);
+  CHECK(v["big"].as<toml::integer>() == 9007199254740993LL);
+  CHECK(v["f"].is<toml::number>());
+  CHECK(v["one"].is<toml::number>());
+  CHECK(v["b"].is<toml::boolean>());
+  CHECK(v["s"].as<toml::string>() == "text");
+  // Date-times are carried verbatim as strings; nothing here maps them onto a
+  // calendar type.
+  CHECK(v["when"].as<toml::string>() == "1979-05-27T07:32:00Z");
+  CHECK(v["list"].is_array());
+  CHECK(v["list"].size() == 3);
+  CHECK(v["inline"]["k"] == 1);
+  CHECK(v["table"]["n"] == 7);
+  CHECK(v["items"].is_array());
+  CHECK(v["items"].size() == 2);
+  CHECK(v["items"][1]["n"] == 2);
+
+  // Written back and read again. The second load is what catches a lossy
+  // write: a value that comes out in the wrong form reads back as the wrong
+  // alternative even though the document parses.
+  const std::string out = dump(v);
+  auto back = toml::deserializer{std::string_view{out}}.load<toml::value>();
+  CHECK(back == v);
+  CHECK(back["big"].as<toml::integer>() == 9007199254740993LL);
+  CHECK(back["one"].is<toml::number>());
+  CHECK(back["i"].is<toml::integer>());
+}
+
+TEST_CASE("reflex::serde::toml: a header builds objects in a toml::value")
+{
+  both_cursors("[a.b.c]\nn = 1\n[a.d]\nm = 2\n", [](auto& de) {
+    auto v = de.template load<toml::value>();
+    CHECK(v["a"].is_object());
+    CHECK(v["a"]["b"].is_object());
+    CHECK(v["a"]["b"]["c"]["n"] == 1);
+    CHECK(v["a"]["d"]["m"] == 2);
+  });
+
+  // A header with nothing under it is still a table. A typed destination has
+  // the member either way, but a toml::value only has what the document put
+  // there.
+  auto empty = toml::deserializer{"[a]"sv}.load<toml::value>();
+  CHECK(empty["a"].is_object());
+  CHECK(empty["a"].size() == 0);
+}
+
+TEST_CASE("reflex::serde::toml: an array of tables builds an arr in a toml::value")
+{
+  auto v = toml::deserializer{"[[items]]\nn = 1\n[[items]]\nn = 2\n[items.sub]\nk = 3\n"sv}
+               .load<toml::value>();
+  CHECK(v["items"].is_array());
+  CHECK(v["items"].size() == 2);
+  CHECK(v["items"][0]["n"] == 1);
+  CHECK(v["items"][1]["n"] == 2);
+  CHECK(v["items"][1]["sub"]["k"] == 3);
+
+  // And comes back out as [[items]] rather than as an inline array of inline
+  // tables.
+  CHECK(dump(v) == "[[items]]\nn = 1\n[[items]]\nn = 2\n[items.sub]\nk = 3");
+}
+
+TEST_CASE("reflex::serde::toml: a toml::value writes tables the way a struct does")
+{
+  // A map iterates in key order, so a leaf named "z" comes after a table named
+  // "a" - and a key written after a [header] belongs to that header's table.
+  // The three passes are what stop "z = 9" landing in [a].
+  auto v = toml::deserializer{"[a]\nn = 1\n"sv}.load<toml::value>();
+  v["z"]  = 9;
+  CHECK(dump(v) == "z = 9\n[a]\nn = 1");
+
+  CHECK(dump(toml::value{1}) == "1");
+  CHECK(dump(toml::value{1.0}) == "1.0");
+  CHECK(dump(toml::value{9007199254740993LL}) == "9007199254740993");
+}
+
+TEST_CASE("reflex::serde::toml: a var holding null loses its key")
+{
+  // TOML has no null, so a var holding one is dropped with its key exactly as
+  // an empty optional is. Every other skip the table passes make is a
+  // compile-time question; this one is not.
+  toml::object o;
+  o["a"] = 1;
+  o["gone"];
+  o["b"] = 2;
+  CHECK(dump(o) == "a = 1\nb = 2");
+
+  toml::object inner;
+  inner["gone"];
+  toml::object outer;
+  outer["t"] = inner;
+  CHECK(dump(outer) == "[t]");
+}
+
 TEST_CASE("reflex::serde::toml::deserializer: a table in a value position needs its braces")
 {
   // At depth 0 a bare "key = value" run is a document. Below it, the same

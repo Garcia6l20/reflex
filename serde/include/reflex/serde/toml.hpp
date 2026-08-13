@@ -211,6 +211,38 @@ REFLEX_EXPORT namespace reflex::serde::toml
     return nonstatic_data_members_of(^^T, std::meta::access_context::current()).size();
   }
 
+  // TOML has no null, so a null member goes with its key exactly as an empty
+  // optional does - but this one is a runtime question, not a compile-time one.
+  template <typename T> bool holds_null([[maybe_unused]] T const& value)
+  {
+    if constexpr(meta::is_template_instance_of(^^T, ^^poly::var))
+    {
+      return value.is_null();
+    }
+    else
+    {
+      return false;
+    }
+  }
+
+  // What header_table_c and table_array_c ask, of a var's current alternative
+  // instead of its type. A mixed or empty array is an inline array.
+  template <typename Var> bool var_is_table(Var const& value)
+  {
+    return value.is_object();
+  }
+
+  template <typename Var> bool var_is_table_array(Var const& value)
+  {
+    if(not value.is_array())
+    {
+      return false;
+    }
+    auto const& elems = value.as_array();
+    return not elems.empty()
+       and std::ranges::all_of(elems, [](auto const& elem) { return elem.is_object(); });
+  }
+
   // How a path came to exist. A table is created once and extended never, but a
   // [header] may claim a path a longer [header] only implied, and a dotted key
   // may add a sibling to a table an earlier dotted key created.
@@ -310,6 +342,24 @@ REFLEX_EXPORT namespace reflex::serde::toml
     return *std::ranges::next(std::ranges::begin(seq), static_cast<diff>(seg.index));
   }
 
+  template <typename T>
+  concept var_c = meta::is_template_instance_of(^^T, ^^poly::var);
+
+  // The entry object_visitor creates on a miss holds null, so the path makes it a
+  // table. Only null is converted; anything else is a broken document rule the
+  // var's own visitor reports better. Free function and unconstrained template
+  // because GCC 16 miscompiles a reflection formed inside a lambda.
+  template <typename T> void make_table([[maybe_unused]] T& value)
+  {
+    if constexpr(var_c<T>)
+    {
+      if(value.is_null())
+      {
+        value.ensure_object();
+      }
+    }
+  }
+
   template <typename Node, typename Fn>
   void table_descend(
       std::span<segment const> rest,
@@ -323,6 +373,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
       fn(node);
       return;
     }
+    make_table(node);
     if constexpr(object_visitable_c<std::remove_cvref_t<Node>>)
     {
       table_visit(rest, node, fn, full);
@@ -336,6 +387,58 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
   }
 
+  // A free function rather than the body of the lambda below, because GCC 16
+  // miscompiles the reflections the `if constexpr` chain forms inside one.
+  template <typename Node, typename Fn>
+  void table_step(
+      segment                  seg,
+      std::span<segment const> rest,
+      Node&                    node,
+      Fn&                      fn,
+      std::string_view         full)
+  {
+    using U = std::remove_cvref_t<Node>;
+    if constexpr(var_c<U>)
+    {
+      if(seg.index != no_index)
+      {
+        if(node.is_null())
+        {
+          node.ensure_array();
+        }
+        if(not node.is_array())
+        {
+          throw std::runtime_error(std::format(
+              "TOML: in '{}', '{}' is an array of tables in the document and is already "
+              "something else here",
+              full, seg.name));
+        }
+        table_descend(rest, element_at(node.as_array(), seg, full), fn, full, seg.name);
+        return;
+      }
+    }
+    // std::array<char, N> is both a sequence and a string and must stay a scalar.
+    else if constexpr(seq_c<U> and not str_c<U>)
+    {
+      if(seg.index != no_index)
+      {
+        table_descend(rest, element_at(node, seg, full), fn, full, seg.name);
+        return;
+      }
+    }
+    else
+    {
+      if(seg.index != no_index)
+      {
+        throw std::runtime_error(std::format(
+            "TOML: in '{}', '{}' is an array of tables in the document and is not a "
+            "sequence in the destination",
+            full, seg.name));
+      }
+    }
+    table_descend(rest, node, fn, full, seg.name);
+  }
+
   template <typename Root, typename Fn>
   void table_visit(std::span<segment const> path, Root& root, Fn& fn, std::string_view full)
   {
@@ -343,31 +446,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     const auto    rest = path.subspan(1);
 
     object_visitor<std::remove_cvref_t<Root>>{}(
-        [&]<typename N>(N&& nested) {
-          using U = std::remove_cvref_t<N>;
-          // std::array<char, N> is both a sequence and a string and has to stay
-          // a scalar, the same trap the table writers document.
-          if constexpr(seq_c<U> and not str_c<U>)
-          {
-            if(seg.index != no_index)
-            {
-              table_descend(rest, element_at(nested, seg, full), fn, full, seg.name);
-              return;
-            }
-          }
-          else
-          {
-            if(seg.index != no_index)
-            {
-              throw std::runtime_error(std::format(
-                  "TOML: in '{}', '{}' is an array of tables in the document and is not a "
-                  "sequence in the destination",
-                  full, seg.name));
-            }
-          }
-          table_descend(rest, nested, fn, full, seg.name);
-        },
-        seg.name, root);
+        [&]<typename N>(N&& nested) { table_step(seg, rest, nested, fn, full); }, seg.name, root);
   }
   } // namespace detail
 
@@ -470,7 +549,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
           write_pair(key_token, *value);
         }
       }
-      else
+      else if(not detail::holds_null(value))
       {
         begin_line();
         this->write_raw(key_token);
@@ -487,7 +566,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
           write_runtime_pair(key, *value);
         }
       }
-      else
+      else if(not detail::holds_null(value))
       {
         begin_line();
         detail::write_key(*this, key);
@@ -510,6 +589,10 @@ REFLEX_EXPORT namespace reflex::serde::toml
       }
       else
       {
+        if(detail::holds_null(value))
+        {
+          return first;
+        }
         if(not first)
         {
           this->write_raw(", ");
@@ -651,6 +734,10 @@ REFLEX_EXPORT namespace reflex::serde::toml
         std::string scratch;
         for(auto const& [key, val] : value)
         {
+          if(detail::holds_null(val))
+          {
+            continue;
+          }
           if(not first)
           {
             ser.write_raw(", ");
@@ -661,6 +748,40 @@ REFLEX_EXPORT namespace reflex::serde::toml
           first = false;
         }
         ser.write_raw(value.empty() ? "}" : " }");
+        return ser.out();
+      }
+
+      // Not is_template_instance_of(^^shape, ...): shape is an alias, and the
+      // reflection of an alias is not the reflection of the type it names.
+      if constexpr(detail::var_c<shape>)
+      {
+        // A poly::obj finds out at run time which shape each entry is. Same
+        // passes, same order, same reason as the aggregate writer.
+        std::string scratch;
+        for(auto const& [key, val] : value)
+        {
+          if(detail::holds_null(val) or detail::var_is_table(val)
+             or detail::var_is_table_array(val))
+          {
+            continue;
+          }
+          ser.write_runtime_pair(detail::key_view(key, scratch), val);
+        }
+        for(auto const& [key, val] : value)
+        {
+          if(detail::var_is_table(val))
+          {
+            ser.write_table(detail::encoded_key(detail::key_view(key, scratch)), val);
+          }
+        }
+        for(auto const& [key, val] : value)
+        {
+          if(detail::var_is_table_array(val))
+          {
+            ser.write_table_array(
+                detail::encoded_key(detail::key_view(key, scratch)), val.as_array());
+          }
+        }
         return ser.out();
       }
 
@@ -1144,6 +1265,50 @@ REFLEX_EXPORT namespace reflex::serde::toml
       throw std::runtime_error(std::format("TOML: expected a string, got '{}'", read_token()));
     }
 
+    // Ordering matters twice. A date-time starts with a digit and so does a
+    // number, so at_date_time() comes first. And Integer and Float are two TOML
+    // types rather than two spellings of one, so matches_int comes before
+    // matches_float: that makes `1` an integer and keeps it exact past 2^53.
+    template <typename var_type> var_type resolve_value()
+    {
+      const char c = peek();
+      if(c == '"' or c == '\'')
+      {
+        return var_type{read_string()};
+      }
+      if(c == '[')
+      {
+        return var_type{this->template load<typename var_type::arr_type>()};
+      }
+      if(c == '{')
+      {
+        return var_type{this->template load<typename var_type::obj_type>()};
+      }
+      if(c == 't' or c == 'f')
+      {
+        return var_type{this->template load<boolean>()};
+      }
+      if(at_date_time())
+      {
+        return var_type{read_text()};
+      }
+
+      const std::string_view token = read_token();
+      if(detail::matches_int<detail::toml_numbers>(token))
+      {
+        return var_type{
+            detail::parse_number<detail::toml_numbers, typename var_type::integral_type>(
+                token, "TOML")};
+      }
+      if(detail::matches_float<detail::toml_numbers>(token))
+      {
+        return var_type{
+            detail::parse_number<detail::toml_numbers, typename var_type::floating_point_type>(
+                token, "TOML")};
+      }
+      throw std::runtime_error(std::format("TOML: '{}' is not a value", token));
+    }
+
     // A bracketed, comma-separated run in 1.1's grammar, which is one rule for the
     // array and the inline table. The serializer still writes the one-line,
     // no-trailing-comma form both versions accept; do not make it match this.
@@ -1269,6 +1434,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
         if(peek_at(0) == '[')
         {
           read_header_();
+          materialize_table_(root);
         }
         else
         {
@@ -1383,6 +1549,27 @@ REFLEX_EXPORT namespace reflex::serde::toml
         key = plain;
       }
       table_path_.push_back(seg);
+    }
+
+    // "[a]" alone means a is an empty table, "[[a]]" alone one more element. A
+    // typed destination has the member either way, a toml::value does not.
+    template <typename Root> void materialize_table_(Root& root)
+    {
+      if(table_path_.empty())
+      {
+        return;
+      }
+      const auto path = std::span<detail::segment const>{table_path_.data(), table_path_.size()};
+      const std::string where  = detail::join_path(path);
+      auto              create = []<typename V>(V& v) { detail::make_table(v); };
+      try
+      {
+        detail::table_visit(path, root, create, where);
+      }
+      catch(std::exception const& e)
+      {
+        rethrow_at_key_(e, where);
+      }
     }
 
     // The header as the document spelled it, for a message.
@@ -1781,6 +1968,22 @@ REFLEX_EXPORT namespace reflex::serde::toml
         }
       }
       return value;
+    }
+
+    // The root of a TOML document is always a table, so this returns an object and
+    // never a bare scalar, unlike json and yaml. Below it, resolve_value() decides.
+    template <typename var_type>
+      requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
+    friend auto tag_invoke(
+        tag_t<serde::deserialize>,
+        deserializer<InputIt>& de,
+        std::type_identity<var_type>) -> var_type
+    {
+      if(de.at_document_level())
+      {
+        return var_type{de.template load<typename var_type::obj_type>()};
+      }
+      return de.template resolve_value<var_type>();
     }
 
     template <derives_c<derive_t<Parse>> T>
