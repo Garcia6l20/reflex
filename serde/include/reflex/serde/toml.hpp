@@ -24,7 +24,11 @@ REFLEX_EXPORT namespace reflex::serde::toml
 {
   namespace detail
   {
+  using serde::detail::matches_float;
+  using serde::detail::matches_int;
+  using serde::detail::parse_number;
   using serde::detail::string_view_of;
+  using serde::detail::toml_numbers;
 
   using escapes = serde::detail::toml_escapes;
 
@@ -644,13 +648,574 @@ REFLEX_EXPORT namespace reflex::serde::toml
   template <std::input_iterator InputIt>
   class deserializer : public serde::detail::line_cursor<InputIt>
   {
+    using base = serde::detail::line_cursor<InputIt>;
+
+    // One buffer, not a pool: a token is dead before the next one is read.
+    std::string token_buf_;
+
   public:
-    using serde::detail::line_cursor<InputIt>::line_cursor;
+    using base::base;
+    using base::advance;
+    using base::at_end;
+    using base::at_line_end;
+    using base::column;
+    using base::is_break;
+    using base::next_line;
+    using base::peek;
+    using base::peek_at;
+    using base::skip_to_line_end;
 
     static constexpr std::string_view format_name = "TOML";
 
     // makes load() without an explicit type read a toml::value
     using default_load_type = toml::value;
+
+    // TOML never makes indentation meaningful, so spaces and tabs are all of it.
+    void skip_ws()
+    {
+      while(not at_line_end() and (peek_at(0) == ' ' or peek_at(0) == '\t'))
+      {
+        advance();
+      }
+    }
+
+    // "non-eol = %x09 / %x20-7E / non-ascii": a stray control byte is reported
+    // here rather than skipped over.
+    void skip_comment()
+    {
+      advance(); // '#'
+      while(not at_line_end())
+      {
+        const char c = peek_at(0);
+        if(c != '\t' and serde::detail::is_control(c))
+        {
+          throw std::runtime_error(
+              "TOML: a control character other than tab cannot appear in a comment");
+        }
+        advance();
+      }
+    }
+
+    // Caught here rather than left to desynchronise the next line.
+    void finish_line()
+    {
+      skip_ws();
+      if(at_line_end())
+      {
+        return;
+      }
+      if(peek_at(0) == '#')
+      {
+        skip_comment();
+        return;
+      }
+      throw std::runtime_error("TOML: unexpected content after a value");
+    }
+
+    // Idempotent when the cursor already sits on content: read_document()'s loop
+    // asks this about a line a value reader has already stopped on.
+    bool next_content_line()
+    {
+      while(true)
+      {
+        skip_ws();
+        if(at_end())
+        {
+          return false;
+        }
+        if(not at_line_end())
+        {
+          if(peek_at(0) != '#')
+          {
+            return true;
+          }
+          skip_comment();
+        }
+        if(not next_line())
+        {
+          return false;
+        }
+      }
+    }
+
+    bool at_string()
+    {
+      if(at_line_end())
+      {
+        return false;
+      }
+      const char c = peek_at(0);
+      return c == '"' or c == '\'';
+    }
+
+    // The four string forms differ in three bits - quote character, delimiter run,
+    // whether escapes are honoured - so one reader covers all four.
+    std::string read_string()
+    {
+      const char quote = peek();
+      if(quote != '"' and quote != '\'')
+      {
+        throw std::runtime_error(std::format("TOML: expected a quoted string, got '{}'", quote));
+      }
+      int run = 1;
+      if(peek_at(1) == quote and peek_at(2) == quote)
+      {
+        run = 3;
+      }
+      for(int i = 0; i < run; ++i)
+      {
+        advance();
+      }
+      return read_string_body(quote, run, quote == '"');
+    }
+
+    // Called with the opening delimiter already consumed.
+    std::string read_string_body(char quote, int run, bool escapes)
+    {
+      const bool  multi = run == 3;
+      std::string out;
+
+      // "A newline immediately following the opening delimiter will be
+      // trimmed." Only the first one: the second is content.
+      if(multi and at_line_end() and not at_end())
+      {
+        next_line();
+      }
+
+      while(true)
+      {
+        if(at_end())
+        {
+          throw std::runtime_error("TOML: unterminated string");
+        }
+        if(at_line_end())
+        {
+          if(not multi)
+          {
+            throw std::runtime_error("TOML: a line break cannot appear in a single-line string");
+          }
+          out.push_back('\n');
+          next_line();
+          continue;
+        }
+
+        const char c = peek_at(0);
+        if(c == quote)
+        {
+          // "mlb-quotes = 1*2quotation-mark" then the three-quote delimiter: a
+          // run of four ends the string with one quote of content, a run of five
+          // with two. One or two anywhere else is ordinary content.
+          int n = 0;
+          while(n < 6 and peek_at(static_cast<std::size_t>(n)) == quote)
+          {
+            ++n;
+          }
+          if(not multi)
+          {
+            advance();
+            return out;
+          }
+          if(n < 3)
+          {
+            for(int i = 0; i < n; ++i)
+            {
+              out.push_back(quote);
+              advance();
+            }
+            continue;
+          }
+          if(n > 5)
+          {
+            throw std::runtime_error(
+                "TOML: more than two quotes in a row inside a multi-line string");
+          }
+          out.append(static_cast<std::size_t>(n - 3), quote);
+          for(int i = 0; i < n; ++i)
+          {
+            advance();
+          }
+          return out;
+        }
+
+        if(escapes and c == '\\')
+        {
+          advance();
+          if(multi and eat_line_continuation_())
+          {
+            continue;
+          }
+          decode_escape_(out);
+          continue;
+        }
+
+        // "basic-unescaped = wschar / %x21 / %x23-5B / %x5D-7E / non-ascii": tab
+        // is in, every other control byte and DEL are out.
+        if(c != '\t' and serde::detail::is_control(c))
+        {
+          throw std::runtime_error(
+              "TOML: a control character other than tab cannot appear literally in a string");
+        }
+        out.push_back(c);
+        advance();
+      }
+    }
+
+    static constexpr bool ends_token(char c)
+    {
+      return c == ' ' or c == '\t' or c == ',' or c == ']' or c == '}' or c == '#';
+    }
+
+    // The view points into a buffer the next token overwrites.
+    std::string_view read_token()
+    {
+      token_buf_.clear();
+      scan_token_run_();
+      // The one place a value token holds a space. Continued only when a time
+      // really follows, so "1979-05-27 # today" still ends at the date.
+      if(is_full_date(token_buf_) and peek_at(0) == ' ' and at_time_ahead_(1))
+      {
+        token_buf_.push_back(' ');
+        advance();
+        scan_token_run_();
+      }
+      return token_buf_;
+    }
+
+    // Shape alone: four digits and a dash open a date, two digits and a colon open
+    // a time. Both are unambiguous against every numeric form.
+    bool at_date_time()
+    {
+      if(not serde::detail::is_dec_digit(peek_at(0)) or not serde::detail::is_dec_digit(peek_at(1)))
+      {
+        return false;
+      }
+      if(peek_at(2) == ':')
+      {
+        return true;
+      }
+      return serde::detail::is_dec_digit(peek_at(2)) and serde::detail::is_dec_digit(peek_at(3))
+         and peek_at(4) == '-';
+    }
+
+    // Shape recognition, not a calendar parse: the text is carried verbatim into a
+    // string. Seconds are optional as of 1.1, so "07:32" is a local time.
+    static bool is_full_date(std::string_view s)
+    {
+      return s.size() == 10 and all_digits(s.substr(0, 4)) and s[4] == '-'
+         and all_digits(s.substr(5, 2)) and s[7] == '-' and all_digits(s.substr(8, 2));
+    }
+
+    static bool is_date_time(std::string_view s)
+    {
+      if(s.size() >= 10 and is_full_date(s.substr(0, 10)))
+      {
+        if(s.size() == 10)
+        {
+          return true; // a local date
+        }
+        const char delim = s[10];
+        return (delim == 'T' or delim == 't' or delim == ' ') and is_partial_time(s.substr(11));
+      }
+      return is_partial_time(s);
+    }
+
+    // "partial-time = time-hour ':' time-minute [ ':' time-second ... ]". Only
+    // the head is checked, an offset or a fractional second is the tail.
+    static bool is_partial_time(std::string_view s)
+    {
+      return s.size() >= 5 and all_digits(s.substr(0, 2)) and s[2] == ':'
+         and all_digits(s.substr(3, 2));
+    }
+
+    std::string read_text()
+    {
+      if(at_string())
+      {
+        return read_string();
+      }
+      if(at_date_time())
+      {
+        const std::string_view token = read_token();
+        if(not is_date_time(token))
+        {
+          throw std::runtime_error(std::format("TOML: '{}' is not a date-time", token));
+        }
+        return std::string{token};
+      }
+      throw std::runtime_error(std::format("TOML: expected a string, got '{}'", read_token()));
+    }
+
+  private:
+    void scan_token_run_()
+    {
+      while(not at_line_end() and not ends_token(peek_at(0)))
+      {
+        token_buf_.push_back(advance());
+      }
+    }
+
+    bool at_time_ahead_(std::size_t at)
+    {
+      return serde::detail::is_dec_digit(peek_at(at))
+         and serde::detail::is_dec_digit(peek_at(at + 1)) and peek_at(at + 2) == ':';
+    }
+
+    static bool all_digits(std::string_view s)
+    {
+      return std::ranges::all_of(s, serde::detail::is_dec_digit);
+    }
+
+    // "mlb-escaped-nl = escape ws newline *( wschar / newline )": a backslash ends
+    // a line by eating the break and every space, tab and blank line after it.
+    // Not yaml's folding, which turns a break into a space. Called with the
+    // backslash consumed; answers false and consumes nothing for a real escape.
+    bool eat_line_continuation_()
+    {
+      std::size_t k = 0;
+      while(peek_at(k) == ' ' or peek_at(k) == '\t')
+      {
+        ++k;
+      }
+      if(not is_break(peek_at(k)))
+      {
+        return false;
+      }
+      for(std::size_t i = 0; i < k; ++i)
+      {
+        advance();
+      }
+      next_line();
+      while(not at_end())
+      {
+        const char c = peek_at(0);
+        if(c == ' ' or c == '\t')
+        {
+          advance();
+          continue;
+        }
+        if(is_break(c))
+        {
+          next_line();
+          continue;
+        }
+        break;
+      }
+      return true;
+    }
+
+    int hex_digits_(int count)
+    {
+      return serde::detail::decode_hex_escape(
+          count,
+          [this] {
+            if(at_line_end())
+            {
+              throw std::runtime_error("TOML: truncated hexadecimal escape");
+            }
+            return advance();
+          },
+          [](char d) { return std::format("TOML: invalid hexadecimal escape digit: {}", d); });
+    }
+
+    // The 1.1 compact set is \b \t \n \f \r \e \" \\ - no \0, no \a, no \v, and
+    // no \/ either, which JSON has and TOML does not.
+    void decode_escape_(std::string& out)
+    {
+      if(at_line_end())
+      {
+        throw std::runtime_error("TOML: a line break cannot follow a backslash here");
+      }
+      const char esc = advance();
+      switch(esc)
+      {
+        case '"':
+        case '\\':
+          out.push_back(esc);
+          return;
+        case 'b':
+          out.push_back('\b');
+          return;
+        case 't':
+          out.push_back('\t');
+          return;
+        case 'n':
+          out.push_back('\n');
+          return;
+        case 'f':
+          out.push_back('\f');
+          return;
+        case 'r':
+          out.push_back('\r');
+          return;
+        case 'e':
+          out.push_back('\x1B');
+          return;
+        case 'x':
+        case 'u':
+        case 'U':
+        {
+          // Only the subset below 0x80 is decoded, which is exactly what the
+          // serializer emits; anything above needs a multi-byte encoding.
+          const int count = esc == 'x' ? 2 : (esc == 'u' ? 4 : 8);
+          const int code  = hex_digits_(count);
+          if(code > 0x7F)
+          {
+            throw std::runtime_error(
+                std::format("TOML: \\{} escapes above 0x7F are not implemented", esc));
+          }
+          out.push_back(static_cast<char>(code));
+          return;
+        }
+        default:
+          throw std::runtime_error(std::format("TOML: unknown escape: \\{}", esc));
+      }
+    }
+
+  public:
+    friend null_t tag_invoke(
+        tag_t<serde::deserialize>,
+        [[maybe_unused]] deserializer<InputIt>& de,
+        std::type_identity<null_t>)
+    {
+      throw std::runtime_error("TOML has no null: there is no literal to read one from");
+    }
+
+    template <typename T>
+    friend std::optional<T> tag_invoke(
+        tag_t<serde::deserialize>,
+        deserializer<InputIt>& de,
+        std::type_identity<std::optional<T>>)
+    {
+      return de.template load<T>();
+    }
+
+    friend auto tag_invoke(
+        tag_t<serde::deserialize>,
+        deserializer<InputIt>& de,
+        std::type_identity<boolean>)
+    {
+      const std::string_view token = de.read_token();
+      if(token == "true")
+      {
+        return true;
+      }
+      if(token == "false")
+      {
+        return false;
+      }
+      throw std::runtime_error(
+          std::format("TOML: expected a boolean, got '{}'; true and false are lowercase", token));
+    }
+
+    template <number_c Num>
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
+    {
+      if(de.at_date_time())
+      {
+        throw std::runtime_error(
+            "TOML: a date-time is read as a string, not as a number: this backend keeps the four "
+            "date-time types verbatim and maps none of them onto a calendar type");
+      }
+      const std::string_view token = de.read_token();
+      // Grammar before parser: from_chars takes the leading zero of "0123" and the
+      // bare digits behind a stripped "0x" prefix that TOML never signs.
+      if(not(detail::matches_int<detail::toml_numbers>(token)
+             or detail::matches_float<detail::toml_numbers>(token)))
+      {
+        throw std::runtime_error(std::format("TOML: '{}' is not a number", token));
+      }
+      return detail::parse_number<detail::toml_numbers, Num>(token, "TOML");
+    }
+
+    template <std::same_as<char> Char>
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Char>)
+    {
+      const std::string text = de.read_text();
+      if(text.size() != 1)
+      {
+        throw std::runtime_error(
+            std::format("TOML: expected a single character, got '{}'", text));
+      }
+      return text.front();
+    }
+
+    // A separate overload rather than a static_assert inside the good one: the
+    // assert alone does not stop the body instantiating.
+    template <str_c Str>
+      requires(not serde::detail::string_sink_c<Str>)
+    friend Str
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    {
+      if constexpr(serde::detail::borrowed_string_sink_c<Str>)
+      {
+        static_assert(
+            false,
+            std::string(display_string_of(dealias(^^Str)))
+                + " cannot be a TOML string destination: this backend does not offer a borrowed"
+                  " read, because three of the four string forms are decoded rather than pointed"
+                  " at and the fourth can still span lines (use std::string)");
+      }
+      else
+      {
+        static_assert(
+            false,
+            std::string(display_string_of(dealias(^^Str)))
+                + " cannot be a TOML string destination: it does not own writable storage"
+                  " (expected std::string, reflex::heapless::string<N> or std::array<char, N>)");
+      }
+      std::unreachable();
+    }
+
+    template <str_c Str>
+      requires serde::detail::string_sink_c<Str>
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    {
+      const std::string text = de.read_text();
+
+      Str value{};
+      if constexpr(requires { value.append(std::string_view{}); })
+      {
+        value.append(std::string_view{text});
+      }
+      else if constexpr(serde::detail::growable_string_sink_c<Str>)
+      {
+        for(const char c : text)
+        {
+          value.push_back(c);
+        }
+      }
+      else
+      {
+        auto it = std::begin(value);
+        for(const char c : text)
+        {
+          if(it == std::end(value))
+          {
+            throw std::out_of_range("String too long to fit in target type");
+          }
+          *it++ = c;
+        }
+      }
+      return value;
+    }
+
+    template <derives_c<derive_t<Parse>> T>
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<T>)
+    {
+      const std::string text   = de.read_text();
+      auto              result = parse<std::remove_cvref_t<T>>(text);
+      if(!result)
+      {
+        throw std::runtime_error(
+            std::format(
+                "Failed to parse value: {}", std::generic_category().message(int(result.error()))));
+      }
+      return std::move(result).value();
+    }
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);

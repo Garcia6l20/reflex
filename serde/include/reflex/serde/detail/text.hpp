@@ -96,6 +96,16 @@ REFLEX_EXPORT namespace reflex::serde::detail
     // signs the infinities and not the NaN, so "-.nan" is a string there; TOML
     // signs both. The infinities take a sign in both, so they need no knob.
     bool signed_nan = false;
+    // Whether a decimal integer may carry a leading zero. YAML's core schema
+    // says [-+]?[0-9]+ and takes 0123; TOML's "unsigned-dec-int" takes a lone 0
+    // and nothing else starting with one. A float's integer part is a dec-int
+    // too, but its fraction and exponent are zero-prefixable.
+    bool leading_zeros = true;
+    // Whether a float may leave a part out. YAML's core schema takes ".5", "5."
+    // and a bare "5"; TOML's "float-int-part ( exp / frac [ exp ] )" requires
+    // the integer part, requires a digit after the '.', and makes a bare "5" an
+    // Integer rather than a Float.
+    bool partial_float = true;
   };
 
   static_assert(std::meta::is_structural_type(^^number_syntax));
@@ -108,11 +118,13 @@ REFLEX_EXPORT namespace reflex::serde::detail
       .fold_case   = true};
 
   inline constexpr number_syntax toml_numbers{
-      .underscores = true,
-      .binary      = true,
-      .octal       = true,
-      .hexadecimal = true,
-      .signed_nan  = true};
+      .underscores   = true,
+      .binary        = true,
+      .octal         = true,
+      .hexadecimal   = true,
+      .signed_nan    = true,
+      .leading_zeros = false,
+      .partial_float = false};
 
   // A run of digits, with '_' accepted only between two of them and only when the
   // format allows separators. An empty run is never one.
@@ -198,6 +210,13 @@ REFLEX_EXPORT namespace reflex::serde::detail
     {
       s.remove_prefix(1);
     }
+    if constexpr(not Syntax.leading_zeros)
+    {
+      if(s.size() > 1 and s.front() == '0')
+      {
+        return false;
+      }
+    }
     return is_digit_run(s, is_dec_digit, Syntax.underscores);
   }
 
@@ -235,13 +254,39 @@ REFLEX_EXPORT namespace reflex::serde::detail
     {
       return false;
     }
-    if(i < s.size() and s[i] == '.')
+    if constexpr(not Syntax.leading_zeros)
     {
-      ++i;
-      if(not scan_digits(s, i, is_dec_digit, Syntax.underscores, digits))
+      // The integer part is a dec-int. The fraction and the exponent below are
+      // zero-prefixable, so the test belongs here and nowhere else.
+      if(i > 1 and s.front() == '0')
       {
         return false;
       }
+    }
+    if constexpr(not Syntax.partial_float)
+    {
+      if(not digits) // the integer part is required
+      {
+        return false;
+      }
+    }
+    [[maybe_unused]] const std::size_t int_end = i;
+    if(i < s.size() and s[i] == '.')
+    {
+      ++i;
+      bool frac_digits = false;
+      if(not scan_digits(s, i, is_dec_digit, Syntax.underscores, frac_digits))
+      {
+        return false;
+      }
+      if constexpr(not Syntax.partial_float)
+      {
+        if(not frac_digits)
+        {
+          return false;
+        }
+      }
+      digits = digits or frac_digits;
     }
     if(not digits)
     {
@@ -262,6 +307,13 @@ REFLEX_EXPORT namespace reflex::serde::detail
         return false;
       }
       if(i == exp_start)
+      {
+        return false;
+      }
+    }
+    if constexpr(not Syntax.partial_float)
+    {
+      if(i == int_end) // neither a fraction nor an exponent: an integer
       {
         return false;
       }

@@ -432,3 +432,284 @@ TEST_CASE("reflex::serde::toml: a pair is a one-entry table")
   CHECK(dump(std::pair{"k"s, 42}) == "k = 42");
   CHECK(dump(std::vector{std::pair{"k"s, 42}}) == "[{ k = 42 }]");
 }
+
+// Every case runs twice: over a contiguous buffer, and through a stream cursor
+// with bulk_scan off. The parser is one implementation, so the two must agree
+// exactly.
+//
+// Each input below is a bare value. `x = <value>` around any of them is what a
+// TOML parser is fed, and that is how they were cross-checked against Python's
+// tomllib.
+
+namespace
+{
+  template <typename Fn> void both_cursors(std::string_view text, Fn&& fn)
+  {
+    {
+      toml::deserializer de{text};
+      fn(de);
+    }
+    {
+      std::istringstream in{std::string{text}};
+      toml::deserializer de{in};
+      fn(de);
+    }
+  }
+
+  template <typename T> void check_load(std::string_view text, T const& expected)
+  {
+    CHECK(toml::deserializer{text}.template load<T>() == expected);
+    std::istringstream in{std::string{text}};
+    CHECK(toml::deserializer{in}.template load<T>() == expected);
+  }
+
+  template <typename T> void check_load_throws(std::string_view text)
+  {
+    CHECK_THROWS(toml::deserializer{text}.template load<T>());
+    std::istringstream in{std::string{text}};
+    CHECK_THROWS(toml::deserializer{in}.template load<T>());
+  }
+} // namespace
+
+// "mlb-quotes = 1*2quotation-mark" then the three-quote delimiter, so a run of
+// four ends the string with one quote of content and a run of five with two.
+// The quote counts are spelled out because a literal run of them is unreadable.
+TEST_CASE("reflex::serde::toml::deserializer: the closing quote run")
+{
+  check_load<std::string>(R"("""""")", "");           // 3 + 3
+  check_load<std::string>(R"(""""""")", "\"");        // 3 + 4 -> one quote
+  check_load<std::string>(R"("""""""")", "\"\"");     // 3 + 5 -> two quotes
+  check_load_throws<std::string>(R"("""a""""""")");   // 3 + a + 7
+  check_load_throws<std::string>(R"("""""""""")");    // 3 + 7
+
+  // One or two quotes anywhere else are ordinary content.
+  check_load<std::string>(R"("""a"b""")", "a\"b");
+  check_load<std::string>(R"("""a""b""")", "a\"\"b");
+
+  // A literal multi-line string counts its apostrophes the same way.
+  check_load<std::string>(R"('''''')", "");
+  check_load<std::string>(R"(''''''')", "'");
+  check_load<std::string>(R"('''''''')", "''");
+}
+
+// A trailing backslash deletes the break and every space, tab and blank line
+// after it. This is not yaml's folding, which turns a break into a space.
+TEST_CASE("reflex::serde::toml::deserializer: a trailing backslash deletes the break")
+{
+  check_load<std::string>("\"\"\"a\\\n   b\"\"\"", "ab");
+  check_load<std::string>("\"\"\"a\\\n\n\n   b\"\"\"", "ab");
+  // "mlb-escaped-nl = escape ws newline ...": whitespace may sit between the
+  // backslash and the break.
+  check_load<std::string>("\"\"\"a\\  \t\n   b\"\"\"", "ab");
+
+  // Without the backslash the break and the indent are content.
+  check_load<std::string>("\"\"\"a\n   b\"\"\"", "a\n   b");
+
+  // A single-line basic string has no continuation rule: a break after the
+  // backslash is an error, not a fold.
+  check_load_throws<std::string>("\"a\\\nb\"");
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: the four string forms")
+{
+  check_load<std::string>(R"("basic")", "basic");
+  check_load<std::string>(R"("")", "");
+  check_load<std::string>(R"('literal')", "literal");
+  check_load<std::string>(R"('')", "");
+
+  // A literal string has no escape mechanism at all.
+  check_load<std::string>(R"('C:\path\to')", R"(C:\path\to)");
+  check_load<std::string>(R"('\n')", R"(\n)");
+
+  // "A newline immediately following the opening delimiter will be trimmed."
+  // Only the first one.
+  check_load<std::string>("\"\"\"\n  a\n  b\"\"\"", "  a\n  b");
+  check_load<std::string>("\"\"\"\n\na\"\"\"", "\na");
+  check_load<std::string>("'''\nline\n'''", "line\n");
+
+  // Neither single-line form may carry a break.
+  check_load_throws<std::string>("\"a\nb\"");
+  check_load_throws<std::string>("'a\nb'");
+  check_load_throws<std::string>(R"("unterminated)");
+
+  // "basic-unescaped = wschar / %x21 / %x23-5B / %x5D-7E / non-ascii": tab is
+  // in, every other control byte and DEL are out.
+  check_load<std::string>("\"a\tb\"", "a\tb");
+  check_load_throws<std::string>("\"a\x01 b\"");
+  check_load_throws<std::string>("'a\x7F b'");
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: the 1.1 escape set")
+{
+  check_load<std::string>(R"("\b\t\n\f\r\"\\")", "\b\t\n\f\r\"\\");
+  check_load<std::string>(R"("\e")", "\x1B");
+  check_load<std::string>(R"("\x41")", "A");
+  check_load<std::string>(R"("\u0041")", "A");
+  check_load<std::string>(R"("\U00000041")", "A");
+
+  // \0, \a and \v have no TOML spelling, and neither does JSON's \/.
+  check_load_throws<std::string>(R"("\0")");
+  check_load_throws<std::string>(R"("\a")");
+  check_load_throws<std::string>(R"("\v")");
+  check_load_throws<std::string>(R"("\/")");
+  check_load_throws<std::string>(R"("\q")");
+  check_load_throws<std::string>(R"("\xZZ")");
+  check_load_throws<std::string>(R"("\u00")");
+
+  // U+0080 is two bytes of UTF-8 and this backend decodes only the subset
+  // below it - the same limit json and yaml carry, and exactly what the
+  // serializer emits. A literal multi-byte sequence passes through untouched.
+  check_load_throws<std::string>(R"("\x80")");
+  check_load_throws<std::string>(R"("\u00e9")");
+  check_load<std::string>("\"caf\xC3\xA9\"", "caf\xC3\xA9");
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: integers in four bases")
+{
+  check_load<int>("0", 0);
+  check_load<int>("+1", 1);
+  check_load<int>("-1", -1);
+  check_load<int>("1_000", 1000);
+  check_load<std::int64_t>("9007199254740993", 9007199254740993LL);
+  check_load<std::int64_t>("0xdead_beef", 0xdeadbeefLL);
+  check_load<int>("0o755", 493);
+  check_load<int>("0b1010", 10);
+  check_load<int>("0x0", 0);
+
+  // An underscore is only legal between two digits.
+  check_load_throws<int>("1__0");
+  check_load_throws<int>("_1");
+  check_load_throws<int>("1_");
+
+  // "unsigned-dec-int = DIGIT / digit1-9 1*( DIGIT / underscore DIGIT )": a
+  // lone zero and nothing else that starts with one.
+  check_load_throws<int>("0123");
+  check_load_throws<int>("00");
+
+  // A prefixed form takes no sign.
+  check_load_throws<int>("-0x1");
+  check_load_throws<int>("+0b1");
+
+  check_load_throws<int>("abc");
+  check_load_throws<int>(R"("42")");
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: floats")
+{
+  check_load<double>("1.5", 1.5);
+  check_load<double>("-1.5", -1.5);
+  check_load<double>("1e10", 1e10);
+  check_load<double>("6.02e23", 6.02e23);
+  check_load<double>("1e0_1", 10.0);
+  check_load<double>("-inf", -std::numeric_limits<double>::infinity());
+  check_load<double>("+inf", std::numeric_limits<double>::infinity());
+  check_load<double>("inf", std::numeric_limits<double>::infinity());
+
+  // A TOML Integer still reads into a floating-point destination; what the
+  // format calls the value and what the schema asks for are two questions.
+  check_load<double>("1", 1.0);
+
+  // "float = float-int-part ( exp / frac [ exp ] )" with
+  // "frac = decimal-point zero-prefixable-int": both halves are required.
+  check_load_throws<double>("1.");
+  check_load_throws<double>(".5");
+  check_load_throws<double>("01.5");
+  check_load_throws<double>("1e");
+  check_load_throws<double>("INF");
+  check_load_throws<double>("NaN");
+
+  CHECK(std::isnan(toml::deserializer{"nan"sv}.load<double>()));
+  CHECK(std::isnan(toml::deserializer{"-nan"sv}.load<double>()));
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: booleans are lowercase")
+{
+  check_load<bool>("true", true);
+  check_load<bool>("false", false);
+  check_load_throws<bool>("True");
+  check_load_throws<bool>("TRUE");
+  check_load_throws<bool>("yes");
+}
+
+// Recognised by shape and read verbatim. Seconds are optional as of 1.1, so
+// "07:32" is a local time rather than a truncated one.
+TEST_CASE("reflex::serde::toml::deserializer: a date-time is read as a string")
+{
+  check_load<std::string>("1979-05-27T07:32:00Z", "1979-05-27T07:32:00Z");
+  check_load<std::string>("1979-05-27 07:32:00-07:00", "1979-05-27 07:32:00-07:00");
+  check_load<std::string>("1979-05-27T07:32:00", "1979-05-27T07:32:00");
+  check_load<std::string>("1979-05-27t07:32:00.999", "1979-05-27t07:32:00.999");
+  check_load<std::string>("1979-05-27", "1979-05-27");
+  check_load<std::string>("07:32:00", "07:32:00");
+  check_load<std::string>("07:32", "07:32");
+
+  // The space separator only continues the token when a time really follows.
+  both_cursors("1979-05-27 # today", [](auto& de) {
+    CHECK(de.template load<std::string>() == "1979-05-27");
+    CHECK_NOTHROW(de.finish_line());
+  });
+
+  // A real limitation rather than a parse error, and the message has to say so.
+  std::string message;
+  try
+  {
+    (void)toml::deserializer{"1979-05-27"sv}.load<int>();
+  }
+  catch(std::runtime_error const& e)
+  {
+    message = e.what();
+  }
+  CHECK(message.starts_with("TOML: a date-time is read as a string"));
+
+  check_load_throws<std::string>("12:ab");
+  check_load_throws<std::string>("42");
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: whitespace, comments and line ends")
+{
+  both_cursors("  \t x", [](auto& de) {
+    de.skip_ws();
+    CHECK(de.column() == 4);
+    CHECK(de.peek() == 'x');
+  });
+
+  both_cursors("\n\n  # a comment\t\nvalue", [](auto& de) {
+    CHECK(de.next_content_line());
+    CHECK(de.peek() == 'v');
+  });
+  both_cursors("# only a comment", [](auto& de) { CHECK(not de.next_content_line()); });
+  both_cursors("", [](auto& de) { CHECK(not de.next_content_line()); });
+
+  // Idempotent once parked on content: read_document()'s loop asks about a line
+  // a value reader has already stopped on.
+  both_cursors("a\nb", [](auto& de) {
+    CHECK(de.next_content_line());
+    CHECK(de.next_content_line());
+    CHECK(de.peek() == 'a');
+  });
+
+  // 1.1 bars a control character other than tab inside a comment.
+  both_cursors("1 # tab\there", [](auto& de) {
+    CHECK(de.template load<int>() == 1);
+    CHECK_NOTHROW(de.finish_line());
+  });
+  both_cursors("1 # bell\a", [](auto& de) {
+    CHECK(de.template load<int>() == 1);
+    CHECK_THROWS(de.finish_line());
+  });
+
+  // Junk after a value is caught where it happens rather than left to
+  // desynchronise the next line.
+  both_cursors("1 junk", [](auto& de) {
+    CHECK(de.template load<int>() == 1);
+    CHECK_THROWS(de.finish_line());
+  });
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: TOML has no null")
+{
+  check_load_throws<toml::null_t>("");
+  // An optional is an absent key, which only a table can see, so a value
+  // position simply reads the payload.
+  check_load<std::optional<int>>("7", std::optional<int>{7});
+}
