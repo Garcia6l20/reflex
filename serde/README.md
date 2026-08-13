@@ -8,7 +8,8 @@ field names, nesting, and type dispatch are all derived automatically via
 C++26 static reflection.
 
 Ships with **JSON** (`reflex.serde.json`), **BSON** (`reflex.serde.bson`),
-**CSV** (`reflex.serde.csv`), and **XML** (`reflex.serde.xml`) backends.
+**CSV** (`reflex.serde.csv`), **XML** (`reflex.serde.xml`), and **YAML**
+(`reflex.serde.yaml`) backends.
 
 ---
 
@@ -21,6 +22,7 @@ Ships with **JSON** (`reflex.serde.json`), **BSON** (`reflex.serde.bson`),
 | `reflex.serde.bson` | BSON serializer + deserializer |
 | `reflex.serde.csv` | CSV serializer + deserializer (flat aggregates) |
 | `reflex.serde.xml` | XML serializer + deserializer |
+| `reflex.serde.yaml` | YAML serializer + deserializer |
 
 ---
 
@@ -281,6 +283,142 @@ struct[[= xml::ns{"x", "urn:example:e"}]] Env
 
 ---
 
+## YAML
+
+Block style out, block and flow in. Any valid JSON document is valid input,
+since YAML is a JSON superset.
+
+```cpp
+import reflex.serde.yaml;
+
+struct Server
+{
+  std::string      host;
+  int              port;
+  std::vector<int> workers;
+};
+
+Server s{"localhost", 8080, {1, 2}};
+std::string out;
+yaml::serializer ser{out};
+ser.dump(s);
+// host: localhost
+// port: 8080
+// workers:
+//   - 1
+//   - 2
+
+auto back = yaml::deserializer{out}.load<Server>();
+```
+
+Two-space indent, fixed. Output carries no trailing newline, so a round trip is
+byte-exact. An empty collection is written `[]` or `{}`, which is the only
+spelling YAML has for one.
+
+### Quoting
+
+A scalar is written plain when that reads back unchanged, single-quoted when it
+can be, and double-quoted only when a control character leaves no choice:
+
+```cpp
+dump("1.2.3-rc1"s);  // 1.2.3-rc1   plain
+dump("42"s);         // '42'        would resolve as a number
+dump("null"s);       // 'null'      would resolve as null
+dump("yes"s);        // 'yes'       a boolean to a YAML 1.1 reader
+dump("a: b"s);       // 'a: b'      a colon-space cannot appear plain
+dump("a\nb"s);       // "a\nb"      needs an escape
+```
+
+The YAML 1.1 booleans (`yes`/`no`/`on`/`off`/`y`/`n`) are quoted deliberately.
+YAML 1.2 reads them as strings, so this library would round-trip them either
+way, but a 1.1 reader would not, and a document that means two things to two
+readers is a bug.
+
+Symmetrically, `load<bool>()` **refuses** them rather than guessing - asked for
+a `bool`, the intent is unambiguous and a 1.1 spelling is worth an error. Asked
+what a value *is* (`load<yaml::value>()`), 1.2 answers "a string".
+
+### Values
+
+`yaml::value` is `poly::var<double, bool, std::string>` - the same alternatives
+as `json::value`, deliberately, so a document keeps its shape when converted
+between the two. Numbers are `double`, so an integer past 2^53 loses precision,
+exactly as through the JSON backend.
+
+Quoting defeats resolution, which is what makes a round trip work: `42` loads as
+a number and `'42'` as a string.
+
+### Supported
+
+| | |
+|---|---|
+| dialect | YAML 1.2 core schema |
+| scalars | plain, single-quoted, double-quoted, literal `\|`, folded `>`, with `-`/`+` chomping and an explicit indent digit |
+| collections | block mappings and sequences, flow `[...]` and `{...}` on input |
+| sequence under a key | both the indented and the flush spelling are accepted; the indented one is written |
+| multi-line plain scalars | a plain value folds across the lines it continues onto |
+| comments | `#` after whitespace or at the start of a line |
+| line breaks | `\n`, `\r\n`, and a lone `\r` |
+| inputs | any contiguous range, `serde::mmap_input_stream`, or an `std::istream` |
+
+### Multi-line plain scalars
+
+A plain value continues onto any line indented deeper than its key, folding one
+line break to a space and each blank line to a newline:
+
+```yaml
+summary: a description long enough
+  that it runs onto a second line
+note: first paragraph
+
+  second paragraph
+```
+
+gives `"a description long enough that it runs onto a second line"` and
+`"first paragraph\nsecond paragraph"`.
+
+A continuation ends at a line that is not indented deeper, at a comment, and at
+a line that looks like a mapping of its own - `key: a` over `  b: c` is
+ambiguous with a nested block, so it is an error, as it is in real YAML. A `- `
+or `? ` on a continuation line is **not** ambiguous and folds into the text.
+
+Quoted scalars are read on one line only, and a plain scalar inside a flow
+collection does not continue. Both fold in real YAML; use `|` or `>` here.
+
+### Not supported
+
+Each of these throws with a message naming the feature, rather than being
+mis-parsed:
+
+- anchors `&a` and aliases `*a`
+- explicit tags (`!!str`, `!foo`)
+- merge keys (`<<:`)
+- more than one document in a stream (a single leading `---` is accepted)
+- `%YAML` / `%TAG` directives
+- a tab used to indent a node
+- a multi-line **quoted** scalar, and a multi-line plain scalar inside a flow
+  collection
+
+Explicit-key syntax (`? key`) is **not** in that list, and not because it works:
+`? a` is currently read as the plain scalar `"? a"` rather than refused. That is
+a gap, not a feature.
+
+Over-indentation inside a block is an error rather than being tolerated, which
+is stricter than most YAML readers. Since a plain value does continue onto
+deeper lines, what remains an error is the ambiguous case: a deeper line that
+looks like a mapping of its own.
+
+A `std::string_view` member cannot be a YAML destination. Unlike the JSON and
+XML backends this one decodes a scalar rather than pointing at the input, so
+there is no borrowed read; the compiler says so and names `std::string`.
+
+Parsing is slower than the JSON backend on the same data. YAML is indentation
+sensitive and cannot be lexed with a single byte of lookahead, so most of the
+parse runs a byte at a time. For a config file read once at start-up this does
+not matter; for bulk interchange, use JSON.
+
+---
+
 ## `poly` serde
 
 `reflex.serde` provides direct support for `reflex::poly::var`:
@@ -297,7 +435,7 @@ v.is_object(); // true
 
 ## Extending with `tag_invoke`
 
-Both backends use the `serde::serialize` / `serde::deserialize` CPOs
+Every backend uses the `serde::serialize` / `serde::deserialize` CPOs
 dispatched via `tag_invoke`.  To add support for a custom type:
 
 ```cpp
