@@ -389,6 +389,53 @@ TEST_CASE("reflex::jinja: for decomposition")
   }
 }
 
+// {{ a.b }} resolves its leading dotted chain with serde::object_visit, and the
+// object it walks is the whole variable scope. A segment landing on a value with
+// no members must not hand that scope back, or a template asking for a member of
+// a number renders every variable in scope.
+//
+// It reads as an undefined name instead, which is what context::visit's scope
+// search is written around: it is noexcept, so it cannot be told about a bad
+// path any other way.
+TEST_CASE("reflex::jinja: a dotted name reaching through a scalar is undefined")
+{
+  jinja::basic_context ctx;
+  ctx.set("n", 42);
+  ctx.set("s", "text"s);
+
+  const auto undefined = render(jinja::parse("{{ nosuchvar }}"), ctx);
+
+  SUBCASE("a member of a number")
+  {
+    CHECK(render(jinja::parse("{{ n.b }}"), ctx) == undefined);
+    // The scope had two variables in it and neither reached the output.
+    CHECK(render(jinja::parse("{{ n.b }}"), ctx).find("text") == std::string::npos);
+  }
+  SUBCASE("a member of a string")
+  {
+    CHECK(render(jinja::parse("{{ s.length }}"), ctx) == undefined);
+  }
+  SUBCASE("several segments in")
+  {
+    CHECK(render(jinja::parse("{{ n.a.b.c }}"), ctx) == undefined);
+  }
+  SUBCASE("the names that do resolve are unaffected")
+  {
+    CHECK(render(jinja::parse("{{ n }}/{{ s }}"), ctx) == "42/text");
+  }
+  SUBCASE("a member of a bound aggregate still resolves")
+  {
+    aggregate2 agg{
+        3.14, {42, "world"s}
+    };
+    auto agg_ctx = expr::context{"agg"_na = agg};
+    CHECK(render(jinja::parse("{{ agg.nested.a }}"), agg_ctx) == "42");
+    // The member is there, the path through it is not.
+    CHECK(render(jinja::parse("{{ agg.nested.a.deeper }}"), agg_ctx)
+          == render(jinja::parse("{{ nosuchvar }}"), agg_ctx));
+  }
+}
+
 TEST_CASE("reflex::jinja: aggregate support")
 {
   SUBCASE("basic")

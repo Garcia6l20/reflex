@@ -565,6 +565,84 @@ TEST_CASE("reflex::serde::object_visit: every dispatch strategy matches the same
   }
 }
 
+// A segment can land on a value with no members while segments remain, and then
+// the rest of the path names nothing. Handing the callback the object the walk
+// stands in would reach a place the key never named, and a callback assigning
+// into its argument would happily write there. Reported the way a const
+// container reports a key it cannot create, by leaving the callback uncalled.
+//
+// A throw would serve neither caller: jinja reads an uncalled callback as an
+// undefined name and looks in the next scope, toml refuses the path itself
+// before the walk starts.
+TEST_CASE("reflex::serde::object_visit: a path through a value with no members is not walked")
+{
+  const auto never = [](auto&&) { FAIL("object_visit called the callback for an unwalkable path"); };
+
+  SUBCASE("an aggregate member")
+  {
+    person alice{
+        .name = "alice"s,
+        .age  = 30,
+        .addr = {.city = "Wonderland"s, .zip = 12345},
+    };
+    CHECK_NOTHROW(object_visit("age.zip", alice, never));
+    CHECK_NOTHROW(object_visit("addr.city.length", alice, never));
+    // Nothing under a scalar answered, and nothing beside it was touched.
+    CHECK_EQ(alice.age, 30);
+    CHECK_EQ(alice.addr.city, "Wonderland");
+  }
+
+  SUBCASE("a map entry")
+  {
+    std::map<std::string, int> m{
+        {"a", 1}
+    };
+    CHECK_NOTHROW(object_visit("a.b", m, never));
+    // A map creates the entry a missed key names, but an int is still not a
+    // table, so no entry is invented under one either.
+    CHECK_EQ(m.size(), 1);
+    CHECK_EQ(m.at("a"), 1);
+  }
+
+  SUBCASE("a poly::obj entry")
+  {
+    object obj = {
+        {"age",  30      },
+        {"name", "alice"s},
+    };
+    CHECK_NOTHROW(object_visit("age.zip", obj, never));
+    CHECK_EQ(obj.size(), 2);
+  }
+
+  SUBCASE("several segments in")
+  {
+    object obj = {
+        {"bob", object{{"address", object{{"city", "Badlands"s}}}}},
+    };
+    CHECK_NOTHROW(object_visit("bob.address.city.length", obj, never));
+  }
+
+  SUBCASE("the walkable prefix still resolves")
+  {
+    // The miss is the segment that could not be walked, not the whole key: a
+    // sibling path through the same object is unaffected.
+    person alice{
+        .name = "alice"s,
+        .age  = 30,
+        .addr = {.city = "Wonderland"s, .zip = 12345},
+    };
+    bool visited = false;
+    object_visit("addr.zip", alice, [&visited](auto const& value) {
+      if constexpr(decay(type_of(^^value)) == ^^int)
+      {
+        CHECK_EQ(value, 12345);
+        visited = true;
+      }
+    });
+    CHECK(visited);
+  }
+}
+
 // A const container cannot create the entry a missed key names, so the visitor
 // leaves the callback uncalled. That answers a callback returning nothing, and
 // every callback in the tree does: the backends assign into a destination and
