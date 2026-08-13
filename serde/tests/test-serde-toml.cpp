@@ -58,15 +58,141 @@ TEST_CASE("toml::value keeps an integer and a float apart")
   CHECK(obj["n"].is<toml::integer>());
 }
 
+// Not an identifier scan over serde::deserializers(): that would only prove the
+// name is a member of reflex::serde::de. with_deserializer additionally
+// substitutes the template on the iterator type and constructs it from an
+// iterator pair, and a backend can reflect correctly and still fail either.
 TEST_CASE("toml is registered as a deserializer")
 {
-  bool found = false;
-  template for(constexpr auto entry : define_static_array(serde::deserializers()))
-  {
-    if(identifier_of(entry) == "toml")
+  const auto input = "x = 1"sv;
+  bool       seen  = false;
+  serde::with_deserializer("toml", input, [&seen](auto& de) {
+    CHECK(std::remove_cvref_t<decltype(de)>::format_name == "TOML"sv);
+    seen = true;
+  });
+  CHECK(seen);
+}
+
+template <typename T> static std::string dump(T const& value)
+{
+  std::string      out;
+  toml::serializer ser{out};
+  ser.dump(value);
+  return out;
+}
+
+TEST_CASE("reflex::serde::toml: a string is a basic string by default")
+{
+  CHECK(dump("plain"s) == R"("plain")");
+  CHECK(dump(""s) == R"("")");
+  CHECK(dump("tab\there"s) == R"("tab\there")");
+  CHECK(dump("two\nlines"s) == R"("two\nlines")");
+}
+
+TEST_CASE("reflex::serde::toml: a literal string is chosen when it saves an escape")
+{
+  // 'C:\path\to' beats "C:\\path\\to" for a reader, and needs no escape at all.
+  CHECK(dump(R"(C:\path\to)"s) == R"('C:\path\to')");
+  CHECK(dump(R"(a "quoted" word)"s) == R"('a "quoted" word')");
+  CHECK(dump(R"(with"quote)"s) == R"('with"quote')");
+
+  // A single quote cannot appear in a literal string and there is no doubling
+  // rule to fall back on, so this goes basic even though it carries a backslash.
+  CHECK(dump(R"(it's a \ mess)"s) == R"("it's a \\ mess")");
+
+  // A control character rules the literal form out too.
+  CHECK(dump("C:\\a\tb"s) == R"("C:\\a\tb")");
+
+  // Nothing to save: no backslash and no double quote, so basic it is.
+  CHECK(dump("it's plain"s) == R"("it's plain")");
+}
+
+TEST_CASE("reflex::serde::toml: control bytes use the 1.1 escape forms")
+{
+  // \e and \xHH are TOML 1.1 spellings. They are the only output this backend
+  // produces that a TOML 1.0 parser rejects, and they are only reachable for a
+  // control byte inside a string.
+  CHECK_MESSAGE(dump("\x1B"s) == R"("\e")", "U+001B is \\e in 1.1, not \\u001b");
+  CHECK_MESSAGE(dump("\x01"s) == R"("\x01")", "a bare control byte is \\xHH in 1.1, not \\u0001");
+  CHECK(dump("\x7F"s) == R"("\x7f")");
+  CHECK(dump("\b\t\n\f\r"s) == R"("\b\t\n\f\r")");
+
+  // \0, \a and \v have no TOML spelling at all, unlike YAML.
+  CHECK(dump("\0\a\v"s) == R"("\x00\x07\x0b")");
+}
+
+TEST_CASE("reflex::serde::toml: integers and floats are distinct spellings")
+{
+  CHECK(dump(1) == "1");
+  CHECK(dump(-1) == "-1");
+  CHECK(dump(std::int64_t{9007199254740993}) == "9007199254740993");
+  CHECK(dump(1.5) == "1.5");
+
+  // TOML's Float grammar wants an integer part plus a fractional or exponent
+  // part, so a bare `1` is an Integer. to_chars is shortest-round-trip and
+  // produces exactly that for the double 1.0, hence the appended ".0".
+  CHECK(dump(1.0) == "1.0");
+  CHECK(dump(-2.0) == "-2.0");
+  CHECK(dump(0.0) == "0.0");
+  CHECK(dump(1e30) == "1e+30");
+
+  CHECK(dump(std::numeric_limits<double>::infinity()) == "inf");
+  CHECK(dump(-std::numeric_limits<double>::infinity()) == "-inf");
+  CHECK(dump(std::numeric_limits<double>::quiet_NaN()) == "nan");
+  CHECK(dump(-std::numeric_limits<double>::quiet_NaN()) == "nan");
+}
+
+TEST_CASE("reflex::serde::toml: booleans and chars")
+{
+  CHECK(dump(true) == "true");
+  CHECK(dump(false) == "false");
+  CHECK(dump('x') == R"("x")");
+  CHECK(dump('\'') == R"("'")");
+}
+
+// Namespace scope: a fixture declared inside a function body can fail to splice
+// on GCC 16.
+struct key_shapes
+{
+  int plain;
+  [[= serde::rename{"with space"}]] int spaced;
+  [[= serde::rename{"1st"}]] int        digit_first;
+  [[= serde::rename{"a-b_c"}]] int      dashed;
+};
+
+TEST_CASE("reflex::serde::toml: a key is bare when it can be")
+{
+  // A bare key is [A-Za-z0-9_-]+ in 1.1 as in 1.0. An identifier always is one;
+  // only a serde::rename can produce something else.
+  static_assert(toml::detail::assign_key<^^key_shapes::plain>() == "plain = "sv);
+  static_assert(toml::detail::assign_key<^^key_shapes::dashed>() == "a-b_c = "sv);
+  static_assert(toml::detail::assign_key<^^key_shapes::digit_first>() == "1st = "sv);
+  static_assert(toml::detail::assign_key<^^key_shapes::spaced>() == R"("with space" = )"sv);
+
+  static_assert(toml::detail::key_name<^^key_shapes::spaced>() == R"("with space")"sv);
+
+  CHECK(toml::detail::is_bare_key("abc"));
+  CHECK(not toml::detail::is_bare_key(""));
+  CHECK(not toml::detail::is_bare_key("a.b"));
+}
+
+TEST_CASE("reflex::serde::toml: a value with nowhere to go names the format")
+{
+  // TOML has no null. In a value position there is no key to omit, so this is
+  // an error rather than a spelling question.
+  const auto message = [](auto const& value) {
+    try
     {
-      found = true;
+      dump(value);
     }
-  }
-  CHECK(found);
+    catch(std::runtime_error const& e)
+    {
+      return std::string{e.what()};
+    }
+    return std::string{"no throw"};
+  };
+
+  CHECK(message(std::optional<int>{}).starts_with("TOML has no null"));
+  CHECK(message(toml::null).starts_with("TOML has no null"));
+  CHECK(dump(std::optional<int>{7}) == "7");
 }
