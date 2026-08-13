@@ -1270,3 +1270,201 @@ TEST_CASE("reflex::serde::toml::deserializer: a table in a value position needs 
   CHECK(message.find('{') != std::string::npos);
   check_load_throws<std::vector<ab_doc>>("[a = 1]");
 }
+
+// Each entry is written, read back, written again, and the two writes compared.
+// The second write is what matters: a reader and a writer that are wrong in the
+// same way pass a single round trip.
+//
+// The first write of every entry below was also parsed by Python's tomllib and
+// compared against the source document, which is what pins the meaning; this
+// pins the stability.
+
+namespace
+{
+  // Read on both cursors, write, read that write back, write again.
+  void check_round_trip(std::string_view doc)
+  {
+    both_cursors(doc, [](auto& de) {
+      const std::string w1 = dump(de.template load<toml::value>());
+      const std::string w2 = dump(toml::deserializer{std::string_view{w1}}.load<toml::value>());
+      CHECK(w1 == w2);
+    });
+  }
+
+  void check_corpus(std::initializer_list<std::string_view> docs)
+  {
+    for(const std::string_view doc : docs)
+    {
+      CAPTURE(doc);
+      check_round_trip(doc);
+    }
+  }
+
+  // The typed leg. A destination type also decides what is written, so a
+  // struct that survives text stability may still lose a field.
+  template <typename T> void check_typed_round_trip(T const& value)
+  {
+    const std::string w1 = dump(value);
+    CAPTURE(w1);
+    const T           back = toml::deserializer{std::string_view{w1}}.template load<T>();
+    const std::string w2   = dump(back);
+    CHECK(w1 == w2);
+    CHECK(back == value);
+  }
+} // namespace
+
+TEST_CASE("reflex::serde::toml: round trip - every scalar form")
+{
+  check_corpus({
+      R"(a = "basic")",
+      R"(a = 'literal')",
+      "a = \"\"\"multi\nline\"\"\"",
+      "a = '''multi\nliteral'''",
+      R"(a = "\b\t\n\f\r\"\\")",
+      // The 1.1-only escapes. Nothing else in this file emits them either.
+      R"(a = "\e\x01\x7f")",
+      // A literal multi-byte sequence in the source, which is not an escape and
+      // passes through both ways.
+      "a = \"caf\xC3\xA9 \xE2\x86\x92\"",
+      "a = 0\nb = -17\nc = +99\nd = 9007199254740993\ne = 1_000_000",
+      "a = 0xdeadBEEF\nb = 0o755\nc = 0b1010",
+      "a = 3.14\nb = -0.0\nc = 5e+22\nd = 1e6\ne = 6.626e-34\nf = 9_224_617.445_991_228",
+      "a = inf\nb = -inf\nc = nan",
+      "a = true\nb = false",
+      // Date-times are strings, so the write is quoted and the re-read is the
+      // string it wrote.
+      "a = 1979-05-27T07:32:00Z\n"
+      "b = 1979-05-27T00:32:00.999999-07:00\n"
+      "c = 1979-05-27\n"
+      "d = 07:32:00\n"
+      "e = 07:32",
+  });
+}
+
+TEST_CASE("reflex::serde::toml: round trip - tables and arrays of tables")
+{
+  check_corpus({
+      "[a]\nx = 1\n[a.b]\ny = 2\n[a.b.c]\nz = 3",
+      // A header jumping back up a level, which is legal and reorders the write.
+      "x = 1\n[a]\ny = 2\n[b]\nz = 3\n[a.c]\nw = 4",
+      "[[fruit]]\n"
+      "name = \"apple\"\n"
+      "[fruit.physical]\n"
+      "color = \"red\"\n"
+      "[[fruit.variety]]\n"
+      "name = \"red delicious\"\n"
+      "[[fruit]]\n"
+      "name = \"banana\"\n"
+      "[[fruit.variety]]\n"
+      "name = \"plantain\"",
+      "a.b.c = 1\na.b.d = 2\ne = 3",
+      // An inline table is a table, so the write is a header section.
+      "a = { b = 1, c = { d = 2 } }",
+      "a = [1, 2, 3]",
+      "a = [[1, 2], [3]]",
+      "a = [1, \"two\", true, 4.5]",
+      // An array whose elements are all tables is an array of tables on the way
+      // out, whatever it looked like on the way in.
+      "a = [{ x = 1 }, { y = 2 }]",
+      "[[a]]\n[[a]]",
+  });
+}
+
+TEST_CASE("reflex::serde::toml: round trip - the shapes with nothing in them")
+{
+  check_corpus({
+      "[empty]",
+      "a = []",
+      "a = {}",
+      "[a]\n[a.b]",
+      "arr = []\ntbl = {}\n[section]",
+  });
+}
+
+TEST_CASE("reflex::serde::toml: round trip - keys")
+{
+  check_corpus({
+      "bare-key_1 = 1\nUPPER = 2\n123 = 3",
+      R"("quoted key" = 1)"
+      "\n"
+      R"("dotted.key" = 2)"
+      "\n"
+      R"('literal key' = 3)",
+      // A bare key is ASCII-only in 1.1.0, so a non-ASCII key is quoted both
+      // ways.
+      "\"\xD0\xBA\xD0\xBB\xD1\x8E\xD1\x87\" = 1\n'\xD0\xBA" "2' = 2",
+      R"("" = 1)",
+      R"("a\tb" = 1)",
+      "[\"quoted.section\"]\nx = 1",
+      "[a.\"b.c\".d]\nx = 1",
+  });
+}
+
+TEST_CASE("reflex::serde::toml: round trip - trivia and line endings")
+{
+  check_corpus({
+      "# only a comment\n\n#   another\n",
+      "",
+      "a = 1 # trailing comment\n# leading\nb = 2",
+      // No trailing newline, and one.
+      "a = 1",
+      "a = 1\n",
+      "a = 1\r\n[b]\r\nc = 2\r\n",
+      "\r\n\r\na = 1\r\n",
+      "  a = 1\n\t[b]\n  c = 2",
+  });
+}
+
+namespace
+{
+  struct rt_leaf
+  {
+    int  n;
+    bool operator==(rt_leaf const&) const = default;
+  };
+  struct rt_mid
+  {
+    int     v;
+    rt_leaf leaf;
+    bool    operator==(rt_mid const&) const = default;
+  };
+  struct rt_deep
+  {
+    rt_mid a;
+    bool   operator==(rt_deep const&) const = default;
+  };
+  struct rt_opt
+  {
+    int                        a;
+    std::optional<int>         b;
+    std::optional<std::string> c;
+    bool                       operator==(rt_opt const&) const = default;
+  };
+  struct rt_collections
+  {
+    std::vector<int>                   nums;
+    std::vector<rt_leaf>               items;
+    std::map<std::string, rt_leaf>     tables;
+    std::map<std::string, std::string> leaves;
+    bool operator==(rt_collections const&) const = default;
+  };
+} // namespace
+
+TEST_CASE("reflex::serde::toml: round trip - typed destinations")
+{
+  check_typed_round_trip(rt_deep{{1, {2}}});
+  check_typed_round_trip(rt_collections{{1, 2}, {{3}, {4}}, {{"x", {5}}}, {{"y", "z"}}});
+  check_typed_round_trip(rt_collections{});
+}
+
+TEST_CASE("reflex::serde::toml: round trip - an absent optional stays absent")
+{
+  // The key is gone from the write and comes back absent, rather than coming
+  // back engaged with a default.
+  const rt_opt absent{1, std::nullopt, std::nullopt};
+  CHECK(dump(absent) == "a = 1");
+  check_typed_round_trip(absent);
+
+  check_typed_round_trip(rt_opt{1, 2, "three"});
+  check_typed_round_trip(rt_opt{1, std::nullopt, "three"});
+}

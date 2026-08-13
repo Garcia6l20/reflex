@@ -1840,6 +1840,13 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
   public:
+    // default_load_type covers load(), but a caller reaching the CPO directly -
+    // reflex-serde-convert does - needs this too.
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de)
+    {
+      return deserialize(de, std::type_identity<toml::value>{});
+    }
+
     friend null_t tag_invoke(
         tag_t<serde::deserialize>,
         [[maybe_unused]] deserializer<InputIt>& de,

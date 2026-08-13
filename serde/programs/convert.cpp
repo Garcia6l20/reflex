@@ -5,6 +5,7 @@ import std;
 import reflex.serde.json;
 import reflex.serde.bson;
 import reflex.serde.yaml;
+import reflex.serde.toml;
 
 using namespace reflex;
 
@@ -45,6 +46,16 @@ bson::datetime
   return reflex::parse_or_throw<bson::datetime>(s);
 }
 } // namespace reflex::serde::yaml
+
+// And again for TOML <-> BSON, same reason.
+namespace reflex::serde::toml
+{
+template <typename OutputIt>
+OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, bson::datetime const& dt)
+{
+  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
+}
+} // namespace reflex::serde::toml
 
 auto format_completer(std::string_view current, std::string_view description)
 {

@@ -12,6 +12,7 @@ convert.private.link_libs.extend(
         "reflex.serde.json",
         "reflex.serde.bson",
         "reflex.serde.yaml",
+        "reflex.serde.toml",
         "reflex.cli",
     )
 )
