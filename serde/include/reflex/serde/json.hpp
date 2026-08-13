@@ -15,6 +15,7 @@
 #include <reflex/serde/json_value.hpp>
 #endif
 
+#include <reflex/serde/detail/escape.hpp>
 #include <reflex/serde/detail/io.hpp>
 
 REFLEX_EXPORT namespace reflex::serde::json
@@ -47,94 +48,21 @@ REFLEX_EXPORT namespace reflex::serde::json
     return empty;
   }
 
-  // One entry per byte value, true when the byte cannot appear literally inside a
-  // JSON string: 0x00-0x1F, '"' and '\\'. '/' is deliberately absent, JSON allows
-  // it to be escaped but does not require it. Bytes 0x80-0xFF are absent too, they
-  // are UTF-8 lead and continuation bytes and pass through unchanged.
-  inline constexpr std::array<bool, 256> escape_table = [] {
-    std::array<bool, 256> t{};
-    for(unsigned c = 0; c < 0x20; ++c)
-    {
-      t[c] = true;
-    }
-    t[static_cast<unsigned char>('"')]  = true;
-    t[static_cast<unsigned char>('\\')] = true;
-    return t;
-  }();
+  using escapes = serde::detail::json_escapes;
 
   constexpr bool needs_escape(char c)
   {
-    return escape_table[static_cast<unsigned char>(c)];
+    return serde::detail::needs_escape<escapes, '"'>(c);
   }
 
-  // A bulk scan is wrong here. JSON's escape set is thirty-four bytes, so a min
-  // over find(char) is thirty-four memchr passes and find_first_of is a per-byte
-  // loop rescanning all thirty-four. The table walk beats both.
-  inline std::size_t find_escapable(std::string_view s)
-  {
-    const auto* const first = s.data();
-    const auto* const last  = first + s.size();
-    const auto*       it    = std::find_if(first, last, needs_escape);
-    return it == last ? std::string_view::npos : static_cast<std::size_t>(it - first);
-  }
-
-  // Emits the two-character escape for the seven bytes JSON names, and \u00XX for
-  // every other control character.
   template <typename Ser> void write_escape(Ser& ser, char c)
   {
-    switch(c)
-    {
-      case '"':
-        ser.write_raw("\\\"");
-        return;
-      case '\\':
-        ser.write_raw("\\\\");
-        return;
-      case '\b':
-        ser.write_raw("\\b");
-        return;
-      case '\f':
-        ser.write_raw("\\f");
-        return;
-      case '\n':
-        ser.write_raw("\\n");
-        return;
-      case '\r':
-        ser.write_raw("\\r");
-        return;
-      case '\t':
-        ser.write_raw("\\t");
-        return;
-      default:
-      {
-        static constexpr std::string_view hex = "0123456789abcdef";
-        const auto                        u   = static_cast<unsigned char>(c);
-        const char buf[6] = {'\\', 'u', '0', '0', hex[u >> 4], hex[u & 0x0F]};
-        ser.write_raw(std::string_view{buf, sizeof(buf)});
-        return;
-      }
-    }
-  }
-
-  // Writes the body of a JSON string: runs of clean bytes go out whole, only the
-  // bytes needing an escape are handled one at a time.
-  template <typename Ser> void write_escaped(Ser& ser, std::string_view text)
-  {
-    serde::detail::write_with_escapes(
-        ser,
-        text,
-        [](std::string_view s, std::size_t pos) {
-          const std::size_t n = find_escapable(s.substr(pos));
-          return n == std::string_view::npos ? n : pos + n;
-        },
-        [](Ser& out, char c) { write_escape(out, c); });
+    serde::detail::write_escape<escapes, '"'>(ser, c);
   }
 
   template <typename Ser> void write_quoted(Ser& ser, std::string_view text)
   {
-    ser.write_char('"');
-    write_escaped(ser, text);
-    ser.write_char('"');
+    serde::detail::write_backslash_quoted<escapes, '"'>(ser, text);
   }
 
   // The seven escapes JSON names, decoded, or -1 for anything else. Kept apart
@@ -179,29 +107,9 @@ REFLEX_EXPORT namespace reflex::serde::json
         // serializer emits: a control character, as one byte of UTF-8. Surrogate
         // pairs and higher code points would need a multi-byte encoding and
         // still throw.
-        int cp = 0;
-        for(int i = 0; i < 4; ++i)
-        {
-          const char d = next();
-          int        n = -1;
-          if(d >= '0' and d <= '9')
-          {
-            n = d - '0';
-          }
-          else if(d >= 'a' and d <= 'f')
-          {
-            n = d - 'a' + 10;
-          }
-          else if(d >= 'A' and d <= 'F')
-          {
-            n = d - 'A' + 10;
-          }
-          else
-          {
-            throw std::runtime_error(std::format("Invalid \\u escape digit: {}", d));
-          }
-          cp = (cp << 4) | n;
-        }
+        const int cp = serde::detail::decode_hex_escape(4, next, [](char d) {
+          return std::format("Invalid \\u escape digit: {}", d);
+        });
         if(cp > 0x7F)
         {
           throw std::runtime_error("\\uXXXX escapes not implemented");

@@ -15,6 +15,7 @@
 #include <reflex/serde/yaml_value.hpp>
 #endif
 
+#include <reflex/serde/detail/escape.hpp>
 #include <reflex/serde/detail/io.hpp>
 #include <reflex/serde/detail/text.hpp>
 
@@ -122,91 +123,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     return std::ranges::any_of(s, [](char c) { return is_control(c) or c == '\t'; });
   }
 
-  // Quote by doubling: no backslash is special, the quote character escapes
-  // itself. csv.hpp's RFC 4180 cell writer is this function with Quote = '"'.
-  //
-  // One needle over the remainder, so the doubling loop cannot restart from the
-  // front and go quadratic.
-  template <char Quote, typename Ser> void write_doubled_quoted(Ser& ser, std::string_view text)
-  {
-    static constexpr char doubled[3]{Quote, Quote, '\0'};
+  // The quote character stays open, write_scalar picks between the two.
+  using escapes = serde::detail::yaml_escapes;
 
-    ser.write_char(Quote);
-    serde::detail::write_with_escapes(
-        ser,
-        text,
-        [](std::string_view s, std::size_t pos) { return s.find(Quote, pos); },
-        [](Ser& out, char) { out.write_raw(doubled); });
-    ser.write_char(Quote);
-  }
-
-  // The two-character escapes YAML names, or '\0' when the byte has none and
-  // needs the \xXX form.
-  constexpr char simple_escape(char c)
-  {
-    switch(c)
-    {
-      case '\0':
-        return '0';
-      case '\a':
-        return 'a';
-      case '\b':
-        return 'b';
-      case '\t':
-        return 't';
-      case '\n':
-        return 'n';
-      case '\v':
-        return 'v';
-      case '\f':
-        return 'f';
-      case '\r':
-        return 'r';
-      case '\x1B':
-        return 'e';
-      default:
-        return '\0';
-    }
-  }
-
-  template <char Quote, typename Ser> void write_escape(Ser& ser, char c)
-  {
-    if(c == Quote or c == '\\')
-    {
-      ser.write_char('\\');
-      ser.write_char(c);
-      return;
-    }
-    if(const char esc = simple_escape(c); esc != '\0')
-    {
-      ser.write_char('\\');
-      ser.write_char(esc);
-      return;
-    }
-    static constexpr std::string_view hex = "0123456789abcdef";
-    const auto                        u   = static_cast<unsigned char>(c);
-    const char                        buf[4]{'\\', 'x', hex[u >> 4], hex[u & 0x0F]};
-    ser.write_raw(std::string_view{buf, sizeof(buf)});
-  }
-
-  // Backslash-escaping writer, quote character parameterised.
   template <char Quote, typename Ser> void write_backslash_quoted(Ser& ser, std::string_view text)
   {
-    ser.write_char(Quote);
-    serde::detail::write_with_escapes(
-        ser,
-        text,
-        [](std::string_view s, std::size_t pos) {
-          const auto* const first = s.data() + pos;
-          const auto* const last  = s.data() + s.size();
-          const auto*       it    = std::find_if(first, last, [](char c) {
-            return is_control(c) or c == Quote or c == '\\';
-          });
-          return it == last ? std::string_view::npos
-                            : pos + static_cast<std::size_t>(it - first);
-        },
-        [](Ser& out, char c) { write_escape<Quote>(out, c); });
-    ser.write_char(Quote);
+    serde::detail::write_backslash_quoted<escapes, Quote>(ser, text);
   }
 
   // Plain when it is safe, single-quoted when it can be, double-quoted only when
@@ -222,7 +144,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
     if(std::ranges::none_of(text, [](char c) { return is_control(c) or c == '\t'; }))
     {
-      write_doubled_quoted<'\''>(ser, text);
+      serde::detail::write_doubled_quoted<'\''>(ser, text);
       return;
     }
     write_backslash_quoted<'"'>(ser, text);
@@ -2170,34 +2092,18 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
     int hex_digits_(int count)
     {
-      int value = 0;
-      for(int i = 0; i < count; ++i)
-      {
-        if(at_line_end())
-        {
-          throw std::runtime_error("YAML: truncated hexadecimal escape");
-        }
-        const char d = advance();
-        int        n = -1;
-        if(d >= '0' and d <= '9')
-        {
-          n = d - '0';
-        }
-        else if(d >= 'a' and d <= 'f')
-        {
-          n = d - 'a' + 10;
-        }
-        else if(d >= 'A' and d <= 'F')
-        {
-          n = d - 'A' + 10;
-        }
-        else
-        {
-          throw std::runtime_error(std::format("YAML: invalid hexadecimal escape digit: {}", d));
-        }
-        value = (value << 4) | n;
-      }
-      return value;
+      return serde::detail::decode_hex_escape(
+          count,
+          [this] {
+            if(at_line_end())
+            {
+              throw std::runtime_error("YAML: truncated hexadecimal escape");
+            }
+            return advance();
+          },
+          [](char d) {
+            return std::format("YAML: invalid hexadecimal escape digit: {}", d);
+          });
     }
 
     void decode_escape_(std::string& out)
