@@ -8,8 +8,8 @@ field names, nesting, and type dispatch are all derived automatically via
 C++26 static reflection.
 
 Ships with **JSON** (`reflex.serde.json`), **BSON** (`reflex.serde.bson`),
-**CSV** (`reflex.serde.csv`), **XML** (`reflex.serde.xml`), and **YAML**
-(`reflex.serde.yaml`) backends.
+**CSV** (`reflex.serde.csv`), **XML** (`reflex.serde.xml`), **YAML**
+(`reflex.serde.yaml`) and **TOML** (`reflex.serde.toml`) backends.
 
 ---
 
@@ -23,6 +23,7 @@ Ships with **JSON** (`reflex.serde.json`), **BSON** (`reflex.serde.bson`),
 | `reflex.serde.csv` | CSV serializer + deserializer (flat aggregates) |
 | `reflex.serde.xml` | XML serializer + deserializer |
 | `reflex.serde.yaml` | YAML serializer + deserializer |
+| `reflex.serde.toml` | TOML serializer + deserializer |
 
 ---
 
@@ -416,6 +417,275 @@ Parsing is slower than the JSON backend on the same data. YAML is indentation
 sensitive and cannot be lexed with a single byte of lookahead, so most of the
 parse runs a byte at a time. For a config file read once at start-up this does
 not matter; for bulk interchange, use JSON.
+
+---
+
+## TOML
+
+TOML 1.1.0 in and out. A nested aggregate becomes a `[header]` section and a
+sequence of aggregates becomes an array of tables, so the output reads like a
+hand-written config file rather than one long inline table.
+
+```cpp
+import reflex.serde.toml;
+
+struct Tls
+{
+  bool enabled;
+  int  port;
+};
+
+struct Server
+{
+  std::string      host;
+  std::vector<int> workers;
+  Tls              tls;
+};
+
+Server s{"localhost", {1, 2}, {true, 8443}};
+std::string out;
+toml::serializer ser{out};
+ser.dump(s);
+// host = "localhost"
+// workers = [1, 2]
+// [tls]
+// enabled = true
+// port = 8443
+
+auto back = toml::deserializer{out}.load<Server>();
+```
+
+Output carries no leading and no trailing newline and no blank line between
+sections, so a round trip is byte-exact.
+
+### Table layout
+
+Every key at a table level is written **before** any `[subtable]` header at that
+level. A key belongs to whichever header precedes it, so a member declared after
+a nested struct still has to be written before it - the writer makes three passes
+over the members rather than one:
+
+```cpp
+struct Probe
+{
+  std::string host;
+  Tls         tls;   // declared before `port`
+  int         port;
+};
+// host = "h"
+// port = 8080       <- written first anyway
+// [tls]
+// enabled = true
+// port = 8443
+```
+
+| Member | Written as |
+| --- | --- |
+| a scalar | `key = value` |
+| `std::vector<int>` | `key = [1, 2, 3]`, on one line |
+| an aggregate | `[key]` and then its body |
+| `std::vector<Aggregate>` | `[[key]]` once per element |
+| `std::map<std::string, T>` | `[key]` and then one entry per map key |
+| `std::vector<std::vector<Aggregate>>` | inline, since an inline array has no line for a header |
+| an empty `std::optional` | nothing, key included |
+| `std::pair<K, V>` | a one-entry table |
+
+A map member gets its own header before its entries, the way any other table
+member does, and a map key that is not a bare key is quoted inside the path:
+
+```cpp
+struct MapDoc { std::map<std::string, Tls> m; };
+MapDoc{{{"a", {true, 1}}, {"has space", {false, 2}}}};
+// [m]
+// [m.a]
+// enabled = true
+// port = 1
+// [m."has space"]
+// enabled = false
+// port = 2
+```
+
+An empty aggregate still gets its header: `[child]` with nothing under it is a
+distinct TOML value and dropping the header would lose it. An empty
+`std::vector<Aggregate>` writes nothing at all, because `[[items]]` with no body
+is one element rather than zero.
+
+An empty `std::optional` drops its key. TOML has no null, so writing anything
+would be a lie and omission is what a TOML reader expects. An inline table has a
+key to omit too. An array element does not - `x = [1, , 3]` is not TOML - so a
+null reaching an array element throws, with a message naming the format.
+
+### Strings
+
+A string is written as a basic string `"..."` unless a literal string `'...'`
+saves an escape:
+
+```cpp
+dump(R"(C:\path\to)"s);      // 'C:\path\to'      beats "C:\\path\\to"
+dump(R"(a "quoted" word)"s); // 'a "quoted" word'
+dump("it's plain"s);         // "it's plain"      nothing to save
+dump(R"(it's a \ mess)"s);   // "it's a \\ mess"  an apostrophe rules out literal
+dump("C:\\a\tb"s);           // "C:\\a\tb"        a control byte rules it out too
+```
+
+A literal string may legally hold a raw tab, so "needs no escape" and "is legal
+in a literal string" are not the same test: the literal form is refused for any
+control character, tab included, rather than writing an invisible byte.
+
+Control bytes use the 1.1 escape forms. `\0`, `\a` and `\v` have no TOML
+spelling at all, unlike YAML:
+
+```cpp
+dump("\x1B"s);          // "\e"      not \u001b
+dump("\x01"s);          // "\x01"    not \u0001
+dump("\x7F"s);          // "\x7f"
+dump("\b\t\n\f\r"s);    // "\b\t\n\f\r"
+dump("\0\a\v"s);        // "\x00\x07\x0b"
+```
+
+All four string forms are read: basic, literal, multi-line basic `"""..."""` and
+multi-line literal `'''...'''`. A trailing backslash in a multi-line basic string
+deletes the line break and every space, tab and blank line after it. Neither
+multi-line form is ever written.
+
+A key is bare when it can be. A bare key is `[A-Za-z0-9_-]+` in 1.1.0 exactly as
+in 1.0, so an identifier always is one and only a `serde::rename` produces
+something else:
+
+```cpp
+struct RenameDoc
+{
+  int                                   plain;
+  [[= serde::rename{"with space"}]] int spaced;
+  [[= serde::rename{"my table"}]] Tls   t;
+};
+// plain = 1
+// "with space" = 2
+// ["my table"]
+// ...
+```
+
+### Values
+
+| TOML | C++ |
+| --- | --- |
+| Integer | any integral type. `toml::integer` is `std::int64_t` |
+| Float | any floating-point type. `toml::number` is `double` |
+| Boolean | `bool` |
+| String | `std::string`, `reflex::heapless::string<N>`, `std::array<char, N>` |
+| Array | any sequence |
+| Table | an aggregate, a `std::map`, a `std::pair` |
+| the four date-time types | `std::string`, verbatim |
+
+Integer and Float are two types in TOML rather than two spellings of one, and
+this backend keeps them apart on both sides. A `double` whose shortest form
+carries no `.` and no exponent gains a `.0`, because a bare `1` is an Integer
+wherever it appears:
+
+```cpp
+dump(1);                    // 1
+dump(1.0);                  // 1.0
+dump(1e30);                 // 1e+30
+dump(std::int64_t{9007199254740993});  // 9007199254740993, exact
+```
+
+`toml::value` is `poly::var<std::int64_t, double, bool, std::string>`. Unlike
+`json::value` and `yaml::value`, which collapse both numeric types into a
+`double`, it carries a distinct Integer alternative, so an integer survives a
+document round trip at full 64-bit width.
+
+A whole document loaded as a `toml::value` writes back with the same table layout
+a struct gets, header sections and arrays of tables included.
+
+### Supported
+
+| | |
+|---|---|
+| dialect | [TOML 1.1.0](https://toml.io/en/v1.1.0), read and written |
+| strings | all four forms read, basic or literal written |
+| escapes | `\b \t \n \f \r \e \" \\`, plus `\xHH`, `\uHHHH` and `\UHHHHHHHH` up to U+007F |
+| integers | decimal with `_` separators, and `0x`, `0o`, `0b` |
+| floats | `_` separators, exponents, `inf`, `-inf`, `nan` |
+| keys | bare, basic-quoted, literal-quoted, dotted, and `[ a . b ]` with spaces around the dot |
+| tables | `[a.b.c]` headers, dotted keys, inline `{ ... }` across lines with a trailing comma |
+| arrays | `[ ... ]` across lines with a trailing comma, and `[[a.b]]` arrays of tables |
+| comments | `#` to the end of the line |
+| line breaks | `\n` and `\r\n` |
+| inputs | any contiguous range, `serde::mmap_input_stream`, or an `std::istream` |
+
+The reader rejects a document that defines the same thing twice, rather than
+letting the last one win:
+
+- a duplicate key in the same table, written directly or reached through a header
+- a duplicate `[header]`, including `[a]` / `[a.b]` / `[a]`
+- a `[header]` naming a path a previous assignment already made a value, whether
+  that value was a scalar or an inline table
+- a `[header]` reaching *through* a value: `b = { c = 1 }` then `[b.c.d]`
+- a dotted key redefining a table a header defined, and a header redefining a
+  table a dotted key created
+- `[[x]]` on a path `[x]` already claimed, and `[x]` on a path `[[x]]` claimed
+- `x = []` then `[[x]]`
+
+### Not supported
+
+**A 1.1 document is written, and a 1.0 parser reads it unless a string holds a
+control character.** `\e` and `\xHH` are the only 1.1-only forms this backend
+emits and both are reachable only from a control byte inside a string.
+Everything else it writes parses under TOML 1.0. On the read side it accepts
+three things 1.0 does not: `\e` and `\xHH`, a line break or trailing comma inside
+an inline table, and a local time with the seconds left off.
+
+**Date-times are strings.** The four date-time types are read verbatim into a
+`std::string` and written back from one, with no `std::chrono` mapping. So
+`d = 1979-05-27T07:32:00Z` comes back out as `d = "1979-05-27T07:32:00Z"` - a
+quoted string, not a date-time. Code that wants a `std::chrono` type parses the
+string itself.
+
+**An escape above U+007F throws on read.** `\xHH`, `\uHHHH` and `\UHHHHHHHH` each
+decode to one byte here, so anything above 0x7F would need a multi-byte UTF-8
+encoding this decoder does not do. `\xFF` means U+00FF, which is two bytes of
+UTF-8, so the limit bites from `\x80` up and not from `\u0100`. This is shared
+with the JSON backend, same decoder. A literal multi-byte UTF-8 sequence in the
+source passes through untouched on both sides, keys included. The serializer is
+unaffected: it emits `\xHH` only for control bytes, all below U+0080.
+
+**A key path is capped at 32 segments.** `serde::max_key_depth` is 32, and a
+dotted key or a header with more segments throws. TOML has no such limit, so this
+is the one place the reader refuses a document a TOML 1.1 parser accepts.
+
+**A destination too small for the document is an error.** A third `[[items]]`
+into a `std::array<Child, 2>`, or an over-long inline array, throws. The document
+is valid and the destination cannot hold it.
+
+**A `[header]` naming a member the destination does not have throws even with
+nothing under it**, because a header materializes its table. That is stricter
+than a TOML parser, which has no destination to be wrong about.
+
+**Errors carry no line or column.** Every message names TOML and the offending
+key path or header. No backend in this repo reports a position.
+
+**Key order is not preserved.** A `std::map` destination and a `toml::value` are
+both sorted by key, so a document round-tripped through either comes back
+reordered. TOML does not require order to be kept.
+
+**A `toml::value` member of an aggregate is written inline**, not as a header
+section, because the member passes classify on the member type and a `poly::var`
+is not a table type at compile time. A whole document loaded as a `toml::value`
+is unaffected.
+
+**A `std::string_view` member cannot be a TOML destination.** There is no
+borrowed read: three of the four string forms are decoded rather than pointed at,
+so the borrowable subset is a single-line literal string on a contiguous cursor,
+which is too narrow to be worth a third string overload. The compiler says so and
+names `std::string`.
+
+**Conversion to and from the other backends' value types is not supported and is
+not a goal.** `toml::value` models TOML. `json::value` and `yaml::value` collapse
+Integer and Float into one `double`. `reflex-serde-convert` takes `toml` on
+either side because it takes a format name on each side independently, but a
+toml -> json -> toml trip turns `port = 8080` into `port = 8080.0` and
+`9007199254740993` into `9007199254740992.0`. Nothing here maps one backend's
+value type onto another's.
 
 ---
 
