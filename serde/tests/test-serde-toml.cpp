@@ -196,3 +196,239 @@ TEST_CASE("reflex::serde::toml: a value with nowhere to go names the format")
   CHECK(message(toml::null).starts_with("TOML has no null"));
   CHECK(dump(std::optional<int>{7}) == "7");
 }
+
+// Fixtures stay at namespace scope: a struct declared inside a function body
+// can fail to splice on GCC 16.
+
+struct flat_doc
+{
+  int         a;
+  std::string b;
+  bool        c;
+};
+
+TEST_CASE("reflex::serde::toml: a flat struct is one key per line")
+{
+  CHECK(dump(flat_doc{1, "x", true}) == "a = 1\nb = \"x\"\nc = true");
+}
+
+struct child_t
+{
+  int         x;
+  std::string y;
+};
+
+// The order probe: `port` is declared AFTER the table member, so a one-pass
+// writer emits it after "[tls]" and it silently becomes tls.port. The document
+// stays valid TOML and means something else, which is why this case exists.
+struct order_probe
+{
+  std::string host;
+  child_t     tls;
+  int         port;
+};
+
+TEST_CASE("reflex::serde::toml: every key of a table precedes its subtable headers")
+{
+  const auto out = dump(order_probe{"h", {1, "y"}, 8080});
+  CHECK(out == "host = \"h\"\nport = 8080\n[tls]\nx = 1\ny = \"y\"");
+  CHECK_MESSAGE(
+      out.find("port = 8080") < out.find("[tls]"),
+      "a key written after a [subtable] header belongs to that subtable");
+}
+
+struct two_tables_doc
+{
+  child_t first;
+  child_t second;
+};
+
+TEST_CASE("reflex::serde::toml: one table block closes before the next opens")
+{
+  CHECK(
+      dump(two_tables_doc{{1, "a"}, {2, "b"}})
+      == "[first]\nx = 1\ny = \"a\"\n[second]\nx = 2\ny = \"b\"");
+}
+
+struct lvl_c_t
+{
+  int v;
+};
+struct lvl_b_t
+{
+  int     v;
+  lvl_c_t c;
+};
+struct lvl_a_t
+{
+  int     v;
+  lvl_b_t b;
+};
+struct lvl_doc
+{
+  lvl_a_t a;
+};
+
+TEST_CASE("reflex::serde::toml: a header path is every enclosing key")
+{
+  CHECK(dump(lvl_doc{{1, {2, {3}}}}) == "[a]\nv = 1\n[a.b]\nv = 2\n[a.b.c]\nv = 3");
+}
+
+struct empty_child_t
+{};
+struct empty_table_doc
+{
+  int           a;
+  empty_child_t child;
+};
+
+TEST_CASE("reflex::serde::toml: an empty table still gets its header")
+{
+  // [child] with nothing under it is a distinct TOML value; dropping the header
+  // would lose it.
+  CHECK(dump(empty_table_doc{1, {}}) == "a = 1\n[child]");
+}
+
+struct nums_doc
+{
+  std::vector<int> items;
+};
+
+TEST_CASE("reflex::serde::toml: a sequence of leaves is an inline array")
+{
+  CHECK(dump(nums_doc{{1, 2, 3}}) == "items = [1, 2, 3]");
+  CHECK(dump(nums_doc{}) == "items = []");
+}
+
+struct items_doc
+{
+  std::vector<child_t> items;
+};
+
+TEST_CASE("reflex::serde::toml: a sequence of tables is an array of tables")
+{
+  CHECK(
+      dump(items_doc{{{1, "a"}, {2, "b"}}})
+      == "[[items]]\nx = 1\ny = \"a\"\n[[items]]\nx = 2\ny = \"b\"");
+
+  // Nothing at all, not a header: [[items]] with no body is one element, not
+  // zero.
+  CHECK(dump(items_doc{}).empty());
+}
+
+struct leaf_item
+{
+  int n;
+};
+struct group_item
+{
+  std::string            name;
+  std::vector<leaf_item> leaves;
+};
+struct groups_doc
+{
+  std::vector<group_item> groups;
+};
+
+TEST_CASE("reflex::serde::toml: an array of tables nests through the path")
+{
+  CHECK(
+      dump(groups_doc{{{"g1", {{1}, {2}}}, {"g2", {}}}})
+      == "[[groups]]\nname = \"g1\"\n[[groups.leaves]]\nn = 1\n[[groups.leaves]]\nn = 2\n"
+         "[[groups]]\nname = \"g2\"");
+}
+
+struct grid_doc
+{
+  std::vector<std::vector<child_t>> rows;
+};
+
+TEST_CASE("reflex::serde::toml: inside an array a table has to go inline")
+{
+  // The outer sequence's value_type is a sequence, not a table, so it stays an
+  // inline array - and an inline array has no line for a header to sit on.
+  CHECK(
+      dump(grid_doc{{{{1, "a"}}, {{2, "b"}}}})
+      == R"(rows = [[{ x = 1, y = "a" }], [{ x = 2, y = "b" }]])");
+}
+
+struct map_of_tables_doc
+{
+  std::map<std::string, child_t> m;
+};
+
+TEST_CASE("reflex::serde::toml: a map of tables gets a header per entry")
+{
+  // The map member gets its own [m] the way any other table member does; the
+  // entries hang off it. A quoted entry key stays quoted inside the path.
+  CHECK(
+      dump(map_of_tables_doc{{{"key1", {1, "a"}}, {"key2", {2, "b"}}}})
+      == "[m]\n[m.key1]\nx = 1\ny = \"a\"\n[m.key2]\nx = 2\ny = \"b\"");
+  CHECK(
+      dump(map_of_tables_doc{{{"has space", {1, "a"}}}})
+      == "[m]\n[m.\"has space\"]\nx = 1\ny = \"a\"");
+}
+
+struct map_of_leaves_doc
+{
+  std::map<std::string, int> m;
+};
+
+TEST_CASE("reflex::serde::toml: a map of leaves is a table of keys")
+{
+  CHECK(dump(map_of_leaves_doc{{{"a", 1}, {"b", 2}}}) == "[m]\na = 1\nb = 2");
+  CHECK(dump(map_of_leaves_doc{}) == "[m]");
+}
+
+struct opt_doc
+{
+  int                a;
+  std::optional<int> b;
+  int                c;
+};
+struct opt_table_doc
+{
+  int                    a;
+  std::optional<child_t> child;
+};
+
+TEST_CASE("reflex::serde::toml: an empty optional takes its key with it")
+{
+  CHECK(dump(opt_doc{1, std::nullopt, 3}) == "a = 1\nc = 3");
+  CHECK(dump(opt_doc{1, 2, 3}) == "a = 1\nb = 2\nc = 3");
+  CHECK(dump(opt_table_doc{1, std::nullopt}) == "a = 1");
+  CHECK(dump(opt_table_doc{1, child_t{2, "z"}}) == "a = 1\n[child]\nx = 2\ny = \"z\"");
+
+  // An inline table has a key to omit too.
+  CHECK(dump(std::vector<opt_doc>{{1, std::nullopt, 3}}) == "[{ a = 1, c = 3 }]");
+
+  // An array element does not, and that is the format's limit rather than this
+  // backend's: `x = [1, , 3]` does not exist.
+  std::string message;
+  try
+  {
+    dump(std::vector<std::optional<int>>{1, std::nullopt});
+  }
+  catch(std::runtime_error const& e)
+  {
+    message = e.what();
+  }
+  CHECK(message.starts_with("TOML has no null"));
+}
+
+struct renamed_doc
+{
+  [[= serde::rename{"with space"}]] int     v;
+  [[= serde::rename{"my table"}]] child_t   t;
+};
+
+TEST_CASE("reflex::serde::toml: a renamed key is quoted on both sides")
+{
+  CHECK(dump(renamed_doc{1, {2, "a"}}) == "\"with space\" = 1\n[\"my table\"]\nx = 2\ny = \"a\"");
+}
+
+TEST_CASE("reflex::serde::toml: a pair is a one-entry table")
+{
+  CHECK(dump(std::pair{"k"s, 42}) == "k = 42");
+  CHECK(dump(std::vector{std::pair{"k"s, 42}}) == "[{ k = 42 }]");
+}
