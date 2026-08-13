@@ -16,45 +16,20 @@
 #endif
 
 #include <reflex/serde/detail/io.hpp>
+#include <reflex/serde/detail/text.hpp>
 
 REFLEX_EXPORT namespace reflex::serde::yaml
 {
   namespace detail
   {
-  constexpr bool is_dec_digit(char c)
-  {
-    return c >= '0' and c <= '9';
-  }
-
-  constexpr bool is_hex_digit(char c)
-  {
-    return is_dec_digit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
-  }
-
-  // A byte that cannot appear literally in a double-quoted scalar. Bytes 0x80 and
-  // above are absent: they are UTF-8 lead and continuation bytes and pass through
-  // unchanged.
-  constexpr bool is_control(char c)
-  {
-    const auto u = static_cast<unsigned char>(c);
-    return u < 0x20 or u == 0x7F;
-  }
-
-  constexpr char lower(char c)
-  {
-    return (c >= 'A' and c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-  }
-
-  constexpr bool iequals(std::string_view a, std::string_view b)
-  {
-    return a.size() == b.size()
-       and std::ranges::equal(a, b, [](char x, char y) { return lower(x) == lower(y); });
-  }
-
-  constexpr bool iequals_any(std::string_view s, std::initializer_list<std::string_view> set)
-  {
-    return std::ranges::any_of(set, [s](std::string_view c) { return iequals(s, c); });
-  }
+  using serde::detail::iequals;
+  using serde::detail::iequals_any;
+  using serde::detail::is_control;
+  using serde::detail::matches_float;
+  using serde::detail::matches_int;
+  using serde::detail::parse_number;
+  using serde::detail::string_view_of;
+  using serde::detail::yaml_numbers;
 
   // A plain scalar may not begin with one of these. '-', '?' and ':' are absent:
   // they only bar a plain scalar when a space or the end of the scalar follows,
@@ -64,86 +39,6 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     return c == ',' or c == '[' or c == ']' or c == '{' or c == '}' or c == '#' or c == '&'
         or c == '*' or c == '!' or c == '|' or c == '>' or c == '\'' or c == '"' or c == '%'
         or c == '@' or c == '`';
-  }
-
-  // The YAML 1.2 core schema's integer forms: [-+]?[0-9]+, 0o[0-7]+, 0x[0-9a-fA-F]+.
-  constexpr bool matches_int(std::string_view s)
-  {
-    if(s.starts_with("0o"))
-    {
-      const auto body = s.substr(2);
-      return not body.empty()
-         and std::ranges::all_of(body, [](char c) { return c >= '0' and c <= '7'; });
-    }
-    if(s.starts_with("0x"))
-    {
-      const auto body = s.substr(2);
-      return not body.empty() and std::ranges::all_of(body, is_hex_digit);
-    }
-    if(s.starts_with('-') or s.starts_with('+'))
-    {
-      s.remove_prefix(1);
-    }
-    return not s.empty() and std::ranges::all_of(s, is_dec_digit);
-  }
-
-  // [-+]? ( \.[0-9]+ | [0-9]+ (\.[0-9]*)? ) ( [eE][-+]?[0-9]+ )?, plus the
-  // non-finite spellings.
-  //
-  // Hand-rolled rather than probed with std::from_chars because this has to run
-  // at compile time for plain_key(), and the floating-point overload of
-  // from_chars is not constexpr. Doing it by hand also keeps the accepted set
-  // exactly YAML's rather than whatever from_chars happens to take - it would
-  // accept "0x1p3" and "infinity", neither of which YAML resolves as a number.
-  constexpr bool matches_float(std::string_view s)
-  {
-    if(iequals_any(s, {".inf", "-.inf", "+.inf", ".nan"}))
-    {
-      return true;
-    }
-    if(s.starts_with('-') or s.starts_with('+'))
-    {
-      s.remove_prefix(1);
-    }
-
-    std::size_t i      = 0;
-    bool        digits = false;
-    while(i < s.size() and is_dec_digit(s[i]))
-    {
-      ++i;
-      digits = true;
-    }
-    if(i < s.size() and s[i] == '.')
-    {
-      ++i;
-      while(i < s.size() and is_dec_digit(s[i]))
-      {
-        ++i;
-        digits = true;
-      }
-    }
-    if(not digits)
-    {
-      return false;
-    }
-    if(i < s.size() and (s[i] == 'e' or s[i] == 'E'))
-    {
-      ++i;
-      if(i < s.size() and (s[i] == '-' or s[i] == '+'))
-      {
-        ++i;
-      }
-      const std::size_t exp_start = i;
-      while(i < s.size() and is_dec_digit(s[i]))
-      {
-        ++i;
-      }
-      if(i == exp_start)
-      {
-        return false;
-      }
-    }
-    return i == s.size();
   }
 
   // Would this text, written plain, read back as something other than a string?
@@ -177,7 +72,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     {
       return true; // document markers
     }
-    return matches_int(s) or matches_float(s);
+    return matches_int<yaml_numbers>(s) or matches_float<yaml_numbers>(s);
   }
 
   // Whether `s` can be written without quotes in block context.
@@ -436,93 +331,6 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     std::string text;
     bool        quoted = false;
   };
-
-  template <typename Num> Num parse_number(std::string_view text)
-  {
-    if constexpr(std::floating_point<Num>)
-    {
-      if(iequals(text, ".nan"))
-      {
-        return std::numeric_limits<Num>::quiet_NaN();
-      }
-      if(iequals(text, ".inf") or iequals(text, "+.inf"))
-      {
-        return std::numeric_limits<Num>::infinity();
-      }
-      if(iequals(text, "-.inf"))
-      {
-        return -std::numeric_limits<Num>::infinity();
-      }
-      Num        value{};
-      const auto last = text.data() + text.size();
-      auto [ptr, ec]  = std::from_chars(text.data(), last, value);
-      if(ec != std::errc{} or ptr != last)
-      {
-        throw std::runtime_error(std::format("YAML: '{}' is not a number", text));
-      }
-      return value;
-    }
-    else
-    {
-      // from_chars takes neither a '+' nor a "0x"/"0o" prefix, so the sign and
-      // the base come off here and the digits go in bare.
-      std::string_view body = text;
-      bool             neg  = false;
-      if(body.starts_with('-'))
-      {
-        neg = true;
-        body.remove_prefix(1);
-      }
-      else if(body.starts_with('+'))
-      {
-        body.remove_prefix(1);
-      }
-      int base = 10;
-      if(body.starts_with("0x"))
-      {
-        base = 16;
-        body.remove_prefix(2);
-      }
-      else if(body.starts_with("0o"))
-      {
-        base = 8;
-        body.remove_prefix(2);
-      }
-      Num        value{};
-      const auto last = body.data() + body.size();
-      auto [ptr, ec]  = std::from_chars(body.data(), last, value, base);
-      if(ec != std::errc{} or ptr != last)
-      {
-        throw std::runtime_error(std::format("YAML: '{}' is not an integer", text));
-      }
-      if(neg)
-      {
-        if constexpr(std::is_signed_v<Num>)
-        {
-          value = static_cast<Num>(-value);
-        }
-        else
-        {
-          throw std::runtime_error(
-              std::format("YAML: '{}' is negative and the destination is unsigned", text));
-        }
-      }
-      return value;
-    }
-  }
-
-  // A std::array<char, N> is a fixed buffer, trimmed at the first NUL.
-  template <typename Str> std::string_view string_view_of(Str const& value)
-  {
-    if constexpr(meta::is_template_instance_of(^^Str, ^^std::array))
-    {
-      return std::string_view{value.data(), ::strnlen(value.data(), value.size())};
-    }
-    else
-    {
-      return std::string_view{value};
-    }
-  }
   } // namespace detail
 
   template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
@@ -1303,7 +1111,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     friend auto
         tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
     {
-      return detail::parse_number<Num>(de.read_scalar().text);
+      return detail::parse_number<detail::yaml_numbers, Num>(de.read_scalar().text, "YAML");
     }
 
     template <std::same_as<char> Char>
@@ -1808,11 +1616,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       // need no such detour, std::from_chars reads them as a double directly.
       if(s.text.starts_with("0x") or s.text.starts_with("0o"))
       {
-        return static_cast<yaml::number>(detail::parse_number<long long>(s.text));
+        return static_cast<yaml::number>(
+            detail::parse_number<detail::yaml_numbers, long long>(s.text, "YAML"));
       }
-      if(detail::matches_int(s.text) or detail::matches_float(s.text))
+      if(detail::matches_int<detail::yaml_numbers>(s.text)
+         or detail::matches_float<detail::yaml_numbers>(s.text))
       {
-        return detail::parse_number<yaml::number>(s.text);
+        return detail::parse_number<detail::yaml_numbers, yaml::number>(s.text, "YAML");
       }
       return yaml::string{s.text};
     }
