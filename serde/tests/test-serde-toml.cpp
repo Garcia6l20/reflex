@@ -817,19 +817,204 @@ TEST_CASE("reflex::serde::toml::deserializer: a dotted key reaches a nested memb
   check_load_throws<dotted_doc>(R"({ """a""".b = 1 })");
 }
 
-// Step 09 owns the document loop, the [header] and the [[array of tables]]. The
-// throw is deliberate, and this pins that it is reached rather than a parse
-// going somewhere confusing.
-TEST_CASE("reflex::serde::toml::deserializer: a whole document is not read yet")
+// Every document below was fed to Python's tomllib and compared against the
+// shape asserted here. The failure mode is not a parse error, it is a key
+// landing in the wrong table, which produces a valid document that no literal
+// comparison catches.
+
+struct tls_conf
 {
-  std::string message;
-  try
+  bool        enabled;
+  std::string cert;
+  bool        operator==(tls_conf const&) const = default;
+};
+
+struct server_conf
+{
+  std::string host;
+  int         port;
+  tls_conf    tls;
+  bool        operator==(server_conf const&) const = default;
+};
+
+struct doc_conf
+{
+  std::string title;
+  server_conf server;
+  bool        operator==(doc_conf const&) const = default;
+};
+
+struct deep_c
+{
+  int  n;
+  bool operator==(deep_c const&) const = default;
+};
+
+struct deep_b
+{
+  deep_c c;
+  bool   operator==(deep_b const&) const = default;
+};
+
+struct deep_a
+{
+  deep_b c;
+  deep_b b;
+  bool   operator==(deep_a const&) const = default;
+};
+
+struct deep_doc
+{
+  deep_a  a;
+  deep_c  d;
+  int     top;
+  bool    operator==(deep_doc const&) const = default;
+};
+
+struct map_doc
+{
+  std::map<std::string, inner_doc> m;
+  bool operator==(map_doc const&) const = default;
+};
+
+TEST_CASE("reflex::serde::toml::deserializer: a flat document is one key per line")
+{
+  check_load<ab_doc>("a = 1\nb = \"x\"", {1, "x"});
+  check_load<ab_doc>("# a comment\n\na = 1   # trailing\n\nb = 'x'\n", {1, "x"});
+  // A document is the one place a table needs no braces at all.
+  check_load<std::map<std::string, int>>("a = 1\nb = 2", {{"a", 1}, {"b", 2}});
+  // An empty document is an empty table, not an error.
+  check_load<std::map<std::string, int>>("", {});
+  check_load<std::map<std::string, int>>("# nothing but a comment\n", {});
+
+  // "keyval-sep = ws %x3D ws": the value is on the line the key is on.
+  check_load_throws<ab_doc>("a =\n1");
+  check_load_throws<ab_doc>("a 1");
+  check_load_throws<ab_doc>("= 1");
+  // A value may still run on to the next line once it has opened a bracket.
+  check_load<std::vector<int>>("[1,\n2]", {1, 2});
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a header re-targets the lines after it")
+{
+  const auto text =
+      "title = \"cfg\"\n"
+      "[server]\n"
+      "host = \"localhost\"\n"
+      "port = 8080\n"
+      "[server.tls]\n"
+      "enabled = true\n"
+      "cert = \"/etc/cert\"\n";
+  check_load<doc_conf>(text, {"cfg", {"localhost", 8080, {true, "/etc/cert"}}});
+
+  // The header is indentation-blind and may carry whitespace inside the
+  // brackets: "[ a . b ]" is the same header as "[a.b]".
+  check_load<doc_conf>(
+      "title = \"cfg\"\n"
+      "     [ server . tls ]   # here\n"
+      "enabled = true\n",
+      {"cfg", {"", 0, {true, ""}}});
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a header jumps back up as easily as down")
+{
+  // Three levels down and then straight back to one, which is what no
+  // recursive-descent reader can express.
+  const auto text =
+      "top = 1\n"
+      "[a.c.c]\n"
+      "n = 2\n"
+      "[a.b.c]\n"
+      "n = 3\n"
+      "[d]\n"
+      "n = 4\n";
+  check_load<deep_doc>(text, {{{{2}}, {{3}}}, {4}, 1});
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a dotted key needs no header")
+{
+  check_load<dotted_doc>("a.b = 1", {{1}});
+  check_load<dotted_doc>("a . b = 1", {{1}});
+  check_load<deep_doc>("a.b.c.n = 3\nd.n = 4\ntop = 1", {{{}, {{3}}}, {4}, 1});
+
+  // A quoted segment is one segment, so "a.b.c" here is three keys and
+  // 'a."b.c".d' is three keys as well - not four.
+  check_load<dotted_doc>(R"("a".'b' = 1)", {{1}});
+
+  // A dotted key under a header appends to the header's path.
+  check_load<deep_doc>("[a]\nb.c.n = 3\n", {{{}, {{3}}}, {}, 0});
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a map is filled by headers")
+{
+  check_load<map_doc>("[m.one]\nb = 1\n[m.two]\nb = 2\n", {{{"one", {1}}, {"two", {2}}}});
+  // The same entries reached without a header for the map itself.
+  check_load<map_doc>("m.one.b = 1\nm.two.b = 2\n", {{{"one", {1}}, {"two", {2}}}});
+}
+
+namespace
+{
+  template <typename T> std::string load_message(std::string_view text)
   {
-    (void)toml::deserializer{"a = 1\nb = \"x\""sv}.load<ab_doc>();
+    try
+    {
+      (void)toml::deserializer{text}.template load<T>();
+    }
+    catch(std::exception const& e)
+    {
+      return e.what();
+    }
+    return {};
   }
-  catch(std::runtime_error const& e)
-  {
-    message = e.what();
-  }
-  CHECK(message == "TOML: reading a whole document is not implemented yet");
+} // namespace
+
+TEST_CASE("reflex::serde::toml::deserializer: an unknown key names the format and the path")
+{
+  // object_visit says "Key not found in object", which names neither the
+  // format nor where in the document it happened. Wrapped at the call site
+  // rather than reworded there: four other things read that message.
+  const std::string message = load_message<doc_conf>("[server.tls]\nnope = true\n");
+  CHECK(message.starts_with("TOML: "));
+  CHECK(message.find("server.tls.nope") != std::string::npos);
+
+  // A message this backend wrote already carries both and is left alone.
+  CHECK(load_message<doc_conf>("[server]\nport = \"x\"\n").starts_with("TOML: "));
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a path may only be defined once")
+{
+  // A duplicate key, directly and through a header.
+  check_load_throws<ab_doc>("a = 1\na = 2");
+  check_load_throws<map_doc>("[m.one]\nb = 1\nb = 2\n");
+  check_load_throws<deep_doc>("a.b.c.n = 1\na.b.c.n = 2\n");
+
+  // A duplicate header, and a header on a path an assignment already took.
+  check_load_throws<map_doc>("[m.one]\n[m.one]\n");
+  check_load_throws<deep_doc>("[a.b]\n[a.b]\n");
+  check_load_throws<map_doc>("[m]\none = { b = 1 }\n[m.one]\nb = 2\n");
+  check_load_throws<deep_doc>("[a]\nb = { c = { n = 1 } }\n[a.b.c]\n");
+
+  // A dotted key cannot redefine a table a header defined, and a header cannot
+  // redefine a table a dotted key created.
+  check_load_throws<deep_doc>("[a.b]\nc.n = 1\n[a]\nb.c.n = 2\n");
+  check_load_throws<deep_doc>("[a]\nb.c.n = 1\n[a.b]\n");
+
+  check_load_throws<deep_doc>("[a]\n[a.b]\n[a]\n");
+
+  // Legal, and the openings the spec leaves: a super-table written after the
+  // sub-table that implied it, a second sibling under a dotted key, and a
+  // sub-table added by a header under a table a dotted key created.
+  check_load<deep_doc>("[a.b.c]\nn = 3\n[a]\n", {{{}, {{3}}}, {}, 0});
+  check_load<deep_doc>("[a.b]\nc.n = 1\n[d]\nn = 4\n[a]\n", {{{}, {{1}}}, {4}, 0});
+  check_load<deep_a>("c.c.n = 1\nb.c.n = 2\n", {{{1}}, {{2}}});
+  check_load<deep_doc>("a.c.c.n = 1\n[a.b]\nc.n = 2\n", {{{{1}}, {{2}}}, {}, 0});
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a table in a value position needs its braces")
+{
+  // At depth 0 a bare "key = value" run is a document. Below it, the same
+  // bytes are a missing brace, and the message says which.
+  const std::string message = load_message<doc_conf>("server = host = \"x\"\n");
+  CHECK(message.find('{') != std::string::npos);
+  check_load_throws<std::vector<ab_doc>>("[a = 1]");
 }

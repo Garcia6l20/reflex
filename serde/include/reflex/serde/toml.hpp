@@ -7,6 +7,8 @@
 #ifndef REFLEX_MODULE
 #include <cmath>
 #include <cstring>
+#include <map>
+#include <vector>
 
 #include <reflex/format.hpp>
 #include <reflex/heapless/string.hpp>
@@ -207,6 +209,43 @@ REFLEX_EXPORT namespace reflex::serde::toml
   template <typename T> consteval std::size_t member_count()
   {
     return nonstatic_data_members_of(^^T, std::meta::access_context::current()).size();
+  }
+
+  // How a path came to exist. A table is created once and extended never, but a
+  // [header] may claim a path a longer [header] only implied, and a dotted key
+  // may add a sibling to a table an earlier dotted key created.
+  enum class path_kind
+  {
+    value,    // a "key = value" landed exactly here
+    dotted,   // created by a dotted key: "a" in "a.b = 1"
+    header,   // claimed by a [header] or a [[header]] of its own
+    implied,  // created by a longer [header]: "a" in "[a.b]"
+  };
+
+  // A path as a map key. Each segment carries its own length, because a plain
+  // join cannot tell the two-segment path a.b from the one-segment key "a.b" -
+  // and a document may write both, in either order.
+  inline void append_path_segment(std::string& out, std::string_view seg)
+  {
+    out += std::to_string(seg.size());
+    out += ':';
+    out += seg;
+  }
+
+  // The same path for an error message, shown as it was decoded rather than
+  // re-quoted.
+  inline std::string join_path(std::span<std::string_view const> path)
+  {
+    std::string out;
+    for(std::string_view seg : path)
+    {
+      if(not out.empty())
+      {
+        out += '.';
+      }
+      out += seg;
+    }
+    return out;
   }
   } // namespace detail
 
@@ -656,6 +695,20 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // Separate from token_buf_: a key and its value are read one after the other.
     std::string key_buf_;
 
+    // Non-zero while a value is being read. The object_visitable_c tag_invoke is
+    // both "read a document" and "read an inline table"; this tells them apart.
+    int depth_ = 0;
+
+    // The table every following assignment belongs to, set by the most recent
+    // [header]. Empty at the start of a document, which is the root table. The
+    // views point into header_buf_ and only the next header rewrites it.
+    std::vector<std::string_view> table_path_;
+    std::string                   header_buf_;
+
+    // Every path the document has claimed so far, and how. This is the whole of
+    // the document-rule bookkeeping; see detail::path_kind.
+    std::map<std::string, detail::path_kind> paths_;
+
   public:
     using base::base;
     using base::advance;
@@ -672,6 +725,28 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
     // makes load() without an explicit type read a toml::value
     using default_load_type = toml::value;
+
+    class value_scope
+    {
+      deserializer* d_;
+
+    public:
+      explicit value_scope(deserializer& d) : d_{&d}
+      {
+        ++d_->depth_;
+      }
+      value_scope(value_scope const&)            = delete;
+      value_scope& operator=(value_scope const&) = delete;
+      ~value_scope()
+      {
+        --d_->depth_;
+      }
+    };
+
+    bool at_document_level() const
+    {
+      return depth_ == 0;
+    }
 
     // TOML never makes indentation meaningful, so spaces and tabs are all of it.
     void skip_ws()
@@ -954,6 +1029,10 @@ REFLEX_EXPORT namespace reflex::serde::toml
     template <char Open, char Close, typename Elem>
     void read_bracketed(std::string_view what, Elem&& read_one)
     {
+      // A value position, which stops a bare "key = value" line inside one from
+      // being read as a document.
+      const value_scope guard{*this};
+
       advance(); // Open, which the caller has already looked at
       if(not next_content_line())
       {
@@ -997,7 +1076,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // because appending a segment can reallocate it.
     std::size_t read_key_path(std::span<std::string_view> out)
     {
-      key_buf_.clear();
+      return read_key_path_into(out, key_buf_);
+    }
+
+    // A [header] path has to outlive every assignment under it, so it cannot share
+    // key_buf_.
+    std::size_t read_key_path_into(std::span<std::string_view> out, std::string& buf)
+    {
+      buf.clear();
       std::array<std::size_t, serde::max_key_depth> ends{};
       std::size_t                                   count = 0;
       while(true)
@@ -1007,8 +1093,8 @@ REFLEX_EXPORT namespace reflex::serde::toml
         {
           throw std::runtime_error("TOML: a key has more dotted segments than can be followed");
         }
-        read_key_segment_();
-        ends[count++] = key_buf_.size();
+        read_key_segment_(buf);
+        ends[count++] = buf.size();
         skip_ws();
         if(at_line_end() or peek_at(0) != '.')
         {
@@ -1019,7 +1105,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
       std::size_t start = 0;
       for(std::size_t i = 0; i < count; ++i)
       {
-        out[i] = std::string_view{key_buf_}.substr(start, ends[i] - start);
+        out[i] = std::string_view{buf}.substr(start, ends[i] - start);
         start  = ends[i];
       }
       return count;
@@ -1047,9 +1133,181 @@ REFLEX_EXPORT namespace reflex::serde::toml
       });
     }
 
+    // A document is flat. A [a.b.c] header re-targets every following assignment
+    // at an arbitrary depth and the next may jump back to depth 1, so there is no
+    // call for a recursive-descent reader to return from: this stays at the root
+    // and addresses every assignment by its full path. Only reachable at depth 0.
+    template <typename Root> void read_document(Root& root)
+    {
+      table_path_.clear();
+      header_buf_.clear();
+      paths_.clear();
+
+      while(next_content_line())
+      {
+        if(peek_at(0) == '[')
+        {
+          read_header_();
+        }
+        else
+        {
+          read_assignment_(root);
+        }
+        // Leaves the cursor on the break, which next_content_line() eats on the
+        // way round.
+        finish_line();
+      }
+    }
+
   private:
+    // "[a.b.c]" - the table every following assignment belongs to, until the
+    // next header.
+    void read_header_()
+    {
+      advance(); // '['
+      std::array<std::string_view, serde::max_key_depth> segs{};
+      const std::size_t count = read_key_path_into(segs, header_buf_);
+      skip_ws();
+      if(at_line_end() or peek_at(0) != ']')
+      {
+        throw std::runtime_error(std::format(
+            "TOML: expected ']' after the table header '{}'",
+            detail::join_path(std::span{segs.data(), count})));
+      }
+      advance();
+
+      const auto path = std::span<std::string_view const>{segs.data(), count};
+      record_header_(path);
+      table_path_.assign(path.begin(), path.end());
+    }
+
+    // Both relative to the table the last header named.
+    template <typename Root> void read_assignment_(Root& root)
+    {
+      std::array<std::string_view, serde::max_key_depth> keys{};
+      const std::size_t                                  count = read_key_path(keys);
+      skip_ws();
+      if(at_line_end() or peek_at(0) != '=')
+      {
+        throw std::runtime_error(
+            std::format("TOML: expected '=' after the key '{}'", keys[count - 1]));
+      }
+      advance();
+      skip_ws();
+      // "keyval-sep = ws %x3D ws", ws being space and tab only: a value starts on
+      // the line its key is on, though a bracket it opens may run past it.
+      if(at_line_end())
+      {
+        throw std::runtime_error(
+            std::format("TOML: the key '{}' has no value", keys[count - 1]));
+      }
+
+      std::array<std::string_view, serde::max_key_depth> full{};
+      if(table_path_.size() + count > full.size())
+      {
+        throw std::runtime_error("TOML: a key has more dotted segments than can be followed");
+      }
+      std::size_t n = 0;
+      for(std::string_view seg : table_path_)
+      {
+        full[n++] = seg;
+      }
+      for(std::size_t i = 0; i < count; ++i)
+      {
+        full[n++] = keys[i];
+      }
+
+      record_assignment_(std::span<std::string_view const>{full.data(), n}, table_path_.size());
+
+      const std::string where = detail::join_path(std::span{full.data(), n});
+      try
+      {
+        serde::object_visit(std::span{full.data(), n}, root, [this]<typename V>(V& v) {
+          const value_scope guard{*this};
+          v = this->template load<std::remove_cvref_t<V>>();
+        });
+      }
+      catch(std::exception const& e)
+      {
+        rethrow_at_key_(e, where);
+      }
+    }
+
+    // A message this backend wrote already names the format and the offending
+    // text; anything from object_visit or a destination type names neither.
+    [[noreturn]] static void rethrow_at_key_(std::exception const& e, std::string_view where)
+    {
+      if(std::string_view{e.what()}.starts_with("TOML"))
+      {
+        throw;
+      }
+      throw std::runtime_error(std::format("TOML: key '{}': {}", where, e.what()));
+    }
+
+    // TOML's define-it-once rules, all statements about paths_. See path_kind.
+    void record_assignment_(std::span<std::string_view const> path, std::size_t table_count)
+    {
+      std::string key;
+      for(std::size_t i = 0; i + 1 < path.size(); ++i)
+      {
+        detail::append_path_segment(key, path[i]);
+        if(i < table_count)
+        {
+          // Set by a header, which recorded it when it read it.
+          continue;
+        }
+        const auto [it, fresh] = paths_.try_emplace(key, detail::path_kind::dotted);
+        if(not fresh and it->second != detail::path_kind::dotted)
+        {
+          throw std::runtime_error(std::format(
+              "TOML: the dotted key '{}' would redefine '{}', which is already defined",
+              detail::join_path(path), detail::join_path(path.first(i + 1))));
+        }
+      }
+      detail::append_path_segment(key, path.back());
+      const auto [it, fresh] = paths_.try_emplace(key, detail::path_kind::value);
+      (void)it;
+      if(not fresh)
+      {
+        throw std::runtime_error(
+            std::format("TOML: the key '{}' is defined twice", detail::join_path(path)));
+      }
+    }
+
+    void record_header_(std::span<std::string_view const> path)
+    {
+      std::string key;
+      for(std::size_t i = 0; i + 1 < path.size(); ++i)
+      {
+        detail::append_path_segment(key, path[i]);
+        const auto [it, fresh] = paths_.try_emplace(key, detail::path_kind::implied);
+        if(not fresh and it->second == detail::path_kind::value)
+        {
+          throw std::runtime_error(std::format(
+              "TOML: the header '[{}]' reaches into '{}', which an earlier assignment made a "
+              "value: neither a scalar nor a table written inline can be extended by a header",
+              detail::join_path(path), detail::join_path(path.first(i + 1))));
+        }
+      }
+      detail::append_path_segment(key, path.back());
+      const auto [it, fresh] = paths_.try_emplace(key, detail::path_kind::header);
+      if(fresh)
+      {
+        return;
+      }
+      if(it->second == detail::path_kind::implied)
+      {
+        // "[a.b]" and then "[a]": a super-table may be written after the
+        // sub-table that implied it, once.
+        it->second = detail::path_kind::header;
+        return;
+      }
+      throw std::runtime_error(
+          std::format("TOML: the table '[{}]' is defined twice", detail::join_path(path)));
+    }
+
     // "simple-key = quoted-key / unquoted-key", appended to `buf`.
-    void read_key_segment_()
+    void read_key_segment_(std::string& buf)
     {
       if(at_line_end())
       {
@@ -1064,15 +1322,15 @@ REFLEX_EXPORT namespace reflex::serde::toml
         {
           throw std::runtime_error("TOML: a multi-line string cannot be a key");
         }
-        key_buf_ += read_string();
+        buf += read_string();
         return;
       }
-      const std::size_t start = key_buf_.size();
+      const std::size_t start = buf.size();
       while(not at_line_end() and detail::is_bare_key_char(peek_at(0)))
       {
-        key_buf_.push_back(advance());
+        buf.push_back(advance());
       }
-      if(key_buf_.size() == start)
+      if(buf.size() == start)
       {
         throw std::runtime_error(std::format("TOML: '{}' cannot start a key", c));
       }
@@ -1374,13 +1632,11 @@ REFLEX_EXPORT namespace reflex::serde::toml
     return value;
   }
 
-  // "{ a = 1, b = 'x' }", and - once step 09 lands - a whole document, which is
-  // the same question asked at depth 0.
-  //
-  // Only the '{' branch exists here. The document loop, the [header] and the
-  // [[array of tables]] are step 09's, and the counter that tells a document
-  // from an inline table is that step's core problem. The throw below is
-  // deliberate, not an oversight.
+  // An inline table and a whole document, told apart by the brace first and the
+  // depth second: a table in a value position is written inline or is a [header]
+  // elsewhere, so a braceless table is a document and only depth 0 begins one. A
+  // top-level "{ ... }" is accepted because load<T>() is also how a caller reads
+  // a bare value.
   template <typename InputIt, object_visitable_c Map>
     requires(
         not(meta::is_template_instance_of(^^Map, ^^poly::var)
@@ -1390,13 +1646,19 @@ REFLEX_EXPORT namespace reflex::serde::toml
   auto tag_invoke(
       tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
   {
-    if(de.at_end() or de.peek_at(0) != '{')
-    {
-      throw std::runtime_error("TOML: reading a whole document is not implemented yet");
-    }
-
     Map value{};
-    de.template read_bracketed<'{', '}'>("an inline table", [&] { de.read_inline_pair(value); });
+    if(not de.at_end() and de.peek_at(0) == '{')
+    {
+      de.template read_bracketed<'{', '}'>("an inline table", [&] { de.read_inline_pair(value); });
+      return value;
+    }
+    if(not de.at_document_level())
+    {
+      throw std::runtime_error(
+          "TOML: expected '{' at the start of an inline table: a table in a value position is "
+          "written inline, and a [header] cannot appear here");
+    }
+    de.read_document(value);
     return value;
   }
 
