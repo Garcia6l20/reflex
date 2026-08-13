@@ -1010,6 +1010,138 @@ TEST_CASE("reflex::serde::toml::deserializer: a path may only be defined once")
   check_load<deep_doc>("a.c.c.n = 1\n[a.b]\nc.n = 2\n", {{{{1}}, {{2}}}, {}, 0});
 }
 
+// Arrays of tables: the only paths that carry an index, and the reason this
+// backend has a walk of its own on top of object_visitor.
+
+struct leaf_row
+{
+  int  n;
+  bool operator==(leaf_row const&) const = default;
+};
+
+struct table_row
+{
+  std::string           name;
+  leaf_row              sub;
+  std::vector<leaf_row> leaves;
+  bool                  operator==(table_row const&) const = default;
+};
+
+struct rows_doc
+{
+  std::vector<table_row> items;
+  std::vector<table_row> more;
+  bool                   operator==(rows_doc const&) const = default;
+};
+
+struct fixed_rows_doc
+{
+  std::array<leaf_row, 2> items;
+  bool                    operator==(fixed_rows_doc const&) const = default;
+};
+
+struct scalar_rows_doc
+{
+  int  items;
+  bool operator==(scalar_rows_doc const&) const = default;
+};
+
+TEST_CASE("reflex::serde::toml::deserializer: [[header]] appends an element")
+{
+  check_load<rows_doc>(
+      "[[items]]\n"
+      "name = \"a\"\n"
+      "[[items]]\n"
+      "name = \"b\"\n",
+      {{{"a", {}, {}}, {"b", {}, {}}}, {}});
+
+  // The same key in two elements is not a duplicate: an element is a table of
+  // its own. In one element it is.
+  check_load_throws<rows_doc>("[[items]]\nname = \"a\"\nname = \"b\"\n");
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a header after [[header]] targets the last element")
+{
+  check_load<rows_doc>(
+      "[[items]]\n"
+      "name = \"a\"\n"
+      "[items.sub]\n"
+      "n = 7\n"
+      "[[items]]\n"
+      "name = \"b\"\n"
+      "[items.sub]\n"
+      "n = 8\n",
+      {{{"a", {7}, {}}, {"b", {8}, {}}}, {}});
+
+  // A dotted key inside an element reaches the same place.
+  check_load<rows_doc>("[[items]]\nsub.n = 7\n", {{{"", {7}, {}}}, {}});
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: interleaved arrays of tables keep their counts")
+{
+  // "[[a]] [[b]] [[a]]" is legal and the second [[a]] is element 1: a count is
+  // never reset, only ever appended to.
+  check_load<rows_doc>(
+      "[[items]]\n"
+      "name = \"a\"\n"
+      "[[more]]\n"
+      "name = \"x\"\n"
+      "[[items]]\n"
+      "name = \"b\"\n",
+      {{{"a", {}, {}}, {"b", {}, {}}}, {{"x", {}, {}}}});
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: an array of tables nests inside an element")
+{
+  // The inner count belongs to the element, not to the name: the leaves of
+  // items[1] start again at 0.
+  check_load<rows_doc>(
+      "[[items]]\n"
+      "name = \"a\"\n"
+      "[[items.leaves]]\n"
+      "n = 1\n"
+      "[[items.leaves]]\n"
+      "n = 2\n"
+      "[[items]]\n"
+      "name = \"b\"\n"
+      "[[items.leaves]]\n"
+      "n = 3\n",
+      {{{"a", {}, {{1}, {2}}}, {"b", {}, {{3}}}}, {}});
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: an array of tables fits its destination or throws")
+{
+  // A fixed-size destination cannot grow, so it is bounds-checked instead -
+  // the same split make_pusher encodes for an inline array.
+  check_load<fixed_rows_doc>("[[items]]\nn = 1\n[[items]]\nn = 2\n", {{{{1}, {2}}}});
+  check_load_throws<fixed_rows_doc>("[[items]]\nn = 1\n[[items]]\nn = 2\n[[items]]\nn = 3\n");
+
+  // A destination that is not a sequence at all says so.
+  const std::string message = load_message<scalar_rows_doc>("[[items]]\nn = 1\n");
+  CHECK(message.starts_with("TOML: "));
+  CHECK(message.find("sequence") != std::string::npos);
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a path is a table or an array of tables, not both")
+{
+  check_load_throws<rows_doc>("[[items]]\n[items]\n");
+  check_load_throws<map_doc>("[m]\n[[m]]\n");
+  check_load_throws<rows_doc>("items = []\n[[items]]\n");
+}
+
+// What bounds a walk is the segment count, and that is bounded where the path
+// is read: serde::max_key_depth is 32.
+TEST_CASE("reflex::serde::toml::deserializer: a key past 32 segments is refused")
+{
+  std::string text;
+  for(int i = 0; i < 32; ++i)
+  {
+    text += "a.";
+  }
+  text += "a = 1";
+  CHECK(load_message<map_doc>(text).starts_with("TOML: "));
+}
+
 TEST_CASE("reflex::serde::toml::deserializer: a table in a value position needs its braces")
 {
   // At depth 0 a bare "key = value" run is a document. Below it, the same

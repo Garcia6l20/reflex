@@ -218,34 +218,156 @@ REFLEX_EXPORT namespace reflex::serde::toml
   {
     value,    // a "key = value" landed exactly here
     dotted,   // created by a dotted key: "a" in "a.b = 1"
-    header,   // claimed by a [header] or a [[header]] of its own
+    header,   // claimed by a [header], or an element of a [[header]]
     implied,  // created by a longer [header]: "a" in "[a.b]"
+    array,    // claimed by a [[header]]; `count` is how many elements so far
   };
 
-  // A path as a map key. Each segment carries its own length, because a plain
-  // join cannot tell the two-segment path a.b from the one-segment key "a.b" -
-  // and a document may write both, in either order.
-  inline void append_path_segment(std::string& out, std::string_view seg)
+  struct path_entry
   {
-    out += std::to_string(seg.size());
+    path_kind   kind;
+    std::size_t count = 0;
+  };
+
+  inline constexpr std::size_t no_index = static_cast<std::size_t>(-1);
+
+  // `index` is set only where the segment names an [[array of tables]], and says
+  // which element the rest of the path is relative to.
+  struct segment
+  {
+    std::string_view name;
+    std::size_t      index = no_index;
+  };
+
+  // A path as a map key. Each segment carries its own length, so the two-segment
+  // path a.b is not the one-segment key "a.b", and an array element carries its
+  // index, so "[[a]] b = 1" twice names two paths and not one twice.
+  inline std::string with_segment(std::string_view base, segment seg)
+  {
+    std::string out{base};
+    out += std::to_string(seg.name.size());
     out += ':';
-    out += seg;
+    out += seg.name;
+    if(seg.index != no_index)
+    {
+      out += '@';
+      out += std::to_string(seg.index);
+    }
+    return out;
   }
 
   // The same path for an error message, shown as it was decoded rather than
   // re-quoted.
-  inline std::string join_path(std::span<std::string_view const> path)
+  inline std::string join_path(std::span<segment const> path)
   {
     std::string out;
-    for(std::string_view seg : path)
+    for(segment seg : path)
     {
       if(not out.empty())
       {
         out += '.';
       }
-      out += seg;
+      out += seg.name;
+      if(seg.index != no_index)
+      {
+        out += std::format("[{}]", seg.index);
+      }
     }
     return out;
+  }
+
+  // serde::object_visit cannot index into a sequence, which is what an [[array of
+  // tables]] header addresses, so this applies the index after each hop. The
+  // recursion walks the type graph and not the document, so it is finite; a walk
+  // is bounded at run time by serde::max_key_depth. `full` is the whole path, so
+  // a failure four segments in still says where it happened.
+  template <typename Root, typename Fn>
+  void table_visit(std::span<segment const> path, Root& root, Fn& fn, std::string_view full);
+
+  // A growable sequence grows to reach the element, which is what "[[x]] appends
+  // an element" means; a fixed-size one is bounds-checked instead.
+  template <typename Seq>
+  auto& element_at(Seq& seq, segment seg, std::string_view full)
+  {
+    if constexpr(requires { seq.emplace_back(); })
+    {
+      while(seq.size() <= seg.index)
+      {
+        seq.emplace_back();
+      }
+    }
+    else
+    {
+      if(seg.index >= std::size(seq))
+      {
+        throw std::out_of_range(std::format(
+            "TOML: in '{}', '{}' is element {} of an array of tables and the destination cannot "
+            "grow to reach it",
+            full, seg.name, seg.index));
+      }
+    }
+    using diff = std::ranges::range_difference_t<Seq>;
+    return *std::ranges::next(std::ranges::begin(seq), static_cast<diff>(seg.index));
+  }
+
+  template <typename Node, typename Fn>
+  void table_descend(
+      std::span<segment const> rest,
+      Node&                    node,
+      Fn&                      fn,
+      std::string_view         full,
+      std::string_view         name)
+  {
+    if(rest.empty())
+    {
+      fn(node);
+      return;
+    }
+    if constexpr(object_visitable_c<std::remove_cvref_t<Node>>)
+    {
+      table_visit(rest, node, fn, full);
+    }
+    else
+    {
+      // object_visit leaves its callback uncalled on a miss, and this callback is
+      // what reads the value, so the cursor would sit on unread text.
+      throw std::runtime_error(std::format(
+          "TOML: in '{}', '{}' is not a table and nothing can be written under it", full, name));
+    }
+  }
+
+  template <typename Root, typename Fn>
+  void table_visit(std::span<segment const> path, Root& root, Fn& fn, std::string_view full)
+  {
+    const segment seg  = path.front();
+    const auto    rest = path.subspan(1);
+
+    object_visitor<std::remove_cvref_t<Root>>{}(
+        [&]<typename N>(N&& nested) {
+          using U = std::remove_cvref_t<N>;
+          // std::array<char, N> is both a sequence and a string and has to stay
+          // a scalar, the same trap the table writers document.
+          if constexpr(seq_c<U> and not str_c<U>)
+          {
+            if(seg.index != no_index)
+            {
+              table_descend(rest, element_at(nested, seg, full), fn, full, seg.name);
+              return;
+            }
+          }
+          else
+          {
+            if(seg.index != no_index)
+            {
+              throw std::runtime_error(std::format(
+                  "TOML: in '{}', '{}' is an array of tables in the document and is not a "
+                  "sequence in the destination",
+                  full, seg.name));
+            }
+          }
+          table_descend(rest, nested, fn, full, seg.name);
+        },
+        seg.name, root);
   }
   } // namespace detail
 
@@ -699,15 +821,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // both "read a document" and "read an inline table"; this tells them apart.
     int depth_ = 0;
 
-    // The table every following assignment belongs to, set by the most recent
-    // [header]. Empty at the start of a document, which is the root table. The
-    // views point into header_buf_ and only the next header rewrites it.
-    std::vector<std::string_view> table_path_;
-    std::string                   header_buf_;
+    // The table every following assignment belongs to. The names point into
+    // header_buf_ and only the next header rewrites it.
+    std::vector<detail::segment> table_path_;
+    std::string                  header_buf_;
 
-    // Every path the document has claimed so far, and how. This is the whole of
-    // the document-rule bookkeeping; see detail::path_kind.
-    std::map<std::string, detail::path_kind> paths_;
+    // Every path the document has claimed, and how; see detail::path_kind. Keyed
+    // by the encoded path, so "[[a]] b = 1" twice is not a duplicate key.
+    std::map<std::string, detail::path_entry> paths_;
 
   public:
     using base::base;
@@ -1160,25 +1281,123 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
   private:
-    // "[a.b.c]" - the table every following assignment belongs to, until the
-    // next header.
+    // The table every following assignment belongs to, until the next header.
     void read_header_()
     {
       advance(); // '['
-      std::array<std::string_view, serde::max_key_depth> segs{};
-      const std::size_t count = read_key_path_into(segs, header_buf_);
-      skip_ws();
-      if(at_line_end() or peek_at(0) != ']')
+      const bool array = not at_line_end() and peek_at(0) == '[';
+      if(array)
       {
-        throw std::runtime_error(std::format(
-            "TOML: expected ']' after the table header '{}'",
-            detail::join_path(std::span{segs.data(), count})));
+        advance();
       }
-      advance();
 
-      const auto path = std::span<std::string_view const>{segs.data(), count};
-      record_header_(path);
-      table_path_.assign(path.begin(), path.end());
+      std::array<std::string_view, serde::max_key_depth> names{};
+      const std::size_t count = read_key_path_into(names, header_buf_);
+      skip_ws();
+      for(int i = 0; i < (array ? 2 : 1); ++i)
+      {
+        if(at_line_end() or peek_at(0) != ']')
+        {
+          throw std::runtime_error(std::format(
+              "TOML: expected '{}' after the table header '{}'",
+              array ? "]]" : "]",
+              std::string_view{names[count - 1]}));
+        }
+        advance();
+      }
+
+      enter_header_(std::span<std::string_view const>{names.data(), count}, array);
+    }
+
+    // A prefix segment naming an [[array of tables]] addresses that array's
+    // current element, so "[[a]] [a.sub]" reaches into the last a.
+    void enter_header_(std::span<std::string_view const> names, bool array)
+    {
+      table_path_.clear();
+      std::string key;
+
+      for(std::size_t i = 0; i + 1 < names.size(); ++i)
+      {
+        detail::segment   seg{names[i], detail::no_index};
+        const std::string plain = detail::with_segment(key, seg);
+        const auto        it    = paths_.find(plain);
+        if(it == paths_.end())
+        {
+          paths_.emplace(plain, detail::path_entry{detail::path_kind::implied, 0});
+        }
+        else if(it->second.kind == detail::path_kind::value)
+        {
+          throw std::runtime_error(std::format(
+              "TOML: the header '{}' reaches into '{}', which an earlier assignment made a "
+              "value: neither a scalar nor a table written inline can be extended by a header",
+              header_text_(names, array), names[i]));
+        }
+        else if(it->second.kind == detail::path_kind::array)
+        {
+          seg.index = it->second.count - 1;
+        }
+        key = detail::with_segment(key, seg);
+        table_path_.push_back(seg);
+      }
+
+      detail::segment   seg{names.back(), detail::no_index};
+      const std::string plain = detail::with_segment(key, seg);
+      if(array)
+      {
+        const auto [it, fresh] =
+            paths_.try_emplace(plain, detail::path_entry{detail::path_kind::array, 0});
+        if(not fresh and it->second.kind != detail::path_kind::array)
+        {
+          throw std::runtime_error(std::format(
+              "TOML: '{}' names a path that is already defined as something other than an array "
+              "of tables",
+              header_text_(names, array)));
+        }
+        // "[[a]] ... [[b]] ... [[a]]" is legal and the second [[a]] is element
+        // 1: the count is never reset, only ever appended to.
+        seg.index = it->second.count++;
+        key       = detail::with_segment(key, seg);
+        paths_.emplace(key, detail::path_entry{detail::path_kind::header, 0});
+      }
+      else
+      {
+        const auto [it, fresh] =
+            paths_.try_emplace(plain, detail::path_entry{detail::path_kind::header, 0});
+        if(not fresh)
+        {
+          if(it->second.kind == detail::path_kind::array)
+          {
+            throw std::runtime_error(std::format(
+                "TOML: the table '{}' names a path an earlier '[[{}]]' made an array of tables",
+                header_text_(names, array), names.back()));
+          }
+          if(it->second.kind != detail::path_kind::implied)
+          {
+            throw std::runtime_error(std::format(
+                "TOML: the table '{}' is defined twice", header_text_(names, array)));
+          }
+          // "[a.b]" and then "[a]": a super-table may be written after the
+          // sub-table that implied it, once.
+          it->second.kind = detail::path_kind::header;
+        }
+        key = plain;
+      }
+      table_path_.push_back(seg);
+    }
+
+    // The header as the document spelled it, for a message.
+    static std::string header_text_(std::span<std::string_view const> names, bool array)
+    {
+      std::string out;
+      for(std::string_view name : names)
+      {
+        if(not out.empty())
+        {
+          out += '.';
+        }
+        out += name;
+      }
+      return array ? std::format("[[{}]]", out) : std::format("[{}]", out);
     }
 
     // Both relative to the table the last header named.
@@ -1202,30 +1421,32 @@ REFLEX_EXPORT namespace reflex::serde::toml
             std::format("TOML: the key '{}' has no value", keys[count - 1]));
       }
 
-      std::array<std::string_view, serde::max_key_depth> full{};
+      std::array<detail::segment, serde::max_key_depth> full{};
       if(table_path_.size() + count > full.size())
       {
         throw std::runtime_error("TOML: a key has more dotted segments than can be followed");
       }
       std::size_t n = 0;
-      for(std::string_view seg : table_path_)
+      for(detail::segment seg : table_path_)
       {
         full[n++] = seg;
       }
       for(std::size_t i = 0; i < count; ++i)
       {
-        full[n++] = keys[i];
+        full[n++] = detail::segment{keys[i], detail::no_index};
       }
 
-      record_assignment_(std::span<std::string_view const>{full.data(), n}, table_path_.size());
+      const auto path = std::span<detail::segment const>{full.data(), n};
+      record_assignment_(path, table_path_.size());
 
-      const std::string where = detail::join_path(std::span{full.data(), n});
+      const std::string where = detail::join_path(path);
+      auto              assign = [this]<typename V>(V& v) {
+        const value_scope guard{*this};
+        v = this->template load<std::remove_cvref_t<V>>();
+      };
       try
       {
-        serde::object_visit(std::span{full.data(), n}, root, [this]<typename V>(V& v) {
-          const value_scope guard{*this};
-          v = this->template load<std::remove_cvref_t<V>>();
-        });
+        detail::table_visit(path, root, assign, where);
       }
       catch(std::exception const& e)
       {
@@ -1245,65 +1466,35 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     // TOML's define-it-once rules, all statements about paths_. See path_kind.
-    void record_assignment_(std::span<std::string_view const> path, std::size_t table_count)
+    void record_assignment_(std::span<detail::segment const> path, std::size_t table_count)
     {
       std::string key;
       for(std::size_t i = 0; i + 1 < path.size(); ++i)
       {
-        detail::append_path_segment(key, path[i]);
+        key = detail::with_segment(key, path[i]);
         if(i < table_count)
         {
           // Set by a header, which recorded it when it read it.
           continue;
         }
-        const auto [it, fresh] = paths_.try_emplace(key, detail::path_kind::dotted);
-        if(not fresh and it->second != detail::path_kind::dotted)
+        const auto [it, fresh] =
+            paths_.try_emplace(key, detail::path_entry{detail::path_kind::dotted, 0});
+        if(not fresh and it->second.kind != detail::path_kind::dotted)
         {
           throw std::runtime_error(std::format(
               "TOML: the dotted key '{}' would redefine '{}', which is already defined",
               detail::join_path(path), detail::join_path(path.first(i + 1))));
         }
       }
-      detail::append_path_segment(key, path.back());
-      const auto [it, fresh] = paths_.try_emplace(key, detail::path_kind::value);
+      key = detail::with_segment(key, path.back());
+      const auto [it, fresh] =
+          paths_.try_emplace(key, detail::path_entry{detail::path_kind::value, 0});
       (void)it;
       if(not fresh)
       {
         throw std::runtime_error(
             std::format("TOML: the key '{}' is defined twice", detail::join_path(path)));
       }
-    }
-
-    void record_header_(std::span<std::string_view const> path)
-    {
-      std::string key;
-      for(std::size_t i = 0; i + 1 < path.size(); ++i)
-      {
-        detail::append_path_segment(key, path[i]);
-        const auto [it, fresh] = paths_.try_emplace(key, detail::path_kind::implied);
-        if(not fresh and it->second == detail::path_kind::value)
-        {
-          throw std::runtime_error(std::format(
-              "TOML: the header '[{}]' reaches into '{}', which an earlier assignment made a "
-              "value: neither a scalar nor a table written inline can be extended by a header",
-              detail::join_path(path), detail::join_path(path.first(i + 1))));
-        }
-      }
-      detail::append_path_segment(key, path.back());
-      const auto [it, fresh] = paths_.try_emplace(key, detail::path_kind::header);
-      if(fresh)
-      {
-        return;
-      }
-      if(it->second == detail::path_kind::implied)
-      {
-        // "[a.b]" and then "[a]": a super-table may be written after the
-        // sub-table that implied it, once.
-        it->second = detail::path_kind::header;
-        return;
-      }
-      throw std::runtime_error(
-          std::format("TOML: the table '[{}]' is defined twice", detail::join_path(path)));
     }
 
     // "simple-key = quoted-key / unquoted-key", appended to `buf`.
