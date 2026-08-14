@@ -175,6 +175,17 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
     append(out, detail::bson_type::null);
     append(out, key);
   }
+  else if constexpr(optional_c<value_t>)
+  {
+    if(value.has_value())
+    {
+      write_element(out, key, *value);
+    }
+    else
+    {
+      write_element(out, key, null);
+    }
+  }
   else if constexpr(std::same_as<value_t, bool>)
   {
     append(out, detail::bson_type::boolean);
@@ -256,7 +267,7 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
     using underlying_t = std::underlying_type_t<value_t>;
     write_element(out, key, static_cast<underlying_t>(value));
   }
-  else if constexpr(requires() { reflex::visit([](auto const&) {}, value); })
+  else if constexpr(visitable_c<value_t>)
   {
     reflex::visit([&](auto const& inner) { write_element(out, key, inner); }, value);
   }
@@ -694,6 +705,17 @@ REFLEX_EXPORT namespace reflex::serde::bson
           throw std::runtime_error("Expected BSON null type");
         }
         value = null;
+      }
+      else if constexpr(optional_c<value_t>)
+      {
+        if(type == detail::bson_type::null)
+        {
+          value.reset();
+        }
+        else
+        {
+          read_element(type, value.emplace());
+        }
       }
       else if constexpr(std::same_as<value_t, bool>)
       {
