@@ -368,21 +368,35 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     //   return visit(name, [](auto&& v) -> auto& { return v; });
     // }
 
-    /// Calls @p fn with what @p dotted_keys names, innermost scope first, and leaves it uncalled
-    /// when no scope answers.
+    /// Calls @p fn with what @p dotted_keys names and leaves it uncalled when the name is
+    /// undefined.
+    ///
+    /// The path is walked in the innermost scope declaring its leading segment, and in no other:
+    /// a local scalar hides an outer object of the same name instead of letting `a.b` read the
+    /// outer one.
     ///
     /// Throws when a scope resolves the name but cannot walk it: an aggregate reports an unknown
     /// member rather than declining it, so `{{ agg.nosuchfield }}` is an error where
     /// `{{ nosuchvar }}` is undefined.
     void visit(this auto& self, std::string_view dotted_keys, auto&& fn)
     {
+      const auto leading  = dotted_keys.substr(0, dotted_keys.find('.'));
+      const auto declares = [leading](auto const& scope) {
+        return std::ranges::any_of(
+            scope, [leading](auto const& entry) { return entry.first == leading; });
+      };
+
       try
       {
-        bool found = false;
-        for(auto&& locals : self.local_vars | std::views::reverse)
+        // Scopes are read const: object_visit creates the key it misses on a mutable container,
+        // which would have this search insert the name into every scope it passes.
+        for(auto const& locals : self.local_vars | std::views::reverse)
         {
-          serde::object_visit(dotted_keys, locals, [&found, &fn]<typename T>(T&& v) {
-            found = true;
+          if(not declares(locals))
+          {
+            continue;
+          }
+          serde::object_visit(dotted_keys, locals, [&fn]<typename T>(T&& v) {
             if constexpr(meta::is_template_instance_of(decay(^^T), ^^std::optional))
             {
               if(v.has_value())
@@ -399,12 +413,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
               std::forward<decltype(fn)>(fn)(std::forward<T>(v));
             }
           });
-          if(found)
-          {
-            return;
-          }
+          return;
         }
-        serde::object_visit(dotted_keys, self.global_vars, std::forward<decltype(fn)>(fn));
+        serde::object_visit(
+            dotted_keys, std::as_const(self.global_vars), std::forward<decltype(fn)>(fn));
       }
       catch(runtime_error const&)
       {

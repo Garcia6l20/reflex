@@ -517,6 +517,51 @@ TEST_CASE("reflex::jinja: an unknown member of a bound aggregate throws")
   }
 }
 
+TEST_CASE("reflex::jinja: an inner binding shadows an outer one for the whole dotted path")
+{
+  jinja::basic_context ctx;
+  const auto           undefined = render(jinja::parse("{{ null }}"), ctx);
+
+  SUBCASE("a local scalar hides an outer object of the same name")
+  {
+    ctx.set("a", value{
+                     object{{"b", 7}}
+    });
+    ctx.set("items", array{5});
+    auto tmpl = jinja::parse(R"({% for i in items %}{% set a = i %}{{ a.b }}|{{ a }}{% endfor %})");
+
+    auto result = render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == undefined + "|5");
+  }
+  SUBCASE("with no outer binding the answer is the same")
+  {
+    ctx.set("items", array{5});
+    auto tmpl = jinja::parse(R"({% for i in items %}{% set a = i %}{{ a.b }}{% endfor %})");
+
+    CHECK(render(tmpl, ctx) == undefined);
+  }
+  SUBCASE("a failed lookup leaves every scope it searched alone")
+  {
+    ctx.set("a", value{
+                     object{{"b", 7}}
+    });
+    auto guard = ctx.push_locals();
+    guard.set("a", 5);
+
+    CHECK(render(jinja::parse("{{ a.b }}"), ctx) == undefined);
+    CHECK(render(jinja::parse("{{ nosuchvar.k }}"), ctx) == undefined);
+
+    CHECK(ctx.local_vars.size() == 1);
+    CHECK(ctx.local_vars.back().size() == 1);
+    CHECK(not ctx.local_vars.back().contains("nosuchvar"));
+    CHECK(ctx.global_vars.size() == 1);
+    CHECK(not ctx.global_vars.contains("nosuchvar"));
+    CHECK(std::get<int>(ctx.local_vars.back().at("a")) == 5);
+    CHECK(std::get<object>(ctx.global_vars.at("a")).size() == 1);
+  }
+}
+
 TEST_CASE("reflex::jinja: top-level bound containers")
 {
   SUBCASE("vector")
