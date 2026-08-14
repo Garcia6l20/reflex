@@ -493,6 +493,30 @@ TEST_CASE("reflex::jinja: aggregate support")
   }
 }
 
+TEST_CASE("reflex::jinja: an unknown member of a bound aggregate throws")
+{
+  aggregate1 agg{42, "hello"s};
+  auto       ctx  = expr::context{"agg"_na = agg};
+  const auto tmpl = jinja::parse("{{ agg.nosuchfield }}");
+
+  CHECK_THROWS_AS(render(tmpl, ctx), reflex::runtime_error);
+
+  try
+  {
+    render(tmpl, ctx);
+    FAIL("expected a throw");
+  }
+  catch(std::exception const& e)
+  {
+    CHECK(std::string_view{e.what()}.contains("agg.nosuchfield"));
+  }
+
+  SUBCASE("an unknown variable is still undefined rather than an error")
+  {
+    CHECK(render(jinja::parse("{{ nosuchvar }}"), ctx) == render(jinja::parse("{{ null }}"), ctx));
+  }
+}
+
 TEST_CASE("reflex::jinja: top-level bound containers")
 {
   SUBCASE("vector")
