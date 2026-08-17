@@ -1146,22 +1146,8 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       Seq value{};
       using elem_type = typename std::remove_cvref_t<Seq>::value_type;
 
-      auto push = [&value] {
-        if constexpr(requires { value.push_back(elem_type{}); })
-        {
-          return [&value](elem_type&& elem) { value.push_back(std::forward<elem_type>(elem)); };
-        }
-        else
-        {
-          return [it = std::begin(value), end = std::end(value)](elem_type&& elem) mutable {
-            if(it == end)
-            {
-              throw std::out_of_range("Sequence has more elements than target type can hold");
-            }
-            *it++ = std::forward<elem_type>(elem);
-          };
-        }
-      }();
+      auto push = serde::detail::make_pusher(
+          value, "Sequence has more elements than target type can hold");
 
       skip_flow_space();
       if(at_end())
@@ -2071,24 +2057,8 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     Seq value{};
     using elem_type = typename std::remove_cvref_t<Seq>::value_type;
 
-    // Same split as json.hpp:984-999: grow when the destination can, otherwise
-    // fill through its own iterators and refuse to overrun.
-    auto push = [&value] {
-      if constexpr(requires { value.push_back(elem_type{}); })
-      {
-        return [&value](elem_type&& elem) { value.push_back(std::forward<elem_type>(elem)); };
-      }
-      else
-      {
-        return [it = std::begin(value), end = std::end(value)](elem_type&& elem) mutable {
-          if(it == end)
-          {
-            throw std::out_of_range("Sequence has more elements than target type can hold");
-          }
-          *it++ = std::forward<elem_type>(elem);
-        };
-      }
-    }();
+    auto push = serde::detail::make_pusher(
+        value, "Sequence has more elements than target type can hold");
 
     auto scope = de.enter_block(base);
 

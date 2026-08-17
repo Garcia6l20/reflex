@@ -884,22 +884,8 @@ REFLEX_EXPORT namespace reflex::serde::json
 
       using elem_type = typename std::remove_cvref_t<decltype(value)>::value_type;
 
-      auto push = [&value] {
-        if constexpr(requires { value.push_back(elem_type{}); })
-        {
-          return [&value](elem_type&& elem) { value.push_back(std::forward<elem_type>(elem)); };
-        }
-        else
-        {
-          return [it = std::begin(value), end = std::end(value)](elem_type&& elem) mutable {
-            if(it == end)
-            {
-              throw std::out_of_range("Array has more elements than target type can hold");
-            }
-            *it++ = std::forward<elem_type>(elem);
-          };
-        }
-      }();
+      auto push = serde::detail::make_pusher(
+          value, "Array has more elements than target type can hold");
 
       while(true)
       {

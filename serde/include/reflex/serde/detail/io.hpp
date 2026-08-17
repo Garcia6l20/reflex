@@ -13,9 +13,11 @@
 #include <optional>
 #include <ranges>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #endif
 
 REFLEX_EXPORT namespace reflex::serde::detail
@@ -304,6 +306,34 @@ REFLEX_EXPORT namespace reflex::serde::detail
     char       buf[64];
     const auto r = std::to_chars(buf, buf + sizeof(buf), value);
     ser.write_raw(std::string_view{buf, static_cast<std::size_t>(r.ptr - buf)});
+  }
+
+  // Appends to a sequence destination: one that grows takes push_back, a
+  // fixed-size one is filled through its own iterators and refuses to overrun.
+  //
+  // `overflow` has to outlive the returned callable, so it is a string literal
+  // at every call site.
+  //
+  // Qualify the call: this header is textually included into several module
+  // purviews, so an unqualified call with a dependent argument finds every
+  // module's copy through ADL and reports an ambiguous overload.
+  template <typename Seq> auto make_pusher(Seq& seq, char const* overflow)
+  {
+    using elem_type = typename std::remove_cvref_t<Seq>::value_type;
+    if constexpr(requires { seq.push_back(elem_type{}); })
+    {
+      return [&seq](elem_type&& elem) { seq.push_back(std::forward<elem_type>(elem)); };
+    }
+    else
+    {
+      return [it = std::begin(seq), end = std::end(seq), overflow](elem_type&& elem) mutable {
+        if(it == end)
+        {
+          throw std::out_of_range(overflow);
+        }
+        *it++ = std::forward<elem_type>(elem);
+      };
+    }
   }
 
   // What load<T>() reads: T, or the backend's default_load_type when T is omitted.

@@ -12,6 +12,7 @@ convert.private.link_libs.extend(
         "reflex.serde.json",
         "reflex.serde.bson",
         "reflex.serde.yaml",
+        "reflex.serde.toml",
         "reflex.cli",
     )
 )
@@ -22,7 +23,7 @@ if build_testing:
     named = write_file(work / "in.json", document)
     unnamed = write_file(work / "in", document)
 
-    for fmt in ("json", "yaml", "bson"):
+    for fmt in ("json", "yaml", "toml", "bson"):
         project.Test(
             f"serde.convert-inferred-{fmt}",
             convert,

@@ -135,6 +135,47 @@ REFLEX_EXPORT namespace reflex::serde::detail
     }
   };
 
+  // TOML 1.1: \0, \a and \v have no spelling in TOML at all.
+  struct toml_escapes
+  {
+    // "Any Unicode character may be used except those that must be escaped:
+    // quotation mark, backslash, and the control characters other than tab."
+    // Tab is in here anyway: an escaped one is legal, and a literal tab inside a
+    // value is a byte a reader cannot see.
+    static constexpr bool is_control_byte(char c)
+    {
+      return serde::detail::is_control(c);
+    }
+
+    static constexpr char two_char(char c)
+    {
+      switch(c)
+      {
+        case '\b':
+          return 'b';
+        case '\t':
+          return 't';
+        case '\n':
+          return 'n';
+        case '\f':
+          return 'f';
+        case '\r':
+          return 'r';
+        case '\x1B':
+          return 'e';
+        default:
+          return '\0';
+      }
+    }
+
+    // \xHH is a 1.1 addition a 1.0 reader rejects, and the only such form this
+    // backend emits - reachable solely for a control byte with no compact escape.
+    template <typename Ser> static void write_fallback(Ser& ser, char c)
+    {
+      serde::detail::write_hex2_escape(ser, c);
+    }
+  };
+
   // One entry per byte value, true when the byte cannot appear literally inside
   // a quoted string of this flavour. Bytes 0x80 and above are absent, they are
   // UTF-8 lead and continuation bytes and pass through unchanged.
