@@ -827,24 +827,32 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
 namespace reflex::serde
 {
-// Generic specialization to allow visiting `std::optional<T>` where `T` is
-// itself visitable as an object. When the optional is empty the visitor is
-// invoked with `poly::null`.
+/**
+ * @brief Names a member of `std::optional<T>`'s payload, for a `T` itself visitable as an object.
+ * @param fn Called with the member @p key names in @p agg's payload, and left uncalled when @p agg
+ *           is disengaged: there is no payload then, and so no member of one to name. That is how
+ *           every unreachable path is reported. Handing @p fn `poly::null` instead would tell
+ *           `object_visit` the hop succeeded, and the walk would ask a member-less value for the
+ *           next segment.
+ * @param key Name of the member to visit.
+ * @param agg The optional to reach through.
+ */
 template <typename T>
   requires(object_visitable_c<std::remove_reference_t<T>>)
 struct object_visitor<std::optional<T>>
 {
   template <typename Fn, typename Agg>
-  static inline constexpr decltype(auto) operator()(Fn&& fn, std::string_view key, Agg&& agg)
+  static inline constexpr void operator()(Fn&& fn, std::string_view key, Agg&& agg)
   {
     using Inner = std::remove_reference_t<T>;
+    static_assert(
+        std::is_void_v<decltype(object_visitor<Inner>{}(
+            std::forward<Fn>(fn), key, std::forward<Agg>(agg).value()))>,
+        "a disengaged optional has no member to hand over, so there is nothing to return: give "
+        "this visit a callback returning void");
     if(agg.has_value())
     {
-      return object_visitor<Inner>{}(std::forward<Fn>(fn), key, std::forward<Agg>(agg).value());
-    }
-    else
-    {
-      return std::forward<Fn>(fn)(poly::null);
+      object_visitor<Inner>{}(std::forward<Fn>(fn), key, std::forward<Agg>(agg).value());
     }
   }
 };

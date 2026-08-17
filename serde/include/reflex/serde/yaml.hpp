@@ -15,46 +15,23 @@
 #include <reflex/serde/yaml_value.hpp>
 #endif
 
+#include <reflex/serde/detail/escape.hpp>
 #include <reflex/serde/detail/io.hpp>
+#include <reflex/serde/detail/line_cursor.hpp>
+#include <reflex/serde/detail/text.hpp>
 
 REFLEX_EXPORT namespace reflex::serde::yaml
 {
   namespace detail
   {
-  constexpr bool is_dec_digit(char c)
-  {
-    return c >= '0' and c <= '9';
-  }
-
-  constexpr bool is_hex_digit(char c)
-  {
-    return is_dec_digit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
-  }
-
-  // A byte that cannot appear literally in a double-quoted scalar. Bytes 0x80 and
-  // above are absent: they are UTF-8 lead and continuation bytes and pass through
-  // unchanged.
-  constexpr bool is_control(char c)
-  {
-    const auto u = static_cast<unsigned char>(c);
-    return u < 0x20 or u == 0x7F;
-  }
-
-  constexpr char lower(char c)
-  {
-    return (c >= 'A' and c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-  }
-
-  constexpr bool iequals(std::string_view a, std::string_view b)
-  {
-    return a.size() == b.size()
-       and std::ranges::equal(a, b, [](char x, char y) { return lower(x) == lower(y); });
-  }
-
-  constexpr bool iequals_any(std::string_view s, std::initializer_list<std::string_view> set)
-  {
-    return std::ranges::any_of(set, [s](std::string_view c) { return iequals(s, c); });
-  }
+  using serde::detail::iequals;
+  using serde::detail::iequals_any;
+  using serde::detail::is_control;
+  using serde::detail::matches_float;
+  using serde::detail::matches_int;
+  using serde::detail::parse_number;
+  using serde::detail::string_view_of;
+  using serde::detail::yaml_numbers;
 
   // A plain scalar may not begin with one of these. '-', '?' and ':' are absent:
   // they only bar a plain scalar when a space or the end of the scalar follows,
@@ -64,86 +41,6 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     return c == ',' or c == '[' or c == ']' or c == '{' or c == '}' or c == '#' or c == '&'
         or c == '*' or c == '!' or c == '|' or c == '>' or c == '\'' or c == '"' or c == '%'
         or c == '@' or c == '`';
-  }
-
-  // The YAML 1.2 core schema's integer forms: [-+]?[0-9]+, 0o[0-7]+, 0x[0-9a-fA-F]+.
-  constexpr bool matches_int(std::string_view s)
-  {
-    if(s.starts_with("0o"))
-    {
-      const auto body = s.substr(2);
-      return not body.empty()
-         and std::ranges::all_of(body, [](char c) { return c >= '0' and c <= '7'; });
-    }
-    if(s.starts_with("0x"))
-    {
-      const auto body = s.substr(2);
-      return not body.empty() and std::ranges::all_of(body, is_hex_digit);
-    }
-    if(s.starts_with('-') or s.starts_with('+'))
-    {
-      s.remove_prefix(1);
-    }
-    return not s.empty() and std::ranges::all_of(s, is_dec_digit);
-  }
-
-  // [-+]? ( \.[0-9]+ | [0-9]+ (\.[0-9]*)? ) ( [eE][-+]?[0-9]+ )?, plus the
-  // non-finite spellings.
-  //
-  // Hand-rolled rather than probed with std::from_chars because this has to run
-  // at compile time for plain_key(), and the floating-point overload of
-  // from_chars is not constexpr. Doing it by hand also keeps the accepted set
-  // exactly YAML's rather than whatever from_chars happens to take - it would
-  // accept "0x1p3" and "infinity", neither of which YAML resolves as a number.
-  constexpr bool matches_float(std::string_view s)
-  {
-    if(iequals_any(s, {".inf", "-.inf", "+.inf", ".nan"}))
-    {
-      return true;
-    }
-    if(s.starts_with('-') or s.starts_with('+'))
-    {
-      s.remove_prefix(1);
-    }
-
-    std::size_t i      = 0;
-    bool        digits = false;
-    while(i < s.size() and is_dec_digit(s[i]))
-    {
-      ++i;
-      digits = true;
-    }
-    if(i < s.size() and s[i] == '.')
-    {
-      ++i;
-      while(i < s.size() and is_dec_digit(s[i]))
-      {
-        ++i;
-        digits = true;
-      }
-    }
-    if(not digits)
-    {
-      return false;
-    }
-    if(i < s.size() and (s[i] == 'e' or s[i] == 'E'))
-    {
-      ++i;
-      if(i < s.size() and (s[i] == '-' or s[i] == '+'))
-      {
-        ++i;
-      }
-      const std::size_t exp_start = i;
-      while(i < s.size() and is_dec_digit(s[i]))
-      {
-        ++i;
-      }
-      if(i == exp_start)
-      {
-        return false;
-      }
-    }
-    return i == s.size();
   }
 
   // Would this text, written plain, read back as something other than a string?
@@ -177,7 +74,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     {
       return true; // document markers
     }
-    return matches_int(s) or matches_float(s);
+    return matches_int<yaml_numbers>(s) or matches_float<yaml_numbers>(s);
   }
 
   // Whether `s` can be written without quotes in block context.
@@ -227,91 +124,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     return std::ranges::any_of(s, [](char c) { return is_control(c) or c == '\t'; });
   }
 
-  // Quote by doubling: no backslash is special, the quote character escapes
-  // itself. csv.hpp's RFC 4180 cell writer is this function with Quote = '"'.
-  //
-  // One needle over the remainder, so the doubling loop cannot restart from the
-  // front and go quadratic.
-  template <char Quote, typename Ser> void write_doubled_quoted(Ser& ser, std::string_view text)
-  {
-    static constexpr char doubled[3]{Quote, Quote, '\0'};
+  // The quote character stays open, write_scalar picks between the two.
+  using escapes = serde::detail::yaml_escapes;
 
-    ser.write_char(Quote);
-    serde::detail::write_with_escapes(
-        ser,
-        text,
-        [](std::string_view s, std::size_t pos) { return s.find(Quote, pos); },
-        [](Ser& out, char) { out.write_raw(doubled); });
-    ser.write_char(Quote);
-  }
-
-  // The two-character escapes YAML names, or '\0' when the byte has none and
-  // needs the \xXX form.
-  constexpr char simple_escape(char c)
-  {
-    switch(c)
-    {
-      case '\0':
-        return '0';
-      case '\a':
-        return 'a';
-      case '\b':
-        return 'b';
-      case '\t':
-        return 't';
-      case '\n':
-        return 'n';
-      case '\v':
-        return 'v';
-      case '\f':
-        return 'f';
-      case '\r':
-        return 'r';
-      case '\x1B':
-        return 'e';
-      default:
-        return '\0';
-    }
-  }
-
-  template <char Quote, typename Ser> void write_escape(Ser& ser, char c)
-  {
-    if(c == Quote or c == '\\')
-    {
-      ser.write_char('\\');
-      ser.write_char(c);
-      return;
-    }
-    if(const char esc = simple_escape(c); esc != '\0')
-    {
-      ser.write_char('\\');
-      ser.write_char(esc);
-      return;
-    }
-    static constexpr std::string_view hex = "0123456789abcdef";
-    const auto                        u   = static_cast<unsigned char>(c);
-    const char                        buf[4]{'\\', 'x', hex[u >> 4], hex[u & 0x0F]};
-    ser.write_raw(std::string_view{buf, sizeof(buf)});
-  }
-
-  // Backslash-escaping writer, quote character parameterised.
   template <char Quote, typename Ser> void write_backslash_quoted(Ser& ser, std::string_view text)
   {
-    ser.write_char(Quote);
-    serde::detail::write_with_escapes(
-        ser,
-        text,
-        [](std::string_view s, std::size_t pos) {
-          const auto* const first = s.data() + pos;
-          const auto* const last  = s.data() + s.size();
-          const auto*       it    = std::find_if(first, last, [](char c) {
-            return is_control(c) or c == Quote or c == '\\';
-          });
-          return it == last ? std::string_view::npos
-                            : pos + static_cast<std::size_t>(it - first);
-        },
-        [](Ser& out, char c) { write_escape<Quote>(out, c); });
-    ser.write_char(Quote);
+    serde::detail::write_backslash_quoted<escapes, Quote>(ser, text);
   }
 
   // Plain when it is safe, single-quoted when it can be, double-quoted only when
@@ -327,7 +145,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
     if(std::ranges::none_of(text, [](char c) { return is_control(c) or c == '\t'; }))
     {
-      write_doubled_quoted<'\''>(ser, text);
+      serde::detail::write_doubled_quoted<'\''>(ser, text);
       return;
     }
     write_backslash_quoted<'"'>(ser, text);
@@ -436,93 +254,6 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     std::string text;
     bool        quoted = false;
   };
-
-  template <typename Num> Num parse_number(std::string_view text)
-  {
-    if constexpr(std::floating_point<Num>)
-    {
-      if(iequals(text, ".nan"))
-      {
-        return std::numeric_limits<Num>::quiet_NaN();
-      }
-      if(iequals(text, ".inf") or iequals(text, "+.inf"))
-      {
-        return std::numeric_limits<Num>::infinity();
-      }
-      if(iequals(text, "-.inf"))
-      {
-        return -std::numeric_limits<Num>::infinity();
-      }
-      Num        value{};
-      const auto last = text.data() + text.size();
-      auto [ptr, ec]  = std::from_chars(text.data(), last, value);
-      if(ec != std::errc{} or ptr != last)
-      {
-        throw std::runtime_error(std::format("YAML: '{}' is not a number", text));
-      }
-      return value;
-    }
-    else
-    {
-      // from_chars takes neither a '+' nor a "0x"/"0o" prefix, so the sign and
-      // the base come off here and the digits go in bare.
-      std::string_view body = text;
-      bool             neg  = false;
-      if(body.starts_with('-'))
-      {
-        neg = true;
-        body.remove_prefix(1);
-      }
-      else if(body.starts_with('+'))
-      {
-        body.remove_prefix(1);
-      }
-      int base = 10;
-      if(body.starts_with("0x"))
-      {
-        base = 16;
-        body.remove_prefix(2);
-      }
-      else if(body.starts_with("0o"))
-      {
-        base = 8;
-        body.remove_prefix(2);
-      }
-      Num        value{};
-      const auto last = body.data() + body.size();
-      auto [ptr, ec]  = std::from_chars(body.data(), last, value, base);
-      if(ec != std::errc{} or ptr != last)
-      {
-        throw std::runtime_error(std::format("YAML: '{}' is not an integer", text));
-      }
-      if(neg)
-      {
-        if constexpr(std::is_signed_v<Num>)
-        {
-          value = static_cast<Num>(-value);
-        }
-        else
-        {
-          throw std::runtime_error(
-              std::format("YAML: '{}' is negative and the destination is unsigned", text));
-        }
-      }
-      return value;
-    }
-  }
-
-  // A std::array<char, N> is a fixed buffer, trimmed at the first NUL.
-  template <typename Str> std::string_view string_view_of(Str const& value)
-  {
-    if constexpr(meta::is_template_instance_of(^^Str, ^^std::array))
-    {
-      return std::string_view{value.data(), ::strnlen(value.data(), value.size())};
-    }
-    else
-    {
-      return std::string_view{value};
-    }
-  }
   } // namespace detail
 
   template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
@@ -876,10 +607,9 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   }
 
   template <std::input_iterator InputIt>
-  class deserializer : public serde::detail::subrange_deserializer<InputIt>
+  class deserializer : public serde::detail::line_cursor<InputIt>
   {
-    using base = serde::detail::subrange_deserializer<InputIt>;
-    using base::cursor_;
+    using base = serde::detail::line_cursor<InputIt>;
 
     // Backs read_key() when the key is quoted or needs trimming, which on this
     // backend is every key: a scalar is decoded rather than pointed at. One
@@ -887,174 +617,28 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // before the next one is read.
     std::string key_buf_;
 
-    // Pushback. YAML cannot be lexed with one byte of lookahead: "- " is a
-    // sequence entry and "-1" is a number, ": " ends a plain scalar and ":"
-    // does not, "---" is a marker, and deciding whether a line is a mapping at
-    // all means scanning it for an unquoted ": ". A stream cursor is an input
-    // iterator, so it cannot be copied and re-read to answer those - hence a
-    // buffer the parser peeks through instead.
-    //
-    // Grows on demand rather than being a fixed array: the mapping lookahead is
-    // bounded by a line, not by a constant. Reads pop by advancing ahead_pos_
-    // and the buffer is compacted once the consumed prefix dominates, which
-    // keeps a pop amortized O(1) instead of erase-from-front's O(n).
-    //
-    // Bytes move out of cursor_ into here, so at_end() has to account for both.
-    // It is shadowed below rather than inherited for exactly that reason.
-    std::string ahead_;
-    std::size_t ahead_pos_ = 0;
-
-    // 0-based column of the next byte to be read. Every block-structure
-    // decision is a comparison between two of these, so it has exactly one
-    // maintainer: advance() increments it and next_line() zeroes it. Nothing
-    // else may move the cursor.
-    std::size_t column_ = 0;
-
     // A "---" has been seen, or content has started. Either way a second one is
     // a second document.
     bool doc_started_ = false;
 
-    // Raw consume of one byte, no column bookkeeping. peek() has already put
-    // the byte in the buffer, so this only ever pops.
-    char take_()
-    {
-      // Nothing buffered, which is almost every call: consume straight from the
-      // cursor and leave the buffer alone. Routing every byte through the
-      // buffer instead cost a string append and a pop per byte of input, and
-      // measured at roughly half the parser's total time.
-      if(ahead_pos_ >= ahead_.size())
-      {
-        if(cursor_.empty())
-        {
-          throw std::runtime_error("Unexpected end of YAML input");
-        }
-        const char c = *cursor_.begin();
-        cursor_.advance(1);
-        return c;
-      }
-      const char c = ahead_[ahead_pos_];
-      ++ahead_pos_;
-      // Drop the consumed prefix once it dominates, so the buffer tracks the
-      // live lookahead rather than the whole document.
-      if(ahead_pos_ >= 64 and ahead_pos_ * 2 >= ahead_.size())
-      {
-        ahead_.erase(0, ahead_pos_);
-        ahead_pos_ = 0;
-      }
-      return c;
-    }
-
   public:
     using base::base;
+    using base::advance;
+    using base::at_end;
+    using base::at_line_end;
+    using base::column;
+    using base::is_break;
+    using base::next_line;
+    using base::peek;
+    using base::peek_at;
+    using base::skip_to_line_end;
+
+    static constexpr std::string_view format_name = "YAML";
 
     static constexpr std::size_t npos = std::size_t(-1);
 
     // makes load() without an explicit type read a yaml::value
     using default_load_type = yaml::value;
-
-    bool at_end() const
-    {
-      return ahead_pos_ >= ahead_.size() and cursor_.empty();
-    }
-
-    // The byte `i` ahead of the cursor, or '\0' at end of input. Callers must
-    // treat '\0' as "nothing there": a NUL in the input is not distinguishable
-    // here, which is fine because a NUL is not valid YAML.
-    char peek_at(std::size_t i)
-    {
-      // The zero-lookahead case, which is almost every call: read through the
-      // cursor rather than moving the byte into the buffer first. See take_().
-      if(i == 0 and ahead_pos_ >= ahead_.size())
-      {
-        return cursor_.empty() ? '\0' : *cursor_.begin();
-      }
-      while(ahead_.size() - ahead_pos_ <= i)
-      {
-        if(cursor_.empty())
-        {
-          return '\0';
-        }
-        ahead_.push_back(*cursor_.begin());
-        cursor_.advance(1);
-      }
-      return ahead_[ahead_pos_ + i];
-    }
-
-    char peek()
-    {
-      if(at_end())
-      {
-        throw std::runtime_error("Unexpected end of YAML input");
-      }
-      return peek_at(0);
-    }
-
-    // YAML 1.2 makes a lone '\r' ordinary content and only "\r\n" a break. That
-    // needs two bytes of lookahead at every scalar byte, so this takes YAML
-    // 1.1's rule instead: '\r' alone is a break too. The two differ only for a
-    // lone CR inside a scalar, which no editor in use produces.
-    static constexpr bool is_break(char c)
-    {
-      return c == '\n' or c == '\r';
-    }
-
-    bool at_line_end()
-    {
-      return at_end() or is_break(peek_at(0));
-    }
-
-    std::size_t column() const
-    {
-      return column_;
-    }
-
-    // Consumes one byte of the current line.
-    //
-    // Refuses a line break. Every caller has already tested at_line_end(), so a
-    // break reaching here is a bug in the caller, not bad input - and a node
-    // reader that runs past a line end has lost the column, which makes every
-    // column after it wrong. Better to fail here than to mis-parse three lines
-    // later.
-    char advance()
-    {
-      const char c = peek();
-      if(is_break(c))
-      {
-        throw std::runtime_error("YAML: internal - advance() over a line break");
-      }
-      take_();
-      ++column_;
-      return c;
-    }
-
-    void skip_to_line_end()
-    {
-      while(not at_line_end())
-      {
-        advance();
-      }
-    }
-
-    // The only function that may consume a line break. Consumes the rest of the
-    // current line too. Returns false at end of input.
-    bool next_line()
-    {
-      while(not at_end() and not is_break(peek_at(0)))
-      {
-        take_();
-      }
-      if(at_end())
-      {
-        return false;
-      }
-      const char c = take_();
-      if(c == '\r' and not at_end() and peek_at(0) == '\n')
-      {
-        take_();
-      }
-      column_ = 0;
-      return true;
-    }
 
     // The leading whitespace run of a line, returning the resulting column.
     // Must be called with the cursor at the start of a line.
@@ -1084,7 +668,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       {
         throw std::runtime_error("YAML: a tab cannot be used to indent a node");
       }
-      return column_;
+      return column();
     }
 
     // Everything a line may carry after a node has been read: trailing spaces
@@ -1118,7 +702,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // line. Without it, a key is skipped every time a nested block ends.
     std::size_t next_content_line()
     {
-      if(column_ == 0)
+      if(column() == 0)
       {
         // A fresh line, nothing consumed from it yet.
         skip_indent();
@@ -1140,7 +724,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       else if(not at_line_end() and peek_at(0) != ' ' and peek_at(0) != '\t'
               and peek_at(0) != '#')
       {
-        return column_; // already parked on a node
+        return column(); // already parked on a node
       }
       else
       {
@@ -1178,7 +762,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // names rather than mis-parses.
     std::size_t on_content_()
     {
-      if(column_ == 0 and marker_here_())
+      if(column() == 0 and marker_here_())
       {
         const char c = peek_at(0);
         if(c == '%')
@@ -1201,7 +785,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         return marker_consumed_;
       }
       doc_started_ = true;
-      return column_;
+      return column();
     }
 
     // "---", "..." or a directive, at column 0. Needs four bytes of lookahead,
@@ -1303,7 +887,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     friend auto
         tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
     {
-      return detail::parse_number<Num>(de.read_scalar().text);
+      return detail::parse_number<detail::yaml_numbers, Num>(de.read_scalar().text, "YAML");
     }
 
     template <std::same_as<char> Char>
@@ -1808,11 +1392,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       // need no such detour, std::from_chars reads them as a double directly.
       if(s.text.starts_with("0x") or s.text.starts_with("0o"))
       {
-        return static_cast<yaml::number>(detail::parse_number<long long>(s.text));
+        return static_cast<yaml::number>(
+            detail::parse_number<detail::yaml_numbers, long long>(s.text, "YAML"));
       }
-      if(detail::matches_int(s.text) or detail::matches_float(s.text))
+      if(detail::matches_int<detail::yaml_numbers>(s.text)
+         or detail::matches_float<detail::yaml_numbers>(s.text))
       {
-        return detail::parse_number<yaml::number>(s.text);
+        return detail::parse_number<detail::yaml_numbers, yaml::number>(s.text, "YAML");
       }
       return yaml::string{s.text};
     }
@@ -1951,7 +1537,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         // before at_block_mapping() on purpose: the common case is a sibling at
         // the same indent, and that must not pay for a line scan.
         if(peek_at(0) == '#' or not deeper_than_block(indent)
-           or (column_ == 0 and marker_here_()) or at_block_mapping())
+           or (column() == 0 and marker_here_()) or at_block_mapping())
         {
           break;
         }
@@ -1989,7 +1575,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       // loop below and the two must agree. Every parser test runs on both.
       if constexpr(base::bulk_scan)
       {
-        if(ahead_pos_ >= ahead_.size())
+        if(this->nothing_buffered())
         {
           const std::string_view sv = this->rest();
 
@@ -2027,9 +1613,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           }
 
           out.assign(sv.substr(0, n));
-          cursor_.advance(
-              static_cast<std::ranges::range_difference_t<typename base::range_cursor>>(n));
-          column_ += n;
+          this->skip_in_line(n);
           while(not out.empty() and (out.back() == ' ' or out.back() == '\t'))
           {
             out.pop_back();
@@ -2360,34 +1944,18 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
     int hex_digits_(int count)
     {
-      int value = 0;
-      for(int i = 0; i < count; ++i)
-      {
-        if(at_line_end())
-        {
-          throw std::runtime_error("YAML: truncated hexadecimal escape");
-        }
-        const char d = advance();
-        int        n = -1;
-        if(d >= '0' and d <= '9')
-        {
-          n = d - '0';
-        }
-        else if(d >= 'a' and d <= 'f')
-        {
-          n = d - 'a' + 10;
-        }
-        else if(d >= 'A' and d <= 'F')
-        {
-          n = d - 'A' + 10;
-        }
-        else
-        {
-          throw std::runtime_error(std::format("YAML: invalid hexadecimal escape digit: {}", d));
-        }
-        value = (value << 4) | n;
-      }
-      return value;
+      return serde::detail::decode_hex_escape(
+          count,
+          [this] {
+            if(at_line_end())
+            {
+              throw std::runtime_error("YAML: truncated hexadecimal escape");
+            }
+            return advance();
+          },
+          [](char d) {
+            return std::format("YAML: invalid hexadecimal escape digit: {}", d);
+          });
     }
 
     void decode_escape_(std::string& out)

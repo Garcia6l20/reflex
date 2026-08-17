@@ -191,28 +191,43 @@ REFLEX_EXPORT namespace reflex::serde
   concept object_visitable_c = not meta::is_template_instance_of(decay(^^T), ^^std::array)
                            and is_complete_type(^^object_visitor<std::decay_t<T>>);
 
+  // Walk a dotted path, one segment per hop, and hand the callback whatever the
+  // last segment names. Returns nothing: any hop may fail to reach the next, so
+  // the callback is the only way out.
   template <object_visitable_c T, typename Fn>
-  constexpr decltype(auto) object_visit(std::span<std::string_view> keys, T && value, Fn && fn)
+  constexpr void object_visit(std::span<std::string_view> keys, T && value, Fn && fn)
   {
     auto first = keys.front();
     auto rest  = keys.subspan(1);
     if(rest.empty())
     {
-      return object_visitor<std::decay_t<T>>{}(std::forward<Fn>(fn), first, std::forward<T>(value));
+      static_assert(
+          std::is_void_v<decltype(object_visitor<std::decay_t<T>>{}(
+              std::forward<Fn>(fn), first, std::forward<T>(value)))>,
+          "a dotted path is walked at run time and may not resolve, so object_visit has nothing "
+          "to return: give this visit a callback returning void");
+      object_visitor<std::decay_t<T>>{}(std::forward<Fn>(fn), first, std::forward<T>(value));
     }
     else
     {
-      return object_visitor<std::decay_t<T>>{}(
-          [&]<typename N>(N&& nested) {
+      object_visitor<std::decay_t<T>>{}(
+          [&]<typename N>([[maybe_unused]] N&& nested) -> void {
             using U = std::decay_t<N>;
             if constexpr(object_visitable_c<U>)
             {
-              return object_visit(
-                  rest, std::forward<decltype(nested)>(nested), std::forward<Fn>(fn));
+              object_visit(rest, std::forward<decltype(nested)>(nested), std::forward<Fn>(fn));
             }
             else
             {
-              return std::forward<Fn>(fn)(std::forward<decltype(value)>(value));
+              // The segment landed on a value with no members and the path has
+              // not run out. Handing the callback the object this walk stands in
+              // would let a document write into a member it never named.
+              //
+              // Reported the way the const-container miss above is, by leaving
+              // the callback uncalled. A throw would serve neither caller:
+              // jinja's context::visit is noexcept and reads an uncalled
+              // callback as an undefined name to look for in the next scope,
+              // and toml refuses the path before the walk starts.
             }
           },
           first, std::forward<T>(value));
@@ -234,15 +249,25 @@ REFLEX_EXPORT namespace reflex::serde
   // copy below has to be bounded.
   inline constexpr std::size_t max_key_depth = 32;
 
+  // Split a dotted key and walk it. Returns nothing, like the span overload.
   template <object_visitable_c T, typename Fn>
-  constexpr decltype(auto) object_visit(std::string_view key, T && value, Fn && fn)
+  constexpr void object_visit(std::string_view key, T && value, Fn && fn)
   {
     // Most keys carry no dot at all, and the split machinery below costs about
     // as much as the member scan it feeds. Skip straight to the visitor when
     // there is nothing to split.
     if(key.find('.') == std::string_view::npos)
     {
-      return object_visit_flat(key, std::forward<T>(value), std::forward<Fn>(fn));
+      // Asserted again here: a key with no dot never reaches the span overload,
+      // and which key a caller passes must not decide whether its callback's
+      // answer is discarded.
+      static_assert(
+          std::is_void_v<decltype(object_visit_flat(
+              key, std::forward<T>(value), std::forward<Fn>(fn)))>,
+          "a dotted path is walked at run time and may not resolve, so object_visit has nothing "
+          "to return: give this visit a callback returning void, or call object_visit_flat");
+      object_visit_flat(key, std::forward<T>(value), std::forward<Fn>(fn));
+      return;
     }
 
     const auto to_sv = [](auto&& r) { return std::string_view(r.begin(), r.end()); };

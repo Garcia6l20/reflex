@@ -24,6 +24,14 @@ enum class Color
   Blue
 };
 
+struct Optionals
+{
+  std::optional<int>         number;
+  std::optional<std::string> text;
+
+  bool operator==(Optionals const&) const = default;
+};
+
 TEST_CASE("reflex::serde::bson: base types round-trip")
 {
   using bson::null;
@@ -673,4 +681,33 @@ TEST_CASE("reflex::serde::bson: an owning string destination is unaffected")
   ser.dump(expected);
 
   CHECK_EQ(bson::deserializer{out}.load<Owned>(), expected);
+}
+
+TEST_CASE("reflex::serde::bson: an optional member")
+{
+  const auto encode = [](Optionals const& value) {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(value);
+    return out;
+  };
+
+  SUBCASE("engaged round-trips")
+  {
+    const Optionals expected{9, "nine"};
+    CHECK_EQ(bson::deserializer{encode(expected)}.load<Optionals>(), expected);
+  }
+
+  SUBCASE("empty round-trips")
+  {
+    const Optionals expected{};
+    CHECK_EQ(bson::deserializer{encode(expected)}.load<Optionals>(), expected);
+  }
+
+  SUBCASE("an empty member is written as a BSON null, not omitted")
+  {
+    const auto bytes = encode(Optionals{});
+    CHECK_EQ(bson::deserializer{bytes}.load<bson::value>().as<bson::object>().size(), 2u);
+    CHECK(bson::deserializer{bytes}.load<bson::value>().as<bson::object>().at("number").is_null());
+  }
 }

@@ -15,6 +15,7 @@
 #include <reflex/serde.hpp>
 #endif
 
+#include <reflex/serde/detail/escape.hpp>
 #include <reflex/serde/detail/io.hpp>
 
 REFLEX_EXPORT namespace reflex::serde::csv
@@ -93,15 +94,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
       ser.write_raw(cell);
       return;
     }
-    ser.write_char('"');
-    // One needle over the remainder of the cell, and the search resumes past
-    // each hit, so the doubling cannot restart from the front and go quadratic.
-    serde::detail::write_with_escapes(
-        ser,
-        cell,
-        [](std::string_view s, std::size_t pos) { return s.find('"', pos); },
-        [](Ser& out, char) { out.write_raw("\"\""); });
-    ser.write_char('"');
+    serde::detail::write_doubled_quoted<'"'>(ser, cell);
   }
 
   // Branch order is load-bearing and must stay as written. number_c, then

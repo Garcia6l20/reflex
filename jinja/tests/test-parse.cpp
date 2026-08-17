@@ -389,6 +389,99 @@ TEST_CASE("reflex::jinja: for decomposition")
   }
 }
 
+// {{ a.b }} resolves its leading dotted chain with serde::object_visit, and the
+// object it walks is the whole variable scope. A segment landing on a value with
+// no members must not hand that scope back, or a template asking for a member of
+// a number renders every variable in scope.
+//
+// It reads as an undefined name instead, which is what context::visit's scope
+// search is written around: it is noexcept, so it cannot be told about a bad
+// path any other way.
+TEST_CASE("reflex::jinja: a dotted name reaching through a scalar is undefined")
+{
+  jinja::basic_context ctx;
+  ctx.set("n", 42);
+  ctx.set("s", "text"s);
+
+  const auto undefined = render(jinja::parse("{{ nosuchvar }}"), ctx);
+
+  SUBCASE("a member of a number")
+  {
+    CHECK(render(jinja::parse("{{ n.b }}"), ctx) == undefined);
+    // The scope had two variables in it and neither reached the output.
+    CHECK(render(jinja::parse("{{ n.b }}"), ctx).find("text") == std::string::npos);
+  }
+  SUBCASE("a member of a string")
+  {
+    CHECK(render(jinja::parse("{{ s.length }}"), ctx) == undefined);
+  }
+  SUBCASE("several segments in")
+  {
+    CHECK(render(jinja::parse("{{ n.a.b.c }}"), ctx) == undefined);
+  }
+  SUBCASE("the names that do resolve are unaffected")
+  {
+    CHECK(render(jinja::parse("{{ n }}/{{ s }}"), ctx) == "42/text");
+  }
+  SUBCASE("a member of a bound aggregate still resolves")
+  {
+    aggregate2 agg{
+        3.14, {42, "world"s}
+    };
+    auto agg_ctx = expr::context{"agg"_na = agg};
+    CHECK(render(jinja::parse("{{ agg.nested.a }}"), agg_ctx) == "42");
+    // The member is there, the path through it is not.
+    CHECK(render(jinja::parse("{{ agg.nested.a.deeper }}"), agg_ctx)
+          == render(jinja::parse("{{ nosuchvar }}"), agg_ctx));
+  }
+  SUBCASE("an optional member resolves to its payload")
+  {
+    aggregate4 engaged{
+        true, aggregate2{3.14, {42, "world"s}}
+    };
+    auto ctx = expr::context{"agg"_na = engaged};
+
+    CHECK(render(jinja::parse("{{ agg.optional_nested.nested.a }}"), ctx) == "42");
+
+    bool unwrapped = false;
+    ctx.visit("agg.optional_nested", [&unwrapped]<typename T>(T&&) {
+      unwrapped =
+          not meta::is_template_instance_of(dealias(^^std::remove_cvref_t<T>), ^^std::optional);
+    });
+    CHECK(unwrapped);
+  }
+  SUBCASE("a path reaching through a disengaged optional member is undefined")
+  {
+    aggregate4 empty{false, std::nullopt};
+    auto       ctx = expr::context{"agg"_na = empty};
+
+    const auto nothing = render(jinja::parse("{{ nosuchvar }}"), ctx);
+
+    CHECK(render(jinja::parse("{{ agg.optional_nested.nested.a }}"), ctx) == nothing);
+    CHECK(render(jinja::parse("{{ agg.optional_nested.nested.a.b.c }}"), ctx) == nothing);
+
+    bool called = false;
+    ctx.visit("agg.optional_nested.nested.a", [&called](auto&&) { called = true; });
+    CHECK(not called);
+
+    CHECK(render(jinja::parse("{{ agg.optional_nested }}"), ctx) == nothing);
+    CHECK_THROWS_AS(render(jinja::parse("{{ agg.nosuchfield }}"), ctx), reflex::runtime_error);
+  }
+  SUBCASE("a path reaching through a null is undefined")
+  {
+    static_assert(not aggregate_c<poly::null_t>);
+    static_assert(not serde::object_visitable_c<poly::null_t>);
+
+    basic_context ctx;
+    ctx.set("nul", poly::null);
+
+    const auto nothing = render(jinja::parse("{{ nosuchvar }}"), ctx);
+
+    CHECK(render(jinja::parse("{{ nul.b }}"), ctx) == nothing);
+    CHECK(render(jinja::parse("{{ nul.b.c }}"), ctx) == nothing);
+  }
+}
+
 TEST_CASE("reflex::jinja: aggregate support")
 {
   SUBCASE("basic")
@@ -443,6 +536,75 @@ TEST_CASE("reflex::jinja: aggregate support")
     auto result = render(tmpl, ctx);
     std::println("{}", result);
     CHECK(result == "a=1, b=one\na=2, b=two\na=3, b=three\n");
+  }
+}
+
+TEST_CASE("reflex::jinja: an unknown member of a bound aggregate throws")
+{
+  aggregate1 agg{42, "hello"s};
+  auto       ctx  = expr::context{"agg"_na = agg};
+  const auto tmpl = jinja::parse("{{ agg.nosuchfield }}");
+
+  CHECK_THROWS_AS(render(tmpl, ctx), reflex::runtime_error);
+
+  try
+  {
+    render(tmpl, ctx);
+    FAIL("expected a throw");
+  }
+  catch(std::exception const& e)
+  {
+    CHECK(std::string_view{e.what()}.contains("agg.nosuchfield"));
+  }
+
+  SUBCASE("an unknown variable is still undefined rather than an error")
+  {
+    CHECK(render(jinja::parse("{{ nosuchvar }}"), ctx) == render(jinja::parse("{{ null }}"), ctx));
+  }
+}
+
+TEST_CASE("reflex::jinja: an inner binding shadows an outer one for the whole dotted path")
+{
+  jinja::basic_context ctx;
+  const auto           undefined = render(jinja::parse("{{ null }}"), ctx);
+
+  SUBCASE("a local scalar hides an outer object of the same name")
+  {
+    ctx.set("a", value{
+                     object{{"b", 7}}
+    });
+    ctx.set("items", array{5});
+    auto tmpl = jinja::parse(R"({% for i in items %}{% set a = i %}{{ a.b }}|{{ a }}{% endfor %})");
+
+    auto result = render(tmpl, ctx);
+    std::println("{}", result);
+    CHECK(result == undefined + "|5");
+  }
+  SUBCASE("with no outer binding the answer is the same")
+  {
+    ctx.set("items", array{5});
+    auto tmpl = jinja::parse(R"({% for i in items %}{% set a = i %}{{ a.b }}{% endfor %})");
+
+    CHECK(render(tmpl, ctx) == undefined);
+  }
+  SUBCASE("a failed lookup leaves every scope it searched alone")
+  {
+    ctx.set("a", value{
+                     object{{"b", 7}}
+    });
+    auto guard = ctx.push_locals();
+    guard.set("a", 5);
+
+    CHECK(render(jinja::parse("{{ a.b }}"), ctx) == undefined);
+    CHECK(render(jinja::parse("{{ nosuchvar.k }}"), ctx) == undefined);
+
+    CHECK(ctx.local_vars.size() == 1);
+    CHECK(ctx.local_vars.back().size() == 1);
+    CHECK(not ctx.local_vars.back().contains("nosuchvar"));
+    CHECK(ctx.global_vars.size() == 1);
+    CHECK(not ctx.global_vars.contains("nosuchvar"));
+    CHECK(std::get<int>(ctx.local_vars.back().at("a")) == 5);
+    CHECK(std::get<object>(ctx.global_vars.at("a")).size() == 1);
   }
 }
 

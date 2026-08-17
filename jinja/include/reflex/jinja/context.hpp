@@ -288,7 +288,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       throw runtime_error("Unknown function '{}'", fname);
     }
 
-    decltype(auto) operator[](std::string_view name) const noexcept
+    decltype(auto) operator[](std::string_view name) const
     {
       value_type result = poly::null;
       visit(name, [&]<typename V>(V&& v) {
@@ -368,35 +368,65 @@ REFLEX_EXPORT namespace reflex::jinja::expr
     //   return visit(name, [](auto&& v) -> auto& { return v; });
     // }
 
-    void visit(this auto& self, std::string_view dotted_keys, auto&& fn) noexcept
+    /// Calls @p fn with what @p dotted_keys names and leaves it uncalled when the name is
+    /// undefined.
+    ///
+    /// The path is walked in the innermost scope declaring its leading segment, and in no other:
+    /// a local scalar hides an outer object of the same name instead of letting `a.b` read the
+    /// outer one.
+    ///
+    /// Throws when a scope resolves the name but cannot walk it: an aggregate reports an unknown
+    /// member rather than declining it, so `{{ agg.nosuchfield }}` is an error where
+    /// `{{ nosuchvar }}` is undefined.
+    void visit(this auto& self, std::string_view dotted_keys, auto&& fn)
     {
-      bool found = false;
-      for(auto&& locals : self.local_vars | std::views::reverse)
-      {
-        serde::object_visit(dotted_keys, locals, [&found, &fn]<typename T>(T&& v) {
-          found = true;
-          if constexpr(meta::is_template_instance_of(decay(^^T), ^^std::optional))
+      const auto leading  = dotted_keys.substr(0, dotted_keys.find('.'));
+      const auto declares = [leading](auto const& scope) {
+        return std::ranges::any_of(
+            scope, [leading](auto const& entry) { return entry.first == leading; });
+      };
+
+      const auto resolved = [&fn]<typename T>(T&& v) {
+        if constexpr(meta::is_template_instance_of(decay(^^T), ^^std::optional))
+        {
+          if(v.has_value())
           {
-            if(v.has_value())
-            {
-              std::forward<decltype(fn)>(fn)(std::forward<T>(v).value());
-            }
-            else
-            {
-              std::forward<decltype(fn)>(fn)(value_type{poly::null});
-            }
+            std::forward<decltype(fn)>(fn)(std::forward<T>(v).value());
           }
           else
           {
-            std::forward<decltype(fn)>(fn)(std::forward<T>(v));
+            std::forward<decltype(fn)>(fn)(value_type{poly::null});
           }
-        });
-        if(found)
+        }
+        else
         {
+          std::forward<decltype(fn)>(fn)(std::forward<T>(v));
+        }
+      };
+
+      try
+      {
+        // Scopes are read const: object_visit creates the key it misses on a mutable container,
+        // which would have this search insert the name into every scope it passes.
+        for(auto const& locals : self.local_vars | std::views::reverse)
+        {
+          if(not declares(locals))
+          {
+            continue;
+          }
+          serde::object_visit(dotted_keys, locals, resolved);
           return;
         }
+        serde::object_visit(dotted_keys, std::as_const(self.global_vars), resolved);
       }
-      serde::object_visit(dotted_keys, self.global_vars, std::forward<decltype(fn)>(fn));
+      catch(runtime_error const&)
+      {
+        throw;
+      }
+      catch(std::exception const& error)
+      {
+        throw runtime_error("while resolving '{}': {}", dotted_keys, error.what());
+      }
     }
 
     struct [[nodiscard("local_scope_guard must be used to avoid dangling local variables")]]

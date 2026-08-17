@@ -78,12 +78,12 @@ struct[[= cli::command("Convert file formats")]] convert_command
   [[
     = cli::option("-if/--input-format", "Force input format."),
     = cli::complete{^^input_format_completer}
-  ]] std::string_view input_format{};
+  ]] std::string input_format{};
 
   [[
     = cli::option("-of/--output-format", "Force output format."),
     = cli::complete{^^output_format_completer}
-  ]] std::string_view output_format{};
+  ]] std::string output_format{};
 
   [[= cli::argument("Input file path."), = cli::completers::path{}]] std::string  input_file{};
   [[= cli::argument("Output file path."), = cli::completers::path{}]] std::string output_file{};
@@ -98,12 +98,12 @@ struct[[= cli::command("Convert file formats")]] convert_command
     if(input_format.empty())
     {
       input_format = input_path.extension().string();
-      input_format.remove_prefix(1);
+      input_format.erase(0, 1);
     }
     if(output_format.empty())
     {
       output_format = output_path.extension().string();
-      output_format.remove_prefix(1);
+      output_format.erase(0, 1);
     }
 
     std::ifstream input_stream{input_file, std::ios::binary};

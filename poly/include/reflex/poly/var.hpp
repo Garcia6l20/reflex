@@ -20,6 +20,9 @@ REFLEX_EXPORT namespace reflex::poly
 {
   struct null_t
   {
+    // non-aggregate
+    constexpr null_t() noexcept = default;
+
     constexpr bool operator==(null_t const&) const noexcept
     {
       return true;
