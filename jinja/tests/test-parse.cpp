@@ -434,6 +434,22 @@ TEST_CASE("reflex::jinja: a dotted name reaching through a scalar is undefined")
     CHECK(render(jinja::parse("{{ agg.nested.a.deeper }}"), agg_ctx)
           == render(jinja::parse("{{ nosuchvar }}"), agg_ctx));
   }
+  SUBCASE("an optional member resolves to its payload")
+  {
+    aggregate4 engaged{
+        true, aggregate2{3.14, {42, "world"s}}
+    };
+    auto ctx = expr::context{"agg"_na = engaged};
+
+    CHECK(render(jinja::parse("{{ agg.optional_nested.nested.a }}"), ctx) == "42");
+
+    bool unwrapped = false;
+    ctx.visit("agg.optional_nested", [&unwrapped]<typename T>(T&&) {
+      unwrapped =
+          not meta::is_template_instance_of(dealias(^^std::remove_cvref_t<T>), ^^std::optional);
+    });
+    CHECK(unwrapped);
+  }
 }
 
 TEST_CASE("reflex::jinja: aggregate support")

@@ -386,6 +386,24 @@ REFLEX_EXPORT namespace reflex::jinja::expr
             scope, [leading](auto const& entry) { return entry.first == leading; });
       };
 
+      const auto resolved = [&fn]<typename T>(T&& v) {
+        if constexpr(meta::is_template_instance_of(decay(^^T), ^^std::optional))
+        {
+          if(v.has_value())
+          {
+            std::forward<decltype(fn)>(fn)(std::forward<T>(v).value());
+          }
+          else
+          {
+            std::forward<decltype(fn)>(fn)(value_type{poly::null});
+          }
+        }
+        else
+        {
+          std::forward<decltype(fn)>(fn)(std::forward<T>(v));
+        }
+      };
+
       try
       {
         // Scopes are read const: object_visit creates the key it misses on a mutable container,
@@ -396,27 +414,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
           {
             continue;
           }
-          serde::object_visit(dotted_keys, locals, [&fn]<typename T>(T&& v) {
-            if constexpr(meta::is_template_instance_of(decay(^^T), ^^std::optional))
-            {
-              if(v.has_value())
-              {
-                std::forward<decltype(fn)>(fn)(std::forward<T>(v).value());
-              }
-              else
-              {
-                std::forward<decltype(fn)>(fn)(value_type{poly::null});
-              }
-            }
-            else
-            {
-              std::forward<decltype(fn)>(fn)(std::forward<T>(v));
-            }
-          });
+          serde::object_visit(dotted_keys, locals, resolved);
           return;
         }
-        serde::object_visit(
-            dotted_keys, std::as_const(self.global_vars), std::forward<decltype(fn)>(fn));
+        serde::object_visit(dotted_keys, std::as_const(self.global_vars), resolved);
       }
       catch(runtime_error const&)
       {
