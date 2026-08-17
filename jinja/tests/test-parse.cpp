@@ -467,6 +467,19 @@ TEST_CASE("reflex::jinja: a dotted name reaching through a scalar is undefined")
     CHECK(render(jinja::parse("{{ agg.optional_nested }}"), ctx) == nothing);
     CHECK_THROWS_AS(render(jinja::parse("{{ agg.nosuchfield }}"), ctx), reflex::runtime_error);
   }
+  SUBCASE("a path reaching through a null is undefined")
+  {
+    static_assert(not aggregate_c<poly::null_t>);
+    static_assert(not serde::object_visitable_c<poly::null_t>);
+
+    basic_context ctx;
+    ctx.set("nul", poly::null);
+
+    const auto nothing = render(jinja::parse("{{ nosuchvar }}"), ctx);
+
+    CHECK(render(jinja::parse("{{ nul.b }}"), ctx) == nothing);
+    CHECK(render(jinja::parse("{{ nul.b.c }}"), ctx) == nothing);
+  }
 }
 
 TEST_CASE("reflex::jinja: aggregate support")

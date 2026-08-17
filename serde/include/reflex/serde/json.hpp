@@ -31,7 +31,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       template for(constexpr auto t : var_type::infos::base_types)
       {
         using T = [:t:];
-        if constexpr(aggregate_c<T> and dealias(t) != dealias(^^null_t))
+        if constexpr(aggregate_c<T>)
         {
           types.push_back(t);
         }
