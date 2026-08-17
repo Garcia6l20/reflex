@@ -450,6 +450,23 @@ TEST_CASE("reflex::jinja: a dotted name reaching through a scalar is undefined")
     });
     CHECK(unwrapped);
   }
+  SUBCASE("a path reaching through a disengaged optional member is undefined")
+  {
+    aggregate4 empty{false, std::nullopt};
+    auto       ctx = expr::context{"agg"_na = empty};
+
+    const auto nothing = render(jinja::parse("{{ nosuchvar }}"), ctx);
+
+    CHECK(render(jinja::parse("{{ agg.optional_nested.nested.a }}"), ctx) == nothing);
+    CHECK(render(jinja::parse("{{ agg.optional_nested.nested.a.b.c }}"), ctx) == nothing);
+
+    bool called = false;
+    ctx.visit("agg.optional_nested.nested.a", [&called](auto&&) { called = true; });
+    CHECK(not called);
+
+    CHECK(render(jinja::parse("{{ agg.optional_nested }}"), ctx) == nothing);
+    CHECK_THROWS_AS(render(jinja::parse("{{ agg.nosuchfield }}"), ctx), reflex::runtime_error);
+  }
 }
 
 TEST_CASE("reflex::jinja: aggregate support")
