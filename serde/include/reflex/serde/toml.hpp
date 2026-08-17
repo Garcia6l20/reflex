@@ -1414,9 +1414,21 @@ REFLEX_EXPORT namespace reflex::serde::toml
         throw std::runtime_error("TOML: a key has no value");
       }
 
-      serde::object_visit(std::span{keys.data(), count}, value, [&]<typename V>(V& v) {
-        v = this->template load<std::remove_cvref_t<V>>();
-      });
+      // table_visit, not serde::object_visit: this callback is what reads the
+      // value, so an unwalkable path has to be reported or the cursor is left on
+      // unread text. It also makes a null poly::var into a table on the way down.
+      std::array<detail::segment, serde::max_key_depth> path{};
+      for(std::size_t i = 0; i < count; ++i)
+      {
+        path[i] = detail::segment{keys[i], detail::no_index};
+      }
+      const auto full = std::span<detail::segment const>{path.data(), count};
+      // Built before the value is read: the segments view key_buf_, and a
+      // nested inline table reads its own key path into it.
+      const std::string where = detail::join_path(full);
+
+      auto assign = [this]<typename V>(V& v) { v = this->template load<std::remove_cvref_t<V>>(); };
+      detail::table_visit(full, value, assign, where);
     }
 
     // A document is flat. A [a.b.c] header re-targets every following assignment

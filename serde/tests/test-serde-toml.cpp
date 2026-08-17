@@ -981,6 +981,27 @@ TEST_CASE("reflex::serde::toml::deserializer: an unknown key names the format an
   CHECK(load_message<doc_conf>("[server]\nport = \"x\"\n").starts_with("TOML: "));
 }
 
+// An inline table's dotted key takes the same indexed walk a document-level
+// assignment takes, so a segment landing on something that is not a table is
+// reported rather than writing the value into the enclosing object.
+TEST_CASE("reflex::serde::toml::deserializer: an inline dotted key cannot reach through a non-table")
+{
+  const std::string message = load_message<ab_doc>("{ a.b = 1 }");
+  CHECK(message.starts_with("TOML: "));
+  CHECK(message.find("a.b") != std::string::npos);
+  CHECK(message.find("is not a table") != std::string::npos);
+
+  // The value the document wrote happens to fit the parent, so a walk handing
+  // back the parent would assign it silently rather than fail.
+  check_load_throws<ab_doc>(R"({ a.b = { a = 5, b = "z" } })");
+
+  // One level in, and under a header rather than at the root.
+  check_load_throws<doc_conf>("[server]\ntls = { enabled.x = true }\n");
+
+  // The document-level form of the same key already said this, and still does.
+  CHECK(load_message<ab_doc>("a.b = 1\n").find("is not a table") != std::string::npos);
+}
+
 TEST_CASE("reflex::serde::toml::deserializer: a path may only be defined once")
 {
   // A duplicate key, directly and through a header.
@@ -1213,6 +1234,19 @@ TEST_CASE("reflex::serde::toml: a header builds objects in a toml::value")
   auto empty = toml::deserializer{"[a]"sv}.load<toml::value>();
   CHECK(empty["a"].is_object());
   CHECK(empty["a"].size() == 0);
+}
+
+// The entry the visitor creates for a missing key holds null, and null has no
+// members. The indexed walk makes a null into a table on the way down, the same
+// way a [header] path does, which is what lets a dotted key inside an inline
+// table reach a schema-free destination.
+TEST_CASE("reflex::serde::toml: an inline dotted key builds objects in a toml::value")
+{
+  auto v = toml::deserializer{"t = { a.b = 1, a.c = 2, d = 3 }\n"sv}.load<toml::value>();
+  CHECK(v["t"]["a"].is_object());
+  CHECK(v["t"]["a"]["b"] == 1);
+  CHECK(v["t"]["a"]["c"] == 2);
+  CHECK(v["t"]["d"] == 3);
 }
 
 TEST_CASE("reflex::serde::toml: an array of tables builds an arr in a toml::value")
