@@ -15,7 +15,6 @@ struct custom
 
   bool operator==(custom const&) const = default;
 };
-Q_DECLARE_METATYPE(custom)
 
 struct [[= reflex::qt::classinfo{"author", "reflex"}]] point : reflex::qt::gadget<point>
 {
