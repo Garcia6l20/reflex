@@ -2,6 +2,7 @@
 
 #include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
+#include <reflex/qt/access.hpp>
 #include <reflex/qt/detail/annotations.hpp>
 #include <reflex/qt/detail/metatype.hpp>
 
@@ -125,16 +126,25 @@ template <typename Tag, typename Super> struct meta_strings
   static constexpr bool is_object =
       meta::is_subclass_of(^^Super, ^^qt::object, meta::access_context::unchecked());
 
+  static consteval auto reachable(std::span<const meta::info> members) -> std::span<const meta::info>
+  {
+    for(auto m : members)
+    {
+      qt::access<Super>::require_reachable(m);
+    }
+    return members;
+  }
+
   static constexpr auto signal_members = [] consteval
   {
     if constexpr(is_object)
     {
-      return define_static_array(
+      return reachable(define_static_array(
           meta::nonstatic_data_members_of(^^Super, meta::access_context::unchecked())
           | std::views::filter([](meta::info m) {
               return meta::is_template_instance_of(dealias(remove_const(type_of(m))),
                                                    ^^detail::signal_decl);
-            }));
+            })));
     }
     else
     {
@@ -146,10 +156,10 @@ template <typename Tag, typename Super> struct meta_strings
   {
     if constexpr(is_object)
     {
-      return define_static_array(
+      return reachable(define_static_array(
           meta::member_functions_annotated_with(^^Super,
                                                 ^^detail::slot,
-                                                meta::access_context::unchecked()));
+                                                meta::access_context::unchecked())));
     }
     else
     {
@@ -157,18 +167,31 @@ template <typename Tag, typename Super> struct meta_strings
     }
   }();
 
-  static constexpr auto invocables =
+  static constexpr auto invocables = reachable(
       define_static_array(meta::member_functions_annotated_with(^^Super,
                                                                 ^^detail::invocable,
-                                                                meta::access_context::unchecked()));
+                                                                meta::access_context::unchecked())));
 
   static constexpr auto properties = [] consteval
   {
     validate_properties(^^Super);
-    return define_static_array(
+    const auto declared = reachable(define_static_array(
         meta::nonstatic_data_members_annotated_with(^^Super,
                                                     ^^detail::property,
-                                                    meta::access_context::unchecked()));
+                                                    meta::access_context::unchecked())));
+    for(auto p : declared)
+    {
+      for(auto a : {accessor_for<getter>(^^Super, p),
+                    accessor_for<setter>(^^Super, p),
+                    accessor_for<listener>(^^Super, p)})
+      {
+        if(a != meta::null)
+        {
+          qt::access<Super>::require_reachable(a);
+        }
+      }
+    }
+    return declared;
   }();
 
   static constexpr auto enums = [] consteval
@@ -197,6 +220,10 @@ template <typename Tag, typename Super> struct meta_strings
       {
         list.push_back({m, m});
       }
+    }
+    for(auto const& e : list)
+    {
+      qt::access<Super>::require_reachable(e.type);
     }
     return define_static_array(list);
   }();

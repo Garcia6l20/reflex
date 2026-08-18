@@ -1,6 +1,7 @@
 #pragma once
 
 #include <reflex/meta.hpp>
+#include <reflex/qt/access.hpp>
 #include <reflex/qt/detail/meta_strings.hpp>
 
 #include <QtCore/qmetaobject.h>
@@ -108,7 +109,8 @@ template <typename Super> struct gadget_impl
 
     const auto call = [&]<std::size_t... I>(std::index_sequence<I...>) -> decltype(auto)
     {
-      return self->[:Member:](
+      return qt::access<Super>::template call<Member>(
+          *self,
           *reinterpret_cast<typename[:meta::remove_cvref(type_of(parameters[I])):]*>(args[I + 1])...);
     };
 
@@ -159,7 +161,10 @@ template <typename Super> struct gadget_impl
           if constexpr(strings::methods[i].kind == method_kind::signal_member
                        and not strings::methods[i].cloned)
           {
-            if(QtMocHelpers::indexOfMethod(a, &[:strings::methods[i].member:], int(i)))
+            if(QtMocHelpers::indexOfMethod(
+                   a,
+                   qt::access<Super>::template pointer<strings::methods[i].member>(),
+                   int(i)))
             {
               return;
             }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <reflex/meta.hpp>
+#include <reflex/qt/access.hpp>
 
 #include <vector>
 
@@ -124,6 +125,19 @@ consteval bool timer_handlers_are_reachable(meta::info Super)
     {
       return false;
     }
+  }
+  return true;
+}
+
+/** @brief rejects a timer whose member or handler @p Super cannot splice */
+template <typename Super> consteval bool timer_access_is_open()
+{
+  template for(constexpr auto m : define_static_array(timer_members_of(^^Super)))
+  {
+    qt::access<Super>::require_reachable(m);
+    constexpr auto handler = timer_handler_of(m);
+    using handler_owner    = [:meta::parent_of(handler):];
+    qt::access<handler_owner>::require_reachable(handler);
   }
   return true;
 }
