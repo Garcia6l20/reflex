@@ -8,11 +8,34 @@
 #include <QtCore/qobjectdefs.h>
 
 #include <cstddef>
+#include <cstring>
 #include <ranges>
 #include <utility>
 
 namespace reflex::qt::detail
 {
+/** @brief matches an `IndexOfMethod` candidate against a notify signal
+ *
+ * `QtMocHelpers::indexOfMethod` reads `_a[1]` as an object of the type it is
+ * given. A notify signal is a pointer to member function, twice the size of the
+ * pointer to data member a reflex signal is, so reading one where the caller
+ * stored the other runs off the end of the caller's object. Only the leading
+ * word is compared here, which is in bounds for either.
+ */
+template <typename Notifier> inline bool index_of_notifier(void** a, Notifier notifier, int index) noexcept
+{
+  const void* candidate = nullptr;
+  const void* target    = nullptr;
+  std::memcpy(&candidate, a[1], sizeof(candidate));
+  std::memcpy(&target, &notifier, sizeof(target));
+  if(candidate != target)
+  {
+    return false;
+  }
+  *static_cast<int*>(a[0]) = index;
+  return true;
+}
+
 /** @brief the `QMetaObject` of @p Super and the dispatcher it points at */
 template <typename Super> struct gadget_impl
 {
@@ -146,7 +169,7 @@ template <typename Super> struct gadget_impl
             constexpr auto notifier =
                 &Super::template propertyChanged<constant_string{
                     identifier_of(strings::methods[i].member)}>;
-            if(QtMocHelpers::indexOfMethod(a, notifier, int(i)))
+            if(index_of_notifier(a, notifier, int(i)))
             {
               return;
             }
