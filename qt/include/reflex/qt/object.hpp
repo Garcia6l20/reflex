@@ -149,8 +149,7 @@ struct FunctionPointer<reflex::qt::detail::signal_decl<ObjectT, Args...> ObjectT
   using Object     = ObjectT;
   using Arguments  = List<reflex::qt::detail::drop_default_t<Args>...>;
   using ReturnType = void;
-  using Function   = ReturnType (reflex::qt::detail::signal_decl<ObjectT, Args...>::*)(
-      reflex::qt::detail::drop_default_t<Args>...);
+  using Function   = reflex::qt::detail::signal_decl<ObjectT, Args...> ObjectT::*;
 
   enum
   {
@@ -158,9 +157,16 @@ struct FunctionPointer<reflex::qt::detail::signal_decl<ObjectT, Args...> ObjectT
     IsPointerToMemberFunction = true
   };
 
-  template <typename SignalArgs, typename R> static void call(Function f, Object* o, void** arg)
+  template <typename SignalArgs, typename R> static void call(Function f, QObject* o, void** arg)
   {
-    FunctorCall<std::index_sequence_for<Args...>, SignalArgs, R, Function>::call(f, o, arg);
+    auto* const self = static_cast<Object*>(o);
+    [&]<typename... CallArgs>(List<CallArgs...>)
+    {
+      [&]<std::size_t... I>(std::index_sequence<I...>)
+      {
+        (self->*f)(*reinterpret_cast<std::remove_reference_t<CallArgs>*>(arg[I + 1])...);
+      }(std::index_sequence_for<CallArgs...>());
+    }(SignalArgs());
   }
 };
 }

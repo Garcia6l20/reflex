@@ -245,3 +245,43 @@ TEST_CASE("a cross-thread connection marshals a custom argument")
   CHECK(receiver->last_payload == payload{11});
   delete receiver;
 }
+
+TEST_CASE("a signal chains into another signal")
+{
+  emitter sender;
+  emitter receiver;
+
+  QObject::connect(&sender, &emitter::pair, &receiver, &emitter::pair);
+  QObject::connect(&receiver, &emitter::pair, &receiver, &emitter::onPair);
+
+  sender.pair(7, 8);
+
+  CHECK(receiver.pairs == 1);
+  CHECK(receiver.last_a == 7);
+  CHECK(receiver.last_b == 8);
+
+  sender.pair(9);
+
+  CHECK(receiver.pairs == 2);
+  CHECK(receiver.last_a == 9);
+  CHECK(receiver.last_b == 42);
+}
+
+TEST_CASE("a chained signal disconnects through its connection, not its pointer")
+{
+  emitter sender;
+  emitter receiver;
+
+  const auto chain = QObject::connect(&sender, &emitter::pair, &receiver, &emitter::pair);
+  QObject::connect(&receiver, &emitter::pair, &receiver, &emitter::onPair);
+
+  CHECK(not QObject::disconnect(&sender, &emitter::pair, &receiver, &emitter::pair));
+
+  sender.pair(1, 2);
+  CHECK(receiver.pairs == 1);
+
+  CHECK(QObject::disconnect(chain));
+
+  sender.pair(3, 4);
+  CHECK(receiver.pairs == 1);
+}
