@@ -64,6 +64,23 @@ namespace probe
 
 using reflex::meta::member_named;
 
+namespace
+{
+class with_private_base_member
+{
+  int hidden = 0;
+
+public:
+  static consteval bool found_with_context_default()
+  {
+    return reflex::meta::member_named(^^with_private_base_member, "hidden", true)
+        != reflex::meta::null;
+  }
+};
+
+static_assert(with_private_base_member::found_with_context_default());
+}
+
 TEST_CASE("reflex::meta::member_named: a single class")
 {
   static_assert(member_named(^^probe::flat, "first") != reflex::meta::null);

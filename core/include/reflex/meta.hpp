@@ -79,9 +79,12 @@ REFLEX_EXPORT namespace reflex::meta
     return null;
   }
 
-  consteval auto member_named(meta::info R, std::string_view name, bool recursive) -> meta::info
+  consteval auto member_named(meta::info       R,
+                              std::string_view name,
+                              bool             recursive,
+                              access_context   ctx = access_context::current()) -> meta::info
   {
-    return member_named(R, name, access_context::current(), recursive);
+    return member_named(R, name, ctx, recursive);
   }
 
   template <std::size_t template_max_args = 16> consteval bool has_call_operator(meta::info R)
