@@ -85,6 +85,12 @@ struct flagged : reflex::qt::gadget<flagged>
   [[= prop{.final = true, .required = true}]] int  both  = 0;
 };
 
+struct constant_alone : reflex::qt::object<constant_alone>
+{
+  [[= prop{.constant = true}]] int fixed = 3;
+  [[= prop{}]] int                 open  = 0;
+};
+
 struct mixed : reflex::qt::object<mixed>
 {
   signal<int> sig{this};
@@ -388,4 +394,29 @@ TEST_CASE("a property that declines to notify still reads, writes and dispatches
   QObject::connect(&m, &mixed::sig, [&seen](int) { ++seen; });
   m.sig(3);
   CHECK(seen == 1);
+}
+
+TEST_CASE("constant implies neither writable nor notifying")
+{
+  static_assert(not reflex::qt::detail::property{.constant = true}.writable());
+  static_assert(not reflex::qt::detail::property{.constant = true}.notifying());
+
+  const QMetaObject& mo = constant_alone::staticMetaObject;
+
+  const auto fixed = mo.property(mo.indexOfProperty("fixed"));
+  CHECK(fixed.isReadable());
+  CHECK(fixed.isConstant());
+  CHECK(not fixed.isWritable());
+  CHECK(not fixed.hasNotifySignal());
+
+  const auto open = mo.property(mo.indexOfProperty("open"));
+  CHECK(open.isWritable());
+  CHECK(open.hasNotifySignal());
+
+  REQUIRE(mo.methodCount() == mo.methodOffset() + 1);
+  CHECK(mo.method(mo.methodOffset()).methodSignature() == QByteArrayLiteral("openChanged()"));
+
+  constant_alone o;
+  CHECK(not o.setProperty("fixed", 9));
+  CHECK(o.fixed == 3);
 }
