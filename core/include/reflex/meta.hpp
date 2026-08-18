@@ -56,16 +56,32 @@ REFLEX_EXPORT namespace reflex::meta
     }
   };
 
-  consteval auto member_named(
-      meta::info R, std::string_view name, access_context ctx = access_context::current())
-      -> meta::info
+  consteval auto member_named(meta::info       R,
+                              std::string_view name,
+                              access_context   ctx       = access_context::current(),
+                              bool             recursive = false) -> meta::info
   {
     for(std::meta::info field : members_of(R, ctx) | std::views::filter(has_identifier))
     {
       if(identifier_of(field) == name)
         return field;
     }
+    if(recursive and is_type(R) and is_class_type(R))
+    {
+      for(auto base : bases_of(R, ctx))
+      {
+        if(auto found = member_named(dealias(type_of(base)), name, ctx, true); found != null)
+        {
+          return found;
+        }
+      }
+    }
     return null;
+  }
+
+  consteval auto member_named(meta::info R, std::string_view name, bool recursive) -> meta::info
+  {
+    return member_named(R, name, access_context::current(), recursive);
   }
 
   template <std::size_t template_max_args = 16> consteval bool has_call_operator(meta::info R)
