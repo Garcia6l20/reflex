@@ -11,6 +11,11 @@ qt = find_qt(project, env, modules=["Core"], required=False)
 if qt is None:
     print("-- reflex.qt skipped: Qt 6 not found")
 else:
+    for module in qt.modules.values():
+        module.public.system_include_dirs.extend(module.public.include_dirs)
+        module.public.include_dirs.clear()
+        module.public.compile_flags.append("-fPIC")
+
     qt_lib = project.HeaderOnlyLibrary("reflex.qt", include_dirs=["include"])
     qt_lib.public.link_libs.extend([project.get_target("reflex.core"), qt.Core])
 
