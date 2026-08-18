@@ -137,6 +137,28 @@ struct poller : qt::object<poller>
   int ticks = 0;
 };
 
+struct driver : qt::object<driver>
+{
+  int start()
+  {
+    return startTimer<^^tick>(50);
+  }
+
+  bool stop()
+  {
+    return killTimer<^^tick>();
+  }
+
+  void tick()
+  {
+    ++ticks;
+  }
+
+  qt::timer<^^tick> tick_timer;
+
+  int ticks = 0;
+};
+
 struct point : qt::gadget<point>
 {
   [[= qt::prop{}]] int x = 0;
@@ -356,6 +378,20 @@ TEST_CASE("README: timers")
   REQUIRE(spin_until([&p] { return p.ticks > 0; }, 2s));
 
   CHECK(p.killTimer<^^poller::tick>());
+}
+
+TEST_CASE("README: a class drives its own timer with the short spelling")
+{
+  application();
+
+  driver d;
+  CHECK(d.start() != 0);
+  CHECK(d.tick_timer.isActive());
+
+  REQUIRE(spin_until([&d] { return d.ticks > 0; }, 2s));
+
+  CHECK(d.stop());
+  CHECK_FALSE(d.tick_timer.isActive());
 }
 
 TEST_CASE("README: gadgets")

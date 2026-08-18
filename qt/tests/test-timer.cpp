@@ -46,9 +46,7 @@ struct ticker : reflex::qt::object<ticker>
   int tocks = 0;
 };
 
-static_assert(
-    sizeof(reflex::qt::timer<^^ticker::tick>) == sizeof(int),
-    "a timer costs one int");
+static_assert(sizeof(decltype(ticker::tick_timer)) == sizeof(int), "a timer costs one int");
 
 struct base_ticker : reflex::qt::object<base_ticker>
 {

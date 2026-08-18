@@ -314,6 +314,53 @@ p.killTimer<^^poller::tick>();                     // true, false if none was ru
 class drives a timer its base declares, and a class that overrides `timerEvent` itself
 takes over the dispatch.
 
+#### One spelling of a handler per translation unit
+
+`^^tick` written inside the class body and `^^poller::tick` written outside it reflect the
+same member and compare equal, and each works on its own. GCC 16.2.1 emits the definition
+twice when one translation unit instantiates the same template with both, and the assembler
+rejects the duplicate symbol:
+
+```
+Error: symbol `_ZN6reflex2qt6objectI6poller7QObjectE10startTimerILDmfnNS2_4tickEvEEEii...'
+       is already defined
+```
+
+The message names a mangled symbol and no line of your own code. reflex.qt cannot diagnose
+it either: the collision happens after the front end and both spellings are correct C++.
+
+So call `startTimer` and `killTimer` for one handler with one spelling per translation
+unit. Inside the class body only `^^tick` is spellable, so a class that drives its own
+timers keeps that spelling and publishes member functions for its callers.
+
+```cpp
+struct driver : qt::object<driver>
+{
+  int start()
+  {
+    return startTimer<^^tick>(50);
+  }
+
+  bool stop()
+  {
+    return killTimer<^^tick>();
+  }
+
+  void tick()
+  {
+    ++ticks;
+  }
+
+  qt::timer<^^tick> tick_timer;
+
+  int ticks = 0;
+};
+```
+
+A class that never names its own handler, `poller` above, leaves the calls to its callers,
+which write `^^poller::tick`. The `qt::timer<^^tick>` member declaration instantiates
+another template and takes no part in the rule.
+
 Four declarations are rejected at compile time: a timer naming something that is not a
 non-static member function, a timer naming a member function of neither its own class nor a
 base, two timers naming one handler, and a `startTimer` naming a handler no timer member
