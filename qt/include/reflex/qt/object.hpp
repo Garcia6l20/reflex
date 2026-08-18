@@ -11,6 +11,7 @@
 #include <QtCore/qobjectdefs.h>
 
 #include <ranges>
+#include <type_traits>
 #include <utility>
 
 namespace reflex::qt
@@ -42,6 +43,11 @@ template <typename Super, typename ParentT> class object : public ParentT, publi
 {
   template <typename, typename...> friend class detail::signal_decl;
 
+  using inherited_names = std::conditional_t<
+      meta::is_subclass_of(^^ParentT, ^^qt::object, meta::access_context::unchecked()),
+      QObject,
+      ParentT>;
+
 public:
   using parent_type = ParentT;
 
@@ -59,10 +65,10 @@ public:
   void* qt_metacast(const char* clname) override;
   int   qt_metacall(QMetaObject::Call c, int id, void** a) override;
 
-  using ParentT::property;
+  using inherited_names::property;
   using gadget<Super>::property;
 
-  using ParentT::setProperty;
+  using inherited_names::setProperty;
   using gadget<Super>::setProperty;
 
   /** @brief emits the notify signal of the property named @p name */
@@ -79,6 +85,9 @@ protected:
   template <typename T> using with_default = detail::with_default<T>;
 
   static constexpr detail::slot slot{};
+
+  using typename gadget<Super>::prop;
+  using gadget<Super>::invocable;
 
 private:
   template <typename... Args, typename... CallArgs>
