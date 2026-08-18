@@ -181,12 +181,15 @@ template <typename Super> struct gadget_impl
     {
       template for(constexpr auto i : std::views::iota(0uz, strings::property_count))
       {
-        if(int(i) == id)
+        if constexpr(property_spec_of(strings::properties[i]).read)
         {
-          using property_type = [:type_of(strings::properties[i]):];
-          *reinterpret_cast<property_type*>(a[0]) =
-              self->template property<strings::properties[i]>();
-          return;
+          if(int(i) == id)
+          {
+            using property_type = [:type_of(strings::properties[i]):];
+            *reinterpret_cast<property_type*>(a[0]) =
+                self->template property<strings::properties[i]>();
+            return;
+          }
         }
       }
     }
@@ -194,12 +197,15 @@ template <typename Super> struct gadget_impl
     {
       template for(constexpr auto i : std::views::iota(0uz, strings::property_count))
       {
-        if(int(i) == id)
+        if constexpr(property_spec_of(strings::properties[i]).write)
         {
-          using property_type = [:type_of(strings::properties[i]):];
-          self->template setProperty<strings::properties[i]>(
-              *reinterpret_cast<property_type*>(a[0]));
-          return;
+          if(int(i) == id)
+          {
+            using property_type = [:type_of(strings::properties[i]):];
+            self->template setProperty<strings::properties[i]>(
+                *reinterpret_cast<property_type*>(a[0]));
+            return;
+          }
         }
       }
     }

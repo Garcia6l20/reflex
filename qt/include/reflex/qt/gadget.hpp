@@ -37,7 +37,17 @@ public:
   {
     static_assert(std::ranges::contains(detail::gadget_impl<Super>::strings::properties, Property),
                   "no such property");
-    return self.[:Property:];
+    static_assert(detail::property_spec_of(Property).read, "the property is not readable");
+
+    static constexpr auto reader = detail::accessor_for<detail::getter>(^^Super, Property);
+    if constexpr(reader != meta::null)
+    {
+      return self.[:reader:]();
+    }
+    else
+    {
+      return self.[:Property:];
+    }
   }
 
   /** @brief Reads the property named @p name, including one a base declares.
@@ -59,9 +69,18 @@ public:
   {
     static_assert(std::ranges::contains(detail::gadget_impl<Super>::strings::properties, Property),
                   "no such property");
-    auto& target = self.[:Property:];
-    if constexpr(detail::gadget_impl<Super>::strings::is_object)
+    static_assert(detail::property_spec_of(Property).write, "the property is not writable");
+
+    static constexpr auto writer  = detail::accessor_for<detail::setter>(^^Super, Property);
+    static constexpr auto handler = detail::accessor_for<detail::listener>(^^Super, Property);
+
+    if constexpr(writer != meta::null)
     {
+      self.[:writer:](std::forward<T>(value));
+    }
+    else
+    {
+      auto& target = self.[:Property:];
       if constexpr(requires { target == value; })
       {
         if(target == value)
@@ -70,11 +89,14 @@ public:
         }
       }
       target = std::forward<T>(value);
-      self.template propertyChanged<constant_string{identifier_of(Property)}>();
     }
-    else
+    if constexpr(handler != meta::null)
     {
-      target = std::forward<T>(value);
+      self.[:handler:]();
+    }
+    if constexpr(detail::gadget_impl<Super>::strings::is_object)
+    {
+      self.template propertyChanged<constant_string{identifier_of(Property)}>();
     }
   }
 
@@ -97,7 +119,10 @@ public:
 protected:
   static constexpr detail::invocable invocable{};
 
-  using prop = detail::property;
+  using prop     = detail::property;
+  using getter   = detail::getter;
+  using setter   = detail::setter;
+  using listener = detail::listener;
 };
 }
 

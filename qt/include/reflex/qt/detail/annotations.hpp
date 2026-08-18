@@ -2,6 +2,7 @@
 
 #include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
+#include <reflex/qt/detail/property.hpp>
 #include <reflex/qt/detail/version.hpp>
 
 #include <QtCore/qobject.h>
@@ -36,31 +37,6 @@ struct slot
 /** @brief marks a member function as the handler of the class's timer events */
 struct timer_event
 {
-};
-
-/** @brief marks a data member as a `Q_PROPERTY`
- *
- * @p specs is a set of one-letter flags: `r` readable, `w` writable, `n` the
- * property notifies on change.
- */
-struct property
-{
-  constant_string specs = "rwn";
-
-  constexpr bool readable() const noexcept
-  {
-    return specs.get().find('r') != std::string_view::npos;
-  }
-
-  constexpr bool writable() const noexcept
-  {
-    return specs.get().find('w') != std::string_view::npos;
-  }
-
-  constexpr bool notify() const noexcept
-  {
-    return specs.get().find('n') != std::string_view::npos;
-  }
 };
 
 /** @brief wraps a `signal` argument type that carries a default value

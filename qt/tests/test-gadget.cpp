@@ -20,7 +20,7 @@ struct [[= reflex::qt::classinfo{"author", "reflex"}]] point : reflex::qt::gadge
 {
   [[= prop{}]] int     x = 0;
   [[= prop{}]] QString label;
-  [[= prop{"r"}]] int  frozen = 7;
+  [[= prop{.write = false}]] int frozen = 7;
   [[= prop{}]] custom  tag;
 
   [[= invocable]] int    add(int a, int b) { return a + b; }
