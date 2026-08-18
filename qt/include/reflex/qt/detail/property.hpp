@@ -28,9 +28,11 @@ struct qt_style_t
  * name would read as that signal without being it.
  *
  * ```cpp
- * struct [[= reflex::qt::naming::qt_style]] data : reflex::qt::object<data>
+ * namespace qt = reflex::qt;
+ *
+ * struct [[= qt::naming::qt_style]] data : qt::object<data>
  * {
- *   [[= prop{}]] int p1 = 0;
+ *   [[= qt::prop{}]] int p1 = 0;
  *
  *   int  getP1() const { return p1 * 2; }
  *   void setP1(int value) { p1 = value / 2; }
@@ -41,8 +43,6 @@ struct qt_style_t
 inline constexpr qt_style_t qt_style{};
 } // namespace naming
 
-namespace detail
-{
 /** @brief marks a data member as a `Q_PROPERTY`
  *
  * Every flag defaults to what a plain `Q_PROPERTY ... MEMBER` gets from moc:
@@ -62,7 +62,7 @@ namespace detail
  * apart from the default, so the implication is silent rather than diagnosed.
  * Read the effective values through @ref writable and @ref notifying.
  */
-struct property
+struct prop
 {
   bool read     = true;
   bool write    = true;
@@ -84,6 +84,10 @@ struct property
   }
 };
 
+template <meta::info Property> struct getter_t
+{
+};
+
 /** @brief marks a member function as the reader of @p Property
  *
  * ```cpp
@@ -95,7 +99,9 @@ struct property
  * the annotation instead of an accessor that silently never runs. The member
  * must already be declared, which is the natural order anyway.
  */
-template <meta::info Property> struct getter
+template <meta::info Property> inline constexpr getter_t<Property> getter{};
+
+template <meta::info Property> struct setter_t
 {
 };
 
@@ -109,7 +115,9 @@ template <meta::info Property> struct getter
  * [[= setter<^^p1>]] void setP1(int value) { p1 = value / 2; }
  * ```
  */
-template <meta::info Property> struct setter
+template <meta::info Property> inline constexpr setter_t<Property> setter{};
+
+template <meta::info Property> struct listener_t
 {
 };
 
@@ -122,21 +130,21 @@ template <meta::info Property> struct setter
  * [[= listener<^^p1>]] void onP1Changed() { std::println("p1 = {}", p1); }
  * ```
  */
-template <meta::info Property> struct listener
-{
-};
+template <meta::info Property> inline constexpr listener_t<Property> listener{};
 
-/** @brief @p Property's `property` annotation */
-consteval auto property_spec_of(meta::info Property) -> property
+namespace detail
 {
-  return meta::annotation_value_of_with<property>(Property);
+/** @brief @p Property's `prop` annotation */
+consteval auto property_spec_of(meta::info Property) -> prop
+{
+  return meta::annotation_value_of_with<prop>(Property);
 }
 
 /** @brief the data member of @p Super named @p name and annotated as a property */
 consteval auto property_named(meta::info Super, std::string_view name) -> meta::info
 {
   for(auto p : meta::nonstatic_data_members_annotated_with(
-          Super, ^^property, meta::access_context::unchecked()))
+          Super, ^^prop, meta::access_context::unchecked()))
   {
     if(identifier_of(p) == name)
     {
@@ -149,15 +157,15 @@ consteval auto property_named(meta::info Super, std::string_view name) -> meta::
 /** @brief what @p Accessor is called in a diagnostic */
 template <meta::info Accessor> consteval auto accessor_noun() -> std::string_view
 {
-  if constexpr(Accessor == ^^getter)
+  if constexpr(Accessor == ^^getter_t)
   {
     return "getter";
   }
-  else if constexpr(Accessor == ^^setter)
+  else if constexpr(Accessor == ^^setter_t)
   {
     return "setter";
   }
-  else if constexpr(Accessor == ^^listener)
+  else if constexpr(Accessor == ^^listener_t)
   {
     return "listener";
   }
@@ -190,15 +198,15 @@ consteval auto conventional_name_of(std::string_view name) -> std::string
   std::string capitalized{name};
   capitalized[0] = char(reflex::to_upper(capitalized[0]));
 
-  if constexpr(Accessor == ^^getter)
+  if constexpr(Accessor == ^^getter_t)
   {
     return "get" + capitalized;
   }
-  else if constexpr(Accessor == ^^setter)
+  else if constexpr(Accessor == ^^setter_t)
   {
     return "set" + capitalized;
   }
-  else if constexpr(Accessor == ^^listener)
+  else if constexpr(Accessor == ^^listener_t)
   {
     return "on" + capitalized + "Changed";
   }
@@ -256,7 +264,7 @@ template <meta::info Accessor> consteval void check_accessors_of(meta::info Supe
 
     const auto p = accessor_target_of<Accessor>(fn);
     REFLEX_META_CHECK(p != meta::null and meta::is_nonstatic_data_member(p)
-                          and meta::has_annotation(p, ^^property) and parent_of(p) == Super,
+                          and meta::has_annotation(p, ^^prop) and parent_of(p) == Super,
                       "the " + named + " names " + std::string{display_string_of(p)}
                           + ", which is not a data member of " + std::string{identifier_of(Super)}
                           + " annotated with prop{}",
@@ -270,7 +278,7 @@ template <meta::info Accessor> consteval void check_accessors_of(meta::info Supe
     const auto declared  = dealias(meta::remove_cvref(type_of(p)));
     const auto arguments = parameters_of(fn);
 
-    if constexpr(Accessor == ^^getter)
+    if constexpr(Accessor == ^^getter_t)
     {
       REFLEX_META_CHECK(arguments.empty(), "the " + named + " must take no argument", fn);
       REFLEX_META_CHECK(dealias(meta::remove_cvref(return_type_of(fn))) == declared,
@@ -279,7 +287,7 @@ template <meta::info Accessor> consteval void check_accessors_of(meta::info Supe
                             + std::string{identifier_of(p)},
                         fn);
     }
-    else if constexpr(Accessor == ^^setter)
+    else if constexpr(Accessor == ^^setter_t)
     {
       REFLEX_META_CHECK(
           arguments.size() == 1, "the " + named + " must take exactly one argument", fn);
@@ -308,7 +316,7 @@ template <meta::info Accessor> consteval void check_accessors_of(meta::info Supe
 consteval auto validate_properties(meta::info Super) -> bool
 {
   for(auto p : meta::nonstatic_data_members_annotated_with(
-          Super, ^^property, meta::access_context::unchecked()))
+          Super, ^^prop, meta::access_context::unchecked()))
   {
     const auto spec = property_spec_of(p);
     REFLEX_META_CHECK(spec.read or spec.write,
@@ -317,9 +325,9 @@ consteval auto validate_properties(meta::info Super) -> bool
                       p);
   }
 
-  check_accessors_of<^^getter>(Super);
-  check_accessors_of<^^setter>(Super);
-  check_accessors_of<^^listener>(Super);
+  check_accessors_of<^^getter_t>(Super);
+  check_accessors_of<^^setter_t>(Super);
+  check_accessors_of<^^listener_t>(Super);
   return true;
 }
 
@@ -327,7 +335,7 @@ consteval auto validate_properties(meta::info Super) -> bool
 consteval bool declares_property(meta::info Super, meta::info Property)
 {
   for(auto p : meta::nonstatic_data_members_annotated_with(
-          Super, ^^property, meta::access_context::unchecked()))
+          Super, ^^prop, meta::access_context::unchecked()))
   {
     if(p == Property)
     {

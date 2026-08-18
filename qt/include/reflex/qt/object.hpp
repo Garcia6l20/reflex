@@ -23,13 +23,15 @@ namespace reflex::qt
 /** @brief CRTP base publishing @p Super to Qt as a `Q_OBJECT` class
  *
  * ```cpp
- * struct counter : reflex::qt::object<counter>
+ * namespace qt = reflex::qt;
+ *
+ * struct counter : qt::object<counter>
  * {
  *   signal<int> changed{this};
  *
- *   [[= slot]] void bump() { setProperty<"value">(value + 1); }
+ *   [[= qt::slot]] void bump() { setProperty<"value">(value + 1); }
  *
- *   [[= prop{}]] int value = 0;
+ *   [[= qt::prop{}]] int value = 0;
  * };
  * ```
  *
@@ -140,19 +142,15 @@ public:
   }
 
 protected:
+  /** @brief a signal of @p Super, declared as a data member
+   *
+   * The one name reflex.qt publishes through the base rather than in
+   * namespace `reflex::qt`: a signal has to know the class that emits it, and
+   * only the base knows @p Super.
+   */
   template <typename... Args> using signal = detail::signal_decl<Super, Args...>;
-  template <typename T> using with_default = detail::with_default<T>;
-  template <meta::info handler> using timer = detail::timer_decl<handler>;
 
   void timerEvent(QTimerEvent* event) override;
-
-  static constexpr detail::slot slot{};
-
-  using typename gadget<Super>::prop;
-  using gadget<Super>::getter;
-  using gadget<Super>::setter;
-  using gadget<Super>::listener;
-  using gadget<Super>::invocable;
 
 private:
   template <typename... Args, typename... CallArgs>

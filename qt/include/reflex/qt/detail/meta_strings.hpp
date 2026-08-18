@@ -158,7 +158,7 @@ template <typename Tag, typename Super> struct meta_strings
     {
       return reachable(define_static_array(
           meta::member_functions_annotated_with(^^Super,
-                                                ^^detail::slot,
+                                                ^^qt::slot_t,
                                                 meta::access_context::unchecked())));
     }
     else
@@ -169,7 +169,7 @@ template <typename Tag, typename Super> struct meta_strings
 
   static constexpr auto invocables = reachable(
       define_static_array(meta::member_functions_annotated_with(^^Super,
-                                                                ^^detail::invocable,
+                                                                ^^qt::invocable_t,
                                                                 meta::access_context::unchecked())));
 
   static constexpr auto properties = [] consteval
@@ -177,13 +177,13 @@ template <typename Tag, typename Super> struct meta_strings
     validate_properties(^^Super);
     const auto declared = reachable(define_static_array(
         meta::nonstatic_data_members_annotated_with(^^Super,
-                                                    ^^detail::property,
+                                                    ^^qt::prop,
                                                     meta::access_context::unchecked())));
     for(auto p : declared)
     {
-      for(auto a : {accessor_for<^^getter>(^^Super, p),
-                    accessor_for<^^setter>(^^Super, p),
-                    accessor_for<^^listener>(^^Super, p)})
+      for(auto a : {accessor_for<^^qt::getter_t>(^^Super, p),
+                    accessor_for<^^qt::setter_t>(^^Super, p),
+                    accessor_for<^^qt::listener_t>(^^Super, p)})
       {
         if(a != meta::null)
         {

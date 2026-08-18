@@ -18,13 +18,15 @@ namespace reflex::qt
  * one friend declaration opens all of them:
  *
  * ```cpp
- * struct controller : reflex::qt::object<controller>
+ * namespace qt = reflex::qt;
+ *
+ * struct controller : qt::object<controller>
  * {
- *   friend reflex::qt::access<controller>;
+ *   friend qt::access<controller>;
  *
  * private:
- *   [[= slot]] void onThing(int n);
- *   [[= prop{}]] int count = 0;
+ *   [[= qt::slot]] void onThing(int n);
+ *   [[= qt::prop{}]] int count = 0;
  * };
  * ```
  *

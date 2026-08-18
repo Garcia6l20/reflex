@@ -17,37 +17,39 @@
 #include <string>
 #include <string_view>
 
+namespace qt = reflex::qt;
+
 using namespace std::chrono_literals;
 
-struct counter : reflex::qt::object<counter>
+struct counter : qt::object<counter>
 {
   signal<int> changed{this};
 
-  [[= slot]] void bump()
+  [[= qt::slot]] void bump()
   {
     setProperty<"value">(value + 1);
     changed(value);
   }
 
-  [[= prop{}]] int value = 0;
+  [[= qt::prop{}]] int value = 0;
 };
 
-struct base_widget : reflex::qt::object<base_widget>
+struct base_widget : qt::object<base_widget>
 {
-  [[= prop{}]] int level = 0;
+  [[= qt::prop{}]] int level = 0;
 };
 
-struct derived_widget : reflex::qt::object<derived_widget, base_widget>
+struct derived_widget : qt::object<derived_widget, base_widget>
 {
-  [[= prop{}]] int depth = 0;
+  [[= qt::prop{}]] int depth = 0;
 };
 
-struct emitter : reflex::qt::object<emitter>
+struct emitter : qt::object<emitter>
 {
-  signal<>                       ping{this};
-  signal<int, with_default<int>> pair{this, 42};
+  signal<>                           ping{this};
+  signal<int, qt::with_default<int>> pair{this, 42};
 
-  [[= slot]] void onPair(int a, int b)
+  [[= qt::slot]] void onPair(int a, int b)
   {
     sum = a + b;
   }
@@ -55,14 +57,14 @@ struct emitter : reflex::qt::object<emitter>
   int sum = 0;
 };
 
-struct service : reflex::qt::object<service>
+struct service : qt::object<service>
 {
-  [[= slot]] void reset()
+  [[= qt::slot]] void reset()
   {
     calls = 0;
   }
 
-  [[= invocable]] int twice(int n) const
+  [[= qt::invocable]] int twice(int n) const
   {
     return 2 * n;
   }
@@ -70,30 +72,30 @@ struct service : reflex::qt::object<service>
   int calls = 0;
 };
 
-struct settings : reflex::qt::object<settings>
+struct settings : qt::object<settings>
 {
-  [[= prop{}]] int                                volume = 0;
-  [[= prop{.write = false}]] int                  peak   = 0;
-  [[= prop{.notify = false}]] int                 cursor = 0;
-  [[= prop{.constant = true}]] int                limit  = 100;
-  [[= prop{.final = true, .required = true}]] int rate   = 44100;
+  [[= qt::prop{}]] int                                volume = 0;
+  [[= qt::prop{.write = false}]] int                  peak   = 0;
+  [[= qt::prop{.notify = false}]] int                 cursor = 0;
+  [[= qt::prop{.constant = true}]] int                limit  = 100;
+  [[= qt::prop{.final = true, .required = true}]] int rate   = 44100;
 };
 
-struct scaled : reflex::qt::object<scaled>
+struct scaled : qt::object<scaled>
 {
-  [[= prop{}]] int raw = 0;
+  [[= qt::prop{}]] int raw = 0;
 
-  [[= getter<^^raw>]] int getRaw() const
+  [[= qt::getter<^^raw>]] int getRaw() const
   {
     return raw * 2;
   }
 
-  [[= setter<^^raw>]] void setRaw(int value)
+  [[= qt::setter<^^raw>]] void setRaw(int value)
   {
     raw = value / 2;
   }
 
-  [[= listener<^^raw>]] void onRawChanged()
+  [[= qt::listener<^^raw>]] void onRawChanged()
   {
     ++changes;
   }
@@ -101,9 +103,9 @@ struct scaled : reflex::qt::object<scaled>
   int changes = 0;
 };
 
-struct[[= reflex::qt::naming::qt_style]] conventional : reflex::qt::object<conventional>
+struct[[= qt::naming::qt_style]] conventional : qt::object<conventional>
 {
-  [[= prop{}]] int p1 = 0;
+  [[= qt::prop{}]] int p1 = 0;
 
   int getP1() const
   {
@@ -123,30 +125,30 @@ struct[[= reflex::qt::naming::qt_style]] conventional : reflex::qt::object<conve
   int changes = 0;
 };
 
-struct poller : reflex::qt::object<poller>
+struct poller : qt::object<poller>
 {
   void tick()
   {
     ++ticks;
   }
 
-  timer<^^tick> tick_timer;
+  qt::timer<^^tick> tick_timer;
 
   int ticks = 0;
 };
 
-struct point : reflex::qt::gadget<point>
+struct point : qt::gadget<point>
 {
-  [[= prop{}]] int x = 0;
-  [[= prop{}]] int y = 0;
+  [[= qt::prop{}]] int x = 0;
+  [[= qt::prop{}]] int y = 0;
 
-  [[= invocable]] int manhattan() const
+  [[= qt::invocable]] int manhattan() const
   {
     return x + y;
   }
 };
 
-struct styled : reflex::qt::object<styled>
+struct styled : qt::object<styled>
 {
   enum Color
   {
@@ -170,29 +172,29 @@ struct styled : reflex::qt::object<styled>
 
   using Options = QFlags<Option>;
 
-  [[= prop{}]] Color   color = Red;
-  [[= prop{}]] Mode    mode  = Mode::Fast;
-  [[= prop{}]] Options options;
+  [[= qt::prop{}]] Color   color = Red;
+  [[= qt::prop{}]] Mode    mode  = Mode::Fast;
+  [[= qt::prop{}]] Options options;
 };
 
-struct controller : reflex::qt::object<controller>
+struct controller : qt::object<controller>
 {
-  friend reflex::qt::access<controller>;
+  friend qt::access<controller>;
 
   int seen = 0;
 
 private:
-  [[= slot]] void onThing(int n)
+  [[= qt::slot]] void onThing(int n)
   {
     seen += n;
   }
 
-  [[= prop{}]] int count = 0;
+  [[= qt::prop{}]] int count = 0;
 };
 
-struct [[= reflex::qt::classinfo{"author", "reflex"}]] described : reflex::qt::object<described>
+struct [[= qt::classinfo{"author", "reflex"}]] described : qt::object<described>
 {
-  [[= prop{}]] int value = 0;
+  [[= qt::prop{}]] int value = 0;
 };
 
 namespace
@@ -408,8 +410,7 @@ TEST_CASE("README: connection_guard")
   int     calls = 0;
 
   {
-    reflex::qt::connection_guard guard =
-        QObject::connect(&sender, &emitter::ping, [&calls] { ++calls; });
+    qt::connection_guard guard = QObject::connect(&sender, &emitter::ping, [&calls] { ++calls; });
     sender.ping();
   }
   sender.ping();
@@ -426,7 +427,7 @@ TEST_CASE("README: QString formatting")
 
 TEST_CASE("README: describe and dump")
 {
-  const std::string text = reflex::qt::describe<counter>();
+  const std::string text = qt::describe<counter>();
 
   CHECK(text.starts_with("class counter\n"));
   CHECK(text.contains("  signal      changed(int)\n"));

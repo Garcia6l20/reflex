@@ -8,6 +8,8 @@
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 
+using namespace reflex::qt;
+
 struct payload
 {
   int value = 0;

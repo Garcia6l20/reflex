@@ -9,6 +9,8 @@
 
 #include <string_view>
 
+using namespace reflex::qt;
+
 struct custom
 {
   int value = 0;

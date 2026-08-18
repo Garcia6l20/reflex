@@ -17,10 +17,12 @@ namespace reflex::qt
 /** @brief CRTP base publishing @p Super to Qt as a `Q_GADGET`
  *
  * ```cpp
- * struct point : reflex::qt::gadget<point>
+ * namespace qt = reflex::qt;
+ *
+ * struct point : qt::gadget<point>
  * {
- *   [[= prop{}]] int x = 0;
- *   [[= invocable]] int twice() const { return 2 * x; }
+ *   [[= qt::prop{}]] int x = 0;
+ *   [[= qt::invocable]] int twice() const { return 2 * x; }
  * };
  * ```
  *
@@ -37,7 +39,7 @@ public:
   {
     [[maybe_unused]] static constexpr bool checked = detail::check_readable(^^Super, Property);
 
-    static constexpr auto reader = detail::accessor_for<^^detail::getter>(^^Super, Property);
+    static constexpr auto reader = detail::accessor_for<^^getter_t>(^^Super, Property);
     if constexpr(reader != meta::null)
     {
       return access<Super>::template call<reader>(self);
@@ -65,8 +67,8 @@ public:
   {
     [[maybe_unused]] static constexpr bool checked = detail::check_writable(^^Super, Property);
 
-    static constexpr auto writer  = detail::accessor_for<^^detail::setter>(^^Super, Property);
-    static constexpr auto handler = detail::accessor_for<^^detail::listener>(^^Super, Property);
+    static constexpr auto writer  = detail::accessor_for<^^setter_t>(^^Super, Property);
+    static constexpr auto handler = detail::accessor_for<^^listener_t>(^^Super, Property);
 
     if constexpr(writer != meta::null)
     {
@@ -108,15 +110,6 @@ public:
     using owner             = [:meta::parent_of(p):];
     static_cast<owner&>(self).template setProperty<p>(std::forward<T>(value));
   }
-
-protected:
-  static constexpr detail::invocable invocable{};
-
-  using prop = detail::property;
-
-  template <meta::info Property> static constexpr detail::getter<Property> getter{};
-  template <meta::info Property> static constexpr detail::setter<Property> setter{};
-  template <meta::info Property> static constexpr detail::listener<Property> listener{};
 };
 }
 

@@ -24,17 +24,19 @@ Header-only. `#include <reflex/qt.hpp>` and link `Qt6Core`.
 #include <QtCore/QMetaObject>
 #include <QtCore/QObject>
 
-struct counter : reflex::qt::object<counter>
+namespace qt = reflex::qt;
+
+struct counter : qt::object<counter>
 {
   signal<int> changed{this};
 
-  [[= slot]] void bump()
+  [[= qt::slot]] void bump()
   {
     setProperty<"value">(value + 1);
     changed(value);
   }
 
-  [[= prop{}]] int value = 0;
+  [[= qt::prop{}]] int value = 0;
 };
 ```
 
@@ -50,6 +52,11 @@ QMetaObject::invokeMethod(&c, "bump");
 `counter` publishes one signal, one notify signal `valueChanged()`, one slot and one
 property, in the method table order moc would use.
 
+Every annotation lives in namespace `reflex::qt`. The snippets here open with
+`namespace qt = reflex::qt;` and write `qt::prop{}`. A file-scope `using namespace
+reflex::qt;` gives the bare `prop{}` instead. `signal` is the one name that comes from the
+base rather than the namespace, because a signal has to know the class that emits it.
+
 ---
 
 ## Objects
@@ -60,14 +67,14 @@ included, so a reflex class can derive from `QWidget` and a reflex class can der
 another reflex class.
 
 ```cpp
-struct base_widget : reflex::qt::object<base_widget>
+struct base_widget : qt::object<base_widget>
 {
-  [[= prop{}]] int level = 0;
+  [[= qt::prop{}]] int level = 0;
 };
 
-struct derived_widget : reflex::qt::object<derived_widget, base_widget>
+struct derived_widget : qt::object<derived_widget, base_widget>
 {
-  [[= prop{}]] int depth = 0;
+  [[= qt::prop{}]] int depth = 0;
 };
 ```
 
@@ -75,22 +82,18 @@ Method and property offsets come out the way moc computes them, so
 `QMetaObject::superClass()` chains and an inherited property is written and notified
 through the class that declares it.
 
-The annotations `prop`, `slot`, `invocable`, `getter`, `setter` and `listener` are members
-of the base, so they are spelled unqualified inside the class body. `classinfo` and
-`naming::qt_style` sit in namespace `reflex::qt` and are spelled in full.
-
 ### Signals
 
 A signal is a data member of type `signal<Args...>`, constructed with `this`. Calling it
 emits.
 
 ```cpp
-struct emitter : reflex::qt::object<emitter>
+struct emitter : qt::object<emitter>
 {
-  signal<>                       ping{this};
-  signal<int, with_default<int>> pair{this, 42};
+  signal<>                           ping{this};
+  signal<int, qt::with_default<int>> pair{this, 42};
 
-  [[= slot]] void onPair(int a, int b)
+  [[= qt::slot]] void onPair(int a, int b)
   {
     sum = a + b;
   }
@@ -107,7 +110,7 @@ e.pair(1, 2);   // e.sum == 3
 e.pair(1);      // e.sum == 43, the default fills the missing argument
 ```
 
-`with_default<T>` marks an argument that may be omitted, and its value is given at
+`qt::with_default<T>` marks an argument that may be omitted, and its value is given at
 construction. Qt publishes one method table entry per reachable arity, so `pair` appears as
 both `pair(int,int)` and `pair(int)` and a `SIGNAL(pair(int))` connect delivers once.
 
@@ -117,18 +120,18 @@ marker cannot be inferred away.
 
 ### Slots and invocables
 
-`[[= slot]]` publishes a member function as a slot, `[[= invocable]]` as a `Q_INVOKABLE`
+`[[= qt::slot]]` publishes a member function as a slot, `[[= qt::invocable]]` as a `Q_INVOKABLE`
 method. Both accept default arguments and both keep their parameter names.
 
 ```cpp
-struct service : reflex::qt::object<service>
+struct service : qt::object<service>
 {
-  [[= slot]] void reset()
+  [[= qt::slot]] void reset()
   {
     calls = 0;
   }
 
-  [[= invocable]] int twice(int n) const
+  [[= qt::invocable]] int twice(int n) const
   {
     return 2 * n;
   }
@@ -147,17 +150,17 @@ QMetaObject::invokeMethod(&s, "twice", Q_RETURN_ARG(int, doubled), Q_ARG(int, 21
 
 ### Properties
 
-`[[= prop{}]]` on a data member publishes it as a `Q_PROPERTY`. Every flag defaults to what
+`[[= qt::prop{}]]` on a data member publishes it as a `Q_PROPERTY`. Every flag defaults to what
 a plain `Q_PROPERTY ... MEMBER` gets from moc.
 
 ```cpp
-struct settings : reflex::qt::object<settings>
+struct settings : qt::object<settings>
 {
-  [[= prop{}]] int                                volume = 0;
-  [[= prop{.write = false}]] int                  peak   = 0;
-  [[= prop{.notify = false}]] int                 cursor = 0;
-  [[= prop{.constant = true}]] int                limit  = 100;
-  [[= prop{.final = true, .required = true}]] int rate   = 44100;
+  [[= qt::prop{}]] int                                volume = 0;
+  [[= qt::prop{.write = false}]] int                  peak   = 0;
+  [[= qt::prop{.notify = false}]] int                 cursor = 0;
+  [[= qt::prop{.constant = true}]] int                limit  = 100;
+  [[= qt::prop{.final = true, .required = true}]] int rate   = 44100;
 };
 ```
 
@@ -198,21 +201,21 @@ through member functions. The annotation names the property by reflection, so a 
 compile error at the annotation rather than an accessor that silently never runs.
 
 ```cpp
-struct scaled : reflex::qt::object<scaled>
+struct scaled : qt::object<scaled>
 {
-  [[= prop{}]] int raw = 0;
+  [[= qt::prop{}]] int raw = 0;
 
-  [[= getter<^^raw>]] int getRaw() const
+  [[= qt::getter<^^raw>]] int getRaw() const
   {
     return raw * 2;
   }
 
-  [[= setter<^^raw>]] void setRaw(int value)
+  [[= qt::setter<^^raw>]] void setRaw(int value)
   {
     raw = value / 2;
   }
 
-  [[= listener<^^raw>]] void onRawChanged()
+  [[= qt::listener<^^raw>]] void onRawChanged()
   {
     ++changes;
   }
@@ -230,13 +233,13 @@ struct scaled : reflex::qt::object<scaled>
 
 ### Naming conventions
 
-`[[= reflex::qt::naming::qt_style]]` on the class finds the accessors by the names Qt code
+`[[= qt::naming::qt_style]]` on the class finds the accessors by the names Qt code
 usually gives them, with no annotation on any of them.
 
 ```cpp
-struct[[= reflex::qt::naming::qt_style]] conventional : reflex::qt::object<conventional>
+struct[[= qt::naming::qt_style]] conventional : qt::object<conventional>
 {
-  [[= prop{}]] int p1 = 0;
+  [[= qt::prop{}]] int p1 = 0;
 
   int getP1() const
   {
@@ -280,19 +283,19 @@ target that never fires.
 
 ### Timers
 
-A `timer<^^handler>` data member declares a timer driving the member function `handler`.
+A `qt::timer<^^handler>` data member declares a timer driving the member function `handler`.
 The storage is one `int` and lives in the class that wants the timer, so a class with no
 timer pays nothing.
 
 ```cpp
-struct poller : reflex::qt::object<poller>
+struct poller : qt::object<poller>
 {
   void tick()
   {
     ++ticks;
   }
 
-  timer<^^tick> tick_timer;
+  qt::timer<^^tick> tick_timer;
 
   int ticks = 0;
 };
@@ -324,12 +327,12 @@ Properties, invocables, class infos and enums all work. Signals, slots and timer
 because a gadget has no metacall to carry them.
 
 ```cpp
-struct point : reflex::qt::gadget<point>
+struct point : qt::gadget<point>
 {
-  [[= prop{}]] int x = 0;
-  [[= prop{}]] int y = 0;
+  [[= qt::prop{}]] int x = 0;
+  [[= qt::prop{}]] int y = 0;
 
-  [[= invocable]] int manhattan() const
+  [[= qt::invocable]] int manhattan() const
   {
     return x + y;
   }
@@ -356,7 +359,7 @@ Every nested enumeration is published, and so is every member alias of a `QFlags
 specialization over one of them. No annotation, no `Q_ENUM`, no `Q_FLAG`.
 
 ```cpp
-struct styled : reflex::qt::object<styled>
+struct styled : qt::object<styled>
 {
   enum Color
   {
@@ -380,9 +383,9 @@ struct styled : reflex::qt::object<styled>
 
   using Options = QFlags<Option>;
 
-  [[= prop{}]] Color   color = Red;
-  [[= prop{}]] Mode    mode  = Mode::Fast;
-  [[= prop{}]] Options options;
+  [[= qt::prop{}]] Color   color = Red;
+  [[= qt::prop{}]] Mode    mode  = Mode::Fast;
+  [[= qt::prop{}]] Options options;
 };
 ```
 
@@ -406,19 +409,19 @@ Splicing one is still access-checked, and every such splice in the module is wri
 `reflex::qt::access<Super>`, so one friend declaration opens all of them.
 
 ```cpp
-struct controller : reflex::qt::object<controller>
+struct controller : qt::object<controller>
 {
-  friend reflex::qt::access<controller>;
+  friend qt::access<controller>;
 
   int seen = 0;
 
 private:
-  [[= slot]] void onThing(int n)
+  [[= qt::slot]] void onThing(int n)
   {
     seen += n;
   }
 
-  [[= prop{}]] int count = 0;
+  [[= qt::prop{}]] int count = 0;
 };
 ```
 
@@ -432,21 +435,21 @@ add:
 
 ```
 error: ... 'what()': 'reflex.qt cannot reach controller::onThing(int):
-                      add 'friend reflex::qt::access<controller>;' to controller'
+                      add 'friend qt::access<controller>;' to controller'
 ```
 
 ---
 
 ## Class infos
 
-`[[= reflex::qt::classinfo{key, value}]]` on the class becomes a `Q_CLASSINFO` entry, one
+`[[= qt::classinfo{key, value}]]` on the class becomes a `Q_CLASSINFO` entry, one
 per annotation, in declaration order.
 
 ```cpp
-struct [[= reflex::qt::classinfo{"author", "reflex"}]] described
-    : reflex::qt::object<described>
+struct [[= qt::classinfo{"author", "reflex"}]] described
+    : qt::object<described>
 {
-  [[= prop{}]] int value = 0;
+  [[= qt::prop{}]] int value = 0;
 };
 ```
 
@@ -483,7 +486,7 @@ disconnect the same connection twice.
 ```cpp
 emitter sender;
 {
-  reflex::qt::connection_guard guard = QObject::connect(&sender, &emitter::ping, [] { });
+  qt::connection_guard guard = QObject::connect(&sender, &emitter::ping, [] { });
   sender.ping();
 }
 sender.ping();   // nothing runs, the guard disconnected on scope exit
@@ -517,14 +520,14 @@ not drag `<print>` into every translation unit.
 ```cpp
 #include <reflex/qt/debug.hpp>
 
-const std::string text = reflex::qt::describe<counter>();
+const std::string text = qt::describe<counter>();
 // class counter
 //   signal      changed(int)
 //   signal      valueChanged()
 //   slot        bump()
 //   property    value : int
 
-reflex::qt::dump(some_qobject);   // the same text, to stdout
+qt::dump(some_qobject);   // the same text, to stdout
 ```
 
 ---
@@ -588,7 +591,7 @@ after actually building and running the suite against another Qt.
 ## Not supported yet
 
 **QML.** No `QML_ELEMENT`, no `qmltyperegistrar` metadata, no QML module. A reflex class
-cannot be instantiated from QML today. `[[= classinfo{"QML.Element", "Name"}]]` reaches the
+cannot be instantiated from QML today. `[[= qt::classinfo{"QML.Element", "Name"}]]` reaches the
 metaobject, which is the entry point the QML work will build on, but nothing consumes it.
 The missing piece is the moc-shaped JSON `qmltyperegistrar` reads, which has to be emitted
 from reflection and fed into the build.
@@ -607,7 +610,7 @@ with no storage, is not expressible: a getter and a setter are optional decorati
 member, not a substitute for one.
 
 **Signal parameter names.** `QMetaMethod::parameterNames()` returns empty strings for a
-signal. A `signal<int, with_default<int>>` carries types and not names, which is a
+signal. A `signal<int, qt::with_default<int>>` carries types and not names, which is a
 permanent consequence of declaring a signal as a data member. Slot and invocable parameter
 names are emitted and match moc. This is cosmetic for `connect` and `invokeMethod` and
 shows only in tooling.
