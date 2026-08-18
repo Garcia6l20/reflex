@@ -9,7 +9,6 @@
 #include <QtCore/qmetaobject.h>
 #include <QtCore/qmetatype.h>
 
-#include <algorithm>
 #include <type_traits>
 #include <utility>
 
@@ -36,9 +35,7 @@ public:
 
   template <meta::info Property> auto property(this auto& self)
   {
-    static_assert(std::ranges::contains(detail::gadget_impl<Super>::strings::properties, Property),
-                  "no such property");
-    static_assert(detail::property_spec_of(Property).read, "the property is not readable");
+    [[maybe_unused]] static constexpr bool checked = detail::check_readable(^^Super, Property);
 
     static constexpr auto reader = detail::accessor_for<^^detail::getter>(^^Super, Property);
     if constexpr(reader != meta::null)
@@ -59,18 +56,14 @@ public:
    */
   template <constant_string name> auto property(this auto& self)
   {
-    static constexpr auto p =
-        meta::member_named(^^Super, *name, meta::access_context::unchecked(), true);
-    static_assert(p != meta::null, "no such property");
-    using owner = [:meta::parent_of(p):];
+    static constexpr auto p = detail::required_member_named(^^Super, *name);
+    using owner             = [:meta::parent_of(p):];
     return static_cast<owner&>(self).template property<p>();
   }
 
   template <meta::info Property, typename T> void setProperty(this auto& self, T&& value)
   {
-    static_assert(std::ranges::contains(detail::gadget_impl<Super>::strings::properties, Property),
-                  "no such property");
-    static_assert(detail::property_spec_of(Property).writable(), "the property is not writable");
+    [[maybe_unused]] static constexpr bool checked = detail::check_writable(^^Super, Property);
 
     static constexpr auto writer  = detail::accessor_for<^^detail::setter>(^^Super, Property);
     static constexpr auto handler = detail::accessor_for<^^detail::listener>(^^Super, Property);
@@ -111,10 +104,8 @@ public:
    */
   template <constant_string name, typename T> void setProperty(this auto& self, T&& value)
   {
-    static constexpr auto p =
-        meta::member_named(^^Super, *name, meta::access_context::unchecked(), true);
-    static_assert(p != meta::null, "no such property");
-    using owner = [:meta::parent_of(p):];
+    static constexpr auto p = detail::required_member_named(^^Super, *name);
+    using owner             = [:meta::parent_of(p):];
     static_cast<owner&>(self).template setProperty<p>(std::forward<T>(value));
   }
 

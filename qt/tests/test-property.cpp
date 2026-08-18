@@ -200,6 +200,28 @@ TEST_CASE("a property or accessor that cannot be honoured is rejected at compile
   }
 }
 
+TEST_CASE("a property query the class cannot answer is rejected at compile time")
+{
+  consteval
+  {
+    REFLEX_CONSTEVAL_NOTHROW(qtd::check_readable(^^accessed, ^^accessed::p1));
+    REFLEX_CONSTEVAL_NOTHROW(qtd::check_writable(^^accessed, ^^accessed::p1));
+    REFLEX_CONSTEVAL_NOTHROW(qtd::check_notifying(^^accessed::p1));
+    REFLEX_CONSTEVAL_NOTHROW(qtd::required_property_named(^^accessed, "p1"));
+    REFLEX_CONSTEVAL_NOTHROW(qtd::required_member_named(^^accessed, "p1"));
+
+    REFLEX_CONSTEVAL_THROWS(qtd::check_readable(^^accessed, ^^accessed::listener_calls));
+    REFLEX_CONSTEVAL_THROWS(
+        qtd::check_readable(^^bad::neither_readable_nor_writable,
+                            ^^bad::neither_readable_nor_writable::p1));
+    REFLEX_CONSTEVAL_THROWS(qtd::check_writable(^^locked, ^^locked::frozen));
+    REFLEX_CONSTEVAL_THROWS(qtd::check_writable(^^constant_alone, ^^constant_alone::fixed));
+    REFLEX_CONSTEVAL_THROWS(qtd::check_notifying(^^mixed::quiet));
+    REFLEX_CONSTEVAL_THROWS(qtd::required_property_named(^^accessed, "nope"));
+    REFLEX_CONSTEVAL_THROWS(qtd::required_member_named(^^accessed, "nope"));
+  }
+}
+
 TEST_CASE("accessor resolution picks the annotation, then the convention, then nothing")
 {
   static_assert(

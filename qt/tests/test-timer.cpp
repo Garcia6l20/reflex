@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <reflex/const_check.hpp>
 #include <reflex/qt.hpp>
 
 #include <QtCore/QCoreApplication>
@@ -88,10 +89,23 @@ static_assert(
         == ^^ticker::tick,
     "a handler written in the class body is the same entity as one written outside");
 
-static_assert(timer_meta::timer_handlers_are_reachable(^^ticker));
-static_assert(timer_meta::timer_handlers_are_unique(^^ticker));
-static_assert(not timer_meta::timer_handlers_are_reachable(^^foreign_handler));
-static_assert(not timer_meta::timer_handlers_are_unique(^^duplicate_handlers));
+TEST_CASE("a timer a class cannot dispatch is rejected at compile time")
+{
+  consteval
+  {
+    REFLEX_CONSTEVAL_NOTHROW(timer_meta::check_timer_handler(^^ticker::tick));
+    REFLEX_CONSTEVAL_NOTHROW(timer_meta::validate_timers(^^ticker));
+    REFLEX_CONSTEVAL_NOTHROW(timer_meta::validate_timers(^^derived_ticker));
+    REFLEX_CONSTEVAL_NOTHROW(
+        timer_meta::required_timer_member_of(^^derived_ticker, ^^base_ticker::beat));
+
+    REFLEX_CONSTEVAL_THROWS(timer_meta::check_timer_handler(^^int));
+    REFLEX_CONSTEVAL_THROWS(timer_meta::check_timer_handler(^^elsewhere));
+    REFLEX_CONSTEVAL_THROWS(timer_meta::validate_timers(^^foreign_handler));
+    REFLEX_CONSTEVAL_THROWS(timer_meta::validate_timers(^^duplicate_handlers));
+    REFLEX_CONSTEVAL_THROWS(timer_meta::required_timer_member_of(^^ticker, ^^elsewhere::ping));
+  }
+}
 
 namespace
 {

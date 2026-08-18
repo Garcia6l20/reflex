@@ -131,9 +131,9 @@ public:
   template <constant_string name> void propertyChanged()
   {
     using strings                  = typename detail::gadget_impl<Super>::strings;
-    static constexpr auto declared = detail::property_named(^^Super, *name);
-    static_assert(declared != meta::null, "no such property");
-    static_assert(detail::property_spec_of(declared).notifying(), "the property does not notify");
+    static constexpr auto declared = detail::required_property_named(^^Super, *name);
+
+    [[maybe_unused]] static constexpr bool checked = detail::check_notifying(declared);
 
     constexpr auto index = strings::notifier_index_of(*name);
     QMetaObject::activate(this, &staticMetaObject, int(index), nullptr);
@@ -160,9 +160,8 @@ private:
 
   template <meta::info handler> auto& timer_state()
   {
-    static constexpr auto m = detail::timer_member_of(^^Super, handler);
-    static_assert(m != meta::null, "no timer member declares this handler");
-    using owner = [:meta::parent_of(m):];
+    static constexpr auto m = detail::required_timer_member_of(^^Super, handler);
+    using owner             = [:meta::parent_of(m):];
     return access<owner>::template member<m>(static_cast<owner&>(*static_cast<Super*>(this)));
   }
 };
@@ -170,11 +169,7 @@ private:
 template <typename Super, typename ParentT>
 void object<Super, ParentT>::timerEvent(QTimerEvent* event)
 {
-  [[maybe_unused]] static constexpr bool timers_reachable = detail::timer_access_is_open<Super>();
-  static_assert(detail::timer_handlers_are_reachable(^^Super),
-                "a timer names a member function of another class");
-  static_assert(detail::timer_handlers_are_unique(^^Super),
-                "two timers name the same handler");
+  [[maybe_unused]] static constexpr bool checked = detail::check_timers<Super>();
 
   auto& self = *static_cast<Super*>(this);
   template for(constexpr auto m : define_static_array(detail::timer_members_of(^^Super)))
