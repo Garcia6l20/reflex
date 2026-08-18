@@ -45,6 +45,7 @@ LIBRARY_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "serde": ("poly",),
     "jinja": ("serde",),
     "py": (),
+    "qt": ("cli", "poly"),
 }
 
 
