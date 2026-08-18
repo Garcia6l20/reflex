@@ -2,6 +2,7 @@
 
 #include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
+#include <reflex/qt/access.hpp>
 #include <reflex/qt/detail/annotations.hpp>
 #include <reflex/qt/detail/object_impl.hpp>
 #include <reflex/qt/detail/timer.hpp>
@@ -162,13 +163,14 @@ private:
     static constexpr auto m = detail::timer_member_of(^^Super, handler);
     static_assert(m != meta::null, "no timer member declares this handler");
     using owner = [:meta::parent_of(m):];
-    return static_cast<owner&>(*static_cast<Super*>(this)).[:m:];
+    return access<owner>::template member<m>(static_cast<owner&>(*static_cast<Super*>(this)));
   }
 };
 
 template <typename Super, typename ParentT>
 void object<Super, ParentT>::timerEvent(QTimerEvent* event)
 {
+  [[maybe_unused]] static constexpr bool timers_reachable = detail::timer_access_is_open<Super>();
   static_assert(detail::timer_handlers_are_reachable(^^Super),
                 "a timer names a member function of another class");
   static_assert(detail::timer_handlers_are_unique(^^Super),
@@ -177,10 +179,11 @@ void object<Super, ParentT>::timerEvent(QTimerEvent* event)
   auto& self = *static_cast<Super*>(this);
   template for(constexpr auto m : define_static_array(detail::timer_members_of(^^Super)))
   {
-    if(self.[:m:].id_ == event->timerId())
+    if(access<Super>::template member<m>(self).id_ == event->timerId())
     {
       constexpr auto handler = detail::timer_handler_of(m);
-      self.[:handler:]();
+      using handler_owner    = [:meta::parent_of(handler):];
+      access<handler_owner>::template call<handler>(static_cast<handler_owner&>(self));
       return;
     }
   }
@@ -219,7 +222,7 @@ void object<Super, ParentT>::trigger(detail::signal_decl<Super, Args...>* sig,
                  and dealias(remove_const(type_of(strings::methods[i].member)))
                          == ^^detail::signal_decl<Super, Args...>)
     {
-      if(&self.[:strings::methods[i].member:] == sig)
+      if(&access<Super>::template member<strings::methods[i].member>(self) == sig)
       {
         QMetaObject::activate<void>(this, &staticMetaObject, int(i), nullptr, args...);
         return;

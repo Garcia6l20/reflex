@@ -2,6 +2,7 @@
 
 #include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
+#include <reflex/qt/access.hpp>
 #include <reflex/qt/detail/annotations.hpp>
 #include <reflex/qt/detail/gadget_impl.hpp>
 
@@ -42,11 +43,11 @@ public:
     static constexpr auto reader = detail::accessor_for<detail::getter>(^^Super, Property);
     if constexpr(reader != meta::null)
     {
-      return self.[:reader:]();
+      return access<Super>::template call<reader>(self);
     }
     else
     {
-      return self.[:Property:];
+      return access<Super>::template member<Property>(self);
     }
   }
 
@@ -76,11 +77,11 @@ public:
 
     if constexpr(writer != meta::null)
     {
-      self.[:writer:](std::forward<T>(value));
+      access<Super>::template call<writer>(self, std::forward<T>(value));
     }
     else
     {
-      auto& target = self.[:Property:];
+      auto& target = access<Super>::template member<Property>(self);
       if constexpr(requires { target == value; })
       {
         if(target == value)
@@ -92,7 +93,7 @@ public:
     }
     if constexpr(handler != meta::null)
     {
-      self.[:handler:]();
+      access<Super>::template call<handler>(self);
     }
     if constexpr(detail::gadget_impl<Super>::strings::is_object
                  and detail::property_spec_of(Property).notifying())
