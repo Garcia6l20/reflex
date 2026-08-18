@@ -12,7 +12,8 @@ class infos, method signatures and kinds, clone flags, constness, return and par
 metatypes, parameter names for slots and invocables, property flags and notify indices, and
 every enumerator. What differs is listed under [Differences from moc](#differences-from-moc).
 
-Header-only. `#include <reflex/qt.hpp>` and link `Qt6Core`.
+Header-only. `#include <reflex/qt.hpp>` and link `Qt6Core`. The `reflex/qt/moc/` headers
+also need `reflex.serde` on the include path.
 
 ---
 
@@ -503,6 +504,95 @@ struct [[= qt::classinfo{"author", "reflex"}]] described
 
 ---
 
+## Metatypes and QML
+
+`qmltyperegistrar` reads the JSON document moc writes with `--output-json`. reflex.qt emits
+the same document from reflection, so a reflex class can be registered with the QML engine
+without moc running on anything.
+
+Declare the classes a document describes with a module body, in the shape of
+`REFLEX_PY_MODULE`:
+
+```cpp
+#include <reflex/qt/moc/export.hpp>
+
+REFLEX_QT_MODULE(app_types, m)
+{
+  m.expose<^^app::controllers>();   // every reflex.qt class declared in the namespace
+  m.expose<app::settings>();        // one class
+}
+
+int main(int, char** argv)
+{
+  return reflex::qt::moc::write_metatypes<app_types>(argv[1]);
+}
+```
+
+The body is a `consteval` function, so the list is a compile-time one. Nothing runs before
+`main`, there is no registry, and a class appears in the document because a body named it.
+A namespace sweep takes the classes declared directly in the namespace, in declaration
+order, and does not recurse: name a nested namespace to reach into it.
+
+`expose` rejects, at the call, anything that is not a complete class deriving
+`qt::gadget<T>` or `qt::object<T>`, and any class with a published member that
+[`qt::access<T>`](#private-members) cannot splice. The second is deliberate: a document
+describing fewer members than the `QMetaObject` in the same binary is worse than no
+document.
+
+### QML type registration
+
+Every `QML_*` macro is a class info to moc, and nothing else, so `qt::classinfo` publishes
+them today:
+
+| moc macro | annotation |
+|---|---|
+| `QML_ELEMENT` | `[[= qt::classinfo{"QML.Element", "auto"}]]` |
+| `QML_NAMED_ELEMENT(Name)` | `[[= qt::classinfo{"QML.Element", "Name"}]]` |
+| `QML_VALUE_TYPE(name)` on a gadget | `[[= qt::classinfo{"QML.Element", "name"}]]` |
+| `QML_SINGLETON` | `[[= qt::classinfo{"QML.Singleton", "true"}]]` |
+
+```cpp
+struct [[= qt::classinfo{"QML.Element", "auto"}]] controller
+    : qt::object<controller>
+{
+  [[= qt::prop{}]] int count = 0;
+};
+```
+
+A shorter vocabulary for these is a later step's; the class infos above are the encoding it
+would produce, so nothing written this way has to change.
+
+### `inputFile`
+
+`qmltyperegistrar` writes `#if __has_include(<inputFile>)` into the registration it
+generates, so the path has to resolve as an angled include on the line that compiles that
+file. The default is the absolute path the compiler saw, which always resolves. Name the
+include directories the consumer will pass to get the short, relocatable spelling:
+
+```cpp
+reflex::qt::moc::write_metatypes<app_types>(argv[1], {.include_roots = {"include"}});
+// /src/app/include/app/thing.hpp  ->  app/thing.hpp
+```
+
+### What the document says
+
+The fields are moc's schema, not reflex's, and the values come from the same reflections the
+`QMetaObject` is built from rather than from a readback of it. So a property carries the
+real names of its `getter` and `setter` where moc carries `READ` and `WRITE`, a property
+with neither carries `member` the way moc's `MEMBER` does, a slot and an invocable carry
+their parameter names, and `constant`, `final` and `required` come from the `prop{}`
+annotation. An absent field is left out rather than written as `null`, which is what moc
+does and what `qmltyperegistrar` reads.
+
+`qt/tests/moc-cross-check.py` is the proof: it runs real moc on `qt/tests/moc-mirror.hpp`
+and the exporter on the equivalent reflex class, normalizes both and diffs them. The two
+documents differ in one place, the signal parameter name below.
+
+The build glue that feeds the document to `qmltyperegistrar` is not written yet, so a QML
+module still has to be wired by hand.
+
+---
+
 ## Differences from moc
 
 Four, all understood, none observable through the `QMetaObject` API except the last.
@@ -638,11 +728,10 @@ after actually building and running the suite against another Qt.
 
 ## Not supported yet
 
-**QML.** No `QML_ELEMENT`, no `qmltyperegistrar` metadata, no QML module. A reflex class
-cannot be instantiated from QML today. `[[= qt::classinfo{"QML.Element", "Name"}]]` reaches the
-metaobject, which is the entry point the QML work will build on, but nothing consumes it.
-The missing piece is the moc-shaped JSON `qmltyperegistrar` reads, which has to be emitted
-from reflection and fed into the build.
+**A QML module end to end.** The metatypes document is emitted and
+`qmltyperegistrar` accepts it, see [Metatypes and QML](#metatypes-and-qml), but nothing
+declares the exporter program or feeds its output to the registrar for you. A QML module
+has to be wired by hand until the build glue lands.
 
 **C++ modules.** Qt and C++ named modules do not work together on this toolchain, so
 `reflex.qt` ships as headers rather than as a `.cppm`, alone among the reflex modules. Its
