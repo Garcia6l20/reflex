@@ -70,6 +70,7 @@ add_subdirectory("poly")
 add_subdirectory("serde")
 add_subdirectory("jinja")
 add_subdirectory("py")
+add_subdirectory("qt")
 
 coverage_command.register()
 instantiations_command.register()
