@@ -101,6 +101,20 @@ consteval std::string notifier_name_of(meta::info Property)
   return std::string{identifier_of(Property)} + "Changed";
 }
 
+/** @brief one `QMetaEnum` a class publishes
+ *
+ * `type` names the entry: the enumeration itself, or the member alias of a
+ * `QFlags` specialization. `keys` is the enumeration whose enumerators fill
+ * the entry, which for a flag alias is the `QFlags` argument. The two differ
+ * exactly when the entry is a flag, which is how `QtMocHelpers::EnumData`
+ * decides to set `EnumIsFlag`.
+ */
+struct enum_entry
+{
+  meta::info type;
+  meta::info keys;
+};
+
 /** @brief the string table and the `QMetaObject` data blob of @p Super
  *
  * @p Tag is the per-class unique type moc calls `qt_meta_tag_*_t`; it selects
@@ -157,8 +171,39 @@ template <typename Tag, typename Super> struct meta_strings
                                                     meta::access_context::unchecked()));
   }();
 
+  static constexpr auto enums = [] consteval
+  {
+    std::vector<enum_entry> list;
+    for(auto m : meta::members_of(^^Super, meta::access_context::unchecked()))
+    {
+      if(not meta::is_type(m))
+      {
+        continue;
+      }
+      if(meta::is_type_alias(m))
+      {
+        const auto target = meta::dealias(m);
+        if(not meta::is_template_instance_of(target, ^^QFlags))
+        {
+          continue;
+        }
+        const auto keys = template_arguments_of(target)[0];
+        if(meta::is_enum_type(keys) and parent_of(keys) == ^^Super)
+        {
+          list.push_back({m, keys});
+        }
+      }
+      else if(meta::is_enum_type(m))
+      {
+        list.push_back({m, m});
+      }
+    }
+    return define_static_array(list);
+  }();
+
   static constexpr auto invocable_count = invocables.size();
   static constexpr auto property_count  = properties.size();
+  static constexpr auto enum_count      = enums.size();
 
   static constexpr auto methods = [] consteval
   {
@@ -293,6 +338,15 @@ template <typename Tag, typename Super> struct meta_strings
     for(auto t : custom_types)
     {
       push(normalized_type_name(t));
+    }
+    for(auto const& e : enums)
+    {
+      push(identifier_of(e.type));
+      push(identifier_of(e.keys));
+      for(auto k : meta::enumerators_of(e.keys))
+      {
+        push(identifier_of(k));
+      }
     }
     return define_static_array(list);
   }();
@@ -443,6 +497,34 @@ template <typename Tag, typename Super> struct meta_strings
                                                      notify_id);
   }
 
+  template <std::size_t I>
+  static constexpr auto enumerators_of_enum = define_static_array(meta::enumerators_of(enums[I].keys));
+
+  template <std::size_t I> static consteval auto enum_data_of()
+  {
+    using enum_type = [:enums[I].type:];
+    using data_type = QtMocHelpers::EnumData<enum_type>;
+
+    constexpr auto name  = index_of(identifier_of(enums[I].type));
+    constexpr auto alias = index_of(identifier_of(enums[I].keys));
+
+    if constexpr(enumerators_of_enum<I>.size() == 0)
+    {
+      return data_type(name, alias, 0);
+    }
+    else
+    {
+      return [&]<std::size_t... J>(std::index_sequence<J...>)
+      {
+        const typename data_type::EnumEntry entries[]{
+            typename data_type::EnumEntry{int(index_of(identifier_of(enumerators_of_enum<I>[J]))),
+                                          [:enumerators_of_enum<I>[J]:]}...
+        };
+        return data_type(name, alias, 0).add(entries);
+      }(std::make_index_sequence<enumerators_of_enum<I>.size()>());
+    }
+  }
+
   static consteval auto create_meta_objectdata()
   {
     namespace QMC = QtMocConstants;
@@ -474,7 +556,11 @@ template <typename Tag, typename Super> struct meta_strings
       }
     }(std::make_index_sequence<classinfo_count>());
 
-    QtMocHelpers::UintData qt_enums{};
+    const auto qt_enums = []<std::size_t... I>(std::index_sequence<I...>)
+    {
+      return QtMocHelpers::UintData{enum_data_of<I>()...};
+    }(std::make_index_sequence<enum_count>());
+
     QtMocHelpers::UintData qt_constructors{};
 
     constexpr uint object_flags = is_object ? uint(QMC::MetaObjectFlag{})
