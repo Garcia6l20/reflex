@@ -1,9 +1,11 @@
 #include <doctest/doctest.h>
 
 #include <reflex/qt.hpp>
+#include <reflex/qt/debug.hpp>
 
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtCore/QTimer>
 
 #include <format>
 #include <string>
@@ -120,4 +122,65 @@ TEST_CASE("the QString formatter honours the string format spec")
   CHECK(std::format("{:>7}", QString{"hi"}) == "     hi");
   CHECK(std::format("{:.<7}", QString{"hi"}) == "hi.....");
   CHECK(std::format("{:.2}", QString{"hello"}) == "he");
+}
+
+struct [[= reflex::qt::classinfo{"author", "reflex"}]]
+[[= reflex::qt::classinfo{"QML.Element", "Described"}]] described
+    : reflex::qt::object<described>
+{
+  enum Color
+  {
+    Red,
+    Green = 5
+  };
+
+  signal<int> valueChanged2{this};
+
+  [[= slot]] void reset()
+  {
+    setProperty<"value">(0);
+  }
+
+  [[= invocable]] int twice() const
+  {
+    return 2 * value;
+  }
+
+  [[= prop{}]] int   value = 0;
+  [[= prop{}]] Color color = Red;
+};
+
+TEST_CASE("describe lists what the metaobject declares")
+{
+  const std::string text = reflex::qt::describe<described>();
+
+  CHECK(text.starts_with("class described\n"));
+  CHECK(text.contains("  classinfo   author = reflex\n"));
+  CHECK(text.contains("  classinfo   QML.Element = Described\n"));
+  CHECK(text.contains("  signal      valueChanged2(int)\n"));
+  CHECK(text.contains("  signal      valueChanged()\n"));
+  CHECK(text.contains("  slot        reset()\n"));
+  CHECK(text.contains("  method      twice()\n"));
+  CHECK(text.contains("  property    value : int\n"));
+  CHECK(text.contains("  property    color : described::Color\n"));
+  CHECK(text.contains("  enum        Color\n"));
+  CHECK(text.contains("    Red = 0\n"));
+  CHECK(text.contains("    Green = 5\n"));
+}
+
+TEST_CASE("describe reads a real moc'ed metaobject too")
+{
+  QTimer     timer;
+  const auto text = reflex::qt::describe(timer);
+
+  CHECK(text.starts_with("class QTimer\n"));
+  CHECK(text.contains("  signal      timeout()\n"));
+  CHECK(text.contains("  slot        start()\n"));
+  CHECK(text.contains("  property    active : bool\n"));
+}
+
+TEST_CASE("describe of an object reads its dynamic metaobject")
+{
+  described instance;
+  CHECK(reflex::qt::describe(instance) == reflex::qt::describe<described>());
 }
