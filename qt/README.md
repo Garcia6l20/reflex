@@ -555,7 +555,11 @@ directories move to `system_include_dirs`, because Qt 6.11 headers trip
 because this Qt is built `-reduce-relocations` and linking without it fails with a copy
 relocation against `QByteArray::_empty`.
 
-The example under `qt/examples/` builds with `REFLEX_BUILD_PROGRAMS=1`.
+The example under `qt/examples/` builds with `REFLEX_BUILD_PROGRAMS=1` and runs with
+
+```console
+$ pcons run qt-example widgets
+```
 
 ---
 
