@@ -113,6 +113,7 @@ void object<Super, ParentT>::trigger(detail::signal_decl<Super, Args...>* sig,
   template for(constexpr auto i : std::views::iota(0uz, strings::method_count))
   {
     if constexpr(strings::methods[i].kind == detail::method_kind::signal_member
+                 and not strings::methods[i].cloned
                  and dealias(remove_const(type_of(strings::methods[i].member)))
                          == ^^detail::signal_decl<Super, Args...>)
     {
