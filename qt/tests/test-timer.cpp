@@ -24,10 +24,6 @@ static_assert(
     sizeof(timerless) == sizeof(baseline),
     "an object with no timer event costs no more than a plain QObject");
 
-static_assert(
-    sizeof(reflex::qt::detail::timer_decl<"tick">) == sizeof(int),
-    "a timer costs one int");
-
 struct ticker : reflex::qt::object<ticker>
 {
   void tick()
@@ -40,12 +36,16 @@ struct ticker : reflex::qt::object<ticker>
     ++tocks;
   }
 
-  timer<"tick"> tick_timer;
-  timer<"tock"> tock_timer;
+  timer<^^tick> tick_timer;
+  timer<^^tock> tock_timer;
 
   int ticks = 0;
   int tocks = 0;
 };
+
+static_assert(
+    sizeof(reflex::qt::detail::timer_decl<^^ticker::tick>) == sizeof(int),
+    "a timer costs one int");
 
 struct base_ticker : reflex::qt::object<base_ticker>
 {
@@ -54,13 +54,44 @@ struct base_ticker : reflex::qt::object<base_ticker>
     ++beats;
   }
 
-  timer<"beat"> beat_timer;
+  timer<^^beat> beat_timer;
 
   int beats = 0;
 };
 
 struct derived_ticker : reflex::qt::object<derived_ticker, base_ticker>
 {};
+
+struct elsewhere
+{
+  void ping() {}
+};
+
+struct foreign_handler
+{
+  reflex::qt::detail::timer_decl<^^elsewhere::ping> t;
+};
+
+struct duplicate_handlers
+{
+  void beep() {}
+
+  reflex::qt::detail::timer_decl<^^beep> a;
+  reflex::qt::detail::timer_decl<^^beep> b;
+};
+
+namespace timer_meta = reflex::qt::detail;
+
+static_assert(
+    timer_meta::timer_handler_of(
+        reflex::meta::member_named(^^ticker, "tick_timer", reflex::meta::access_context::unchecked()))
+        == ^^ticker::tick,
+    "a handler written in the class body is the same entity as one written outside");
+
+static_assert(timer_meta::timer_handlers_are_reachable(^^ticker));
+static_assert(timer_meta::timer_handlers_are_unique(^^ticker));
+static_assert(not timer_meta::timer_handlers_are_reachable(^^foreign_handler));
+static_assert(not timer_meta::timer_handlers_are_unique(^^duplicate_handlers));
 
 namespace
 {
@@ -100,7 +131,7 @@ TEST_CASE("a timer event fires and stops firing once killed")
   ticker t;
   CHECK_FALSE(t.tick_timer.isActive());
 
-  const int id = t.startTimer<"tick">(1);
+  const int id = t.startTimer<^^ticker::tick>(1);
   CHECK(id != 0);
   CHECK(t.tick_timer.id() == id);
   CHECK(t.tick_timer.isActive());
@@ -108,7 +139,7 @@ TEST_CASE("a timer event fires and stops firing once killed")
   REQUIRE(spin_until([&t] { return t.ticks > 0; }, 2s));
   CHECK(t.tocks == 0);
 
-  CHECK(t.killTimer<"tick">());
+  CHECK(t.killTimer<^^ticker::tick>());
   CHECK_FALSE(t.tick_timer.isActive());
   CHECK(t.tick_timer.id() == 0);
 
@@ -122,13 +153,13 @@ TEST_CASE("two timer events on one class fire independently")
   application();
 
   ticker t;
-  CHECK(t.startTimer<"tick">(1) != 0);
-  CHECK(t.startTimer<"tock">(1) != 0);
+  CHECK(t.startTimer<^^ticker::tick>(1) != 0);
+  CHECK(t.startTimer<^^ticker::tock>(1) != 0);
   CHECK(t.tick_timer.id() != t.tock_timer.id());
 
   REQUIRE(spin_until([&t] { return t.ticks > 0 and t.tocks > 0; }, 2s));
 
-  CHECK(t.killTimer<"tick">());
+  CHECK(t.killTimer<^^ticker::tick>());
   const int ticks = t.ticks;
   const int tocks = t.tocks;
 
@@ -141,13 +172,13 @@ TEST_CASE("starting a running timer reports through the return value")
   application();
 
   ticker    t;
-  const int id = t.startTimer<"tick">(1000);
+  const int id = t.startTimer<^^ticker::tick>(1000);
   CHECK(id != 0);
-  CHECK(t.startTimer<"tick">(1000) == 0);
+  CHECK(t.startTimer<^^ticker::tick>(1000) == 0);
   CHECK(t.tick_timer.id() == id);
 
-  CHECK(t.killTimer<"tick">());
-  CHECK_FALSE(t.killTimer<"tick">());
+  CHECK(t.killTimer<^^ticker::tick>());
+  CHECK_FALSE(t.killTimer<^^ticker::tick>());
 }
 
 TEST_CASE("a derived object drives a timer its base declares")
@@ -155,12 +186,12 @@ TEST_CASE("a derived object drives a timer its base declares")
   application();
 
   derived_ticker t;
-  CHECK(t.startTimer<"beat">(1) != 0);
+  CHECK(t.startTimer<^^base_ticker::beat>(1) != 0);
   CHECK(t.beat_timer.isActive());
 
   REQUIRE(spin_until([&t] { return t.beats > 0; }, 2s));
 
-  CHECK(t.killTimer<"beat">());
+  CHECK(t.killTimer<^^base_ticker::beat>());
 }
 
 TEST_CASE("the inherited startTimer and killTimer overloads still resolve")
@@ -170,9 +201,9 @@ TEST_CASE("the inherited startTimer and killTimer overloads still resolve")
   ticker    t;
   const int id = t.startTimer(1000);
   CHECK(id != 0);
-  CHECK(t.startTimer<"tick">(1000) != 0);
+  CHECK(t.startTimer<^^ticker::tick>(1000) != 0);
   CHECK(t.tick_timer.id() != id);
 
   t.killTimer(id);
-  CHECK(t.killTimer<"tick">());
+  CHECK(t.killTimer<^^ticker::tick>());
 }

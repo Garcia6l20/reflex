@@ -1,9 +1,7 @@
 #pragma once
 
-#include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
 
-#include <string_view>
 #include <vector>
 
 namespace reflex::qt
@@ -18,7 +16,7 @@ namespace detail
  * struct ticker : reflex::qt::object<ticker>
  * {
  *   void tick();
- *   timer<"tick"> tick_timer;
+ *   timer<^^tick> tick_timer;
  * };
  * ```
  *
@@ -29,8 +27,12 @@ namespace detail
  * moves the four bytes to the class that asked for the timer, and a class with
  * no timer pays nothing.
  */
-template <constant_string Handler> class timer_decl
+template <meta::info Handler> class timer_decl
 {
+  static_assert(meta::is_function(Handler) and meta::is_class_member(Handler)
+                    and not meta::is_static_member(Handler),
+                "a timer must name a non-static member function");
+
 public:
   /** @brief the Qt timer id, or `0` when the timer is not running */
   [[nodiscard]] constexpr int id() const noexcept
@@ -59,9 +61,15 @@ consteval bool is_timer_member(meta::info M)
   return meta::is_template_instance_of(timer_type_of(M), ^^timer_decl);
 }
 
-consteval auto timer_handler_of(meta::info M) -> std::string_view
+/** @brief the member function a timer member drives
+ *
+ * `template_arguments_of` yields a reflection *of* a value argument, so an
+ * `std::meta::info` parameter comes back wrapped one level deep and must be
+ * unwrapped before it compares equal to the handler's own reflection.
+ */
+consteval auto timer_handler_of(meta::info M) -> meta::info
 {
-  return *extract<constant_string>(template_arguments_of(timer_type_of(M))[0]);
+  return extract<meta::info>(template_arguments_of(timer_type_of(M))[0]);
 }
 
 /** @brief the timer member driving @p handler, or `meta::null`
@@ -69,7 +77,7 @@ consteval auto timer_handler_of(meta::info M) -> std::string_view
  * @p Super's own members come first, then its bases depth-first, so a derived
  * class can start and stop a timer a base declares.
  */
-consteval auto timer_member_of(meta::info Super, std::string_view handler) -> meta::info
+consteval auto timer_member_of(meta::info Super, meta::info handler) -> meta::info
 {
   for(auto m : meta::nonstatic_data_members_of(Super, meta::access_context::unchecked()))
   {
@@ -104,6 +112,36 @@ consteval auto timer_members_of(meta::info Super) -> std::vector<meta::info>
     }
   }
   return list;
+}
+
+consteval bool timer_handlers_are_reachable(meta::info Super)
+{
+  for(auto m : timer_members_of(Super))
+  {
+    const auto owner = meta::parent_of(timer_handler_of(m));
+    if(owner != Super
+       and not meta::is_subclass_of(Super, owner, meta::access_context::unchecked()))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+consteval bool timer_handlers_are_unique(meta::info Super)
+{
+  const auto members = timer_members_of(Super);
+  for(std::size_t i = 0; i < members.size(); ++i)
+  {
+    for(std::size_t j = i + 1; j < members.size(); ++j)
+    {
+      if(timer_handler_of(members[i]) == timer_handler_of(members[j]))
+      {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 }
 }

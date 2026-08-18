@@ -43,9 +43,9 @@ namespace reflex::qt
  * `.notify = false`, reachable from `connect` as
  * `&Super::propertyChanged<"name">`.
  *
- * A `timer<"handler">` data member declares a timer driving the member
- * function named `handler`; `timerEvent` is overridden here to dispatch it, so
- * a class that overrides `timerEvent` itself takes over that dispatch.
+ * A `timer<^^handler>` data member declares a timer driving the member
+ * function `handler`; `timerEvent` is overridden here to dispatch it, so a
+ * class that overrides `timerEvent` itself takes over that dispatch.
  */
 template <typename Super, typename ParentT> class object : public ParentT, public gadget<Super>
 {
@@ -82,7 +82,7 @@ public:
   using inherited_names::startTimer;
   using inherited_names::killTimer;
 
-  /** @brief Starts the timer of the member function named @p handler.
+  /** @brief Starts the timer of the member function @p handler.
    *
    * The id is kept in the `timer<handler>` data member that @p Super or one of
    * its bases declares. Naming a handler no timer member mentions is a compile
@@ -92,7 +92,7 @@ public:
    *         running or Qt refused to start one. Nothing is written to any
    *         stream in either case.
    */
-  template <constant_string handler>
+  template <meta::info handler>
   int startTimer(int period_ms, Qt::TimerType type = Qt::CoarseTimer)
   {
     auto& state = timer_state<handler>();
@@ -104,12 +104,12 @@ public:
     return state.id_;
   }
 
-  /** @brief Stops the timer of the member function named @p handler.
+  /** @brief Stops the timer of the member function @p handler.
    *
    * @return `true` if a running timer was stopped, `false` if none was
    *         running. Nothing is written to any stream in either case.
    */
-  template <constant_string handler> bool killTimer()
+  template <meta::info handler> bool killTimer()
   {
     auto& state = timer_state<handler>();
     if(state.id_ == 0)
@@ -141,7 +141,7 @@ public:
 protected:
   template <typename... Args> using signal = detail::signal_decl<Super, Args...>;
   template <typename T> using with_default = detail::with_default<T>;
-  template <constant_string handler> using timer = detail::timer_decl<handler>;
+  template <meta::info handler> using timer = detail::timer_decl<handler>;
 
   void timerEvent(QTimerEvent* event) override;
 
@@ -157,9 +157,9 @@ private:
   template <typename... Args, typename... CallArgs>
   void trigger(detail::signal_decl<Super, Args...>* sig, CallArgs const&... args);
 
-  template <constant_string handler> auto& timer_state()
+  template <meta::info handler> auto& timer_state()
   {
-    static constexpr auto m = detail::timer_member_of(^^Super, *handler);
+    static constexpr auto m = detail::timer_member_of(^^Super, handler);
     static_assert(m != meta::null, "no timer member declares this handler");
     using owner = [:meta::parent_of(m):];
     return static_cast<owner&>(*static_cast<Super*>(this)).[:m:];
@@ -169,16 +169,17 @@ private:
 template <typename Super, typename ParentT>
 void object<Super, ParentT>::timerEvent(QTimerEvent* event)
 {
+  static_assert(detail::timer_handlers_are_reachable(^^Super),
+                "a timer names a member function of another class");
+  static_assert(detail::timer_handlers_are_unique(^^Super),
+                "two timers name the same handler");
+
   auto& self = *static_cast<Super*>(this);
   template for(constexpr auto m : define_static_array(detail::timer_members_of(^^Super)))
   {
     if(self.[:m:].id_ == event->timerId())
     {
-      constexpr auto handler = meta::member_named(^^Super,
-                                                  detail::timer_handler_of(m),
-                                                  meta::access_context::unchecked(),
-                                                  true);
-      static_assert(handler != meta::null, "the timer names no member function");
+      constexpr auto handler = detail::timer_handler_of(m);
       self.[:handler:]();
       return;
     }
