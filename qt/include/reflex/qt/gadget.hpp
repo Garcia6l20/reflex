@@ -25,16 +25,13 @@ namespace reflex::qt
  * ```
  *
  * No `Q_GADGET` macro is written and moc never runs: `staticMetaObject` is
- * built from reflection over @p Super, and `QtGadgetHelper` is what Qt looks
- * for to accept the class as a gadget.
+ * built from reflection over @p Super, and the `QtPrivate::IsGadgetHelper`
+ * specializations below tell Qt to accept @p Super as a gadget.
  */
 template <typename Super> class gadget
 {
 public:
   static inline const QMetaObject staticMetaObject = detail::gadget_impl<Super>::metaObject();
-
-  void         qt_check_for_QGADGET_macro();
-  typedef void QtGadgetHelper;
 
   template <meta::info Property> auto property(this auto& self)
   {
@@ -72,6 +69,41 @@ protected:
 }
 
 QT_BEGIN_NAMESPACE
+namespace QtPrivate
+{
+template <typename Super>
+  requires(reflex::meta::is_complete_type(^^Super)
+           and reflex::meta::is_subclass_of(^^Super,
+                                            ^^reflex::qt::gadget,
+                                            reflex::meta::access_context::unchecked())
+           and not IsPointerToTypeDerivedFromQObject<Super*>::Value)
+struct IsGadgetHelper<Super, void>
+{
+  enum
+  {
+    IsRealGadget          = true,
+    IsGadgetOrDerivedFrom = true
+  };
+};
+
+template <typename Super>
+  requires(reflex::meta::is_complete_type(^^Super)
+           and reflex::meta::is_subclass_of(^^Super,
+                                            ^^reflex::qt::gadget,
+                                            reflex::meta::access_context::unchecked())
+           and not IsPointerToTypeDerivedFromQObject<Super*>::Value)
+struct IsPointerToGadgetHelper<Super*, void>
+{
+  using BaseType = Super;
+
+  enum
+  {
+    IsRealGadget          = true,
+    IsGadgetOrDerivedFrom = true
+  };
+};
+}
+
 template <typename Super>
   requires(reflex::meta::is_complete_type(^^Super)
            and reflex::meta::is_subclass_of(^^Super,
