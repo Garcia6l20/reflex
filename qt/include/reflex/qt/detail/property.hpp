@@ -146,6 +146,27 @@ consteval auto property_named(meta::info Super, std::string_view name) -> meta::
   return meta::null;
 }
 
+/** @brief what @p Accessor is called in a diagnostic */
+template <meta::info Accessor> consteval auto accessor_noun() -> std::string_view
+{
+  if constexpr(Accessor == ^^getter)
+  {
+    return "getter";
+  }
+  else if constexpr(Accessor == ^^setter)
+  {
+    return "setter";
+  }
+  else if constexpr(Accessor == ^^listener)
+  {
+    return "listener";
+  }
+  else
+  {
+    static_assert(false, "not an accessor annotation");
+  }
+}
+
 /** @brief the property @p fn's @p Accessor annotation reflects, or `meta::null`
  *
  * `template_arguments_of` yields a reflection *of* a value argument, so the
@@ -206,7 +227,11 @@ consteval auto accessor_for(meta::info Super, meta::info Property) -> meta::info
     {
       continue;
     }
-    REFLEX_META_CHECK(found == meta::null, "two accessors of one kind name one property", fn);
+    REFLEX_META_CHECK(found == meta::null,
+                      "the property " + std::string{name} + " already has a "
+                          + std::string{accessor_noun<Accessor>()} + ", "
+                          + meta::spelling_of(found) + "; keep one",
+                      fn);
     found = fn;
   }
   if(found != meta::null or not meta::has_annotation(Super, ^^naming::qt_style_t))
@@ -226,12 +251,20 @@ template <meta::info Accessor> consteval void check_accessors_of(meta::info Supe
   for(auto fn :
       meta::member_functions_annotated_with(Super, Accessor, meta::access_context::unchecked()))
   {
+    const std::string noun{accessor_noun<Accessor>()};
+    const std::string named = noun + " " + meta::spelling_of(fn);
+
     const auto p = accessor_target_of<Accessor>(fn);
     REFLEX_META_CHECK(p != meta::null and meta::is_nonstatic_data_member(p)
                           and meta::has_annotation(p, ^^property) and parent_of(p) == Super,
-                      "the accessor names no property of this class", fn);
-    REFLEX_META_CHECK(
-        not std::ranges::contains(claimed, p), "two accessors of one kind name one property", fn);
+                      "the " + named + " names " + std::string{display_string_of(p)}
+                          + ", which is not a data member of " + std::string{identifier_of(Super)}
+                          + " annotated with prop{}",
+                      fn);
+    REFLEX_META_CHECK(not std::ranges::contains(claimed, p),
+                      "the property " + std::string{identifier_of(p)} + " already has a " + noun
+                          + "; keep one",
+                      fn);
     claimed.push_back(p);
 
     const auto declared  = dealias(meta::remove_cvref(type_of(p)));
@@ -239,23 +272,30 @@ template <meta::info Accessor> consteval void check_accessors_of(meta::info Supe
 
     if constexpr(Accessor == ^^getter)
     {
-      REFLEX_META_CHECK(arguments.empty(), "a getter takes no argument", fn);
-      REFLEX_META_CHECK(
-          dealias(meta::remove_cvref(return_type_of(fn))) == declared,
-          "the getter does not return the property's type", fn);
+      REFLEX_META_CHECK(arguments.empty(), "the " + named + " must take no argument", fn);
+      REFLEX_META_CHECK(dealias(meta::remove_cvref(return_type_of(fn))) == declared,
+                        "the " + named + " must return "
+                            + std::string{display_string_of(declared)} + ", the type of "
+                            + std::string{identifier_of(p)},
+                        fn);
     }
     else if constexpr(Accessor == ^^setter)
     {
-      REFLEX_META_CHECK(arguments.size() == 1, "a setter takes exactly one argument", fn);
       REFLEX_META_CHECK(
-          dealias(meta::remove_cvref(type_of(arguments.front()))) == declared,
-          "the setter does not take the property's type", fn);
+          arguments.size() == 1, "the " + named + " must take exactly one argument", fn);
+      REFLEX_META_CHECK(dealias(meta::remove_cvref(type_of(arguments.front()))) == declared,
+                        "the " + named + " must take "
+                            + std::string{display_string_of(declared)} + ", the type of "
+                            + std::string{identifier_of(p)},
+                        fn);
     }
     else
     {
-      REFLEX_META_CHECK(arguments.empty(), "a listener takes no argument", fn);
-      REFLEX_META_CHECK(
-          property_spec_of(p).notify, "a listener needs a property that notifies", fn);
+      REFLEX_META_CHECK(arguments.empty(), "the " + named + " must take no argument", fn);
+      REFLEX_META_CHECK(property_spec_of(p).notify,
+                        "the " + named + " needs " + std::string{identifier_of(p)}
+                            + " to notify; drop its .notify = false",
+                        fn);
     }
   }
 }
@@ -271,13 +311,91 @@ consteval auto validate_properties(meta::info Super) -> bool
           Super, ^^property, meta::access_context::unchecked()))
   {
     const auto spec = property_spec_of(p);
-    REFLEX_META_CHECK(spec.read or spec.write, "a property is readable, writable or both", p);
+    REFLEX_META_CHECK(spec.read or spec.write,
+                      "the property " + std::string{identifier_of(p)}
+                          + " is neither readable nor writable; set .read or .write",
+                      p);
   }
 
   check_accessors_of<^^getter>(Super);
   check_accessors_of<^^setter>(Super);
   check_accessors_of<^^listener>(Super);
   return true;
+}
+
+/** @brief whether @p Super itself publishes @p Property */
+consteval bool declares_property(meta::info Super, meta::info Property)
+{
+  for(auto p : meta::nonstatic_data_members_annotated_with(
+          Super, ^^property, meta::access_context::unchecked()))
+  {
+    if(p == Property)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** @brief rejects a read of something @p Super does not publish as readable */
+consteval bool check_readable(meta::info Super, meta::info Property)
+{
+  REFLEX_META_CHECK(declares_property(Super, Property),
+                    std::string{display_string_of(Property)} + " is not a property of "
+                        + std::string{identifier_of(Super)} + "; annotate it with prop{}",
+                    Property);
+  REFLEX_META_CHECK(property_spec_of(Property).read,
+                    "the property " + std::string{identifier_of(Property)}
+                        + " is declared .read = false and cannot be read",
+                    Property);
+  return true;
+}
+
+/** @brief rejects a write of something @p Super does not publish as writable */
+consteval bool check_writable(meta::info Super, meta::info Property)
+{
+  REFLEX_META_CHECK(declares_property(Super, Property),
+                    std::string{display_string_of(Property)} + " is not a property of "
+                        + std::string{identifier_of(Super)} + "; annotate it with prop{}",
+                    Property);
+  REFLEX_META_CHECK(property_spec_of(Property).writable(),
+                    "the property " + std::string{identifier_of(Property)}
+                        + " is declared .write = false or .constant = true and cannot be written",
+                    Property);
+  return true;
+}
+
+/** @brief rejects a property with no notify signal */
+consteval bool check_notifying(meta::info Property)
+{
+  REFLEX_META_CHECK(property_spec_of(Property).notifying(),
+                    "the property " + std::string{identifier_of(Property)}
+                        + " publishes no notify signal; drop its .notify = false or "
+                          ".constant = true",
+                    Property);
+  return true;
+}
+
+/** @brief the property named @p name in @p Super, rejecting a name it does not declare */
+consteval auto required_property_named(meta::info Super, std::string_view name) -> meta::info
+{
+  const auto p = property_named(Super, name);
+  REFLEX_META_CHECK(p != meta::null,
+                    std::string{identifier_of(Super)} + " declares no property named "
+                        + std::string{name},
+                    Super);
+  return p;
+}
+
+/** @brief the member named @p name in @p Super or a base, rejecting an unknown name */
+consteval auto required_member_named(meta::info Super, std::string_view name) -> meta::info
+{
+  const auto p = meta::member_named(Super, name, meta::access_context::unchecked(), true);
+  REFLEX_META_CHECK(p != meta::null,
+                    std::string{identifier_of(Super)} + " and its bases declare no member named "
+                        + std::string{name},
+                    Super);
+  return p;
 }
 } // namespace detail
 } // namespace reflex::qt

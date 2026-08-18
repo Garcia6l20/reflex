@@ -1,8 +1,11 @@
 #pragma once
 
+#include <reflex/const_check.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/qt/access.hpp>
 
+#include <cstddef>
+#include <string>
 #include <vector>
 
 namespace reflex::qt
@@ -11,6 +14,17 @@ template <typename Super, typename ParentT> class object;
 
 namespace detail
 {
+/** @brief rejects a timer declaration that does not name a member function */
+consteval bool check_timer_handler(meta::info Handler)
+{
+  REFLEX_META_CHECK(meta::is_function(Handler) and meta::is_class_member(Handler)
+                        and not meta::is_static_member(Handler),
+                    "a timer names a non-static member function, but "
+                        + std::string{display_string_of(Handler)} + " is not one",
+                    Handler);
+  return true;
+}
+
 /** @brief the id of one running timer, declared as a data member of the object
  *
  * ```cpp
@@ -30,9 +44,10 @@ namespace detail
  */
 template <meta::info Handler> class timer_decl
 {
-  static_assert(meta::is_function(Handler) and meta::is_class_member(Handler)
-                    and not meta::is_static_member(Handler),
-                "a timer must name a non-static member function");
+  consteval
+  {
+    check_timer_handler(Handler);
+  }
 
 public:
   /** @brief the Qt timer id, or `0` when the timer is not running */
@@ -115,45 +130,57 @@ consteval auto timer_members_of(meta::info Super) -> std::vector<meta::info>
   return list;
 }
 
-consteval bool timer_handlers_are_reachable(meta::info Super)
+/** @brief the timer member driving @p handler, rejecting a handler none declares */
+consteval auto required_timer_member_of(meta::info Super, meta::info handler) -> meta::info
 {
-  for(auto m : timer_members_of(Super))
+  const auto m = timer_member_of(Super, handler);
+  REFLEX_META_CHECK(m != meta::null,
+                    "no timer member of " + std::string{identifier_of(Super)} + " declares "
+                        + std::string{display_string_of(handler)}
+                        + "; add a timer<^^handler> data member",
+                    handler);
+  return m;
+}
+
+/** @brief rejects a timer @p Super's `timerEvent` cannot dispatch */
+consteval bool validate_timers(meta::info Super)
+{
+  const auto members = timer_members_of(Super);
+  for(std::size_t i = 0; i < members.size(); ++i)
   {
-    const auto owner = meta::parent_of(timer_handler_of(m));
-    if(owner != Super
-       and not meta::is_subclass_of(Super, owner, meta::access_context::unchecked()))
+    const auto handler = timer_handler_of(members[i]);
+    const auto owner   = meta::parent_of(handler);
+
+    REFLEX_META_CHECK(
+        owner == Super or meta::is_subclass_of(Super, owner, meta::access_context::unchecked()),
+        "the timer " + std::string{identifier_of(members[i])} + " names "
+            + std::string{display_string_of(handler)}
+            + ", a member function of neither its own class nor a base",
+        members[i]);
+
+    for(std::size_t j = i + 1; j < members.size(); ++j)
     {
-      return false;
+      REFLEX_META_CHECK(timer_handler_of(members[j]) != handler,
+                        "the timers " + std::string{identifier_of(members[i])} + " and "
+                            + std::string{identifier_of(members[j])} + " both name "
+                            + std::string{display_string_of(handler)}
+                            + "; declare one timer per handler",
+                        members[j]);
     }
   }
   return true;
 }
 
-/** @brief rejects a timer whose member or handler @p Super cannot splice */
-template <typename Super> consteval bool timer_access_is_open()
+/** @brief rejects every timer of @p Super its `timerEvent` cannot dispatch or splice */
+template <typename Super> consteval bool check_timers()
 {
+  validate_timers(^^Super);
   template for(constexpr auto m : define_static_array(timer_members_of(^^Super)))
   {
     qt::access<Super>::require_reachable(m);
     constexpr auto handler = timer_handler_of(m);
     using handler_owner    = [:meta::parent_of(handler):];
     qt::access<handler_owner>::require_reachable(handler);
-  }
-  return true;
-}
-
-consteval bool timer_handlers_are_unique(meta::info Super)
-{
-  const auto members = timer_members_of(Super);
-  for(std::size_t i = 0; i < members.size(); ++i)
-  {
-    for(std::size_t j = i + 1; j < members.size(); ++j)
-    {
-      if(timer_handler_of(members[i]) == timer_handler_of(members[j]))
-      {
-        return false;
-      }
-    }
   }
   return true;
 }
