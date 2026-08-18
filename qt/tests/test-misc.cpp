@@ -3,7 +3,10 @@
 #include <reflex/qt.hpp>
 
 #include <QtCore/QObject>
+#include <QtCore/QString>
 
+#include <format>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -99,4 +102,22 @@ TEST_CASE("assigning over a connection_guard disconnects what it held")
 
   sender.ping();
   CHECK(second == 1);
+}
+
+static_assert(std::formattable<QString, char>);
+static_assert(not std::formattable<QString, wchar_t>,
+              "the QString formatter is narrow only, on purpose");
+
+TEST_CASE("a QString formats as UTF-8 through std::format")
+{
+  CHECK(std::format("{}", QString{"hello"}) == "hello");
+  CHECK(std::format("{}", QString{}) == "");
+  CHECK(std::format("{}", QString::fromUtf8("caf\xc3\xa9")) == "caf\xc3\xa9");
+}
+
+TEST_CASE("the QString formatter honours the string format spec")
+{
+  CHECK(std::format("{:>7}", QString{"hi"}) == "     hi");
+  CHECK(std::format("{:.<7}", QString{"hi"}) == "hi.....");
+  CHECK(std::format("{:.2}", QString{"hello"}) == "he");
 }
