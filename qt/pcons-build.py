@@ -4,6 +4,7 @@ from pcons import add_subdirectory, context
 from pcons.toolchains.qt import find_qt
 
 from reflex_build.config import build_programs, build_testing
+from reflex_build.qt import add_metatypes
 
 project = context.current_project
 env = project.default_environment
@@ -47,6 +48,11 @@ else:
         add_subdirectory("tests")
 
     if build_programs:
+
+        @project.cli_group()
+        def qt_example():
+            """Reflex Qt examples"""
+
         qt_widgets = find_qt(project, env, modules=["Widgets"], required=False)
         if qt_widgets is None:
             print("-- reflex.qt examples skipped: Qt 6 Widgets not found")
@@ -60,13 +66,49 @@ else:
             )
             print(f"-- Example added: {example.name}")
 
-            @project.cli_group()
-            def qt_example():
-                """Reflex Qt examples"""
-
             qt_example.depends(example)
 
             @qt_example.command()
             def widgets():
                 """Run the widgets example"""
                 subprocess.run([str(example.output_nodes[0].path)], check=True)
+
+        qt_qml = find_qt(project, env, modules=["Qml"], required=False)
+        if qt_qml is None:
+            print("-- reflex.qt QML example skipped: Qt 6 Qml not found")
+        else:
+            _patch(qt_qml)
+
+            metatypes, exporter = add_metatypes(
+                "reflex-qt-qml",
+                ["examples/qml/module.cpp"],
+                link=[qt_qml.Qml],
+                include_roots=["examples"],
+            )
+
+            qml_module = project.QtQmlModule(
+                "reflex-qt-qml-types",
+                env,
+                uri="Reflex.Demo",
+                qml_files=["qt/examples/qml/Main.qml"],
+                metatypes=[metatypes],
+                link=[qt_qml.Qml, qt_lib],
+            )
+            qml_module.depends(exporter)
+            qml_module.private.include_dirs.append("examples")
+
+            qml_app = project.QtProgram(
+                "reflex-qt-qml",
+                env,
+                sources=["examples/qml/main.cpp"],
+                link=[qt_qml.Qml, qt_lib],
+            )
+            qml_app.link(qml_module)
+            print(f"-- Example added: {qml_app.name}")
+
+            qt_example.depends(qml_app)
+
+            @qt_example.command()
+            def qml():
+                """Run the QML example"""
+                subprocess.run([str(qml_app.output_nodes[0].path)], check=True)
