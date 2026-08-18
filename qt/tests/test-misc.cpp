@@ -3,12 +3,14 @@
 #include <reflex/qt.hpp>
 #include <reflex/qt/debug.hpp>
 
+#include <QtCore/QMetaClassInfo>
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtCore/QTimer>
 
 #include <format>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -183,4 +185,25 @@ TEST_CASE("describe of an object reads its dynamic metaobject")
 {
   described instance;
   CHECK(reflex::qt::describe(instance) == reflex::qt::describe<described>());
+}
+
+TEST_CASE("a class publishes every classinfo annotation it carries")
+{
+  const QMetaObject& meta = described::staticMetaObject;
+
+  REQUIRE(meta.classInfoOffset() == 0);
+  REQUIRE(meta.classInfoCount() == 2);
+
+  CHECK(std::string_view{meta.classInfo(0).name()} == "author");
+  CHECK(std::string_view{meta.classInfo(0).value()} == "reflex");
+  CHECK(std::string_view{meta.classInfo(1).name()} == "QML.Element");
+  CHECK(std::string_view{meta.classInfo(1).value()} == "Described");
+
+  CHECK(meta.indexOfClassInfo("QML.Element") == 1);
+  CHECK(meta.indexOfClassInfo("absent") == -1);
+}
+
+TEST_CASE("a class with no classinfo publishes none")
+{
+  CHECK(pinger::staticMetaObject.classInfoCount() == 0);
 }
