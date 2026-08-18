@@ -148,10 +148,14 @@ template <typename Tag, typename Super> struct meta_strings
                                                                 ^^detail::invocable,
                                                                 meta::access_context::unchecked()));
 
-  static constexpr auto properties = define_static_array(
-      meta::nonstatic_data_members_annotated_with(^^Super,
-                                                  ^^detail::property,
-                                                  meta::access_context::unchecked()));
+  static constexpr auto properties = [] consteval
+  {
+    validate_properties(^^Super);
+    return define_static_array(
+        meta::nonstatic_data_members_annotated_with(^^Super,
+                                                    ^^detail::property,
+                                                    meta::access_context::unchecked()));
+  }();
 
   static constexpr auto invocable_count = invocables.size();
   static constexpr auto property_count  = properties.size();
@@ -405,12 +409,28 @@ template <typename Tag, typename Super> struct meta_strings
 
     constexpr auto p    = properties[I];
     using property_type = [:type_of(p):];
-    constexpr auto spec = meta::annotation_value_of_with<detail::property>(p);
+    constexpr auto spec = property_spec_of(p);
 
     uint flags = QMC::DefaultPropertyFlags;
-    if constexpr(spec.writable())
+    if constexpr(not spec.read)
+    {
+      flags &= ~uint(QMC::Readable);
+    }
+    if constexpr(spec.write)
     {
       flags |= QMC::Writable;
+    }
+    if constexpr(spec.constant)
+    {
+      flags |= QMC::Constant;
+    }
+    if constexpr(spec.final)
+    {
+      flags |= QMC::Final;
+    }
+    if constexpr(spec.required)
+    {
+      flags |= QMC::Required;
     }
     constexpr uint notify_id =
         is_object ? uint(notifier_index_of(identifier_of(p))) : uint(-1);
