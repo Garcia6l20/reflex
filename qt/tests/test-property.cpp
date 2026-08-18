@@ -15,17 +15,17 @@ struct accessed : reflex::qt::object<accessed>
   [[= prop{}]] int p1    = 0;
   [[= prop{}]] int plain = 0;
 
-  [[= getter{"p1"}]] int getP1() const
+  [[= getter<^^p1>]] int getP1() const
   {
     return p1 * 2;
   }
 
-  [[= setter{"p1"}]] void setP1(int value)
+  [[= setter<^^p1>]] void setP1(int value)
   {
     p1 = value / 2;
   }
 
-  [[= listener{"p1"}]] void onP1Changed()
+  [[= listener<^^p1>]] void onP1Changed()
   {
     ++listener_calls;
     listener_saw_notification = notifications;
@@ -67,7 +67,7 @@ struct[[= reflex::qt::naming::qt_style]] annotation_wins : reflex::qt::object<an
     return -1;
   }
 
-  [[= getter{"p1"}]] int readP1() const
+  [[= getter<^^p1>]] int readP1() const
   {
     return p1 * 10;
   }
@@ -111,9 +111,20 @@ namespace bad
 {
 struct unknown_property : reflex::qt::object<unknown_property>
 {
+  [[= prop{}]] int p1            = 0;
+  int              not_annotated = 0;
+
+  [[= getter<^^not_annotated>]] int getP1() const
+  {
+    return p1;
+  }
+};
+
+struct foreign_property : reflex::qt::object<foreign_property>
+{
   [[= prop{}]] int p1 = 0;
 
-  [[= getter{"typo"}]] int getP1() const
+  [[= getter<^^unknown_property::p1>]] int getP1() const
   {
     return p1;
   }
@@ -123,12 +134,12 @@ struct duplicate_getter : reflex::qt::object<duplicate_getter>
 {
   [[= prop{}]] int p1 = 0;
 
-  [[= getter{"p1"}]] int getP1() const
+  [[= getter<^^p1>]] int getP1() const
   {
     return p1;
   }
 
-  [[= getter{"p1"}]] int readP1() const
+  [[= getter<^^p1>]] int readP1() const
   {
     return p1;
   }
@@ -138,7 +149,7 @@ struct mismatched_setter : reflex::qt::object<mismatched_setter>
 {
   [[= prop{}]] int p1 = 0;
 
-  [[= setter{"p1"}]] void setP1(QString const&)
+  [[= setter<^^p1>]] void setP1(QString const&)
   {}
 };
 
@@ -146,7 +157,7 @@ struct mismatched_getter : reflex::qt::object<mismatched_getter>
 {
   [[= prop{}]] int p1 = 0;
 
-  [[= getter{"p1"}]] QString getP1() const
+  [[= getter<^^p1>]] QString getP1() const
   {
     return {};
   }
@@ -156,7 +167,7 @@ struct listening_to_nothing : reflex::qt::object<listening_to_nothing>
 {
   [[= prop{.notify = false}]] int p1 = 0;
 
-  [[= listener{"p1"}]] void onP1Changed()
+  [[= listener<^^p1>]] void onP1Changed()
   {}
 };
 
@@ -176,6 +187,7 @@ TEST_CASE("a property or accessor that cannot be honoured is rejected at compile
     REFLEX_CONSTEVAL_NOTHROW(qtd::validate_properties(^^conventional));
 
     REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::unknown_property));
+    REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::foreign_property));
     REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::duplicate_getter));
     REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::mismatched_setter));
     REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::mismatched_getter));
@@ -183,7 +195,7 @@ TEST_CASE("a property or accessor that cannot be honoured is rejected at compile
     REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::neither_readable_nor_writable));
 
     REFLEX_CONSTEVAL_THROWS(
-        qtd::accessor_for<qtd::getter>(
+        qtd::accessor_for<^^qtd::getter>(
             ^^bad::duplicate_getter, qtd::property_named(^^bad::duplicate_getter, "p1")));
   }
 }
@@ -191,14 +203,14 @@ TEST_CASE("a property or accessor that cannot be honoured is rejected at compile
 TEST_CASE("accessor resolution picks the annotation, then the convention, then nothing")
 {
   static_assert(
-      qtd::accessor_for<qtd::getter>(^^conventional, qtd::property_named(^^conventional, "p1"))
+      qtd::accessor_for<^^qtd::getter>(^^conventional, qtd::property_named(^^conventional, "p1"))
       != reflex::meta::null);
   static_assert(
-      qtd::accessor_for<qtd::getter>(^^accessed, qtd::property_named(^^accessed, "plain"))
+      qtd::accessor_for<^^qtd::getter>(^^accessed, qtd::property_named(^^accessed, "plain"))
       == reflex::meta::null);
   static_assert(
       identifier_of(
-          qtd::accessor_for<qtd::getter>(
+          qtd::accessor_for<^^qtd::getter>(
               ^^annotation_wins, qtd::property_named(^^annotation_wins, "p1")))
       == "readP1");
 }

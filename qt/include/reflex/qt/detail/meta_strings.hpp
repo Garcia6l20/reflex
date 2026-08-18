@@ -181,9 +181,9 @@ template <typename Tag, typename Super> struct meta_strings
                                                     meta::access_context::unchecked())));
     for(auto p : declared)
     {
-      for(auto a : {accessor_for<getter>(^^Super, p),
-                    accessor_for<setter>(^^Super, p),
-                    accessor_for<listener>(^^Super, p)})
+      for(auto a : {accessor_for<^^getter>(^^Super, p),
+                    accessor_for<^^setter>(^^Super, p),
+                    accessor_for<^^listener>(^^Super, p)})
       {
         if(a != meta::null)
         {

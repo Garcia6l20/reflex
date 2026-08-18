@@ -1,12 +1,10 @@
 #pragma once
 
 #include <reflex/const_check.hpp>
-#include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/utils.hpp>
 
 #include <algorithm>
-#include <concepts>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -86,48 +84,46 @@ struct property
   }
 };
 
-/** @brief marks a member function as the reader of the property it names
- *
- * The property is named rather than reflected, so the annotation does not
- * require the member to be declared first, nor accessible from where the
- * accessor is written.
+/** @brief marks a member function as the reader of @p Property
  *
  * ```cpp
- * [[= getter{"p1"}]] int getP1() const { return p1 * 2; }
+ * [[= prop{}]] int p1 = 0;
+ * [[= getter<^^p1>]] int getP1() const { return p1 * 2; }
  * ```
+ *
+ * The property is reflected rather than named, so a typo is a compile error at
+ * the annotation instead of an accessor that silently never runs. The member
+ * must already be declared, which is the natural order anyway.
  */
-struct getter : constant_string
+template <meta::info Property> struct getter
 {
-  using constant_string::constant_string;
 };
 
-/** @brief marks a member function as the writer of the property it names
+/** @brief marks a member function as the writer of @p Property
  *
  * The setter replaces the whole write, change detection included: a property
  * with one notifies on every `setProperty`, since only the setter knows
  * whether anything changed.
  *
  * ```cpp
- * [[= setter{"p1"}]] void setP1(int value) { p1 = value / 2; }
+ * [[= setter<^^p1>]] void setP1(int value) { p1 = value / 2; }
  * ```
  */
-struct setter : constant_string
+template <meta::info Property> struct setter
 {
-  using constant_string::constant_string;
 };
 
-/** @brief marks a member function as the change handler of the property it names
+/** @brief marks a member function as the change handler of @p Property
  *
  * Called by `setProperty` after the write and before the notify signal, and
  * not at all when the write changed nothing.
  *
  * ```cpp
- * [[= listener{"p1"}]] void onP1Changed() { std::println("p1 = {}", p1); }
+ * [[= listener<^^p1>]] void onP1Changed() { std::println("p1 = {}", p1); }
  * ```
  */
-struct listener : constant_string
+template <meta::info Property> struct listener
 {
-  using constant_string::constant_string;
 };
 
 /** @brief @p Property's `property` annotation */
@@ -150,22 +146,38 @@ consteval auto property_named(meta::info Super, std::string_view name) -> meta::
   return meta::null;
 }
 
+/** @brief the property @p fn's @p Accessor annotation reflects, or `meta::null`
+ *
+ * `template_arguments_of` yields a reflection *of* a value argument, so the
+ * `std::meta::info` the annotation carries comes back wrapped one level deep
+ * and has to be extracted before it compares equal to the member's own
+ * reflection.
+ */
+template <meta::info Accessor> consteval auto accessor_target_of(meta::info fn) -> meta::info
+{
+  for(auto a : meta::annotations_of_with(fn, Accessor))
+  {
+    return extract<meta::info>(template_arguments_of(type_of(a))[0]);
+  }
+  return meta::null;
+}
+
 /** @brief the name convention mode gives @p Accessor for the property @p name */
-template <typename Accessor>
+template <meta::info Accessor>
 consteval auto conventional_name_of(std::string_view name) -> std::string
 {
   std::string capitalized{name};
   capitalized[0] = char(reflex::to_upper(capitalized[0]));
 
-  if constexpr(std::same_as<Accessor, getter>)
+  if constexpr(Accessor == ^^getter)
   {
     return "get" + capitalized;
   }
-  else if constexpr(std::same_as<Accessor, setter>)
+  else if constexpr(Accessor == ^^setter)
   {
     return "set" + capitalized;
   }
-  else if constexpr(std::same_as<Accessor, listener>)
+  else if constexpr(Accessor == ^^listener)
   {
     return "on" + capitalized + "Changed";
   }
@@ -181,16 +193,16 @@ consteval auto conventional_name_of(std::string_view name) -> std::string
  * carries `naming::qt_style`, the conventionally named member function does.
  * `meta::null` when @p Super has neither.
  */
-template <typename Accessor>
+template <meta::info Accessor>
 consteval auto accessor_for(meta::info Super, meta::info Property) -> meta::info
 {
   const std::string_view name  = identifier_of(Property);
   meta::info             found = meta::null;
 
   for(auto fn :
-      meta::member_functions_annotated_with(Super, ^^Accessor, meta::access_context::unchecked()))
+      meta::member_functions_annotated_with(Super, Accessor, meta::access_context::unchecked()))
   {
-    if(*meta::annotation_value_of_with<Accessor>(fn) != name)
+    if(accessor_target_of<Accessor>(fn) != Property)
     {
       continue;
     }
@@ -207,32 +219,32 @@ consteval auto accessor_for(meta::info Super, meta::info Property) -> meta::info
   return candidates.empty() ? meta::null : candidates.front();
 }
 
-template <typename Accessor> consteval void check_accessors_of(meta::info Super)
+template <meta::info Accessor> consteval void check_accessors_of(meta::info Super)
 {
-  std::vector<std::string> claimed;
+  std::vector<meta::info> claimed;
 
   for(auto fn :
-      meta::member_functions_annotated_with(Super, ^^Accessor, meta::access_context::unchecked()))
+      meta::member_functions_annotated_with(Super, Accessor, meta::access_context::unchecked()))
   {
-    const std::string_view name = *meta::annotation_value_of_with<Accessor>(fn);
-    const auto             p    = property_named(Super, name);
-    REFLEX_META_CHECK(p != meta::null, "the accessor names no property of this class", fn);
+    const auto p = accessor_target_of<Accessor>(fn);
+    REFLEX_META_CHECK(p != meta::null and meta::is_nonstatic_data_member(p)
+                          and meta::has_annotation(p, ^^property) and parent_of(p) == Super,
+                      "the accessor names no property of this class", fn);
     REFLEX_META_CHECK(
-        not std::ranges::contains(claimed, name), "two accessors of one kind name one property",
-        fn);
-    claimed.emplace_back(name);
+        not std::ranges::contains(claimed, p), "two accessors of one kind name one property", fn);
+    claimed.push_back(p);
 
     const auto declared  = dealias(meta::remove_cvref(type_of(p)));
     const auto arguments = parameters_of(fn);
 
-    if constexpr(std::same_as<Accessor, getter>)
+    if constexpr(Accessor == ^^getter)
     {
       REFLEX_META_CHECK(arguments.empty(), "a getter takes no argument", fn);
       REFLEX_META_CHECK(
           dealias(meta::remove_cvref(return_type_of(fn))) == declared,
           "the getter does not return the property's type", fn);
     }
-    else if constexpr(std::same_as<Accessor, setter>)
+    else if constexpr(Accessor == ^^setter)
     {
       REFLEX_META_CHECK(arguments.size() == 1, "a setter takes exactly one argument", fn);
       REFLEX_META_CHECK(
@@ -262,9 +274,9 @@ consteval auto validate_properties(meta::info Super) -> bool
     REFLEX_META_CHECK(spec.read or spec.write, "a property is readable, writable or both", p);
   }
 
-  check_accessors_of<getter>(Super);
-  check_accessors_of<setter>(Super);
-  check_accessors_of<listener>(Super);
+  check_accessors_of<^^getter>(Super);
+  check_accessors_of<^^setter>(Super);
+  check_accessors_of<^^listener>(Super);
   return true;
 }
 } // namespace detail
