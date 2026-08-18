@@ -34,11 +34,6 @@ struct slot
 {
 };
 
-/** @brief marks a member function as the handler of the class's timer events */
-struct timer_event
-{
-};
-
 /** @brief wraps a `signal` argument type that carries a default value
  *
  * Qt publishes one method table entry per default-argument arity, so the count
