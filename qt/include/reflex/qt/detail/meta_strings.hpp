@@ -297,6 +297,25 @@ template <typename Tag, typename Super> struct meta_strings
     return has_identifier(R) ? identifier_of(R) : std::string_view{};
   }
 
+  /** @brief the type name moc would write in @p R's slot of the blob
+   *
+   * A nested enumeration is spelled unqualified there and shares its string
+   * with its own descriptor, which is what lets `QMetaProperty::enumerator()`
+   * find it again.
+   */
+  static consteval std::string type_name_of(meta::info R)
+  {
+    const auto T = normalized_type_of(R);
+    for(auto const& e : enums)
+    {
+      if(meta::dealias(e.type) == T)
+      {
+        return std::string{identifier_of(e.type)};
+      }
+    }
+    return normalized_type_name(T);
+  }
+
   static constexpr auto strings = [] consteval
   {
     std::vector<constant_string> list;
@@ -337,7 +356,7 @@ template <typename Tag, typename Super> struct meta_strings
     }
     for(auto t : custom_types)
     {
-      push(normalized_type_name(t));
+      push(type_name_of(t));
     }
     for(auto const& e : enums)
     {
@@ -394,7 +413,7 @@ template <typename Tag, typename Super> struct meta_strings
     {
       return id;
     }
-    return id | index_of(normalized_type_name(T));
+    return id | index_of(type_name_of(T));
   }
 
   static consteval uint access_flags_of(meta::info R)
@@ -488,6 +507,10 @@ template <typename Tag, typename Super> struct meta_strings
     if constexpr(spec.required)
     {
       flags |= QMC::Required;
+    }
+    if constexpr(is_enum_or_flags(type_of(p)))
+    {
+      flags |= QMC::EnumOrFlag;
     }
     constexpr uint notify_id =
         (is_object and spec.notify) ? uint(notifier_index_of(identifier_of(p))) : uint(-1);

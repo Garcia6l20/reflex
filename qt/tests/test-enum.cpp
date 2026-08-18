@@ -45,6 +45,36 @@ struct palette : reflex::qt::gadget<palette>
   [[= prop{}]] Options opts;
 };
 
+struct styled : reflex::qt::object<styled>
+{
+  enum Color
+  {
+    Red,
+    Green = 5,
+    Blue
+  };
+
+  enum class Mode
+  {
+    Fast,
+    Slow = 9
+  };
+
+  enum Option
+  {
+    NoOption = 0x0,
+    First    = 0x1,
+    Second   = 0x2
+  };
+
+  using Options = QFlags<Option>;
+
+  [[= prop{}]] Color   color = Red;
+  [[= prop{}]] Mode    mode  = Mode::Fast;
+  [[= prop{}]] Options opts;
+  [[= prop{}]] int     plain = 0;
+};
+
 struct signal_free : reflex::qt::gadget<signal_free>
 {
   struct nested
@@ -187,4 +217,79 @@ TEST_CASE("a nested class or type alias is not mistaken for an enumeration")
 {
   CHECK(signal_free::staticMetaObject.enumeratorCount() == 0);
   CHECK(signal_free::staticMetaObject.propertyCount() == 1);
+}
+
+TEST_CASE("an enum-typed property is flagged as an enumeration")
+{
+  const QMetaObject& mo = styled::staticMetaObject;
+
+  const auto color = mo.property(mo.indexOfProperty("color"));
+  CHECK(color.isEnumType());
+  CHECK(not color.isFlagType());
+  CHECK(std::string_view{color.typeName()} == "styled::Color");
+  CHECK(color.metaType() == QMetaType::fromType<styled::Color>());
+  CHECK(std::string_view{color.enumerator().name()} == "Color");
+
+  const auto mode = mo.property(mo.indexOfProperty("mode"));
+  CHECK(mode.isEnumType());
+  CHECK(std::string_view{mode.enumerator().name()} == "Mode");
+
+  const auto opts = mo.property(mo.indexOfProperty("opts"));
+  CHECK(opts.isEnumType());
+  CHECK(opts.isFlagType());
+  CHECK(std::string_view{opts.typeName()} == "QFlags<styled::Option>");
+  CHECK(opts.metaType() == QMetaType::fromType<styled::Options>());
+  CHECK(std::string_view{opts.enumerator().name()} == "Options");
+
+  const auto plain = mo.property(mo.indexOfProperty("plain"));
+  CHECK(not plain.isEnumType());
+  CHECK(std::string_view{plain.typeName()} == "int");
+}
+
+TEST_CASE("an enum-typed property keeps its own type through QVariant")
+{
+  styled s;
+
+  const QVariant color = s.property("color");
+  CHECK(std::string_view{color.typeName()} == "styled::Color");
+  CHECK(color.metaType() == QMetaType::fromType<styled::Color>());
+  CHECK(color.value<styled::Color>() == styled::Red);
+
+  CHECK(s.setProperty("color", QVariant::fromValue(styled::Blue)));
+  CHECK(s.color == styled::Blue);
+  CHECK(s.property("color").value<styled::Color>() == styled::Blue);
+
+  const QVariant mode = s.property("mode");
+  CHECK(std::string_view{mode.typeName()} == "styled::Mode");
+  CHECK(s.setProperty("mode", QVariant::fromValue(styled::Mode::Slow)));
+  CHECK(s.mode == styled::Mode::Slow);
+  CHECK(s.property("mode").value<styled::Mode>() == styled::Mode::Slow);
+}
+
+TEST_CASE("a QFlags-typed property keeps its own type through QVariant")
+{
+  styled s;
+
+  const QVariant opts = s.property("opts");
+  CHECK(std::string_view{opts.typeName()} == "QFlags<styled::Option>");
+  CHECK(opts.value<styled::Options>() == styled::Options{});
+
+  CHECK(s.setProperty("opts", QVariant::fromValue(styled::Options{styled::First | styled::Second})));
+  CHECK(s.opts == (styled::First | styled::Second));
+  CHECK(s.property("opts").value<styled::Options>() == (styled::First | styled::Second));
+}
+
+TEST_CASE("an enum-typed property round-trips on a gadget too")
+{
+  palette            p;
+  const QMetaObject& mo = palette::staticMetaObject;
+
+  const auto color = mo.property(mo.indexOfProperty("color"));
+  CHECK(color.isEnumType());
+  CHECK(color.writeOnGadget(&p, QVariant::fromValue(palette::Green)));
+  CHECK(p.color == palette::Green);
+
+  const QVariant read = color.readOnGadget(&p);
+  CHECK(std::string_view{read.typeName()} == "palette::Color");
+  CHECK(read.value<palette::Color>() == palette::Green);
 }
