@@ -2,6 +2,7 @@
 
 #include <reflex/qt.hpp>
 #include <reflex/qt/debug.hpp>
+#include <reflex/qt/moc/export.hpp>
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDeadlineTimer>
@@ -13,6 +14,7 @@
 #include <QtCore/QVariant>
 
 #include <chrono>
+#include <filesystem>
 #include <format>
 #include <string>
 #include <string_view>
@@ -33,6 +35,24 @@ struct counter : qt::object<counter>
 
   [[= qt::prop{}]] int value = 0;
 };
+
+namespace app
+{
+struct [[= qt::classinfo{"QML.Element", "auto"}]] controller : qt::object<controller>
+{
+  [[= qt::prop{}]] int count = 0;
+};
+
+struct settings : qt::object<settings>
+{
+  [[= qt::prop{}]] int level = 0;
+};
+} // namespace app
+
+REFLEX_QT_MODULE(app_types, m)
+{
+  m.expose<^^app>();
+}
 
 struct base_widget : qt::object<base_widget>
 {
@@ -485,4 +505,29 @@ TEST_CASE("README: a chained signal disconnects through its connection")
 
   sender.pair(1, 2);
   CHECK(receiver.sum == 0);
+}
+
+TEST_CASE("README: a module body publishes what the metatypes document describes")
+{
+  const auto document = reflex::qt::moc::metatypes_of<app_types>();
+
+  REQUIRE(document.size() == 1);
+  REQUIRE(document.front().classes.size() == 2);
+
+  auto const& controller = document.front().classes.front();
+  CHECK(controller.qualifiedClassName == "app::controller");
+  REQUIRE(controller.classInfos.size() == 1);
+  CHECK(controller.classInfos.front().name == "QML.Element");
+  CHECK(controller.classInfos.front().value == "auto");
+
+  CHECK(document.front().classes.back().qualifiedClassName == "app::settings");
+}
+
+TEST_CASE("README: include_roots shortens inputFile to an angled include")
+{
+  const auto full = reflex::qt::moc::metatypes_of<app_types>().front().inputFile;
+  const auto root = std::filesystem::path{full}.parent_path().parent_path();
+
+  CHECK(reflex::qt::moc::metatypes_of<app_types>({{root}}).front().inputFile
+        == "tests/test-readme.cpp");
 }
