@@ -9,6 +9,8 @@
 
 #include <chrono>
 
+using namespace reflex::qt;
+
 using namespace std::chrono_literals;
 
 struct baseline : QObject
@@ -45,7 +47,7 @@ struct ticker : reflex::qt::object<ticker>
 };
 
 static_assert(
-    sizeof(reflex::qt::detail::timer_decl<^^ticker::tick>) == sizeof(int),
+    sizeof(reflex::qt::timer<^^ticker::tick>) == sizeof(int),
     "a timer costs one int");
 
 struct base_ticker : reflex::qt::object<base_ticker>
@@ -70,15 +72,15 @@ struct elsewhere
 
 struct foreign_handler
 {
-  reflex::qt::detail::timer_decl<^^elsewhere::ping> t;
+  reflex::qt::timer<^^elsewhere::ping> t;
 };
 
 struct duplicate_handlers
 {
   void beep() {}
 
-  reflex::qt::detail::timer_decl<^^beep> a;
-  reflex::qt::detail::timer_decl<^^beep> b;
+  reflex::qt::timer<^^beep> a;
+  reflex::qt::timer<^^beep> b;
 };
 
 namespace timer_meta = reflex::qt::detail;

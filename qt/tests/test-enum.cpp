@@ -10,6 +10,8 @@
 #include <optional>
 #include <string_view>
 
+using namespace reflex::qt;
+
 struct palette : reflex::qt::gadget<palette>
 {
   enum Color

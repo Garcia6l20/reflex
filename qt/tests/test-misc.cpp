@@ -14,6 +14,8 @@
 #include <type_traits>
 #include <utility>
 
+using namespace reflex::qt;
+
 struct pinger : reflex::qt::object<pinger>
 {
   signal<> ping{this};

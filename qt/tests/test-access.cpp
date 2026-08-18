@@ -15,6 +15,8 @@
 #include <string_view>
 #include <utility>
 
+using namespace reflex::qt;
+
 using namespace std::chrono_literals;
 
 struct controller : reflex::qt::object<controller>

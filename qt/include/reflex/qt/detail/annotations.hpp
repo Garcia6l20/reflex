@@ -18,32 +18,50 @@ namespace reflex::qt
 template <typename Super> class gadget;
 template <typename Super, typename ParentT = QObject> class object;
 
-namespace detail
-{
-template <typename Super> struct gadget_impl;
-template <typename Super, typename ParentT> struct object_impl;
-template <typename Tag, typename Super> struct meta_strings;
-
-/** @brief marks a member function as `Q_INVOKABLE` */
-struct invocable
+struct invocable_t
 {
 };
 
-/** @brief marks a member function as a slot */
-struct slot
+/** @brief marks a member function as `Q_INVOKABLE`
+ *
+ * ```cpp
+ * [[= reflex::qt::invocable]] int twice(int n) const { return 2 * n; }
+ * ```
+ */
+inline constexpr invocable_t invocable{};
+
+struct slot_t
 {
 };
+
+/** @brief marks a member function as a slot
+ *
+ * ```cpp
+ * [[= reflex::qt::slot]] void bump() { setProperty<^^value>(value + 1); }
+ * ```
+ */
+inline constexpr slot_t slot{};
 
 /** @brief wraps a `signal` argument type that carries a default value
  *
  * Qt publishes one method table entry per default-argument arity, so the count
  * has to be known from the signal's *type*. A constructor argument count is
  * not part of a type, which is why the marker cannot be inferred away.
+ *
+ * ```cpp
+ * signal<int, reflex::qt::with_default<int>> pair{this, 42};
+ * ```
  */
 template <typename T> struct with_default
 {
   using type = T;
 };
+
+namespace detail
+{
+template <typename Super> struct gadget_impl;
+template <typename Super, typename ParentT> struct object_impl;
+template <typename Tag, typename Super> struct meta_strings;
 
 template <typename T> struct drop_default
 {
@@ -75,7 +93,7 @@ consteval auto default_types_of(std::initializer_list<meta::info> args) -> std::
  * ```cpp
  * struct counter : reflex::qt::object<counter>
  * {
- *   signal<int, with_default<int>> changed{this, 0};
+ *   signal<int, reflex::qt::with_default<int>> changed{this, 0};
  * };
  * ```
  *

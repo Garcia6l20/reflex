@@ -10,6 +10,8 @@
 
 #include <string_view>
 
+using namespace reflex::qt;
+
 struct accessed : reflex::qt::object<accessed>
 {
   [[= prop{}]] int p1    = 0;
@@ -195,7 +197,7 @@ TEST_CASE("a property or accessor that cannot be honoured is rejected at compile
     REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::neither_readable_nor_writable));
 
     REFLEX_CONSTEVAL_THROWS(
-        qtd::accessor_for<^^qtd::getter>(
+        qtd::accessor_for<^^getter_t>(
             ^^bad::duplicate_getter, qtd::property_named(^^bad::duplicate_getter, "p1")));
   }
 }
@@ -225,14 +227,14 @@ TEST_CASE("a property query the class cannot answer is rejected at compile time"
 TEST_CASE("accessor resolution picks the annotation, then the convention, then nothing")
 {
   static_assert(
-      qtd::accessor_for<^^qtd::getter>(^^conventional, qtd::property_named(^^conventional, "p1"))
+      qtd::accessor_for<^^getter_t>(^^conventional, qtd::property_named(^^conventional, "p1"))
       != reflex::meta::null);
   static_assert(
-      qtd::accessor_for<^^qtd::getter>(^^accessed, qtd::property_named(^^accessed, "plain"))
+      qtd::accessor_for<^^getter_t>(^^accessed, qtd::property_named(^^accessed, "plain"))
       == reflex::meta::null);
   static_assert(
       identifier_of(
-          qtd::accessor_for<^^qtd::getter>(
+          qtd::accessor_for<^^getter_t>(
               ^^annotation_wins, qtd::property_named(^^annotation_wins, "p1")))
       == "readP1");
 }
@@ -432,8 +434,8 @@ TEST_CASE("a property that declines to notify still reads, writes and dispatches
 
 TEST_CASE("constant implies neither writable nor notifying")
 {
-  static_assert(not reflex::qt::detail::property{.constant = true}.writable());
-  static_assert(not reflex::qt::detail::property{.constant = true}.notifying());
+  static_assert(not reflex::qt::prop{.constant = true}.writable());
+  static_assert(not reflex::qt::prop{.constant = true}.notifying());
 
   const QMetaObject& mo = constant_alone::staticMetaObject;
 

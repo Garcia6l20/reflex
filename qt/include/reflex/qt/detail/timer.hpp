@@ -24,14 +24,17 @@ consteval bool check_timer_handler(meta::info Handler)
                     Handler);
   return true;
 }
+}
 
 /** @brief the id of one running timer, declared as a data member of the object
  *
  * ```cpp
- * struct ticker : reflex::qt::object<ticker>
+ * namespace qt = reflex::qt;
+ *
+ * struct ticker : qt::object<ticker>
  * {
  *   void tick();
- *   timer<^^tick> tick_timer;
+ *   qt::timer<^^tick> tick_timer;
  * };
  * ```
  *
@@ -42,11 +45,11 @@ consteval bool check_timer_handler(meta::info Handler)
  * moves the four bytes to the class that asked for the timer, and a class with
  * no timer pays nothing.
  */
-template <meta::info Handler> class timer_decl
+template <meta::info Handler> class timer
 {
   consteval
   {
-    check_timer_handler(Handler);
+    detail::check_timer_handler(Handler);
   }
 
 public:
@@ -62,11 +65,13 @@ public:
   }
 
 private:
-  template <typename, typename> friend class qt::object;
+  template <typename, typename> friend class object;
 
   int id_ = 0;
 };
 
+namespace detail
+{
 consteval auto timer_type_of(meta::info M) -> meta::info
 {
   return meta::dealias(meta::remove_const(type_of(M)));
@@ -74,7 +79,7 @@ consteval auto timer_type_of(meta::info M) -> meta::info
 
 consteval bool is_timer_member(meta::info M)
 {
-  return meta::is_template_instance_of(timer_type_of(M), ^^timer_decl);
+  return meta::is_template_instance_of(timer_type_of(M), ^^timer);
 }
 
 /** @brief the member function a timer member drives

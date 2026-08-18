@@ -9,6 +9,8 @@
 
 #include <string_view>
 
+using namespace reflex::qt;
+
 struct base_object : reflex::qt::object<base_object>
 {
   signal<int> baseSig{this};

@@ -10,40 +10,41 @@
 
 #include <format>
 
-struct [[= reflex::qt::classinfo{"author", "reflex"}]] tally
-    : reflex::qt::object<tally>
+namespace qt = reflex::qt;
+
+struct [[= qt::classinfo{"author", "reflex"}]] tally : qt::object<tally>
 {
-  friend reflex::qt::access<tally>;
+  friend qt::access<tally>;
 
   signal<int> changed{this};
 
-  [[= slot]] void increment()
+  [[= qt::slot]] void increment()
   {
     setProperty<^^count>(count + 1);
   }
 
-  [[= slot]] void reset()
+  [[= qt::slot]] void reset()
   {
     setProperty<^^count>(0);
   }
 
-  [[= invocable]] QString caption() const
+  [[= qt::invocable]] QString caption() const
   {
     return QString::fromStdString(std::format("clicked {} time{}", count, count == 1 ? "" : "s"));
   }
 
 private:
-  [[= prop{}]] int count = 0;
+  [[= qt::prop{}]] int count = 0;
 
-  [[= listener<^^count>]] void onCountChanged()
+  [[= qt::listener<^^count>]] void onCountChanged()
   {
     changed(count);
   }
 };
 
-class window : public reflex::qt::object<window, QWidget>
+class window : public qt::object<window, QWidget>
 {
-  friend reflex::qt::access<window>;
+  friend qt::access<window>;
 
 public:
   window()
@@ -76,7 +77,7 @@ public:
   }
 
 private:
-  [[= slot]] void refresh(int)
+  [[= qt::slot]] void refresh(int)
   {
     label_->setText(tally_.caption());
   }
