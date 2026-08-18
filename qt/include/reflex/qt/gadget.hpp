@@ -51,7 +51,23 @@ public:
   {
     static_assert(std::ranges::contains(detail::gadget_impl<Super>::strings::properties, Property),
                   "no such property");
-    self.[:Property:] = std::forward<T>(value);
+    auto& target = self.[:Property:];
+    if constexpr(detail::gadget_impl<Super>::strings::is_object)
+    {
+      if constexpr(requires { target == value; })
+      {
+        if(target == value)
+        {
+          return;
+        }
+      }
+      target = std::forward<T>(value);
+      self.template propertyChanged<constant_string{identifier_of(Property)}>();
+    }
+    else
+    {
+      target = std::forward<T>(value);
+    }
   }
 
   template <constant_string name, typename T> void setProperty(this auto& self, T&& value)

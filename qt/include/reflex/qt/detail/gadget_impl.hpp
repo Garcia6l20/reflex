@@ -37,10 +37,27 @@ template <typename Super> struct gadget_impl
   static constexpr inline auto qt_staticMetaObjectRelocatingContent =
       qt_staticMetaObjectContent<MetaObjectTagType>.relocatingData;
 
+  static constexpr const char* class_name()
+  {
+    return qt_staticMetaObjectStaticContent<tag>.strings;
+  }
+
+  static constexpr QMetaObject::SuperData superdata()
+  {
+    if constexpr(strings::is_object)
+    {
+      return QMetaObject::SuperData::link<Super::parent_type::staticMetaObject>();
+    }
+    else
+    {
+      return nullptr;
+    }
+  }
+
   static constexpr QMetaObject metaObject()
   {
     return {
-        {nullptr,
+        {superdata(),
          qt_staticMetaObjectStaticContent<tag>.stringdata,
          qt_staticMetaObjectStaticContent<tag>.data,
          qt_static_metacall,
@@ -50,25 +67,37 @@ template <typename Super> struct gadget_impl
     };
   }
 
-  template <meta::info Fn> static void invoke(Super* self, void** args)
+  static constexpr Super* recover(QObject* o)
   {
-    static constexpr auto parameters = define_static_array(parameters_of(Fn));
+    if constexpr(strings::is_object)
+    {
+      return static_cast<Super*>(o);
+    }
+    else
+    {
+      return reinterpret_cast<Super*>(o);
+    }
+  }
+
+  template <meta::info Member, std::size_t N> static void invoke(Super* self, void** args)
+  {
+    static constexpr auto parameters = define_static_array(parameters_of(call_function_of(Member)));
 
     const auto call = [&]<std::size_t... I>(std::index_sequence<I...>) -> decltype(auto)
     {
-      return self->[:Fn:](
+      return self->[:Member:](
           *reinterpret_cast<typename[:meta::remove_cvref(type_of(parameters[I])):]*>(args[I + 1])...);
     };
 
-    constexpr auto return_type = return_type_of(Fn);
+    constexpr auto return_type = call_return_type_of(Member);
     if constexpr(return_type == ^^void)
     {
-      call(std::make_index_sequence<parameters.size()>());
+      call(std::make_index_sequence<N>());
     }
     else
     {
       using return_value_type = [:return_type:];
-      return_value_type value = call(std::make_index_sequence<parameters.size()>());
+      return_value_type value = call(std::make_index_sequence<N>());
       if(args[0])
       {
         *reinterpret_cast<return_value_type*>(args[0]) = std::move(value);
@@ -78,16 +107,49 @@ template <typename Super> struct gadget_impl
 
   static void qt_static_metacall(QObject* o, QMetaObject::Call c, int id, void** a)
   {
-    [[maybe_unused]] auto* self = reinterpret_cast<Super*>(o);
+    [[maybe_unused]] auto* self = recover(o);
 
     if(c == QMetaObject::InvokeMetaMethod)
     {
-      template for(constexpr auto i : std::views::iota(0uz, strings::invocable_count))
+      template for(constexpr auto i : std::views::iota(0uz, strings::method_count))
       {
         if(int(i) == id)
         {
-          invoke<strings::invocables[i]>(self, a);
+          if constexpr(strings::methods[i].kind == method_kind::notifier)
+          {
+            QMetaObject::activate(self, &Super::staticMetaObject, int(i), nullptr);
+          }
+          else
+          {
+            invoke<strings::methods[i].member, strings::methods[i].arity>(self, a);
+          }
           return;
+        }
+      }
+    }
+    else if(c == QMetaObject::IndexOfMethod)
+    {
+      if constexpr(strings::is_object)
+      {
+        template for(constexpr auto i : std::views::iota(0uz, strings::method_count))
+        {
+          if constexpr(strings::methods[i].kind == method_kind::signal_member)
+          {
+            if(QtMocHelpers::indexOfMethod(a, &[:strings::methods[i].member:], int(i)))
+            {
+              return;
+            }
+          }
+          else if constexpr(strings::methods[i].kind == method_kind::notifier)
+          {
+            constexpr auto notifier =
+                &Super::template propertyChanged<constant_string{
+                    identifier_of(strings::methods[i].member)}>;
+            if(QtMocHelpers::indexOfMethod(a, notifier, int(i)))
+            {
+              return;
+            }
+          }
         }
       }
     }
@@ -135,19 +197,23 @@ template <typename Super> struct gadget_impl
       auto* result = reinterpret_cast<QMetaType*>(a[0]);
       *result      = QMetaType();
 
-      template for(constexpr auto i : std::views::iota(0uz, strings::invocable_count))
+      template for(constexpr auto i : std::views::iota(0uz, strings::method_count))
       {
         if(int(i) == id)
         {
-          static constexpr auto parameters = define_static_array(parameters_of(strings::invocables[i]));
-          const auto            argument   = *reinterpret_cast<int*>(a[1]);
-          template for(constexpr auto j : std::views::iota(0uz, parameters.size()))
+          if constexpr(strings::methods[i].kind != method_kind::notifier)
           {
-            if(int(j) == argument)
+            static constexpr auto parameters =
+                define_static_array(parameters_of(call_function_of(strings::methods[i].member)));
+            const auto argument = *reinterpret_cast<int*>(a[1]);
+            template for(constexpr auto j : std::views::iota(0uz, parameters.size()))
             {
-              using parameter_type = [:meta::remove_cvref(type_of(parameters[j])):];
-              *result              = QMetaType::fromType<parameter_type>();
-              return;
+              if(int(j) == argument)
+              {
+                using parameter_type = [:meta::remove_cvref(type_of(parameters[j])):];
+                *result              = QMetaType::fromType<parameter_type>();
+                return;
+              }
             }
           }
           return;
