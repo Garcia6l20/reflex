@@ -35,7 +35,13 @@ else:
     _patch(qt)
 
     qt_lib = project.HeaderOnlyLibrary("reflex.qt", include_dirs=["include"])
-    qt_lib.public.link_libs.extend([project.get_target("reflex.core"), qt.Core])
+    qt_lib.public.link_libs.extend(
+        [
+            project.get_target("reflex.core"),
+            project.get_target("reflex.serde"),
+            qt.Core,
+        ]
+    )
 
     if build_testing:
         add_subdirectory("tests")

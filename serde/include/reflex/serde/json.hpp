@@ -95,9 +95,9 @@ REFLEX_EXPORT namespace reflex::serde::json
   }
 
   // The cold half: \u, and every malformed escape. `next` yields the next body
-  // byte and throws when there is none, `emit` takes the decoded byte. Both
+  // byte and throws when there is none, `put` takes the decoded byte. Both
   // cursors share this so the escape semantics exist in exactly one place.
-  template <typename Next, typename Emit> void decode_rare_escape(char esc, Next&& next, Emit&& emit)
+  template <typename Next, typename Emit> void decode_rare_escape(char esc, Next&& next, Emit&& put)
   {
     switch(esc)
     {
@@ -114,7 +114,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         {
           throw std::runtime_error("\\uXXXX escapes not implemented");
         }
-        emit(static_cast<char>(cp));
+        put(static_cast<char>(cp));
         return;
       }
       default:
@@ -123,16 +123,16 @@ REFLEX_EXPORT namespace reflex::serde::json
   }
 
   // One escape, whichever kind. The common seven stay inline at the call site.
-  template <typename Next, typename Emit> void decode_escape(Next&& next, Emit&& emit)
+  template <typename Next, typename Emit> void decode_escape(Next&& next, Emit&& put)
   {
     const char esc    = next();
     const int  simple = simple_escape(esc);
     if(simple >= 0)
     {
-      emit(static_cast<char>(simple));
+      put(static_cast<char>(simple));
       return;
     }
-    decode_rare_escape(esc, next, emit);
+    decode_rare_escape(esc, next, put);
   }
 
   // What may legally follow a number: a structural character, or whitespace
