@@ -226,9 +226,37 @@ REFLEX_EXPORT namespace reflex::meta
     return false;
   }
 
+  /** @brief the annotations of @p R, empty for anything `annotations_of` rejects
+   *
+   * `annotations_of` describes a type, type alias, variable, function, function
+   * parameter, namespace, enumerator, base class relationship or non-static
+   * data member, and throws on anything else. A template is what reaches here:
+   * `members_of` hands back a member function template, a variable template and
+   * a nested class template alongside the rest, so a query walking a class runs
+   * into one whether or not the class was written with reflection in mind. The
+   * annotation is accepted on such a declaration and is readable on a
+   * specialization, so the emptiness is what the implementation can describe
+   * and not what the declaration carries.
+   *
+   * Catching rather than testing the kind ties the answer to `annotations_of`:
+   * the day it describes a template, every query built on this one reports the
+   * annotations instead of nothing.
+   */
+  consteval auto annotations_of_or_empty(info R) -> std::vector<info>
+  {
+    try
+    {
+      return annotations_of(R);
+    }
+    catch(std::meta::exception const&)
+    {
+      return {};
+    }
+  }
+
   consteval auto annotations_of_with(info R, info A)
   {
-    return annotations_of(R) | std::views::filter([A](auto R) {
+    return annotations_of_or_empty(R) | std::views::filter([A](auto R) {
              if(is_template(A))
              {
                return is_template_instance_of(type_of(R), A);

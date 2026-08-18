@@ -207,3 +207,37 @@ TEST_CASE("a class with no classinfo publishes none")
 {
   CHECK(pinger::staticMetaObject.classInfoCount() == 0);
 }
+
+struct helper_holder : reflex::qt::object<helper_holder>
+{
+  signal<int> changed{this};
+
+  [[= slot]] void bump()
+  {
+    ++bumps;
+  }
+
+  template <typename F> void on_changed(F&& handler)
+  {
+    QObject::connect(this, &helper_holder::changed, std::forward<F>(handler));
+  }
+
+  int bumps = 0;
+};
+
+TEST_CASE("a member function template leaves the slots around it alone")
+{
+  const QMetaObject& meta = helper_holder::staticMetaObject;
+
+  CHECK(meta.indexOfSlot("bump()") >= 0);
+  CHECK(meta.indexOfSignal("changed(int)") >= 0);
+
+  helper_holder instance;
+  int           seen = 0;
+  instance.on_changed([&seen](int value) { seen = value; });
+  instance.changed(7);
+  CHECK(seen == 7);
+
+  REQUIRE(QMetaObject::invokeMethod(&instance, "bump"));
+  CHECK(instance.bumps == 1);
+}
