@@ -19,9 +19,9 @@ struct payload
 
 struct emitter : reflex::qt::object<emitter>
 {
-  signal<>                       ping{this};
-  signal<int, with_default<int>> pair{this, 42};
-  signal<payload>                boxed{this};
+  signal<>                    ping{this};
+  signal<int, defaulted<int>> pair{this, 42};
+  signal<payload>             boxed{this};
 
   [[= slot]] void onPing()
   {
@@ -60,7 +60,7 @@ struct emitter : reflex::qt::object<emitter>
 
 struct spread : reflex::qt::object<spread>
 {
-  signal<int, with_default<int>, with_default<int>> three{this, 20, 30};
+  signal<int, defaulted<int>, defaulted<int>> three{this, 20, 30};
 
   [[= slot]] void onThree(int a, int b, int c)
   {

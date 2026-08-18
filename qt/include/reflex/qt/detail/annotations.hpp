@@ -44,15 +44,17 @@ inline constexpr slot_t slot{};
 
 /** @brief wraps a `signal` argument type that carries a default value
  *
- * Qt publishes one method table entry per default-argument arity, so the count
- * has to be known from the signal's *type*. A constructor argument count is
- * not part of a type, which is why the marker cannot be inferred away.
+ * Qt publishes one method table entry per default-argument arity, so the
+ * metaobject needs the defaulted-argument count while it reflects over the
+ * class, before any object exists. The defaults themselves are constructor
+ * arguments and never appear in the member's type, so the count cannot be
+ * inferred and the marker carries it.
  *
  * ```cpp
- * signal<int, reflex::qt::with_default<int>> pair{this, 42};
+ * signal<int, reflex::qt::defaulted<int>> pair{this, 42};
  * ```
  */
-template <typename T> struct with_default
+template <typename T> struct defaulted
 {
   using type = T;
 };
@@ -68,7 +70,7 @@ template <typename T> struct drop_default
   using type = T;
 };
 
-template <typename T> struct drop_default<with_default<T>>
+template <typename T> struct drop_default<defaulted<T>>
 {
   using type = T;
 };
@@ -80,7 +82,7 @@ consteval auto default_types_of(std::initializer_list<meta::info> args) -> std::
   std::vector<meta::info> types;
   for(auto a : args)
   {
-    if(meta::is_template_instance_of(a, ^^with_default))
+    if(meta::is_template_instance_of(a, ^^defaulted))
     {
       types.push_back(template_arguments_of(a)[0]);
     }
@@ -93,7 +95,7 @@ consteval auto default_types_of(std::initializer_list<meta::info> args) -> std::
  * ```cpp
  * struct counter : reflex::qt::object<counter>
  * {
- *   signal<int, reflex::qt::with_default<int>> changed{this, 0};
+ *   signal<int, reflex::qt::defaulted<int>> changed{this, 0};
  * };
  * ```
  *
@@ -182,7 +184,7 @@ consteval auto signal_default_count_of(meta::info R) -> std::size_t
   std::size_t count = 0;
   for(auto a : template_arguments_of(meta::dealias(meta::remove_const(type_of(R)))))
   {
-    if(meta::is_template_instance_of(a, ^^with_default))
+    if(meta::is_template_instance_of(a, ^^defaulted))
     {
       ++count;
     }

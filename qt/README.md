@@ -90,8 +90,8 @@ emits.
 ```cpp
 struct emitter : qt::object<emitter>
 {
-  signal<>                           ping{this};
-  signal<int, qt::with_default<int>> pair{this, 42};
+  signal<>                        ping{this};
+  signal<int, qt::defaulted<int>> pair{this, 42};
 
   [[= qt::slot]] void onPair(int a, int b)
   {
@@ -110,13 +110,14 @@ e.pair(1, 2);   // e.sum == 3
 e.pair(1);      // e.sum == 43, the default fills the missing argument
 ```
 
-`qt::with_default<T>` marks an argument that may be omitted, and its value is given at
+`qt::defaulted<T>` marks an argument that may be omitted, and its value is given at
 construction. Qt publishes one method table entry per reachable arity, so `pair` appears as
 both `pair(int,int)` and `pair(int)` and a `SIGNAL(pair(int))` connect delivers once.
 
-The count has to come from the signal's *type*, because that is what the metaobject is
-built from, and a constructor's argument count is not part of a type. That is why the
-marker cannot be inferred away.
+The count has to come from the signal's *type*. The metaobject emits the clone entries
+while it reflects over the class, before any object exists, and the defaults are
+constructor arguments that never appear in the member's type. That is why the marker
+cannot be inferred away.
 
 ### Slots and invocables
 
@@ -610,7 +611,7 @@ with no storage, is not expressible: a getter and a setter are optional decorati
 member, not a substitute for one.
 
 **Signal parameter names.** `QMetaMethod::parameterNames()` returns empty strings for a
-signal. A `signal<int, qt::with_default<int>>` carries types and not names, which is a
+signal. A `signal<int, qt::defaulted<int>>` carries types and not names, which is a
 permanent consequence of declaring a signal as a data member. Slot and invocable parameter
 names are emitted and match moc. This is cosmetic for `connect` and `invokeMethod` and
 shows only in tooling.
