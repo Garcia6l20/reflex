@@ -69,7 +69,7 @@ public:
   {
     static_assert(std::ranges::contains(detail::gadget_impl<Super>::strings::properties, Property),
                   "no such property");
-    static_assert(detail::property_spec_of(Property).write, "the property is not writable");
+    static_assert(detail::property_spec_of(Property).writable(), "the property is not writable");
 
     static constexpr auto writer  = detail::accessor_for<detail::setter>(^^Super, Property);
     static constexpr auto handler = detail::accessor_for<detail::listener>(^^Super, Property);
@@ -95,7 +95,7 @@ public:
       self.[:handler:]();
     }
     if constexpr(detail::gadget_impl<Super>::strings::is_object
-                 and detail::property_spec_of(Property).notify)
+                 and detail::property_spec_of(Property).notifying())
     {
       self.template propertyChanged<constant_string{identifier_of(Property)}>();
     }

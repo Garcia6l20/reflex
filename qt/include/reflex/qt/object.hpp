@@ -83,7 +83,7 @@ public:
     using strings                  = typename detail::gadget_impl<Super>::strings;
     static constexpr auto declared = detail::property_named(^^Super, *name);
     static_assert(declared != meta::null, "no such property");
-    static_assert(detail::property_spec_of(declared).notify, "the property does not notify");
+    static_assert(detail::property_spec_of(declared).notifying(), "the property does not notify");
 
     constexpr auto index = strings::notifier_index_of(*name);
     QMetaObject::activate(this, &staticMetaObject, int(index), nullptr);

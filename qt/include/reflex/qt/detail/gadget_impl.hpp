@@ -197,7 +197,7 @@ template <typename Super> struct gadget_impl
     {
       template for(constexpr auto i : std::views::iota(0uz, strings::property_count))
       {
-        if constexpr(property_spec_of(strings::properties[i]).write)
+        if constexpr(property_spec_of(strings::properties[i]).writable())
         {
           if(int(i) == id)
           {

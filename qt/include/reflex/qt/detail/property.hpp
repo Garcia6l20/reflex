@@ -52,10 +52,17 @@ namespace detail
  * signal. Turning one off is a designated initializer.
  *
  * ```cpp
- * [[= prop{}]]                int a;   // read, write, notify
- * [[= prop{.write = false}]]  int b;   // read-only, still notifies
- * [[= prop{.notify = false}]] int c;   // no cChanged() in the method table
+ * [[= prop{}]]                  int a;   // read, write, notify
+ * [[= prop{.write = false}]]    int b;   // read-only, still notifies
+ * [[= prop{.notify = false}]]   int c;   // no cChanged() in the method table
+ * [[= prop{.constant = true}]]  int d;   // read-only and silent, both implied
  * ```
+ *
+ * `constant` implies neither writable nor notifying, which is the only
+ * combination Qt accepts: moc rejects `CONSTANT` next to `WRITE` or `NOTIFY`.
+ * Since the other flags default to true, an explicit `true` cannot be told
+ * apart from the default, so the implication is silent rather than diagnosed.
+ * Read the effective values through @ref writable and @ref notifying.
  */
 struct property
 {
@@ -65,6 +72,18 @@ struct property
   bool constant = false;
   bool final    = false;
   bool required = false;
+
+  /** @brief Whether the property accepts a write, `constant` taken into account. */
+  constexpr bool writable() const noexcept
+  {
+    return write and not constant;
+  }
+
+  /** @brief Whether the property has a notify signal, `constant` taken into account. */
+  constexpr bool notifying() const noexcept
+  {
+    return notify and not constant;
+  }
 };
 
 /** @brief marks a member function as the reader of the property it names

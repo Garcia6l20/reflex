@@ -228,7 +228,7 @@ template <typename Tag, typename Super> struct meta_strings
     {
       for(auto p : properties)
       {
-        if(property_spec_of(p).notify)
+        if(property_spec_of(p).notifying())
         {
           list.push_back({p, 0, method_kind::notifier, false});
         }
@@ -492,7 +492,7 @@ template <typename Tag, typename Super> struct meta_strings
     {
       flags &= ~uint(QMC::Readable);
     }
-    if constexpr(spec.write)
+    if constexpr(spec.writable())
     {
       flags |= QMC::Writable;
     }
@@ -513,7 +513,7 @@ template <typename Tag, typename Super> struct meta_strings
       flags |= QMC::EnumOrFlag;
     }
     constexpr uint notify_id =
-        (is_object and spec.notify) ? uint(notifier_index_of(identifier_of(p))) : uint(-1);
+        (is_object and spec.notifying()) ? uint(notifier_index_of(identifier_of(p))) : uint(-1);
     return QtMocHelpers::PropertyData<property_type>(index_of(identifier_of(p)),
                                                      meta_type_id_of(type_of(p)),
                                                      flags,
