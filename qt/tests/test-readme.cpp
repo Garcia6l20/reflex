@@ -46,8 +46,8 @@ struct derived_widget : qt::object<derived_widget, base_widget>
 
 struct emitter : qt::object<emitter>
 {
-  signal<>                           ping{this};
-  signal<int, qt::with_default<int>> pair{this, 42};
+  signal<>                        ping{this};
+  signal<int, qt::defaulted<int>> pair{this, 42};
 
   [[= qt::slot]] void onPair(int a, int b)
   {

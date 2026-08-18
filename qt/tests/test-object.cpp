@@ -20,9 +20,9 @@ struct custom
 
 struct [[= reflex::qt::classinfo{"author", "reflex"}]] counter : reflex::qt::object<counter>
 {
-  signal<>                       emptySig{this};
-  signal<int, with_default<int>> intSig{this, 42};
-  signal<custom>                 customSig{this};
+  signal<>                    emptySig{this};
+  signal<int, defaulted<int>> intSig{this, 42};
+  signal<custom>              customSig{this};
 
   [[= slot]] void emptySlot()
   {
