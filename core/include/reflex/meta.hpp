@@ -56,6 +56,32 @@ REFLEX_EXPORT namespace reflex::meta
     }
   };
 
+  /** @brief The member of @p R whose identifier is @p name.
+   *
+   * @param R the scope to search: a class type, or any scope `members_of` accepts
+   * @param name the identifier to match, compared exactly
+   * @param ctx the access context the lookup is performed from. Defaults to the
+   *        caller's, so a private member is found from inside its own class and
+   *        not from outside it. Pass `access_context::unchecked()` to ignore
+   *        access entirely
+   * @param recursive when true, and @p R is a class type, base classes are
+   *        searched as well
+   * @return the member, or `meta::null` when @p name names nothing reachable
+   *
+   * A recursive lookup takes @p R's own members first, so a member shadows one
+   * of the same name in a base. Bases are then searched depth first in
+   * declaration order and the first match wins, which means a name declared in
+   * two unrelated bases resolves to the one declared first rather than being
+   * reported as ambiguous.
+   *
+   * ```cpp
+   * struct base    { int value; };
+   * struct derived : base { int other; };
+   *
+   * static_assert(member_named(^^derived, "value") == meta::null);
+   * static_assert(member_named(^^derived, "value", true) != meta::null);
+   * ```
+   */
   consteval auto member_named(meta::info       R,
                               std::string_view name,
                               access_context   ctx       = access_context::current(),
@@ -79,6 +105,12 @@ REFLEX_EXPORT namespace reflex::meta
     return null;
   }
 
+  /** @brief The member of @p R whose identifier is @p name, searching bases.
+   *
+   * Spelling of the same lookup that puts @p recursive next to the name, for
+   * the common case where the default access context is wanted. @p ctx stays a
+   * default argument so it is still evaluated at the call site.
+   */
   consteval auto member_named(meta::info       R,
                               std::string_view name,
                               bool             recursive,
