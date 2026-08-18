@@ -94,7 +94,8 @@ public:
     {
       self.[:handler:]();
     }
-    if constexpr(detail::gadget_impl<Super>::strings::is_object)
+    if constexpr(detail::gadget_impl<Super>::strings::is_object
+                 and detail::property_spec_of(Property).notify)
     {
       self.template propertyChanged<constant_string{identifier_of(Property)}>();
     }

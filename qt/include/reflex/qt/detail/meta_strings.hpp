@@ -183,7 +183,10 @@ template <typename Tag, typename Super> struct meta_strings
     {
       for(auto p : properties)
       {
-        list.push_back({p, 0, method_kind::notifier, false});
+        if(property_spec_of(p).notify)
+        {
+          list.push_back({p, 0, method_kind::notifier, false});
+        }
       }
     }
     for(auto fn : slot_members)
@@ -433,7 +436,7 @@ template <typename Tag, typename Super> struct meta_strings
       flags |= QMC::Required;
     }
     constexpr uint notify_id =
-        is_object ? uint(notifier_index_of(identifier_of(p))) : uint(-1);
+        (is_object and spec.notify) ? uint(notifier_index_of(identifier_of(p))) : uint(-1);
     return QtMocHelpers::PropertyData<property_type>(index_of(identifier_of(p)),
                                                      meta_type_id_of(type_of(p)),
                                                      flags,

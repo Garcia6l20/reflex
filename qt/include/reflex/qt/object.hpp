@@ -36,8 +36,9 @@ namespace reflex::qt
  * and `qobject_cast` admit it, and `FunctionPointer` so that new-style
  * `connect` accepts a `signal` data member where it expects a member function.
  *
- * Every property gets a `<name>Changed` notify signal, reachable from
- * `connect` as `&Super::propertyChanged<"name">`.
+ * A property gets a `<name>Changed` notify signal unless its annotation says
+ * `.notify = false`, reachable from `connect` as
+ * `&Super::propertyChanged<"name">`.
  */
 template <typename Super, typename ParentT> class object : public ParentT, public gadget<Super>
 {
@@ -71,12 +72,20 @@ public:
   using inherited_names::setProperty;
   using gadget<Super>::setProperty;
 
-  /** @brief emits the notify signal of the property named @p name */
+  /** @brief emits the notify signal of the property named @p name
+   *
+   * Only a property whose annotation leaves `.notify` on has one, so naming a
+   * property declared `.notify = false` is a compile error rather than a
+   * connect target that never fires.
+   */
   template <constant_string name> void propertyChanged()
   {
-    using strings         = typename detail::gadget_impl<Super>::strings;
+    using strings                  = typename detail::gadget_impl<Super>::strings;
+    static constexpr auto declared = detail::property_named(^^Super, *name);
+    static_assert(declared != meta::null, "no such property");
+    static_assert(detail::property_spec_of(declared).notify, "the property does not notify");
+
     constexpr auto index = strings::notifier_index_of(*name);
-    static_assert(index < strings::method_count, "no such property");
     QMetaObject::activate(this, &staticMetaObject, int(index), nullptr);
   }
 

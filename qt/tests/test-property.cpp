@@ -85,6 +85,22 @@ struct flagged : reflex::qt::gadget<flagged>
   [[= prop{.final = true, .required = true}]] int  both  = 0;
 };
 
+struct mixed : reflex::qt::object<mixed>
+{
+  signal<int> sig{this};
+
+  [[= prop{}]] int                before = 0;
+  [[= prop{.notify = false}]] int quiet  = 0;
+  [[= prop{}]] int                after  = 0;
+
+  [[= slot]] void tick()
+  {
+    ++ticks;
+  }
+
+  int ticks = 0;
+};
+
 namespace bad
 {
 struct unknown_property : reflex::qt::object<unknown_property>
@@ -298,4 +314,78 @@ TEST_CASE("an annotated accessor wins over a conventionally named one")
 
   CHECK(a.property<"p1">() == 20);
   CHECK(a.property("p1").toInt() == 20);
+}
+
+TEST_CASE("a property that declines to notify perforates nothing")
+{
+  const QMetaObject& mo     = mixed::staticMetaObject;
+  const int          offset = mo.methodOffset();
+
+  QList<QByteArray> signatures;
+  for(int i = offset; i < mo.methodCount(); ++i)
+  {
+    signatures.push_back(mo.method(i).methodSignature());
+  }
+
+  const QList<QByteArray> expected{"sig(int)", "beforeChanged()", "afterChanged()", "tick()"};
+  CHECK(signatures == expected);
+  CHECK(mo.methodCount() == offset + 4);
+
+  CHECK(mo.method(offset + 0).methodType() == QMetaMethod::Signal);
+  CHECK(mo.method(offset + 1).methodType() == QMetaMethod::Signal);
+  CHECK(mo.method(offset + 2).methodType() == QMetaMethod::Signal);
+  CHECK(mo.method(offset + 3).methodType() == QMetaMethod::Slot);
+
+  const int poffset = mo.propertyOffset();
+  REQUIRE(mo.propertyCount() == poffset + 3);
+
+  const auto before = mo.property(poffset + 0);
+  CHECK(std::string_view{before.name()} == "before");
+  CHECK(before.hasNotifySignal());
+  CHECK(before.notifySignalIndex() == offset + 1);
+
+  const auto quiet = mo.property(poffset + 1);
+  CHECK(std::string_view{quiet.name()} == "quiet");
+  CHECK(not quiet.hasNotifySignal());
+  CHECK(quiet.notifySignalIndex() == -1);
+
+  const auto after = mo.property(poffset + 2);
+  CHECK(std::string_view{after.name()} == "after");
+  CHECK(after.hasNotifySignal());
+  CHECK(after.notifySignalIndex() == offset + 2);
+}
+
+TEST_CASE("a property that declines to notify still reads, writes and dispatches")
+{
+  mixed m;
+  int   before_notified = 0;
+  int   after_notified  = 0;
+
+  QObject::connect(
+      &m, &mixed::propertyChanged<"before">, [&before_notified] { ++before_notified; });
+  QObject::connect(&m, &mixed::propertyChanged<"after">, [&after_notified] { ++after_notified; });
+
+  REQUIRE(m.setProperty("quiet", 5));
+  CHECK(m.quiet == 5);
+  CHECK(m.property("quiet").toInt() == 5);
+  CHECK(before_notified == 0);
+  CHECK(after_notified == 0);
+
+  m.setProperty<"quiet">(6);
+  CHECK(m.property<"quiet">() == 6);
+  CHECK(before_notified == 0);
+  CHECK(after_notified == 0);
+
+  m.setProperty<"before">(1);
+  m.setProperty<"after">(2);
+  CHECK(before_notified == 1);
+  CHECK(after_notified == 1);
+
+  REQUIRE(QMetaObject::invokeMethod(&m, "tick"));
+  CHECK(m.ticks == 1);
+
+  int seen = 0;
+  QObject::connect(&m, &mixed::sig, [&seen](int) { ++seen; });
+  m.sig(3);
+  CHECK(seen == 1);
 }
