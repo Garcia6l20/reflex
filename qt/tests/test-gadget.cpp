@@ -150,6 +150,15 @@ TEST_CASE("the gadget is a valid meta type named after the class")
   CHECK(type.metaObject() == &point::staticMetaObject);
 }
 
+TEST_CASE("the gadget is flagged as a gadget, by value and by pointer")
+{
+  static_assert(QtPrivate::IsRealGadget<point>::value);
+  static_assert(QtPrivate::IsPointerToGadgetHelper<point*>::IsRealGadget);
+
+  CHECK(QMetaType::fromType<point>().flags().testFlag(QMetaType::IsGadget));
+  CHECK(QMetaType::fromType<point*>().flags().testFlag(QMetaType::PointerToGadget));
+}
+
 TEST_CASE("properties are reachable by name")
 {
   point p;
