@@ -43,6 +43,11 @@ import reflex.core;
 // Find member by name at compile time
 consteval auto mem = reflex::meta::member_named(^^MyStruct, "field_name");
 
+// Base classes are searched on request. Own members come first, so a member
+// shadows one of the same name in a base, and bases are taken depth first in
+// declaration order.
+consteval auto inherited = reflex::meta::member_named(^^Derived, "field_name", true);
+
 // Typed annotation extraction. A class type comes back as a `T const&`, anything
 // else by value: an enumeration or arithmetic annotation is a value, not an object.
 constexpr auto ann = reflex::meta::annotation_value_of_with<MyAnnotation>(mem);

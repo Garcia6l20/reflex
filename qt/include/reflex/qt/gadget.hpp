@@ -40,6 +40,12 @@ public:
     return self.[:Property:];
   }
 
+  /** @brief Reads the property named @p name, including one a base declares.
+   *
+   * The lookup searches @p Super and its bases, so a property inherited from
+   * another reflex class is reachable from the derived type. A property
+   * declared in @p Super shadows one of the same name in a base.
+   */
   template <constant_string name> auto property(this auto& self)
   {
     static constexpr auto p =
@@ -72,6 +78,13 @@ public:
     }
   }
 
+  /** @brief Writes @p value to the property named @p name, notifying once.
+   *
+   * The lookup searches @p Super and its bases. An inherited property is
+   * written and notified through the class that declares it, so its notify
+   * signal carries that class's own method index. A write of the value the
+   * property already holds notifies nothing.
+   */
   template <constant_string name, typename T> void setProperty(this auto& self, T&& value)
   {
     static constexpr auto p =
