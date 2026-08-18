@@ -3,6 +3,7 @@
 #include <reflex/meta.hpp>
 #include <reflex/qt/detail/version.hpp>
 
+#include <QtCore/qflags.h>
 #include <QtCore/qmetatype.h>
 
 #include <bit>
@@ -25,6 +26,13 @@ consteval std::string normalized_type_name(meta::info R)
   return meta::display_string_of(normalized_type_of(R))
        | std::views::filter([](char c) { return c != ' '; })
        | std::ranges::to<std::string>();
+}
+
+/** @brief whether @p R names an enumeration or a `QFlags` specialization */
+consteval bool is_enum_or_flags(meta::info R)
+{
+  const auto T = normalized_type_of(R);
+  return meta::is_enum_type(T) or meta::is_template_instance_of(T, ^^QFlags);
 }
 
 /** @brief @p R's built-in `QMetaType` id, or `custom_type` when it has none */
