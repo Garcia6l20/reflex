@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <ranges>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -57,6 +58,43 @@ template <auto const& Strings> struct string_storage
   }
 };
 
+/** @brief what a method table entry was built from */
+enum class method_kind : unsigned
+{
+  signal_member,
+  notifier,
+  slot,
+  invocable
+};
+
+/** @brief one row of the `QMetaObject` method table */
+struct method_entry
+{
+  meta::info  member;
+  std::size_t arity;
+  method_kind kind;
+};
+
+consteval uint moc_method_flag_of(method_kind kind)
+{
+  switch(kind)
+  {
+  case method_kind::signal_member:
+  case method_kind::notifier:
+    return QtMocConstants::MethodSignal;
+  case method_kind::slot:
+    return QtMocConstants::MethodSlot;
+  case method_kind::invocable:
+    return QtMocConstants::MethodMethod;
+  }
+  return QtMocConstants::MethodMethod;
+}
+
+consteval std::string notifier_name_of(meta::info Property)
+{
+  return std::string{identifier_of(Property)} + "Changed";
+}
+
 /** @brief the string table and the `QMetaObject` data blob of @p Super
  *
  * @p Tag is the per-class unique type moc calls `qt_meta_tag_*_t`; it selects
@@ -64,6 +102,41 @@ template <auto const& Strings> struct string_storage
  */
 template <typename Tag, typename Super> struct meta_strings
 {
+  static constexpr bool is_object =
+      meta::is_subclass_of(^^Super, ^^qt::object, meta::access_context::unchecked());
+
+  static constexpr auto signal_members = [] consteval
+  {
+    if constexpr(is_object)
+    {
+      return define_static_array(
+          meta::nonstatic_data_members_of(^^Super, meta::access_context::unchecked())
+          | std::views::filter([](meta::info m) {
+              return meta::is_template_instance_of(dealias(remove_const(type_of(m))),
+                                                   ^^detail::signal_decl);
+            }));
+    }
+    else
+    {
+      return std::span<const meta::info>{};
+    }
+  }();
+
+  static constexpr auto slot_members = [] consteval
+  {
+    if constexpr(is_object)
+    {
+      return define_static_array(
+          meta::member_functions_annotated_with(^^Super,
+                                                ^^detail::slot,
+                                                meta::access_context::unchecked()));
+    }
+    else
+    {
+      return std::span<const meta::info>{};
+    }
+  }();
+
   static constexpr auto invocables =
       define_static_array(meta::member_functions_annotated_with(^^Super,
                                                                 ^^detail::invocable,
@@ -76,6 +149,38 @@ template <typename Tag, typename Super> struct meta_strings
 
   static constexpr auto invocable_count = invocables.size();
   static constexpr auto property_count  = properties.size();
+
+  static constexpr auto methods = [] consteval
+  {
+    std::vector<method_entry> list;
+    auto                      push = [&list](meta::info member, method_kind kind)
+    {
+      list.push_back({member, parameters_of(call_function_of(member)).size(), kind});
+    };
+
+    for(auto s : signal_members)
+    {
+      push(s, method_kind::signal_member);
+    }
+    if constexpr(is_object)
+    {
+      for(auto p : properties)
+      {
+        list.push_back({p, 0, method_kind::notifier});
+      }
+    }
+    for(auto fn : slot_members)
+    {
+      push(fn, method_kind::slot);
+    }
+    for(auto fn : invocables)
+    {
+      push(fn, method_kind::invocable);
+    }
+    return std::define_static_array(list);
+  }();
+
+  static constexpr auto method_count = methods.size();
 
   static constexpr auto custom_types = [] consteval
   {
@@ -93,13 +198,18 @@ template <typename Tag, typename Super> struct meta_strings
     {
       try_push(type_of(p));
     }
-    for(auto fn : invocables)
+    for(auto const& e : methods)
     {
+      if(e.kind == method_kind::notifier)
+      {
+        continue;
+      }
+      const auto fn = call_function_of(e.member);
       for(auto param : parameters_of(fn))
       {
         try_push(type_of(param));
       }
-      try_push(return_type_of(fn));
+      try_push(call_return_type_of(e.member));
     }
     return define_static_array(types);
   }();
@@ -143,10 +253,15 @@ template <typename Tag, typename Super> struct meta_strings
       push(*s);
     }
     push("");
-    for(auto fn : invocables)
+    for(auto const& e : methods)
     {
-      push(identifier_of(fn));
-      for(auto param : parameters_of(fn))
+      if(e.kind == method_kind::notifier)
+      {
+        push(notifier_name_of(e.member));
+        continue;
+      }
+      push(identifier_of(e.member));
+      for(auto param : parameters_of(call_function_of(e.member)))
       {
         push(parameter_name_of(param));
       }
@@ -183,6 +298,19 @@ template <typename Tag, typename Super> struct meta_strings
 
   static constexpr uint empty_string_index = index_of("");
 
+  /** @brief the method index of @p name's notify signal, or `method_count` */
+  static consteval std::size_t notifier_index_of(std::string_view name)
+  {
+    for(std::size_t i = 0; i < methods.size(); ++i)
+    {
+      if(methods[i].kind == method_kind::notifier and identifier_of(methods[i].member) == name)
+      {
+        return i;
+      }
+    }
+    return methods.size();
+  }
+
   /** @brief @p R's `QMetaType` id, or `custom_type | <string index>` when it has none */
   static consteval uint meta_type_id_of(meta::info R)
   {
@@ -209,24 +337,49 @@ template <typename Tag, typename Super> struct meta_strings
     return QMC::AccessPrivate;
   }
 
+  static consteval uint method_flags_of(meta::info R)
+  {
+    namespace QMC = QtMocConstants;
+    uint flags    = access_flags_of(R);
+    if(is_function(R) and meta::is_const(R))
+    {
+      flags |= QMC::MethodIsConst;
+    }
+    return flags;
+  }
+
   template <std::size_t I> static consteval auto method_data_of()
   {
-    constexpr auto fn         = invocables[I];
-    using signature_type      = [:meta::signature_of<fn>():];
-    using data_type           = QtMocHelpers::FunctionData<signature_type, QtMocConstants::MethodMethod>;
-    constexpr auto parameters = define_static_array(parameters_of(fn));
+    namespace QMC = QtMocConstants;
 
-    typename data_type::ParametersArray args{};
-    for(std::size_t i = 0; i < parameters.size(); ++i)
+    if constexpr(methods[I].kind == method_kind::notifier)
     {
-      args[i] = {meta_type_id_of(type_of(parameters[i])),
-                 index_of(parameter_name_of(parameters[i]))};
+      using data_type = QtMocHelpers::FunctionData<void(), QMC::MethodSignal>;
+      return data_type(index_of(notifier_name_of(methods[I].member)),
+                       empty_string_index,
+                       QMC::AccessPublic,
+                       QMetaType::Void);
     }
-    return data_type(index_of(identifier_of(fn)),
-                     empty_string_index,
-                     access_flags_of(fn),
-                     meta_type_id_of(return_type_of(fn)),
-                     args);
+    else
+    {
+      constexpr auto fn         = call_function_of(methods[I].member);
+      using signature_type      = [:meta::signature_of<fn, methods[I].arity>():];
+      using data_type           = QtMocHelpers::FunctionData<signature_type,
+                                                             moc_method_flag_of(methods[I].kind)>;
+      constexpr auto parameters = define_static_array(parameters_of(fn));
+
+      typename data_type::ParametersArray args{};
+      for(std::size_t i = 0; i < methods[I].arity; ++i)
+      {
+        args[i] = {meta_type_id_of(type_of(parameters[i])),
+                   index_of(parameter_name_of(parameters[i]))};
+      }
+      return data_type(index_of(identifier_of(methods[I].member)),
+                       empty_string_index,
+                       method_flags_of(methods[I].member),
+                       meta_type_id_of(call_return_type_of(methods[I].member)),
+                       args);
+    }
   }
 
   template <std::size_t I> static consteval auto property_data_of()
@@ -242,9 +395,12 @@ template <typename Tag, typename Super> struct meta_strings
     {
       flags |= QMC::Writable;
     }
+    constexpr uint notify_id =
+        is_object ? uint(notifier_index_of(identifier_of(p))) : uint(-1);
     return QtMocHelpers::PropertyData<property_type>(index_of(identifier_of(p)),
                                                      meta_type_id_of(type_of(p)),
-                                                     flags);
+                                                     flags,
+                                                     notify_id);
   }
 
   static consteval auto create_meta_objectdata()
@@ -256,7 +412,7 @@ template <typename Tag, typename Super> struct meta_strings
     const auto qt_methods = []<std::size_t... I>(std::index_sequence<I...>)
     {
       return QtMocHelpers::UintData{method_data_of<I>()...};
-    }(std::make_index_sequence<invocable_count>());
+    }(std::make_index_sequence<method_count>());
 
     const auto qt_properties = []<std::size_t... I>(std::index_sequence<I...>)
     {
@@ -281,7 +437,10 @@ template <typename Tag, typename Super> struct meta_strings
     QtMocHelpers::UintData qt_enums{};
     QtMocHelpers::UintData qt_constructors{};
 
-    return QtMocHelpers::metaObjectData<Super, Tag>(QMC::PropertyAccessInStaticMetaCall,
+    constexpr uint object_flags = is_object ? uint(QMC::MetaObjectFlag{})
+                                            : uint(QMC::PropertyAccessInStaticMetaCall);
+
+    return QtMocHelpers::metaObjectData<Super, Tag>(object_flags,
                                                     qt_stringData,
                                                     qt_methods,
                                                     qt_properties,
