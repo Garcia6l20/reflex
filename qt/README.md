@@ -1,0 +1,635 @@
+# reflex.qt
+
+> **Qt metaobjects from C++26 reflection.** No `Q_OBJECT`, no `Q_GADGET`, no moc.
+
+`reflex.qt` builds a class's `QMetaObject` at compile time from reflection over its
+members. Derive from `reflex::qt::object<T>`, annotate what Qt should see, and stock Qt
+treats the class as if moc had processed it: `connect`, `qobject_cast`,
+`QMetaObject::invokeMethod`, `QVariant`, `QMetaProperty` and queued connections all work.
+
+The metaobject it produces reads back identical to real moc's, field for field: class name,
+class infos, method signatures and kinds, clone flags, constness, return and parameter
+metatypes, parameter names for slots and invocables, property flags and notify indices, and
+every enumerator. What differs is listed under [Differences from moc](#differences-from-moc).
+
+Header-only. `#include <reflex/qt.hpp>` and link `Qt6Core`.
+
+---
+
+## Quick start
+
+```cpp
+#include <reflex/qt.hpp>
+
+#include <QtCore/QMetaObject>
+#include <QtCore/QObject>
+
+struct counter : reflex::qt::object<counter>
+{
+  signal<int> changed{this};
+
+  [[= slot]] void bump()
+  {
+    setProperty<"value">(value + 1);
+    changed(value);
+  }
+
+  [[= prop{}]] int value = 0;
+};
+```
+
+```cpp
+counter c;
+int     seen = 0;
+
+QObject::connect(&c, &counter::changed, [&seen](int n) { seen = n; });
+QMetaObject::invokeMethod(&c, "bump");
+// c.value == 1, seen == 1
+```
+
+`counter` publishes one signal, one notify signal `valueChanged()`, one slot and one
+property, in the method table order moc would use.
+
+---
+
+## Objects
+
+`reflex::qt::object<Super, ParentT = QObject>` is a CRTP base. `Super` is the class being
+declared, `ParentT` is its Qt base. Any `QObject` works as `ParentT`, a moc'ed one
+included, so a reflex class can derive from `QWidget` and a reflex class can derive from
+another reflex class.
+
+```cpp
+struct base_widget : reflex::qt::object<base_widget>
+{
+  [[= prop{}]] int level = 0;
+};
+
+struct derived_widget : reflex::qt::object<derived_widget, base_widget>
+{
+  [[= prop{}]] int depth = 0;
+};
+```
+
+Method and property offsets come out the way moc computes them, so
+`QMetaObject::superClass()` chains and an inherited property is written and notified
+through the class that declares it.
+
+The annotations `prop`, `slot`, `invocable`, `getter`, `setter` and `listener` are members
+of the base, so they are spelled unqualified inside the class body. `classinfo` and
+`naming::qt_style` sit in namespace `reflex::qt` and are spelled in full.
+
+### Signals
+
+A signal is a data member of type `signal<Args...>`, constructed with `this`. Calling it
+emits.
+
+```cpp
+struct emitter : reflex::qt::object<emitter>
+{
+  signal<>                       ping{this};
+  signal<int, with_default<int>> pair{this, 42};
+
+  [[= slot]] void onPair(int a, int b)
+  {
+    sum = a + b;
+  }
+
+  int sum = 0;
+};
+```
+
+```cpp
+emitter e;
+QObject::connect(&e, &emitter::pair, &e, &emitter::onPair);
+
+e.pair(1, 2);   // e.sum == 3
+e.pair(1);      // e.sum == 43, the default fills the missing argument
+```
+
+`with_default<T>` marks an argument that may be omitted, and its value is given at
+construction. Qt publishes one method table entry per reachable arity, so `pair` appears as
+both `pair(int,int)` and `pair(int)` and a `SIGNAL(pair(int))` connect delivers once.
+
+The count has to come from the signal's *type*, because that is what the metaobject is
+built from, and a constructor's argument count is not part of a type. That is why the
+marker cannot be inferred away.
+
+### Slots and invocables
+
+`[[= slot]]` publishes a member function as a slot, `[[= invocable]]` as a `Q_INVOKABLE`
+method. Both accept default arguments and both keep their parameter names.
+
+```cpp
+struct service : reflex::qt::object<service>
+{
+  [[= slot]] void reset()
+  {
+    calls = 0;
+  }
+
+  [[= invocable]] int twice(int n) const
+  {
+    return 2 * n;
+  }
+
+  int calls = 0;
+};
+```
+
+```cpp
+service s;
+int     doubled = 0;
+
+QMetaObject::invokeMethod(&s, "twice", Q_RETURN_ARG(int, doubled), Q_ARG(int, 21));
+// doubled == 42
+```
+
+### Properties
+
+`[[= prop{}]]` on a data member publishes it as a `Q_PROPERTY`. Every flag defaults to what
+a plain `Q_PROPERTY ... MEMBER` gets from moc.
+
+```cpp
+struct settings : reflex::qt::object<settings>
+{
+  [[= prop{}]] int                                volume = 0;
+  [[= prop{.write = false}]] int                  peak   = 0;
+  [[= prop{.notify = false}]] int                 cursor = 0;
+  [[= prop{.constant = true}]] int                limit  = 100;
+  [[= prop{.final = true, .required = true}]] int rate   = 44100;
+};
+```
+
+| Field | Default | Effect when cleared or set |
+|---|---|---|
+| `.read` | `true` | clearing it drops `Readable` and the `ReadProperty` metacall |
+| `.write` | `true` | clearing it drops `Writable`, a write through `QMetaProperty` fails |
+| `.notify` | `true` | clearing it drops the `<name>Changed()` signal from the method table |
+| `.constant` | `false` | setting it adds `Constant` and implies neither writable nor notifying |
+| `.final` | `false` | setting it adds `Final` |
+| `.required` | `false` | setting it adds `Required` |
+
+`.constant` next to `WRITE` or `NOTIFY` is what moc rejects, so it wins over both here
+rather than being diagnosed. The other flags default to `true` and an explicit `true`
+cannot be told apart from the default.
+
+Reading and writing works two ways. The typed form takes the name as a template argument
+and is checked at compile time, the `QVariant` form is `QObject`'s own.
+
+```cpp
+settings s;
+
+s.setProperty<"volume">(7);
+const int typed = s.property<"volume">();       // 7, an int
+
+s.setProperty("volume", 9);                     // QObject's, through QVariant
+const QVariant boxed = s.property("volume");    // QVariant(int, 9)
+```
+
+A write of the value the property already holds notifies nothing, as moc's own
+`setProperty` does. A property whose type is not equality-comparable is allowed and always
+notifies.
+
+### Accessors
+
+A property backed by a data member can route its read, its write and its change handling
+through member functions. The annotation names the property by reflection, so a typo is a
+compile error at the annotation rather than an accessor that silently never runs.
+
+```cpp
+struct scaled : reflex::qt::object<scaled>
+{
+  [[= prop{}]] int raw = 0;
+
+  [[= getter<^^raw>]] int getRaw() const
+  {
+    return raw * 2;
+  }
+
+  [[= setter<^^raw>]] void setRaw(int value)
+  {
+    raw = value / 2;
+  }
+
+  [[= listener<^^raw>]] void onRawChanged()
+  {
+    ++changes;
+  }
+
+  int changes = 0;
+};
+```
+
+- A getter takes no argument and returns the property's type.
+- A setter takes exactly one argument of the property's type. It replaces the whole write,
+  change detection included, so a property with a setter notifies on every write.
+- A listener takes no argument, runs after the write and before the notify signal, and is
+  rejected on a property declared `.notify = false`.
+- One accessor of each kind per property. A second one is a compile error.
+
+### Naming conventions
+
+`[[= reflex::qt::naming::qt_style]]` on the class finds the accessors by the names Qt code
+usually gives them, with no annotation on any of them.
+
+```cpp
+struct[[= reflex::qt::naming::qt_style]] conventional : reflex::qt::object<conventional>
+{
+  [[= prop{}]] int p1 = 0;
+
+  int getP1() const
+  {
+    return p1 * 3;
+  }
+
+  void setP1(int value)
+  {
+    p1 = value / 3;
+  }
+
+  void onP1Changed()
+  {
+    ++changes;
+  }
+
+  int changes = 0;
+};
+```
+
+An annotated accessor still wins over a conventionally named one. The listener is
+`onP1Changed` and not `p1Changed`, because `p1Changed` is the name the metaobject already
+publishes for the property's notify signal.
+
+### Notify signals
+
+A property gets a `<name>Changed()` signal unless it says `.notify = false` or
+`.constant = true`. The connect target is `&Super::propertyChanged<"name">`.
+
+```cpp
+counter c;
+int     notifications = 0;
+
+QObject::connect(&c, &counter::propertyChanged<"value">, [&notifications] { ++notifications; });
+c.setProperty<"value">(3);
+// notifications == 1
+```
+
+Naming a property that publishes no notify signal is a compile error rather than a connect
+target that never fires.
+
+### Timers
+
+A `timer<^^handler>` data member declares a timer driving the member function `handler`.
+The storage is one `int` and lives in the class that wants the timer, so a class with no
+timer pays nothing.
+
+```cpp
+struct poller : reflex::qt::object<poller>
+{
+  void tick()
+  {
+    ++ticks;
+  }
+
+  timer<^^tick> tick_timer;
+
+  int ticks = 0;
+};
+```
+
+```cpp
+poller    p;
+const int id = p.startTimer<^^poller::tick>(50);   // 0 if one is already running
+p.tick_timer.isActive();                           // true
+p.tick_timer.id();                                 // id
+p.killTimer<^^poller::tick>();                     // true, false if none was running
+```
+
+`QObject::startTimer` and `QObject::killTimer` keep their untemplated overloads. A derived
+class drives a timer its base declares, and a class that overrides `timerEvent` itself
+takes over the dispatch.
+
+Four declarations are rejected at compile time: a timer naming something that is not a
+non-static member function, a timer naming a member function of neither its own class nor a
+base, two timers naming one handler, and a `startTimer` naming a handler no timer member
+declares.
+
+---
+
+## Gadgets
+
+`reflex::qt::gadget<Super>` publishes a non-`QObject` value type, the way `Q_GADGET` does.
+Properties, invocables, class infos and enums all work. Signals, slots and timers do not,
+because a gadget has no metacall to carry them.
+
+```cpp
+struct point : reflex::qt::gadget<point>
+{
+  [[= prop{}]] int x = 0;
+  [[= prop{}]] int y = 0;
+
+  [[= invocable]] int manhattan() const
+  {
+    return x + y;
+  }
+};
+```
+
+```cpp
+point p;
+point::staticMetaObject.property(0).writeOnGadget(&p, 3);
+// p.x == 3
+
+const QVariant boxed = QVariant::fromValue(p);
+// boxed.metaType().flags() carries QMetaType::IsGadget
+```
+
+`QMetaType::fromType<point>()` is registered under the class name, `point` reports
+`IsGadget` and `point*` reports `PointerToGadget`. `Q_DECLARE_METATYPE` is not needed.
+
+---
+
+## Enums and flags
+
+Every nested enumeration is published, and so is every member alias of a `QFlags`
+specialization over one of them. No annotation, no `Q_ENUM`, no `Q_FLAG`.
+
+```cpp
+struct styled : reflex::qt::object<styled>
+{
+  enum Color
+  {
+    Red,
+    Green = 5,
+    Blue
+  };
+
+  enum class Mode
+  {
+    Fast,
+    Slow = 9
+  };
+
+  enum Option
+  {
+    NoOption = 0x0,
+    First    = 0x1,
+    Second   = 0x2
+  };
+
+  using Options = QFlags<Option>;
+
+  [[= prop{}]] Color   color = Red;
+  [[= prop{}]] Mode    mode  = Mode::Fast;
+  [[= prop{}]] Options options;
+};
+```
+
+`QMetaEnum` reads back `isScoped`, `isFlag`, `is64Bit` and every key and value the way moc
+would fill them. An enum-typed property carries `EnumOrFlag` and answers
+`QMetaProperty::isEnumType()`.
+
+Two things moc cannot do work here. A `using Options = QFlags<Option>;` is published
+without `Q_DECLARE_FLAGS`, and both the flag alias and the enumeration it wraps get their
+own descriptor, so `QMetaEnum::valueToKey` on a bare `Option` value resolves. A `QFlags`
+alias whose argument is declared in another class is skipped, because its enumerators
+belong to that class's metaobject.
+
+---
+
+## Private members
+
+moc publishes a class's private slots and private properties, so `reflex.qt` queries the
+class with an unchecked access context and reaches members that are private to it.
+Splicing one is still access-checked, and every such splice in the module is written inside
+`reflex::qt::access<Super>`, so one friend declaration opens all of them.
+
+```cpp
+struct controller : reflex::qt::object<controller>
+{
+  friend reflex::qt::access<controller>;
+
+  int seen = 0;
+
+private:
+  [[= slot]] void onThing(int n)
+  {
+    seen += n;
+  }
+
+  [[= prop{}]] int count = 0;
+};
+```
+
+The line opens private slots, invocables, properties, accessors, signal members, timer
+handlers and enums at once. A class whose annotated members are all public needs nothing.
+A base carrying private members writes its own line, because a member is spliced through
+the `access` of the class that declares it.
+
+Without it the class does not compile, and the diagnostic names the member and the line to
+add:
+
+```
+error: ... 'what()': 'reflex.qt cannot reach controller::onThing(int):
+                      add 'friend reflex::qt::access<controller>;' to controller'
+```
+
+---
+
+## Class infos
+
+`[[= reflex::qt::classinfo{key, value}]]` on the class becomes a `Q_CLASSINFO` entry, one
+per annotation, in declaration order.
+
+```cpp
+struct [[= reflex::qt::classinfo{"author", "reflex"}]] described
+    : reflex::qt::object<described>
+{
+  [[= prop{}]] int value = 0;
+};
+```
+
+---
+
+## Differences from moc
+
+Four, all understood, none observable through the `QMetaObject` API except the last.
+
+- **String table order.** moc orders the string table by first use, this orders it by kind.
+  Both tables hold the same strings and every reference into them is an index, so nothing
+  reads differently.
+- **`EnumOrFlag` on a property of a custom class type.** moc sets it on every property
+  whose type it cannot resolve, because it cannot tell an enumeration from a struct.
+  Reflection can, so the flag is set only for an actual enumeration. `isEnumType()` reads
+  `false` on both sides.
+- **One descriptor per nested enumeration.** moc publishes what `Q_ENUM` and `Q_FLAG` mark.
+  This publishes every nested enumeration and every `QFlags` alias over one, so a class with
+  a flag alias gets one more descriptor than moc emits for the same shape. It is a superset,
+  and moc cannot produce it: asking moc for `Q_ENUM(E)` and `Q_FLAG(QFlags<E>)` together
+  yields a single descriptor and loses the flag entry.
+- **Signal parameter names.** Empty, where moc has them. See
+  [Not supported yet](#not-supported-yet).
+
+---
+
+## Utilities
+
+### `connection_guard`
+
+Disconnects what it holds when it goes out of scope. Move-only, since a copy would
+disconnect the same connection twice.
+
+```cpp
+emitter sender;
+{
+  reflex::qt::connection_guard guard = QObject::connect(&sender, &emitter::ping, [] { });
+  sender.ping();
+}
+sender.ping();   // nothing runs, the guard disconnected on scope exit
+```
+
+`release()` hands the connection out and leaves the guard empty. `reset()` drops what it
+holds and optionally takes another connection.
+
+### `QString` formatting
+
+`reflex/qt/format.hpp`, pulled in by the umbrella header, formats a `QString` as UTF-8
+through the full string format spec.
+
+```cpp
+std::format("{}", QString{"hello"});     // "hello"
+std::format("{:>7}", QString{"hi"});     // "     hi"
+std::format("{:.2}", QString{"hello"});  // "he"
+```
+
+Narrow only. A `wchar_t` specialization would transcode UTF-16 into a unit that is 4 bytes
+on Linux and 2 on Windows, so `std::format(L"{}", s)` is an error where it is written
+rather than platform-dependent output.
+
+### `describe` and `dump`
+
+`reflex/qt/debug.hpp` renders a metaobject's class infos, methods, properties and enums.
+The walk is a runtime one over `QMetaObject`, so it reads a reflex class and a real moc'ed
+one the same way. It is deliberately not in `reflex/qt.hpp`, so including the module does
+not drag `<print>` into every translation unit.
+
+```cpp
+#include <reflex/qt/debug.hpp>
+
+const std::string text = reflex::qt::describe<counter>();
+// class counter
+//   signal      changed(int)
+//   signal      valueChanged()
+//   slot        bump()
+//   property    value : int
+
+reflex::qt::dump(some_qobject);   // the same text, to stdout
+```
+
+---
+
+## Building
+
+`reflex.qt` is a header-only pcons target that carries its Qt dependency, so a consumer
+links it and nothing else.
+
+```python
+from pcons.toolchains.qt import find_qt
+
+qt  = find_qt(project, env, modules=["Core", "Widgets"], required=False)
+app = project.QtProgram("app", env, sources=["main.cpp"], link=[qt.Widgets])
+app.link(project.get_target("reflex.qt"))
+```
+
+`find_qt` must be called after `env.set_variant`. When Qt is absent it returns `None` and
+`qt/pcons-build.py` skips the module, leaving the rest of the build green.
+
+pcons scans for `Q_OBJECT`, `Q_GADGET` and `Q_NAMESPACE` to decide what needs moc. A
+reflex.qt class carries none of them, so the scan finds nothing and no moc edge is emitted.
+`automoc=False` is not needed.
+
+Two flags in `qt/pcons-build.py` are load-bearing on this toolchain. Qt's include
+directories move to `system_include_dirs`, because Qt 6.11 headers trip
+`-Wsfinae-incomplete` on GCC 16 and `-Werror` makes that fatal. The Qt modules get `-fPIC`,
+because this Qt is built `-reduce-relocations` and linking without it fails with a copy
+relocation against `QByteArray::_empty`.
+
+The example under `qt/examples/` builds with `REFLEX_BUILD_PROGRAMS=1`.
+
+---
+
+## Qt version
+
+Qt **6.11.x** only. `detail/version.hpp` asserts the window:
+
+```
+static assertion failed: reflex.qt reproduces moc's private metaobject layout and is
+only tested against Qt 6.11.x; define REFLEX_QT_ALLOW_UNTESTED_QT to try anyway
+```
+
+The pin is not caution. `reflex.qt` fills `QtMocHelpers::UintData`, `FunctionData`,
+`PropertyData`, `EnumData` and `StringRefStorage` and specializes
+`QtPrivate::HasQ_OBJECT_Macro`, `QtPrivate::FunctionPointer`, `QtPrivate::IsGadgetHelper`
+and `QMetaTypeId`. Those are Qt's own internals with no compatibility promise, and the
+metaobject data layout has changed between Qt minor releases before. `qtmochelpers.h` and
+`qtmocconstants.h` are public headers in 6.11.1, so no `private_headers=` is needed, but
+the layout they describe is still unstable.
+
+`REFLEX_QT_ALLOW_UNTESTED_QT` turns the assertion off. Widen the window in the header only
+after actually building and running the suite against another Qt.
+
+---
+
+## Not supported yet
+
+**QML.** No `QML_ELEMENT`, no `qmltyperegistrar` metadata, no QML module. A reflex class
+cannot be instantiated from QML today. `[[= classinfo{"QML.Element", "Name"}]]` reaches the
+metaobject, which is the entry point the QML work will build on, but nothing consumes it.
+The missing piece is the moc-shaped JSON `qmltyperegistrar` reads, which has to be emitted
+from reflection and fed into the build.
+
+**C++ modules.** Qt and C++ named modules do not work together on this toolchain, so
+`reflex.qt` ships as headers rather than as a `.cppm`, alone among the reflex modules. Its
+headers include `reflex/meta.hpp`, `reflex/constant.hpp` and friends rather than importing
+them. `reflex.core` and `serde` expose usable headers alongside their module interfaces, so
+nothing is missing.
+
+**Constructors.** `qt_constructors` is empty, so `QMetaObject::newInstance` finds nothing
+and no constructor is published. QML needs this.
+
+**Computed properties.** A property is a data member. A property backed only by accessors,
+with no storage, is not expressible: a getter and a setter are optional decorations on a
+member, not a substitute for one.
+
+**Signal parameter names.** `QMetaMethod::parameterNames()` returns empty strings for a
+signal. A `signal<int, with_default<int>>` carries types and not names, which is a
+permanent consequence of declaring a signal as a data member. Slot and invocable parameter
+names are emitted and match moc. This is cosmetic for `connect` and `invokeMethod` and
+shows only in tooling.
+
+**Disconnecting a signal-to-signal chain by naming the target signal.** Chaining works,
+`connect(&a, &A::sig, &b, &B::sig)` delivers, but the matching `disconnect` overload
+returns `false` and disconnects nothing. Qt compares the stored slot object against a
+member function pointer, and a reflex signal is a data member. Keep the
+`QMetaObject::Connection` and disconnect that instead.
+
+```cpp
+const auto chain = QObject::connect(&sender, &emitter::pair, &receiver, &emitter::pair);
+QObject::disconnect(&sender, &emitter::pair, &receiver, &emitter::pair);  // false
+QObject::disconnect(chain);                                              // true
+```
+
+**An opt-out for a published enumeration.** Every nested enumeration is published. There is
+no `qt::skip`, so a private implementation enum reaches the metaobject too.
+
+**`QProperty` bindings.** `BindableProperty` is answered the way moc answers it for a
+non-bindable property. Nothing is `QBindable`.
+
+**Anything but Linux and GCC 16.2.1.** The module is written against a compiler with
+working C++26 reflection and has been built and run nowhere else.
+
+---
+
+> See [tests](tests) for more examples, and [examples/widgets](examples/widgets) for a
+> working application.
