@@ -51,6 +51,31 @@ struct derived_object : reflex::qt::object<derived_object, base_object>
   int     derived_slot_calls = 0;
 };
 
+struct deep_object : reflex::qt::object<deep_object, derived_object>
+{
+  [[= prop{}]] double weight = 0;
+};
+
+struct shadow_base : reflex::qt::object<shadow_base>
+{
+  [[= prop{}]] int value = 0;
+};
+
+struct shadow_derived : reflex::qt::object<shadow_derived, shadow_base>
+{
+  [[= prop{}]] int value = 0;
+};
+
+struct void_sink : reflex::qt::object<void_sink>
+{
+  [[= slot]] void ping()
+  {
+    ++calls;
+  }
+
+  int calls = 0;
+};
+
 struct int_sink : reflex::qt::object<int_sink>
 {
   [[= slot]] void onInt(int a)
@@ -245,4 +270,100 @@ TEST_CASE("qobject_cast reaches both levels of the hierarchy")
   QObject* base_only = &b;
   CHECK(qobject_cast<derived_object*>(base_only) == nullptr);
   CHECK(qobject_cast<base_object*>(base_only) == &b);
+}
+
+TEST_CASE("typed property access reaches a property declared in the base")
+{
+  derived_object d;
+  int            level_notified = 0;
+
+  QObject::connect(
+      &d, &base_object::propertyChanged<"level">, [&level_notified] { ++level_notified; });
+
+  d.setProperty<"level">(5);
+  CHECK(d.level == 5);
+  CHECK(d.property<"level">() == 5);
+  CHECK(d.property("level").toInt() == 5);
+  CHECK(level_notified == 1);
+}
+
+TEST_CASE("writing an inherited property notifies through the declaring class")
+{
+  derived_object d;
+  int            typed_notified  = 0;
+  void_sink      sink;
+
+  QObject::connect(
+      &d, &base_object::propertyChanged<"level">, [&typed_notified] { ++typed_notified; });
+  REQUIRE(QObject::connect(&d, SIGNAL(levelChanged()), &sink, SLOT(ping())));
+
+  d.setProperty<"level">(3);
+  CHECK(typed_notified == 1);
+  CHECK(sink.calls == 1);
+
+  d.setProperty<"level">(3);
+  CHECK(typed_notified == 1);
+  CHECK(sink.calls == 1);
+
+  d.setProperty<"level">(4);
+  CHECK(typed_notified == 2);
+  CHECK(sink.calls == 2);
+}
+
+TEST_CASE("typed property access reaches three levels up")
+{
+  deep_object dd;
+  int         level_notified  = 0;
+  int         depth_notified  = 0;
+  int         weight_notified = 0;
+
+  QObject::connect(
+      &dd, &base_object::propertyChanged<"level">, [&level_notified] { ++level_notified; });
+  QObject::connect(
+      &dd, &derived_object::propertyChanged<"depth">, [&depth_notified] { ++depth_notified; });
+  QObject::connect(
+      &dd, &deep_object::propertyChanged<"weight">, [&weight_notified] { ++weight_notified; });
+
+  dd.setProperty<"level">(1);
+  dd.setProperty<"depth">(2);
+  dd.setProperty<"weight">(0.5);
+
+  CHECK(dd.property<"level">() == 1);
+  CHECK(dd.property<"depth">() == 2);
+  CHECK(dd.property<"weight">() == doctest::Approx(0.5));
+
+  CHECK(level_notified == 1);
+  CHECK(depth_notified == 1);
+  CHECK(weight_notified == 1);
+
+  CHECK(dd.property("level").toInt() == 1);
+  CHECK(dd.property("depth").toInt() == 2);
+  CHECK(dd.property("weight").toDouble() == doctest::Approx(0.5));
+
+  const QMetaObject& deep = deep_object::staticMetaObject;
+  CHECK(deep.superClass() == &derived_object::staticMetaObject);
+  CHECK(deep.methodOffset() == derived_object::staticMetaObject.methodCount());
+  CHECK(deep.methodCount() == deep.methodOffset() + 1);
+  CHECK(deep.propertyOffset() == derived_object::staticMetaObject.propertyCount());
+  CHECK(deep.propertyCount() == deep.propertyOffset() + 1);
+}
+
+TEST_CASE("a shadowing property resolves to the derived declaration")
+{
+  shadow_derived d;
+  int            base_notified    = 0;
+  int            derived_notified = 0;
+
+  QObject::connect(
+      &d, &shadow_base::propertyChanged<"value">, [&base_notified] { ++base_notified; });
+  QObject::connect(
+      &d, &shadow_derived::propertyChanged<"value">, [&derived_notified] { ++derived_notified; });
+
+  d.setProperty<"value">(9);
+
+  CHECK(d.shadow_derived::value == 9);
+  CHECK(d.shadow_base::value == 0);
+  CHECK(d.property<"value">() == 9);
+  CHECK(derived_notified == 1);
+  CHECK(base_notified == 0);
 }

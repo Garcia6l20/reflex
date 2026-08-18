@@ -42,9 +42,11 @@ public:
 
   template <constant_string name> auto property(this auto& self)
   {
-    static constexpr auto p = meta::member_named(^^Super, *name, meta::access_context::unchecked());
+    static constexpr auto p =
+        meta::member_named(^^Super, *name, meta::access_context::unchecked(), true);
     static_assert(p != meta::null, "no such property");
-    return self.template property<p>();
+    using owner = [:meta::parent_of(p):];
+    return static_cast<owner&>(self).template property<p>();
   }
 
   template <meta::info Property, typename T> void setProperty(this auto& self, T&& value)
@@ -72,9 +74,11 @@ public:
 
   template <constant_string name, typename T> void setProperty(this auto& self, T&& value)
   {
-    static constexpr auto p = meta::member_named(^^Super, *name, meta::access_context::unchecked());
+    static constexpr auto p =
+        meta::member_named(^^Super, *name, meta::access_context::unchecked(), true);
     static_assert(p != meta::null, "no such property");
-    self.template setProperty<p>(std::forward<T>(value));
+    using owner = [:meta::parent_of(p):];
+    static_cast<owner&>(self).template setProperty<p>(std::forward<T>(value));
   }
 
 protected:
