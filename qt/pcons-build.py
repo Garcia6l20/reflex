@@ -1,3 +1,5 @@
+import subprocess
+
 from pcons import add_subdirectory, context
 from pcons.toolchains.qt import find_qt
 
@@ -51,3 +53,14 @@ else:
                 link=[qt_widgets.Widgets, qt_lib],
             )
             print(f"-- Example added: {example.name}")
+
+            @project.cli_group()
+            def qt_example():
+                """Reflex Qt examples"""
+
+            qt_example.depends(example)
+
+            @qt_example.command()
+            def widgets():
+                """Run the widgets example"""
+                subprocess.run([str(example.output_nodes[0].path)], check=True)
