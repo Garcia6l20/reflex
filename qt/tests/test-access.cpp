@@ -56,17 +56,17 @@ private:
 
   [[= prop{}]] int count = 0;
 
-  [[= getter{"count"}]] int getCount() const
+  [[= getter<^^count>]] int getCount() const
   {
     return count * 2;
   }
 
-  [[= setter{"count"}]] void setCount(int value)
+  [[= setter<^^count>]] void setCount(int value)
   {
     count = value / 2;
   }
 
-  [[= listener{"count"}]] void onCountChanged()
+  [[= listener<^^count>]] void onCountChanged()
   {
     ++listened;
   }

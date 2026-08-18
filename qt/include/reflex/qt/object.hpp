@@ -149,9 +149,9 @@ protected:
   static constexpr detail::slot slot{};
 
   using typename gadget<Super>::prop;
-  using typename gadget<Super>::getter;
-  using typename gadget<Super>::setter;
-  using typename gadget<Super>::listener;
+  using gadget<Super>::getter;
+  using gadget<Super>::setter;
+  using gadget<Super>::listener;
   using gadget<Super>::invocable;
 
 private:

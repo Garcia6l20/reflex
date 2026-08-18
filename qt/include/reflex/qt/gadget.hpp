@@ -40,7 +40,7 @@ public:
                   "no such property");
     static_assert(detail::property_spec_of(Property).read, "the property is not readable");
 
-    static constexpr auto reader = detail::accessor_for<detail::getter>(^^Super, Property);
+    static constexpr auto reader = detail::accessor_for<^^detail::getter>(^^Super, Property);
     if constexpr(reader != meta::null)
     {
       return access<Super>::template call<reader>(self);
@@ -72,8 +72,8 @@ public:
                   "no such property");
     static_assert(detail::property_spec_of(Property).writable(), "the property is not writable");
 
-    static constexpr auto writer  = detail::accessor_for<detail::setter>(^^Super, Property);
-    static constexpr auto handler = detail::accessor_for<detail::listener>(^^Super, Property);
+    static constexpr auto writer  = detail::accessor_for<^^detail::setter>(^^Super, Property);
+    static constexpr auto handler = detail::accessor_for<^^detail::listener>(^^Super, Property);
 
     if constexpr(writer != meta::null)
     {
@@ -121,10 +121,11 @@ public:
 protected:
   static constexpr detail::invocable invocable{};
 
-  using prop     = detail::property;
-  using getter   = detail::getter;
-  using setter   = detail::setter;
-  using listener = detail::listener;
+  using prop = detail::property;
+
+  template <meta::info Property> static constexpr detail::getter<Property> getter{};
+  template <meta::info Property> static constexpr detail::setter<Property> setter{};
+  template <meta::info Property> static constexpr detail::listener<Property> listener{};
 };
 }
 
