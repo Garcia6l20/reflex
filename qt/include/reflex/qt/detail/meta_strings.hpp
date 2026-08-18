@@ -67,12 +67,18 @@ enum class method_kind : unsigned
   invocable
 };
 
-/** @brief one row of the `QMetaObject` method table */
+/** @brief one row of the `QMetaObject` method table
+ *
+ * Qt allocates one row per default-argument arity, so a member with defaults
+ * contributes several rows: the longest signature first, then one clone per
+ * omitted trailing argument.
+ */
 struct method_entry
 {
   meta::info  member;
   std::size_t arity;
   method_kind kind;
+  bool        cloned;
 };
 
 consteval uint moc_method_flag_of(method_kind kind)
@@ -153,29 +159,36 @@ template <typename Tag, typename Super> struct meta_strings
   static constexpr auto methods = [] consteval
   {
     std::vector<method_entry> list;
-    auto                      push = [&list](meta::info member, method_kind kind)
+    auto                      push = [&list](meta::info member,
+                                             method_kind kind,
+                                             std::size_t max_arity,
+                                             std::size_t min_arity)
     {
-      list.push_back({member, parameters_of(call_function_of(member)).size(), kind});
+      for(std::size_t n = max_arity + 1; n-- > min_arity;)
+      {
+        list.push_back({member, n, kind, n != max_arity});
+      }
     };
 
     for(auto s : signal_members)
     {
-      push(s, method_kind::signal_member);
+      const auto total = parameters_of(call_function_of(s)).size();
+      push(s, method_kind::signal_member, total, total - signal_default_count_of(s));
     }
     if constexpr(is_object)
     {
       for(auto p : properties)
       {
-        list.push_back({p, 0, method_kind::notifier});
+        list.push_back({p, 0, method_kind::notifier, false});
       }
     }
     for(auto fn : slot_members)
     {
-      push(fn, method_kind::slot);
+      push(fn, method_kind::slot, parameters_of(fn).size(), meta::min_arity_of(fn));
     }
     for(auto fn : invocables)
     {
-      push(fn, method_kind::invocable);
+      push(fn, method_kind::invocable, parameters_of(fn).size(), meta::min_arity_of(fn));
     }
     return std::define_static_array(list);
   }();
@@ -200,7 +213,7 @@ template <typename Tag, typename Super> struct meta_strings
     }
     for(auto const& e : methods)
     {
-      if(e.kind == method_kind::notifier)
+      if(e.kind == method_kind::notifier or e.cloned)
       {
         continue;
       }
@@ -337,10 +350,14 @@ template <typename Tag, typename Super> struct meta_strings
     return QMC::AccessPrivate;
   }
 
-  static consteval uint method_flags_of(meta::info R)
+  static consteval uint method_flags_of(meta::info R, bool cloned)
   {
     namespace QMC = QtMocConstants;
     uint flags    = access_flags_of(R);
+    if(cloned)
+    {
+      flags |= QMC::MethodCloned;
+    }
     if(is_function(R) and meta::is_const(R))
     {
       flags |= QMC::MethodIsConst;
@@ -376,7 +393,7 @@ template <typename Tag, typename Super> struct meta_strings
       }
       return data_type(index_of(identifier_of(methods[I].member)),
                        empty_string_index,
-                       method_flags_of(methods[I].member),
+                       method_flags_of(methods[I].member, methods[I].cloned),
                        meta_type_id_of(call_return_type_of(methods[I].member)),
                        args);
     }

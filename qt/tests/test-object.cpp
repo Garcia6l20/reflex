@@ -96,33 +96,42 @@ TEST_CASE("the method table matches what moc would publish")
 
   const QList<QByteArray> expected{"emptySig()",
                                    "intSig(int,int)",
+                                   "intSig(int)",
                                    "customSig(custom)",
                                    "valueChanged()",
                                    "tagChanged()",
                                    "emptySlot()",
                                    "intSlot(int,int)",
+                                   "intSlot(int)",
+                                   "intSlot()",
                                    "customSlot(custom)",
                                    "stringSlot(QString)",
                                    "add(int,int)",
+                                   "add(int)",
                                    "twice(custom)"};
   CHECK(local_signatures(mo) == expected);
 }
 
-TEST_CASE("method kinds and constness match moc")
+TEST_CASE("method kinds, clone flags and constness match moc")
 {
   const QMetaObject& mo     = counter::staticMetaObject;
   const int          offset = mo.methodOffset();
 
   CHECK(mo.method(offset + 0).methodType() == QMetaMethod::Signal);
-  CHECK(mo.method(offset + 3).methodType() == QMetaMethod::Signal);
-  CHECK(mo.method(offset + 5).methodType() == QMetaMethod::Slot);
-  CHECK(mo.method(offset + 9).methodType() == QMetaMethod::Method);
+  CHECK(mo.method(offset + 4).methodType() == QMetaMethod::Signal);
+  CHECK(mo.method(offset + 6).methodType() == QMetaMethod::Slot);
+  CHECK(mo.method(offset + 12).methodType() == QMetaMethod::Method);
 
-  CHECK(mo.method(offset + 9).isConst());
-  CHECK(not mo.method(offset + 10).isConst());
+  CHECK((mo.method(offset + 1).attributes() & QMetaMethod::Cloned) == 0);
+  CHECK((mo.method(offset + 2).attributes() & QMetaMethod::Cloned) != 0);
+  CHECK((mo.method(offset + 9).attributes() & QMetaMethod::Cloned) != 0);
+  CHECK((mo.method(offset + 13).attributes() & QMetaMethod::Cloned) != 0);
 
-  CHECK(mo.method(offset + 10).returnMetaType() == QMetaType::fromType<custom>());
-  CHECK(mo.method(offset + 2).parameterMetaType(0) == QMetaType::fromType<custom>());
+  CHECK(mo.method(offset + 12).isConst());
+  CHECK(not mo.method(offset + 14).isConst());
+
+  CHECK(mo.method(offset + 14).returnMetaType() == QMetaType::fromType<custom>());
+  CHECK(mo.method(offset + 3).parameterMetaType(0) == QMetaType::fromType<custom>());
 }
 
 TEST_CASE("class infos and properties survive the object half")
@@ -170,8 +179,19 @@ TEST_CASE("invokeMethod reaches slots and invocables by name")
   CHECK(c.last_a == 5);
   CHECK(c.last_b == 6);
 
+  REQUIRE(QMetaObject::invokeMethod(&c, "intSlot", Q_ARG(int, 9)));
+  CHECK(c.last_a == 9);
+  CHECK(c.last_b == 1);
+
+  REQUIRE(QMetaObject::invokeMethod(&c, "intSlot"));
+  CHECK(c.last_a == 0);
+  CHECK(c.last_b == 1);
+
   int sum = 0;
   REQUIRE(QMetaObject::invokeMethod(&c, "add", Q_RETURN_ARG(int, sum), Q_ARG(int, 2), Q_ARG(int, 3)));
+  CHECK(sum == 5);
+
+  REQUIRE(QMetaObject::invokeMethod(&c, "add", Q_RETURN_ARG(int, sum), Q_ARG(int, 2)));
   CHECK(sum == 5);
 
   custom doubled{};

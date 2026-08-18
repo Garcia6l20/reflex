@@ -156,6 +156,23 @@ TEST_CASE("string-based connect across the moc boundary")
   CHECK(reflex_side.last_name == QStringLiteral("world"));
 }
 
+TEST_CASE("connecting the one-argument form of a defaulted signal delivers once")
+{
+  emitter sender;
+  emitter receiver;
+
+  REQUIRE(QObject::connect(&sender, SIGNAL(pair(int)), &receiver, SLOT(onPair(int))));
+
+  sender.pair(5, 6);
+  CHECK(receiver.pairs == 1);
+  CHECK(receiver.last_a == 5);
+  CHECK(receiver.last_b == -1);
+
+  sender.pair(11);
+  CHECK(receiver.pairs == 2);
+  CHECK(receiver.last_a == 11);
+}
+
 TEST_CASE("connect to a lambda, and disconnect it again")
 {
   emitter sender;

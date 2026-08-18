@@ -133,7 +133,8 @@ template <typename Super> struct gadget_impl
       {
         template for(constexpr auto i : std::views::iota(0uz, strings::method_count))
         {
-          if constexpr(strings::methods[i].kind == method_kind::signal_member)
+          if constexpr(strings::methods[i].kind == method_kind::signal_member
+                       and not strings::methods[i].cloned)
           {
             if(QtMocHelpers::indexOfMethod(a, &[:strings::methods[i].member:], int(i)))
             {
