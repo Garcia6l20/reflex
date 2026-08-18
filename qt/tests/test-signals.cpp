@@ -45,6 +45,7 @@ struct emitter : reflex::qt::object<emitter>
   }
 
   [[= prop{}]] int level = 0;
+  [[= prop{}]] int depth = 0;
 
   int     pings  = 0;
   int     pairs  = 0;
@@ -284,4 +285,22 @@ TEST_CASE("a chained signal disconnects through its connection, not its pointer"
 
   sender.pair(3, 4);
   CHECK(receiver.pairs == 1);
+}
+
+TEST_CASE("each notifier resolves to its own property")
+{
+  emitter sender;
+  int     levels = 0;
+  int     depths = 0;
+
+  QObject::connect(&sender, &emitter::propertyChanged<"level">, &sender, [&levels] { ++levels; });
+  QObject::connect(&sender, &emitter::propertyChanged<"depth">, &sender, [&depths] { ++depths; });
+
+  sender.setProperty<"level">(1);
+  CHECK(levels == 1);
+  CHECK(depths == 0);
+
+  sender.setProperty<"depth">(2);
+  CHECK(levels == 1);
+  CHECK(depths == 1);
 }
