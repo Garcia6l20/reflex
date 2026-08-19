@@ -104,13 +104,14 @@ auto run(std::vector<std::string> arguments) -> outcome
     argv.push_back(argument.data());
   }
 
+  const auto own  = std::to_string(::getpid());
   const auto base = std::filesystem::temp_directory_path();
   outcome    result{};
 
   std::fflush(nullptr);
   {
-    const redirected err{STDERR_FILENO, base / "reflex-qt-export-err"};
-    const redirected out{STDOUT_FILENO, base / "reflex-qt-export-out"};
+    const redirected err{STDERR_FILENO, base / ("reflex-qt-export-" + own + "-err")};
+    const redirected out{STDOUT_FILENO, base / ("reflex-qt-export-" + own + "-out")};
 
     result.status = moc::export_main<pair_types>(static_cast<int>(argv.size()), argv.data());
 
