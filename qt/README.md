@@ -12,8 +12,12 @@ class infos, method signatures and kinds, clone flags, constness, return and par
 metatypes, parameter names for slots and invocables, property flags and notify indices, and
 every enumerator. What differs is listed under [Differences from moc](#differences-from-moc).
 
+QML works the same way: annotate a class with `[[= qt::qml{}]]`, name it in a module body,
+and `qmltyperegistrar` registers it from a metatypes document reflection wrote. See
+[Metatypes and QML](#metatypes-and-qml).
+
 Header-only. `#include <reflex/qt.hpp>` and link `Qt6Core`. The `reflex/qt/moc/` headers
-also need `reflex.serde` on the include path.
+also need `reflex.serde` on the include path, and `reflex/qt/qml.hpp` needs `Qt6Qml`.
 
 ---
 
@@ -522,11 +526,15 @@ REFLEX_QT_MODULE(app_types, m)
   m.expose<app::settings>();        // one class
 }
 
-int main(int, char** argv)
+int main(int argc, char** argv)
 {
-  return reflex::qt::moc::write_metatypes<app_types>(argv[1]);
+  return reflex::qt::moc::export_main<app_types>(argc, argv);
 }
 ```
+
+`export_main` reads the output path and the `-I` roots off the command line the build
+passes. `write_metatypes<app_types>(path, opts)` is the same thing without the argument
+parsing.
 
 The body is a `consteval` function, so the list is a compile-time one. Nothing runs before
 `main`, there is no registry, and a class appears in the document because a body named it.
@@ -539,28 +547,111 @@ order, and does not recurse: name a nested namespace to reach into it.
 describing fewer members than the `QMetaObject` in the same binary is worse than no
 document.
 
-### QML type registration
+### QML types
 
-Every `QML_*` macro is a class info to moc, and nothing else, so `qt::classinfo` publishes
-them today:
-
-| moc macro | annotation |
-|---|---|
-| `QML_ELEMENT` | `[[= qt::classinfo{"QML.Element", "auto"}]]` |
-| `QML_NAMED_ELEMENT(Name)` | `[[= qt::classinfo{"QML.Element", "Name"}]]` |
-| `QML_VALUE_TYPE(name)` on a gadget | `[[= qt::classinfo{"QML.Element", "name"}]]` |
-| `QML_SINGLETON` | `[[= qt::classinfo{"QML.Singleton", "true"}]]` |
+`[[= qt::qml{}]]` publishes a class to QML. One aggregate carries every option, the way
+`prop{}` does, so the options compose instead of needing a name per combination:
 
 ```cpp
-struct [[= qt::classinfo{"QML.Element", "auto"}]] controller
-    : qt::object<controller>
+struct [[= qt::qml{}]] controller : qt::object<controller>
 {
   [[= qt::prop{}]] int count = 0;
 };
+
+struct [[= qt::qml{.singleton = true}]] settings : qt::object<settings> { };
+
+struct [[= qt::qml{.name = "Gauge", .uncreatable = "ask Factory"}]] meter
+    : qt::object<meter> { };
+
+struct [[= qt::qml{.name = "span"}]] span : qt::gadget<span> { };
 ```
 
-A shorter vocabulary for these is a later step's; the class infos above are the encoding it
-would produce, so nothing written this way has to change.
+Each field is the class info moc writes for the macro it stands for, read off a real moc
+run rather than off the macro definitions:
+
+| field | moc macro | class info |
+|---|---|---|
+| none | `QML_ELEMENT` | `QML.Element` = `auto` |
+| `.name = "Gauge"` | `QML_NAMED_ELEMENT(Gauge)` | `QML.Element` = `Gauge` |
+| `.name = "span"` on a gadget | `QML_VALUE_TYPE(span)` | `QML.Element` = `span` |
+| `.singleton = true` | `QML_SINGLETON` | `QML.Singleton` = `true` |
+| `.uncreatable = "why"` | `QML_UNCREATABLE("why")` | `QML.Creatable` = `false` and `QML.UncreatableReason` = `why` |
+| `.added_in = {2, 3}` | `QML_ADDED_IN_VERSION(2, 3)` | `QML.AddedInVersion` = `515` |
+| `.removed_in = {3, 0}` | `QML_REMOVED_IN_VERSION(3, 0)` | `QML.RemovedInVersion` = `768` |
+
+A version is one integer, `major * 256 + minor`. Major version `0` reads as no version
+given, which is the default.
+
+`qt::classinfo` reaches the same table, so a `QML_*` macro Qt adds later is expressible the
+day it appears and needs no new field here:
+
+```cpp
+struct [[= qt::classinfo{"QML.HasCustomParser", "true"}]] parsed
+    : qt::object<parsed> { };
+```
+
+### `reflex/qt/qml.hpp`
+
+A singleton and an uncreatable type need more than a class info.
+`qmlRegisterTypesAndRevisions` decides both from `QQmlPrivate::QmlSingleton<T>` and
+`QQmlPrivate::QmlUncreatable<T>`, which read a nested enumeration and a marker member
+function that `QML_SINGLETON` and `QML_UNCREATABLE` declare in the class body. Qt compares
+the marker's owning class against `T`, so a CRTP base cannot supply either.
+`reflex/qt/qml.hpp` specializes the two traits from the same annotation instead.
+
+Include it from the header the QML module registers. It stays out of `reflex/qt.hpp`,
+which pulls in QtCore alone:
+
+```cpp
+#include <reflex/qt/qml.hpp>
+```
+
+A class whose header does not reach it registers as an ordinary creatable type, and its
+`QML.Singleton` class info goes unread.
+
+### Building a QML module
+
+`reflex_build.qt.add_metatypes` declares the exporter and `pcons`'s `QtQmlModule` consumes
+its document, so the whole module is stock pcons plus one translation unit:
+
+```python
+from reflex_build.qt import add_metatypes, use_qt
+
+qt_qml = use_qt(project, env, ["Qml"])
+
+metatypes, exporter = add_metatypes(
+    "app", ["module.cpp"], link=[qt_qml.Qml], include_roots=["include"]
+)
+
+types = project.QtQmlModule(
+    "app-types", env,
+    uri="Com.Example.App",
+    qml_files=["app/Main.qml"],
+    metatypes=[metatypes],
+    link=[qt_qml.Qml, project.get_target("reflex.qt")],
+)
+types.depends(exporter)
+types.private.include_dirs.append("include")
+```
+
+`module.cpp` is the module body plus the one-line `main` above. `include_roots` are the
+exporter's own include directories and the roots it spells `inputFile` relative to, so pass
+the ones the QML module compiles the generated registration with.
+
+`qmltyperegistrar` generates the registration and pcons compiles it into the module, so
+nothing is hand-written. The generated file needs `T::staticMetaObject` and nothing else,
+which a reflex.qt class has.
+
+One failure mode is worth knowing, because it is invisible in the document.
+`qmlRegisterTypesAndRevisions` reads `QML.Element` back off the **runtime metaobject**, not
+off the JSON, and a class missing it fails at load with *Missing QML.Element class info*
+while its `.qmltypes` looks perfect. reflex.qt feeds the blob and the document from the one
+annotation, so the two cannot disagree here.
+
+The exporter must run from the build directory. pcons compiles from there, so
+`source_location_of(...).file_name()` is a path relative to it and `weakly_canonical`
+resolves it against the process's working directory. Running the exporter by hand from the
+project root silently writes a path one directory up.
 
 ### `inputFile`
 
@@ -585,11 +676,9 @@ annotation. An absent field is left out rather than written as `null`, which is 
 does and what `qmltyperegistrar` reads.
 
 `qt/tests/moc-cross-check.py` is the proof: it runs real moc on `qt/tests/moc-mirror.hpp`
-and the exporter on the equivalent reflex class, normalizes both and diffs them. The two
-documents differ in one place, the signal parameter name below.
-
-The build glue that feeds the document to `qmltyperegistrar` is not written yet, so a QML
-module still has to be wired by hand.
+and the exporter on the equivalent reflex classes, normalizes both and diffs them, then
+runs `qmltyperegistrar` on each document and diffs the two `.qmltypes`. Both differ in one
+place, the signal parameter name below.
 
 ---
 
@@ -696,10 +785,20 @@ directories move to `system_include_dirs`, because Qt 6.11 headers trip
 because this Qt is built `-reduce-relocations` and linking without it fails with a copy
 relocation against `QByteArray::_empty`.
 
-The example under `qt/examples/` builds with `REFLEX_BUILD_PROGRAMS=1` and runs with
+The examples under `qt/examples/` build with `REFLEX_BUILD_PROGRAMS=1` and run with
 
 ```console
 $ pcons run qt-example widgets
+$ pcons run qt-example clock
+$ pcons run qt-example sandbox
+```
+
+`clock` and `sandbox` are QML modules. `qt/examples/qml-check.py` runs both offscreen,
+checks that each exits 0, prints its summary line and writes nothing to stderr, then lints
+their QML against the `.qmltypes` the build generated:
+
+```console
+$ python3 qt/examples/qml-check.py build
 ```
 
 ---
@@ -728,10 +827,18 @@ after actually building and running the suite against another Qt.
 
 ## Not supported yet
 
-**A QML module end to end.** The metatypes document is emitted and
-`qmltyperegistrar` accepts it, see [Metatypes and QML](#metatypes-and-qml), but nothing
-declares the exporter program or feeds its output to the registrar for you. A QML module
-has to be wired by hand until the build glue lands.
+**The QML macros that declare a type rather than a class info.** `QML_ATTACHED`,
+`QML_EXTENDED`, `QML_FOREIGN`, `QML_SEQUENTIAL_CONTAINER` and `QML_INTERFACE` each declare a
+nested typedef and a marker member function that Qt reads back off the class, the way
+`QML_SINGLETON` does. `qt::qml` covers the singleton and uncreatable pair; the rest would
+each need another `QQmlPrivate` specialization in `reflex/qt/qml.hpp`. The class infos are
+reachable through `qt::classinfo` meanwhile, which is enough for the `.qmltypes` and not
+enough for the engine.
+
+**A QML import path on disk.** A pcons QML module lives in the binary's resources, so
+`qmllint` and `qmlls` need a directory tree with a `qmldir` in it.
+`qt/examples/qml-check.py` stages one in a temporary directory for the lint run, and
+nothing writes a `.qmlls.ini`.
 
 **C++ modules.** Qt and C++ named modules do not work together on this toolchain, so
 `reflex.qt` ships as headers rather than as a `.cppm`, alone among the reflex modules. Its
@@ -740,7 +847,10 @@ them. `reflex.core` and `serde` expose usable headers alongside their module int
 nothing is missing.
 
 **Constructors.** `qt_constructors` is empty, so `QMetaObject::newInstance` finds nothing
-and no constructor is published. QML needs this.
+and no constructor is published. QML instantiates a registered type through C++ rather than
+through the metaobject, so this costs nothing there, but `QML_CONSTRUCTIBLE_VALUE` and
+`QML_STRUCTURED_VALUE` build a value type from its published constructors and cannot work
+without them.
 
 **Computed properties.** A property is a data member. A property backed only by accessors,
 with no storage, is not expressible: a getter and a setter are optional decorations on a
@@ -775,5 +885,6 @@ working C++26 reflection and has been built and run nowhere else.
 
 ---
 
-> See [tests](tests) for more examples, and [examples/widgets](examples/widgets) for a
-> working application.
+> See [tests](tests) for more examples, [examples/widgets](examples/widgets) for a working
+> application, and [examples/clock](examples/clock) and
+> [examples/sandbox](examples/sandbox) for QML modules.
