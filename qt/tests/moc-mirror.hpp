@@ -105,3 +105,25 @@ public:
 Q_SIGNALS:
   void levelChanged();
 };
+
+/** @brief the gadget half of the pair, mirroring `twin_gadget`
+ *
+ * A `Q_GADGET` has no signals, so no property here can carry `NOTIFY`: moc
+ * rejects that outright. It is the shape the metatypes document used to invent
+ * a notify signal for.
+ */
+class mirror_gadget
+{
+  Q_GADGET
+  QML_VALUE_TYPE(span)
+
+  Q_PROPERTY(int length MEMBER length)
+
+public:
+  Q_INVOKABLE int doubled() const
+  {
+    return length * 2;
+  }
+
+  int length = 0;
+};
