@@ -99,11 +99,20 @@ TEST_CASE("a timer a class cannot dispatch is rejected at compile time")
     REFLEX_CONSTEVAL_NOTHROW(
         timer_meta::required_timer_member_of(^^derived_ticker, ^^base_ticker::beat));
 
-    REFLEX_CONSTEVAL_THROWS(timer_meta::check_timer_handler(^^int));
-    REFLEX_CONSTEVAL_THROWS(timer_meta::check_timer_handler(^^elsewhere));
-    REFLEX_CONSTEVAL_THROWS(timer_meta::validate_timers(^^foreign_handler));
-    REFLEX_CONSTEVAL_THROWS(timer_meta::validate_timers(^^duplicate_handlers));
-    REFLEX_CONSTEVAL_THROWS(timer_meta::required_timer_member_of(^^ticker, ^^elsewhere::ping));
+    REFLEX_CONSTEVAL_THROWS_WITH("a timer names a non-static member function, but int is not one",
+                                 timer_meta::check_timer_handler(^^int));
+    REFLEX_CONSTEVAL_THROWS_WITH(
+        "a timer names a non-static member function, but elsewhere is not one",
+        timer_meta::check_timer_handler(^^elsewhere));
+    REFLEX_CONSTEVAL_THROWS_WITH("the timer t names void elsewhere::ping(), a member function of "
+                                 "neither its own class nor a base",
+                                 timer_meta::validate_timers(^^foreign_handler));
+    REFLEX_CONSTEVAL_THROWS_WITH("the timers a and b both name void duplicate_handlers::beep(); "
+                                 "declare one timer per handler",
+                                 timer_meta::validate_timers(^^duplicate_handlers));
+    REFLEX_CONSTEVAL_THROWS_WITH("no timer member of ticker declares void elsewhere::ping(); add "
+                                 "a timer<^^handler> data member",
+                                 timer_meta::required_timer_member_of(^^ticker, ^^elsewhere::ping));
   }
 }
 

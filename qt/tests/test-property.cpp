@@ -198,15 +198,28 @@ TEST_CASE("a property or accessor that cannot be honoured is rejected at compile
     REFLEX_CONSTEVAL_NOTHROW(qtd::validate_properties(^^accessed));
     REFLEX_CONSTEVAL_NOTHROW(qtd::validate_properties(^^conventional));
 
-    REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::unknown_property));
-    REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::foreign_property));
-    REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::duplicate_getter));
-    REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::mismatched_setter));
-    REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::mismatched_getter));
-    REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::listening_to_nothing));
-    REFLEX_CONSTEVAL_THROWS(qtd::validate_properties(^^bad::neither_readable_nor_writable));
+    REFLEX_CONSTEVAL_THROWS_WITH("the getter getP1 names bad::unknown_property::not_annotated, "
+                                 "which is not a data member of unknown_property annotated with "
+                                 "prop{}",
+                                 qtd::validate_properties(^^bad::unknown_property));
+    REFLEX_CONSTEVAL_THROWS_WITH("the getter getP1 names bad::unknown_property::p1, which is not "
+                                 "a data member of foreign_property annotated with prop{}",
+                                 qtd::validate_properties(^^bad::foreign_property));
+    REFLEX_CONSTEVAL_THROWS_WITH("the property p1 already has a getter; keep one",
+                                 qtd::validate_properties(^^bad::duplicate_getter));
+    REFLEX_CONSTEVAL_THROWS_WITH("the setter setP1 must take int, the type of p1",
+                                 qtd::validate_properties(^^bad::mismatched_setter));
+    REFLEX_CONSTEVAL_THROWS_WITH("the getter getP1 must return int, the type of p1",
+                                 qtd::validate_properties(^^bad::mismatched_getter));
+    REFLEX_CONSTEVAL_THROWS_WITH("the listener onP1Changed needs p1 to notify; drop its "
+                                 ".notify = false",
+                                 qtd::validate_properties(^^bad::listening_to_nothing));
+    REFLEX_CONSTEVAL_THROWS_WITH("the property p1 is neither readable nor writable; set .read or "
+                                 ".write",
+                                 qtd::validate_properties(^^bad::neither_readable_nor_writable));
 
-    REFLEX_CONSTEVAL_THROWS(
+    REFLEX_CONSTEVAL_THROWS_WITH(
+        "the property p1 already has a getter, getP1; keep one",
         qtd::accessor_for<^^getter_t>(
             ^^bad::duplicate_getter, qtd::property_named(^^bad::duplicate_getter, "p1")));
   }
@@ -222,15 +235,26 @@ TEST_CASE("a property query the class cannot answer is rejected at compile time"
     REFLEX_CONSTEVAL_NOTHROW(qtd::required_property_named(^^accessed, "p1"));
     REFLEX_CONSTEVAL_NOTHROW(qtd::required_member_named(^^accessed, "p1"));
 
-    REFLEX_CONSTEVAL_THROWS(qtd::check_readable(^^accessed, ^^accessed::listener_calls));
-    REFLEX_CONSTEVAL_THROWS(
+    REFLEX_CONSTEVAL_THROWS_WITH("accessed::listener_calls is not a property of accessed; "
+                                 "annotate it with prop{}",
+                                 qtd::check_readable(^^accessed, ^^accessed::listener_calls));
+    REFLEX_CONSTEVAL_THROWS_WITH(
+        "the property p1 is declared .read = false and cannot be read",
         qtd::check_readable(^^bad::neither_readable_nor_writable,
                             ^^bad::neither_readable_nor_writable::p1));
-    REFLEX_CONSTEVAL_THROWS(qtd::check_writable(^^locked, ^^locked::frozen));
-    REFLEX_CONSTEVAL_THROWS(qtd::check_writable(^^constant_alone, ^^constant_alone::fixed));
-    REFLEX_CONSTEVAL_THROWS(qtd::check_notifying(^^mixed::quiet));
-    REFLEX_CONSTEVAL_THROWS(qtd::required_property_named(^^accessed, "nope"));
-    REFLEX_CONSTEVAL_THROWS(qtd::required_member_named(^^accessed, "nope"));
+    REFLEX_CONSTEVAL_THROWS_WITH("the property frozen is declared .write = false or "
+                                 ".constant = true and cannot be written",
+                                 qtd::check_writable(^^locked, ^^locked::frozen));
+    REFLEX_CONSTEVAL_THROWS_WITH("the property fixed is declared .write = false or "
+                                 ".constant = true and cannot be written",
+                                 qtd::check_writable(^^constant_alone, ^^constant_alone::fixed));
+    REFLEX_CONSTEVAL_THROWS_WITH("the property quiet publishes no notify signal; drop its "
+                                 ".notify = false or .constant = true",
+                                 qtd::check_notifying(^^mixed::quiet));
+    REFLEX_CONSTEVAL_THROWS_WITH("accessed declares no property named nope",
+                                 qtd::required_property_named(^^accessed, "nope"));
+    REFLEX_CONSTEVAL_THROWS_WITH("accessed and its bases declare no member named nope",
+                                 qtd::required_member_named(^^accessed, "nope"));
   }
 }
 
