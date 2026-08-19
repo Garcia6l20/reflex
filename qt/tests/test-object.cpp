@@ -198,8 +198,8 @@ TEST_CASE("invokeMethod reaches slots and invocables by name")
   CHECK(c.last_b == 1);
 
   int sum = 0;
-  REQUIRE(QMetaObject::invokeMethod(&c, "add", Q_RETURN_ARG(int, sum), Q_ARG(int, 2), Q_ARG(int, 3)));
-  CHECK(sum == 5);
+  REQUIRE(QMetaObject::invokeMethod(&c, "add", Q_RETURN_ARG(int, sum), Q_ARG(int, 2), Q_ARG(int, 8)));
+  CHECK(sum == 10);
 
   REQUIRE(QMetaObject::invokeMethod(&c, "add", Q_RETURN_ARG(int, sum), Q_ARG(int, 2)));
   CHECK(sum == 5);
