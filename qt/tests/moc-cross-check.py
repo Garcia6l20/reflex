@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
-"""Diff reflex.qt's metatypes document against real moc's for an equivalent class.
+"""Diff reflex.qt's metatypes document against real moc's for equivalent classes.
 
-`moc-mirror.hpp` is a hand-written Q_OBJECT class; `twin` in `moc-pair.hpp` is
-the same shape through reflex.qt. Real moc runs on the first, the exporter
-program on the second, both documents are normalized, and the diff is what this
-half of reflex.qt is verified by. qmltyperegistrar then runs on both and its two
-.qmltypes are diffed the same way.
+`moc-mirror.hpp` holds hand-written `Q_OBJECT` and `Q_GADGET` classes; `twin`,
+`twin_qml` and `twin_gadget` in `moc-pair.hpp` are the same shapes through
+reflex.qt. Real moc runs on the first, the exporter program on the second, both
+documents are normalized, and the diff is what this half of reflex.qt is
+verified by. qmltyperegistrar then runs on both and its two .qmltypes are diffed
+the same way.
 
     python3 qt/tests/moc-cross-check.py build/qt/tests/reflex-qt-moc-export
 
 Normalization drops what the two sides cannot agree on by construction: keys are
 sorted, `lineNumber` / `inputFile` / `outputRevision` are removed, and the class
 name is folded to CLASS on both sides so `mirror::Mode` and `twin::Mode` compare
-equal. Everything else that differs is a finding.
+equal. Signal parameter names go too, and that one is a real divergence rather
+than a formatting one: a `signal<int>` data member carries types and no names,
+so reflex cannot produce them. They are dropped before qmltyperegistrar runs, so
+the generated .qmltypes are compared on everything else.
 
-Not a doctest: a test binary shelling out to moc would make the suite depend on
-Qt's tools being installed.
+Everything else that differs is a finding.
+
+`pcons test` runs this as `qt.moc-cross-check`, and both the build script and
+this script skip rather than fail when moc, qmltyperegistrar or Qt's headers are
+absent: the suite must not depend on Qt's tools being installed.
 """
 
 import argparse
@@ -23,14 +30,50 @@ import difflib
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 
 QT_LIBEXEC = pathlib.Path("/usr/lib/qt6")
+QT_HEADERS = pathlib.Path("/usr/include/qt6")
 HERE = pathlib.Path(__file__).resolve().parent
 DROPPED = ("lineNumber", "inputFile", "outputRevision")
-CLASS_NAMES = ("mirror", "twin", "mirror_qml", "twin_qml")
+CLASS_NAMES = (
+    "mirror",
+    "twin",
+    "mirror_qml",
+    "twin_qml",
+    "mirror_gadget",
+    "twin_gadget",
+)
+
+
+def is_qt6(tool):
+    try:
+        reported = subprocess.run(
+            [tool, "--version"], capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return reported.split()[-1].startswith("6.")
+
+
+def find_tool(name, override):
+    """The Qt 6 spelling of @p name, or None.
+
+    PATH is searched last and the version checked, because a distribution that
+    ships Qt 5 alongside Qt 6 puts Qt 5's moc in /usr/bin and Qt 6's in libexec.
+    """
+    candidates = [pathlib.Path(override)] if override else [QT_LIBEXEC / name]
+    if not override:
+        found = shutil.which(name)
+        if found:
+            candidates.append(pathlib.Path(found))
+    for candidate in candidates:
+        if candidate.is_file() and is_qt6(candidate):
+            return candidate
+    return None
 
 
 def normalize(node):
@@ -41,6 +84,15 @@ def normalize(node):
     if isinstance(node, str):
         return re.sub(r"\b(%s)\b" % "|".join(CLASS_NAMES), "CLASS", node)
     return node
+
+
+def drop_signal_argument_names(documents):
+    for document in documents:
+        for described in document.get("classes", []):
+            for signal in described.get("signals", []):
+                for argument in signal.get("arguments", []):
+                    argument.pop("name", None)
+    return documents
 
 
 def unified(left, right, left_name, right_name):
@@ -60,13 +112,13 @@ def clean_qmltypes(text):
     return kept
 
 
-def run_moc(header, out_cpp):
+def run_moc(moc, headers, header, out_cpp):
     subprocess.run(
         [
-            QT_LIBEXEC / "moc",
-            "-I/usr/include/qt6",
-            "-I/usr/include/qt6/QtCore",
-            "-I/usr/include/qt6/QtQmlIntegration",
+            moc,
+            f"-I{headers}",
+            f"-I{headers}/QtCore",
+            f"-I{headers}/QtQmlIntegration",
             "--output-json",
             "-o",
             out_cpp,
@@ -77,12 +129,12 @@ def run_moc(header, out_cpp):
     return json.loads(out_cpp.with_suffix(".cpp.json").read_text())
 
 
-def run_registrar(document, out_qmltypes, tmp):
+def run_registrar(registrar, documents, out_qmltypes, tmp):
     source = tmp / (out_qmltypes.stem + ".json")
-    source.write_text(json.dumps(document if isinstance(document, list) else [document]))
+    source.write_text(json.dumps(documents))
     subprocess.run(
         [
-            QT_LIBEXEC / "qmltyperegistrar",
+            registrar,
             "--import-name",
             "reflex.crosscheck",
             "--major-version",
@@ -103,24 +155,50 @@ def run_registrar(document, out_qmltypes, tmp):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("exporter", help="the built reflex-qt-moc-export program")
+    parser.add_argument("--moc", help="path to real moc, else looked up")
+    parser.add_argument(
+        "--qmltyperegistrar", help="path to qmltyperegistrar, else looked up"
+    )
+    parser.add_argument(
+        "--qt-headers", default=str(QT_HEADERS), help="Qt's include prefix, for moc"
+    )
     args = parser.parse_args()
+
+    moc = find_tool("moc", args.moc)
+    registrar = find_tool("qmltyperegistrar", args.qmltyperegistrar)
+    headers = pathlib.Path(args.qt_headers)
+    for what, missing in (("moc", moc), ("qmltyperegistrar", registrar)):
+        if missing is None:
+            print(f"skipped: no Qt 6 {what} found")
+            return 0
+    if not (headers / "QtCore").is_dir():
+        print(f"skipped: Qt headers not found under {headers}")
+        return 0
 
     with tempfile.TemporaryDirectory() as raw:
         tmp = pathlib.Path(raw)
 
-        moc_document = run_moc(HERE / "moc-mirror.hpp", tmp / "moc_mirror.cpp")
+        moc_documents = drop_signal_argument_names(
+            [run_moc(moc, headers, HERE / "moc-mirror.hpp", tmp / "moc_mirror.cpp")]
+        )
 
         reflex_json = tmp / "reflex_twin.json"
         subprocess.run([args.exporter, reflex_json], check=True)
-        reflex_document = json.loads(reflex_json.read_text())
+        reflex_documents = drop_signal_argument_names(
+            json.loads(reflex_json.read_text())
+        )
 
         metatypes_diff = unified(
-            dump([moc_document]), dump(reflex_document), "moc(mirror)", "reflex(twin)"
+            dump(moc_documents), dump(reflex_documents), "moc(mirror)", "reflex(twin)"
         )
 
         qmltypes_diff = unified(
-            clean_qmltypes(run_registrar(moc_document, tmp / "mirror.qmltypes", tmp)),
-            clean_qmltypes(run_registrar(reflex_document, tmp / "twin.qmltypes", tmp)),
+            clean_qmltypes(
+                run_registrar(registrar, moc_documents, tmp / "mirror.qmltypes", tmp)
+            ),
+            clean_qmltypes(
+                run_registrar(registrar, reflex_documents, tmp / "twin.qmltypes", tmp)
+            ),
             "moc(mirror).qmltypes",
             "reflex(twin).qmltypes",
         )

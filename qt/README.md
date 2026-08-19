@@ -688,8 +688,10 @@ does and what `qmltyperegistrar` reads.
 
 `qt/tests/moc-cross-check.py` is the proof: it runs real moc on `qt/tests/moc-mirror.hpp`
 and the exporter on the equivalent reflex classes, normalizes both and diffs them, then
-runs `qmltyperegistrar` on each document and diffs the two `.qmltypes`. Both differ in one
-place, the signal parameter name below.
+runs `qmltyperegistrar` on each document and diffs the two `.qmltypes`. The pair covers an
+object, a QML singleton and a value-type gadget, and both diffs are empty once the signal
+parameter names below are dropped from each side. `pcons test` runs it as
+`qt.moc-cross-check` and skips it where Qt's tools are not installed.
 
 ---
 

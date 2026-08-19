@@ -86,3 +86,14 @@ struct [[= mocqt::qml{.name        = "Gauge",
 
   [[= mocqt::prop{}]] int level = 0;
 };
+
+/** @brief the gadget half of the pair, matching `mirror_gadget` */
+struct [[= mocqt::qml{.name = "span"}]] twin_gadget : mocqt::gadget<twin_gadget>
+{
+  [[= mocqt::prop{}]] int length = 0;
+
+  [[= mocqt::invocable]] int doubled() const
+  {
+    return length * 2;
+  }
+};
