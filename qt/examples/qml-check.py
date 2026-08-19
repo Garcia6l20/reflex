@@ -8,7 +8,12 @@ nothing on stderr: a QML resolution failure leaves the exit code at 0, so an
 empty stderr is the assertion that matters. `qmllint` then reads the `.qmltypes`
 `qmltyperegistrar` generated from the reflex metatypes document and checks every
 name the QML uses against it, which is what proves the metadata rather than the
-plumbing.
+plumbing. `QMLLINT` in the environment overrides the Qt 6 path it defaults to,
+since `qmllint` on `PATH` is Qt 5 on some distributions.
+
+Running the examples is the only place a `QQmlEngine` builds a property cache
+over a reflex class. A shape the engine rejects fails object creation without
+printing anything, so `run_example` reads the exit code rather than the output.
 
 Not a doctest: the examples need Qt Qml and its tools, which the suite must not
 depend on being installed.
@@ -22,7 +27,7 @@ import subprocess
 import sys
 import tempfile
 
-QMLLINT = pathlib.Path("/usr/lib/qt6/bin/qmllint")
+QMLLINT = pathlib.Path(os.environ.get("QMLLINT", "/usr/lib/qt6/bin/qmllint"))
 HERE = pathlib.Path(__file__).resolve().parent
 
 EXAMPLES = {
@@ -67,14 +72,22 @@ def run_qmllint(build, name, uri, staging):
         [QMLLINT, "-I", staging, *sorted(module.glob("*.qml"))],
         capture_output=True,
         text=True,
+        timeout=60,
     )
-    return [line for line in (result.stdout + result.stderr).splitlines() if line]
+    problems = [line for line in (result.stdout + result.stderr).splitlines() if line]
+    if result.returncode != 0 and not problems:
+        problems.append(f"qmllint exited {result.returncode} without saying why")
+    return problems
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("build", type=pathlib.Path, help="the build directory")
     args = parser.parse_args()
+
+    if not QMLLINT.is_file():
+        print(f"{QMLLINT} is not there; set QMLLINT to a Qt 6 qmllint", file=sys.stderr)
+        return 2
 
     failed = False
     with tempfile.TemporaryDirectory() as raw:
