@@ -368,7 +368,7 @@ template <typename Tag, typename Super> struct meta_strings
       list.push_back(s);
     };
 
-    push(identifier_of(^^Super));
+    push(display_string_of(^^Super));
     for(auto const& s : classinfo_strings)
     {
       push(*s);

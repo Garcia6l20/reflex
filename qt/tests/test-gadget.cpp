@@ -33,6 +33,22 @@ struct empty_gadget : reflex::qt::gadget<empty_gadget>
 {
 };
 
+namespace outer::inner
+{
+struct scoped_gadget : reflex::qt::gadget<scoped_gadget>
+{
+  [[= prop{}]] int x = 0;
+};
+}
+
+struct host
+{
+  struct nested : reflex::qt::gadget<nested>
+  {
+    [[= prop{}]] int x = 0;
+  };
+};
+
 namespace
 {
 namespace qtd = reflex::qt::detail;
@@ -53,6 +69,13 @@ TEST_CASE("the class name and class infos land in the meta object")
   REQUIRE(mo.classInfoCount() == 1);
   CHECK(std::string_view{mo.classInfo(0).name()} == "author");
   CHECK(std::string_view{mo.classInfo(0).value()} == "reflex");
+}
+
+TEST_CASE("the class name is the qualified one, the way moc writes it")
+{
+  CHECK(std::string_view{outer::inner::scoped_gadget::staticMetaObject.className()}
+        == "outer::inner::scoped_gadget");
+  CHECK(std::string_view{host::nested::staticMetaObject.className()} == "host::nested");
 }
 
 TEST_CASE("properties are described as moc would describe them")
