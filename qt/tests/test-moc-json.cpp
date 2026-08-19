@@ -301,8 +301,7 @@ TEST_CASE("a flags alias is described by its own name and the enumeration it ali
 static auto folded(char const* text) -> std::string
 {
   std::string out{text};
-  for(std::string_view owner :
-      {"mirror_gadget", "mirror_qml", "mirror", "twin_gadget", "twin_qml", "twin"})
+  for(std::string_view owner : {"mirror", "twin"})
   {
     for(auto at = out.find(owner); at != std::string::npos; at = out.find(owner))
     {
@@ -402,4 +401,23 @@ TEST_CASE("the metaobject reflex builds is the one moc builds for the mirror")
   CHECK(method_rows(twin_gadget::staticMetaObject) == method_rows(mirror_gadget::staticMetaObject));
   CHECK(property_rows(twin_gadget::staticMetaObject)
         == property_rows(mirror_gadget::staticMetaObject));
+
+  CHECK(property_rows(twin_base::staticMetaObject) == property_rows(mirror_base::staticMetaObject));
+  CHECK(method_rows(twin_base::staticMetaObject) == method_rows(mirror_base::staticMetaObject));
+
+  CHECK(property_rows(twin_derived::staticMetaObject)
+        == property_rows(mirror_derived::staticMetaObject));
+  CHECK(method_rows(twin_derived::staticMetaObject)
+        == method_rows(mirror_derived::staticMetaObject));
+  CHECK(folded(twin_derived::staticMetaObject.superClass()->className())
+        == folded(mirror_derived::staticMetaObject.superClass()->className()));
+
+  CHECK(enum_rows(twin_flags::staticMetaObject) == enum_rows(mirror_flags::staticMetaObject));
+  CHECK(property_rows(twin_flags::staticMetaObject)
+        == property_rows(mirror_flags::staticMetaObject));
+  CHECK(method_rows(twin_flags::staticMetaObject) == method_rows(mirror_flags::staticMetaObject));
+
+  CHECK(property_rows(twin_styled::staticMetaObject)
+        == property_rows(mirror_styled::staticMetaObject));
+  CHECK(method_rows(twin_styled::staticMetaObject) == method_rows(mirror_styled::staticMetaObject));
 }
