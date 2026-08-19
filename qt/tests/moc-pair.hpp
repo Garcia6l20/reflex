@@ -50,6 +50,17 @@ public:
 
   signal<int> bumped{this};
 
+private:
+  /** @brief a signal declared private, which moc has no spelling for
+   *
+   * `Q_SIGNALS` is a public access specifier, so `mirror` declares `nudged`
+   * public. The pair agrees only while reflex stamps a signal `AccessPublic`
+   * whatever section it sits in, which is what the QML engine's property cache
+   * reads.
+   */
+  signal<int> nudged{this};
+
+public:
   [[= mocqt::getter<^^count>]] int getCount() const
   {
     return count;
