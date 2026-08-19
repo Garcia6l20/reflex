@@ -896,6 +896,15 @@ QObject::disconnect(&sender, &emitter::pair, &receiver, &emitter::pair);  // fal
 QObject::disconnect(chain);                                              // true
 ```
 
+**A gadget inheriting a gadget.** `struct derived : qt::gadget<derived>, base_g` makes
+`staticMetaObject` ambiguous between the two bases and does not compile, and
+`struct derived : base_g`, the only other spelling, never instantiates `gadget<derived>`: it
+inherits `base_g`'s metaobject whole, so `derived::staticMetaObject` is `base_g`'s, down to
+its `className()`, and the properties `derived` declares are invisible to Qt. Nothing
+diagnoses it, because no reflex code runs for a class that does not name the CRTP base. Its
+metatype is still its own, so `QVariant` does not confuse the two. An object inherits
+properly through `qt::object<derived, base>`; a gadget has no equivalent.
+
 **An opt-out for a published enumeration.** Every nested enumeration is published. There is
 no `qt::skip`, so a private implementation enum reaches the metaobject too.
 

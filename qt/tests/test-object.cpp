@@ -71,6 +71,14 @@ struct bare : reflex::qt::object<bare>
 {
 };
 
+namespace outer::inner
+{
+struct scoped_object : reflex::qt::object<scoped_object>
+{
+  [[= prop{}]] int x = 0;
+};
+}
+
 struct listy : reflex::qt::object<listy>
 {
   [[= prop{}]] QList<custom> tags;
@@ -230,6 +238,16 @@ TEST_CASE("an object with nothing in it is still a usable QObject")
     QObject::connect(&b, &QObject::destroyed, &guard, [&destroyed] { ++destroyed; });
   }
   CHECK(destroyed == 1);
+}
+
+TEST_CASE("the class name is the qualified one, and qt_metacast follows it")
+{
+  outer::inner::scoped_object o;
+
+  CHECK(std::string_view{o.staticMetaObject.className()} == "outer::inner::scoped_object");
+  CHECK(o.inherits("outer::inner::scoped_object"));
+  CHECK(not o.inherits("scoped_object"));
+  CHECK(qobject_cast<outer::inner::scoped_object*>(static_cast<QObject*>(&o)) == &o);
 }
 
 TEST_CASE("a reflex object stays a QObject to the metatype system")
