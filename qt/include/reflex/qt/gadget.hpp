@@ -168,7 +168,9 @@ struct QMetaTypeId<Super>
     {
       return id;
     }
-    const int newId = qRegisterNormalizedMetaType<Super>(Super::staticMetaObject.className());
+    const auto name  = reflex::meta::display_string_of(^^Super);
+    const int  newId = qRegisterNormalizedMetaType<Super>(
+        QByteArray(name.data(), qsizetype(name.size())));
     metatype_id.storeRelease(newId);
     return newId;
   }
