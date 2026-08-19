@@ -549,6 +549,12 @@ template <typename Tag, typename Super> struct meta_strings
     {
       flags |= QMC::EnumOrFlag;
     }
+    if constexpr(constexpr auto writer = accessor_for<^^qt::setter_t>(^^Super, p);
+                 writer != meta::null
+                 and identifier_of(writer) == conventional_name_of<^^qt::setter_t>(identifier_of(p)))
+    {
+      flags |= QMC::StdCppSet;
+    }
     constexpr uint notify_id =
         (is_object and spec.notifying()) ? uint(notifier_index_of(identifier_of(p))) : uint(-1);
     return QtMocHelpers::PropertyData<property_type>(index_of(identifier_of(p)),
