@@ -13,9 +13,14 @@
 #include <QtCore/QString>
 #include <QtCore/QVariant>
 
+#include <unistd.h>
+
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <source_location>
 #include <string>
 #include <string_view>
@@ -482,6 +487,24 @@ TEST_CASE("README: QString formatting")
   CHECK(std::format("{:.2}", QString{"hello"}) == "he");
 }
 
+template <typename F> static auto on_stdout(F&& produce) -> std::string
+{
+  const auto path  = std::filesystem::temp_directory_path() / "reflex-qt-dump.txt";
+  const int  saved = ::dup(::fileno(stdout));
+  std::fflush(stdout);
+  REQUIRE(std::freopen(path.string().c_str(), "w", stdout) != nullptr);
+  produce();
+  std::fflush(stdout);
+  ::dup2(saved, ::fileno(stdout));
+  ::close(saved);
+
+  std::ifstream in{path};
+  std::string   text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+  in.close();
+  std::filesystem::remove(path);
+  return text;
+}
+
 TEST_CASE("README: describe and dump")
 {
   const std::string text = qt::describe<counter>();
@@ -491,6 +514,12 @@ TEST_CASE("README: describe and dump")
   CHECK(text.contains("  signal      valueChanged()\n"));
   CHECK(text.contains("  slot        bump()\n"));
   CHECK(text.contains("  property    value : int\n"));
+
+  counter instance;
+
+  CHECK(on_stdout([] { qt::dump<counter>(); }) == text);
+  CHECK(on_stdout([&instance] { qt::dump(instance); }) == text);
+  CHECK(on_stdout([] { qt::dump(counter::staticMetaObject); }) == text);
 }
 
 TEST_CASE("README: a chained signal disconnects through its connection")
