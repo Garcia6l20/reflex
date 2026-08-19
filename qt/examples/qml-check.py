@@ -27,6 +27,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 EXAMPLES = {
     "clock": ("Reflex.Clock", "observed 5 label updates"),
+    "sandbox": (
+        "Reflex.Sandbox",
+        "span [-5, 15] width 20 shade 2 observed 4 note reflex sandbox",
+    ),
 }
 
 

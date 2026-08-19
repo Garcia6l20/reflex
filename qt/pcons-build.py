@@ -89,7 +89,16 @@ else:
             clock_app = qml_example(
                 "clock", "Reflex.Clock", sources=["main.cpp"], qml_files=["Main.qml"]
             )
+            sandbox_app = qml_example(
+                "sandbox", "Reflex.Sandbox", sources=["main.cpp"], qml_files=["Main.qml"]
+            )
+
             @qt_example.command()
             def clock():
                 """Run the QML clock example"""
                 subprocess.run([str(clock_app.output_nodes[0].path)], check=True)
+
+            @qt_example.command()
+            def sandbox():
+                """Run the QML sandbox example"""
+                subprocess.run([str(sandbox_app.output_nodes[0].path)], check=True)
