@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diff reflex.qt's metatypes document against real moc's for equivalent classes.
+r"""Diff reflex.qt's metatypes document against real moc's for equivalent classes.
 
 `moc-mirror.hpp` holds hand-written `Q_OBJECT` and `Q_GADGET` classes; `twin`,
 `twin_qml` and `twin_gadget` in `moc-pair.hpp` are the same shapes through
@@ -8,7 +8,13 @@ documents are normalized, and the diff is what this half of reflex.qt is
 verified by. qmltyperegistrar then runs on both and its two .qmltypes are diffed
 the same way.
 
-    python3 qt/tests/moc-cross-check.py build/qt/tests/reflex-qt-moc-export
+    python3 qt/tests/moc-cross-check.py --compile-dir build \
+        build/qt/tests/reflex-qt-moc-export
+
+`--compile-dir` is the directory the exporter's sources were compiled from,
+which is what the exporter needs to resolve the relative path the compiler
+recorded. It defaults to the working directory, which is what `pcons test`
+runs the cross-check from.
 
 Normalization drops what the two sides cannot agree on by construction: keys are
 sorted, `lineNumber` / `inputFile` / `outputRevision` are removed, and the class
@@ -28,6 +34,7 @@ absent: the suite must not depend on Qt's tools being installed.
 import argparse
 import difflib
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -162,6 +169,11 @@ def main():
     parser.add_argument(
         "--qt-headers", default=str(QT_HEADERS), help="Qt's include prefix, for moc"
     )
+    parser.add_argument(
+        "--compile-dir",
+        default=os.getcwd(),
+        help="the directory the exporter's sources were compiled from",
+    )
     args = parser.parse_args()
 
     moc = find_tool("moc", args.moc)
@@ -183,7 +195,7 @@ def main():
         )
 
         reflex_json = tmp / "reflex_twin.json"
-        subprocess.run([args.exporter, reflex_json], check=True)
+        subprocess.run([args.exporter, reflex_json, "-C", args.compile_dir], check=True)
         reflex_documents = drop_signal_argument_names(
             json.loads(reflex_json.read_text())
         )
