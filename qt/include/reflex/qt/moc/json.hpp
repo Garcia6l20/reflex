@@ -223,7 +223,7 @@ template <typename T> auto describe() -> class_meta
         described_property.member = std::string{identifier_of(p)};
       }
     }
-    if constexpr(spec.notifying())
+    if constexpr(strings::is_object and spec.notifying())
     {
       constexpr auto notify_text = std::define_static_string(qt::detail::notifier_name_of(p));
       described_property.notify  = std::string{notify_text};
