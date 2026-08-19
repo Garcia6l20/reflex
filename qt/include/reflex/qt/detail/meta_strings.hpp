@@ -145,6 +145,25 @@ consteval bool validate_gadget_members(meta::info Super)
   return true;
 }
 
+/** @brief rejects a published method whose return value cannot cross a metacall
+ *
+ * A metacall hands the dispatcher one `void*` of caller storage and the return
+ * value is written into it, which a reference has no room to be written to.
+ * moc answers the same declaration by publishing the method as returning void,
+ * dropping the result without a word.
+ */
+consteval bool check_method_return(meta::info Member)
+{
+  const auto returned = call_return_type_of(Member);
+  REFLEX_META_CHECK(not meta::is_reference_type(returned),
+                    "the method " + std::string{display_string_of(Member)} + " returns "
+                        + std::string{display_string_of(returned)}
+                        + "; a metacall writes the return value into storage the caller owns, so a "
+                          "published method has to return by value",
+                    Member);
+  return true;
+}
+
 /** @brief the string table and the `QMetaObject` data blob of @p Super
  *
  * @p Tag is the per-class unique type moc calls `qt_meta_tag_*_t`; it selects
@@ -283,10 +302,12 @@ template <typename Tag, typename Super> struct meta_strings
     }
     for(auto fn : slot_members)
     {
+      check_method_return(fn);
       push(fn, method_kind::slot, parameters_of(fn).size(), meta::min_arity_of(fn));
     }
     for(auto fn : invocables)
     {
+      check_method_return(fn);
       push(fn, method_kind::invocable, parameters_of(fn).size(), meta::min_arity_of(fn));
     }
     return std::define_static_array(list);

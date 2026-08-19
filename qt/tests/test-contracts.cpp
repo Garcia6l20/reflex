@@ -5,6 +5,7 @@
 
 #include <QtCore/QMetaMethod>
 #include <QtCore/QMetaObject>
+#include <QtCore/QString>
 
 /** @file
  *
@@ -28,6 +29,22 @@ struct slotted_gadget : qt::gadget<slotted_gadget>
   [[= qt::slot]] void bump()
   {
     ++x;
+  }
+};
+
+struct referring : qt::gadget<referring>
+{
+  [[= qt::prop{}]] int x = 1;
+
+  [[= qt::invocable]] int& reference()
+  {
+    return x;
+  }
+
+  [[= qt::slot]] const QString& name() const
+  {
+    static const QString empty;
+    return empty;
   }
 };
 
@@ -87,5 +104,20 @@ TEST_CASE("a signal or a timer on a gadget is rejected")
                                  qtd::validate_gadget_members(^^signalling_gadget));
     REFLEX_CONSTEVAL_THROWS_WITH("has no timerEvent to dispatch it",
                                  qtd::validate_gadget_members(^^timed_gadget));
+  }
+}
+
+TEST_CASE("a published method returning a reference is rejected")
+{
+  consteval
+  {
+    REFLEX_CONSTEVAL_NOTHROW(qtd::check_method_return(^^slotted_gadget::twice));
+    REFLEX_CONSTEVAL_NOTHROW(qtd::check_method_return(^^slotted_gadget::bump));
+
+    REFLEX_CONSTEVAL_THROWS_WITH("has to return by value",
+                                 qtd::check_method_return(^^referring::reference));
+    REFLEX_CONSTEVAL_THROWS_WITH("the method const QString& referring::name() const returns "
+                                 "const QString&",
+                                 qtd::check_method_return(^^referring::name));
   }
 }
