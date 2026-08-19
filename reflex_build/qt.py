@@ -117,10 +117,14 @@ def qml_module(name, env, *, uri, qml_files, metatypes, link=(), version="1.0"):
     is therefore not published - merging the two documents is what stock
     ``QtQmlModule`` would have to do, and no caller needs it.
 
-    ``qml_files`` are project-root relative, as ``QtQmlModule`` takes them.
-    Each one is embedded under ``:/qt/qml/<uri as path>/`` next to a
-    synthesized ``qmldir`` and the generated ``.qmltypes``, and its stem names
-    the QML type.
+    ``qml_files`` are project-root relative, as stock ``QtQmlModule`` takes
+    them, and alone among the paths a build script writes: ``sources``,
+    ``include_dirs`` and ``add_metatypes``'s ``include_roots`` are all relative
+    to the script's own directory. A caller naming one directory twice should
+    derive the root-relative spelling from ``project.current_dir`` rather than
+    write it out. Each file is embedded under ``:/qt/qml/<uri as path>/`` next
+    to a synthesized ``qmldir`` and the generated ``.qmltypes``, and its stem
+    names the QML type.
 
     Returns an object target, so ``app.link(module)`` pulls the registration
     and the resources into the application.
