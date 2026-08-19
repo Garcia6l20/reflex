@@ -611,11 +611,12 @@ A class whose header does not reach it registers as an ordinary creatable type, 
 
 ### Building a QML module
 
-`reflex_build.qt.add_metatypes` declares the exporter and `pcons`'s `QtQmlModule` consumes
-its document, so the whole module is stock pcons plus one translation unit:
+`reflex_build.qt` declares the whole module on top of the builders pcons already exposes:
+`add_metatypes` builds the exporter and `qml_module` hands its document to
+`qmltyperegistrar`.
 
 ```python
-from reflex_build.qt import add_metatypes, use_qt
+from reflex_build.qt import add_metatypes, qml_module, use_qt
 
 qt_qml = use_qt(project, env, ["Qml"])
 
@@ -623,11 +624,11 @@ metatypes, exporter = add_metatypes(
     "app", ["module.cpp"], link=[qt_qml.Qml], include_roots=["include"]
 )
 
-types = project.QtQmlModule(
+types = qml_module(
     "app-types", env,
     uri="Com.Example.App",
     qml_files=["app/Main.qml"],
-    metatypes=[metatypes],
+    metatypes=metatypes,
     link=[qt_qml.Qml, project.get_target("reflex.qt")],
 )
 types.depends(exporter)
@@ -638,9 +639,19 @@ types.private.include_dirs.append("include")
 exporter's own include directories and the roots it spells `inputFile` relative to, so pass
 the ones the QML module compiles the generated registration with.
 
-`qmltyperegistrar` generates the registration and pcons compiles it into the module, so
-nothing is hand-written. The generated file needs `T::staticMetaObject` and nothing else,
-which a reflex.qt class has.
+`qml_module` is `project.QtQmlModule` without moc: it runs `qmltyperegistrar` on the
+exporter's document, synthesizes the `qmldir`, embeds the QML files, the `qmldir` and the
+generated `.qmltypes` under `:/qt/qml/<uri as path>/`, and returns an object target that
+`app.link(types)` pulls in whole. `qml_files` are project-root relative, the way pcons takes
+them.
+
+`qmltyperegistrar` generates the registration and the module compiles it, so nothing is
+hand-written. The generated file needs `T::staticMetaObject` and nothing else, which a
+reflex.qt class has.
+
+Nothing merges moc's collection with the exporter's document, so one module publishes either
+reflex types or `Q_OBJECT` types, not both. A moc'ed class gets its own module through
+`project.QtQmlModule`.
 
 One failure mode is worth knowing, because it is invisible in the document.
 `qmlRegisterTypesAndRevisions` reads `QML.Element` back off the **runtime metaobject**, not
