@@ -5,6 +5,8 @@ from xml.sax.saxutils import escape
 from pcons import PathToken, context
 from pcons.toolchains.qt import find_qt
 
+from reflex_build.config import build_dir
+
 _patched = set()
 
 
@@ -50,6 +52,11 @@ def add_metatypes(name, sources, *, env=None, link=(), include_roots=()):
     that built it. A relative root is taken from the build script's directory,
     as pcons takes ``include_dirs``.
 
+    ``-C`` is the directory the compiler ran in. ninja compiles with relative
+    paths, so that is what ``std::source_location`` records and what the
+    exporter needs to complete them; it refuses to guess it from its own
+    working directory.
+
     Returns the document's path and the command target that writes it.
     """
     project = context.current_project
@@ -72,7 +79,7 @@ def add_metatypes(name, sources, *, env=None, link=(), include_roots=()):
     command = env.Command(
         target=output,
         source=[exporter],
-        command=[f"{run}${{SOURCES[0]}}", "$TARGET", *flags],
+        command=[f"{run}${{SOURCES[0]}}", "$TARGET", "-C", str(build_dir), *flags],
         name=f"{name}-metatypes",
         write_if_different=True,
     )
