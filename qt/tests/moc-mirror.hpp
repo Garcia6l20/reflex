@@ -142,7 +142,7 @@ public:
   int length = 0;
 
 public Q_SLOTS:
-  void stretch(int by)
+  void stretch(int by = 1)
   {
     length += by;
   }
