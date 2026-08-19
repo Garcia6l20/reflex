@@ -138,12 +138,25 @@ def dump(node):
     return json.dumps(normalize(node), indent=2, sort_keys=True).splitlines()
 
 
+LINE_NUMBER = re.compile(r";?\s*lineNumber:\s*\d+")
+
+
 def clean_qmltypes(text):
+    """The .qmltypes lines to diff, without what the two sides cannot share.
+
+    `lineNumber` is stripped inside the line rather than by dropping the line:
+    qmltyperegistrar writes a short record on one line, so dropping every line
+    naming a line number would hide every one-line Property, Enum and Method
+    from both sides at once.
+    """
     kept = []
     for line in text.splitlines():
-        if "lineNumber" in line or line.strip().startswith("file:"):
+        if line.strip().startswith("file:"):
             continue
-        kept.append(re.sub(r"\b(%s)\b" % "|".join(CLASS_NAMES), "CLASS", line))
+        stripped = LINE_NUMBER.sub("", line)
+        if "lineNumber" in line and not stripped.strip():
+            continue
+        kept.append(re.sub(r"\b(%s)\b" % "|".join(CLASS_NAMES), "CLASS", stripped))
     return kept
 
 
