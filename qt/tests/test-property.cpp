@@ -75,6 +75,16 @@ struct[[= reflex::qt::naming::qt_style]] annotation_wins : reflex::qt::object<an
   }
 };
 
+struct renamed_setter : reflex::qt::object<renamed_setter>
+{
+  [[= prop{}]] int p1 = 0;
+
+  [[= setter<^^p1>]] void assignP1(int value)
+  {
+    p1 = value;
+  }
+};
+
 struct locked : reflex::qt::object<locked>
 {
   [[= prop{.write = false}]] int frozen = 7;
@@ -321,6 +331,19 @@ TEST_CASE("a read-only property is described and enforced as read-only")
   CHECK(l.frozen == 7);
   CHECK(l.property("frozen").toInt() == 7);
   CHECK(l.property<"frozen">() == 7);
+}
+
+TEST_CASE("a setter named the way moc names one is marked as such in the blob")
+{
+  const QMetaObject& mo = accessed::staticMetaObject;
+  CHECK(mo.property(mo.propertyOffset() + 0).hasStdCppSet());
+  CHECK(not mo.property(mo.propertyOffset() + 1).hasStdCppSet());
+
+  const QMetaObject& conv = conventional::staticMetaObject;
+  CHECK(conv.property(conv.propertyOffset()).hasStdCppSet());
+
+  const QMetaObject& renamed = renamed_setter::staticMetaObject;
+  CHECK(not renamed.property(renamed.propertyOffset()).hasStdCppSet());
 }
 
 TEST_CASE("the Qt property flags follow the annotation")
