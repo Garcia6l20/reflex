@@ -212,16 +212,14 @@ template <typename T> auto describe() -> class_meta
     {
       described_property.read = std::string{identifier_of(reader)};
     }
-    if constexpr(spec.writable())
+    if constexpr(spec.writable() and writer != meta::null)
     {
-      if constexpr(writer != meta::null)
-      {
-        described_property.write = std::string{identifier_of(writer)};
-      }
-      else
-      {
-        described_property.member = std::string{identifier_of(p)};
-      }
+      described_property.write = std::string{identifier_of(writer)};
+    }
+    if constexpr((spec.read and reader == meta::null)
+                 or (spec.writable() and writer == meta::null))
+    {
+      described_property.member = std::string{identifier_of(p)};
     }
     if constexpr(strings::is_object and spec.notifying())
     {
@@ -325,10 +323,9 @@ template <typename T> auto describe() -> class_meta
 /** @brief serializes a metatypes aggregate the way moc writes one
  *
  * An absent field is left out rather than written as `null` or `[]`: moc omits
- * it, and `qmltyperegistrar` reads presence, so a `member` on a read-only
- * property would make it writable in the generated `.qmltypes`. serde's own
- * aggregate serializer writes every member, which is why this takes over for the
- * schema types.
+ * it, and `qmltyperegistrar` reads presence, so a `notify` written as `null`
+ * would name a signal that does not exist. serde's own aggregate serializer
+ * writes every member, which is why this takes over for the schema types.
  */
 template <typename OutputIt, typename Agg>
   requires(meta::is_class_type(^^Agg) and std::is_aggregate_v<Agg>

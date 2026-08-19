@@ -105,7 +105,7 @@ TEST_CASE("a class describes itself the way moc describes its Q_OBJECT mirror")
   CHECK_FALSE(described.enums.front().alias.has_value());
   CHECK_EQ(described.enums.front().values, std::vector<std::string>{"Fast", "Slow"});
 
-  REQUIRE_EQ(described.properties.size(), 4u);
+  REQUIRE_EQ(described.properties.size(), 5u);
 
   SUBCASE("an accessor pair is read and write, never member")
   {
@@ -150,6 +150,17 @@ TEST_CASE("a class describes itself the way moc describes its Q_OBJECT mirror")
     CHECK(mode.required);
     CHECK_FALSE(mode.constant);
     CHECK_EQ(mode.member, "mode");
+  }
+
+  SUBCASE("a constant property with no getter still names the member it reads")
+  {
+    auto const& fixed = described.properties[4];
+    CHECK_EQ(fixed.name, "fixed");
+    CHECK(fixed.constant);
+    CHECK_EQ(fixed.member, "fixed");
+    CHECK_FALSE(fixed.read.has_value());
+    CHECK_FALSE(fixed.write.has_value());
+    CHECK_FALSE(fixed.notify.has_value());
   }
 
   SUBCASE("the method indices are the metaobject's own, notifiers included")
