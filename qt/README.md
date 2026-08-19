@@ -787,27 +787,30 @@ qt::dump(some_qobject);   // the same text, to stdout
 links it and nothing else.
 
 ```python
-from pcons.toolchains.qt import find_qt
+from reflex_build.qt import use_qt
 
-qt  = find_qt(project, env, modules=["Core", "Widgets"], required=False)
+qt  = use_qt(project, env, ["Core", "Widgets"])
 app = project.QtProgram("app", env, sources=["main.cpp"], link=[qt.Widgets])
 app.link(project.get_target("reflex.qt"))
 ```
 
-`find_qt` must be called after `env.set_variant`. When Qt is absent it returns `None` and
-`qt/pcons-build.py` skips the module, leaving the rest of the build green.
+`use_qt` returns what `find_qt` returns, `None` included, and it defaults to
+`required=False`. When Qt is absent `qt/pcons-build.py` gets that `None` and skips the
+module, leaving the rest of the build green.
 
 pcons scans for `Q_OBJECT`, `Q_GADGET` and `Q_NAMESPACE` to decide what needs moc. A
 reflex.qt class carries none of them, so the scan finds nothing and no moc edge is emitted.
 `automoc=False` is not needed.
 
-Two flags in `qt/pcons-build.py` are load-bearing on this toolchain. Qt's include
-directories move to `system_include_dirs`, because Qt 6.11 headers trip
-`-Wsfinae-incomplete` on GCC 16 and `-Werror` makes that fatal. The Qt modules get `-fPIC`,
-because this Qt is built `-reduce-relocations` and linking without it fails with a copy
-relocation against `QByteArray::_empty`.
+Call `use_qt` rather than `find_qt`: two flags are load-bearing on this toolchain and
+`reflex_build/qt.py` applies them there, so a build that reaches `find_qt` directly gets
+neither. Qt's include directories move to `system_include_dirs`, because Qt 6.11 headers
+trip `-Wsfinae-incomplete` on GCC 16 and `-Werror` makes that fatal. The Qt modules get
+`-fPIC`, because this Qt is built `-reduce-relocations` and linking without it fails with a
+copy relocation against `QByteArray::_empty`.
 
-The examples under `qt/examples/` build with `REFLEX_BUILD_PROGRAMS=1` and run with
+The examples under `qt/examples/` build with `pcons REFLEX_BUILD_PROGRAMS=true` and run
+with
 
 ```console
 $ pcons run qt-example widgets
