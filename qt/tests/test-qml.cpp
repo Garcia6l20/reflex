@@ -1,3 +1,5 @@
+#include "moc-qml-mirror.hpp"
+
 #include <doctest/doctest.h>
 
 #include <reflex/const_check.hpp>
@@ -7,6 +9,7 @@
 #include <QtCore/QMetaClassInfo>
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtCore/QTypeRevision>
 
 #include <string>
 #include <string_view>
@@ -80,63 +83,73 @@ static auto class_infos_of(moc::class_meta const& described)
   return found;
 }
 
+using infos = std::vector<std::pair<std::string, std::string>>;
+
 TEST_CASE("a bare qml annotation publishes QML.Element auto")
 {
-  const std::vector<std::pair<std::string, std::string>> expected{{"QML.Element", "auto"}};
+  const auto expected = class_infos_of(qml_plain::staticMetaObject);
 
+  CHECK(expected == infos{{"QML.Element", "auto"}});
   CHECK(class_infos_of(plain::staticMetaObject) == expected);
   CHECK(class_infos_of(moc::describe<plain>()) == expected);
 }
 
 TEST_CASE("a named qml annotation publishes the name")
 {
-  const std::vector<std::pair<std::string, std::string>> expected{{"QML.Element", "Gauge"}};
+  const auto expected = class_infos_of(qml_named::staticMetaObject);
 
+  CHECK(expected == infos{{"QML.Element", "Gauge"}});
   CHECK(class_infos_of(named::staticMetaObject) == expected);
   CHECK(class_infos_of(moc::describe<named>()) == expected);
 }
 
 TEST_CASE("a singleton publishes QML.Singleton after its element")
 {
-  const std::vector<std::pair<std::string, std::string>> expected{{"QML.Element", "auto"},
-                                                                  {"QML.Singleton", "true"}};
+  const auto expected = class_infos_of(qml_lone::staticMetaObject);
 
+  CHECK(expected == infos{{"QML.Element", "auto"}, {"QML.Singleton", "true"}});
   CHECK(class_infos_of(lone::staticMetaObject) == expected);
   CHECK(class_infos_of(moc::describe<lone>()) == expected);
 }
 
 TEST_CASE("an uncreatable type publishes its reason next to QML.Creatable")
 {
-  const std::vector<std::pair<std::string, std::string>> expected{
-      {"QML.Element", "auto"},
-      {"QML.Creatable", "false"},
-      {"QML.UncreatableReason", "ask the factory"}};
+  const auto expected = class_infos_of(qml_sealed::staticMetaObject);
 
+  CHECK(expected
+        == infos{{"QML.Element", "auto"},
+                 {"QML.Creatable", "false"},
+                 {"QML.UncreatableReason", "ask the factory"}});
   CHECK(class_infos_of(sealed::staticMetaObject) == expected);
   CHECK(class_infos_of(moc::describe<sealed>()) == expected);
 }
 
 TEST_CASE("a version is encoded the way moc encodes one")
 {
-  const std::vector<std::pair<std::string, std::string>> expected{{"QML.Element", "span"},
-                                                                  {"QML.AddedInVersion", "515"},
-                                                                  {"QML.RemovedInVersion", "768"}};
+  const auto expected = class_infos_of(qml_versioned::staticMetaObject);
 
+  CHECK(expected
+        == infos{{"QML.Element", "span"},
+                 {"QML.AddedInVersion",
+                  std::to_string(QTypeRevision::fromVersion(2, 3).toEncodedVersion<quint16>())},
+                 {"QML.RemovedInVersion",
+                  std::to_string(QTypeRevision::fromVersion(3, 0).toEncodedVersion<quint16>())}});
   CHECK(class_infos_of(versioned::staticMetaObject) == expected);
   CHECK(class_infos_of(moc::describe<versioned>()) == expected);
 }
 
 TEST_CASE("qml class infos come before the classinfo annotations")
 {
-  const std::vector<std::pair<std::string, std::string>> expected{{"QML.Element", "auto"},
-                                                                  {"author", "reflex"}};
+  const auto expected = class_infos_of(qml_mixed::staticMetaObject);
 
+  CHECK(expected == infos{{"QML.Element", "auto"}, {"author", "reflex"}});
   CHECK(class_infos_of(mixed::staticMetaObject) == expected);
   CHECK(class_infos_of(moc::describe<mixed>()) == expected);
 }
 
 TEST_CASE("a class carrying no qml annotation publishes no class info")
 {
+  CHECK(class_infos_of(qml_none::staticMetaObject).empty());
   CHECK(class_infos_of(bare::staticMetaObject).empty());
   CHECK(class_infos_of(moc::describe<bare>()).empty());
 }
