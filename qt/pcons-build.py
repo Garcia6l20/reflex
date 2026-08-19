@@ -54,10 +54,13 @@ else:
         if qt_qml is None:
             print("-- reflex.qt QML examples skipped: Qt 6 Qml not found")
         else:
+            from_root = project.current_dir.relative_to(project.root_dir)
+
             def qml_example(name, uri, *, sources, qml_files):
+                here = f"examples/{name}"
                 metatypes, exporter = add_metatypes(
                     f"reflex-qt-{name}",
-                    [f"examples/{name}/module.cpp"],
+                    [f"{here}/module.cpp"],
                     link=[qt_qml.Qml],
                     include_roots=["examples"],
                 )
@@ -66,7 +69,7 @@ else:
                     f"reflex-qt-{name}-types",
                     env,
                     uri=uri,
-                    qml_files=[f"qt/examples/{name}/{f}" for f in qml_files],
+                    qml_files=[f"{from_root}/{here}/{f}" for f in qml_files],
                     metatypes=metatypes,
                     link=[qt_qml.Qml, qt_lib],
                 )
@@ -76,7 +79,7 @@ else:
                 app = project.QtProgram(
                     f"reflex-qt-{name}",
                     env,
-                    sources=[f"examples/{name}/{s}" for s in sources],
+                    sources=[f"{here}/{s}" for s in sources],
                     link=[qt_qml.Qml, qt_lib],
                 )
                 app.private.include_dirs.append("examples")
