@@ -115,4 +115,46 @@ auto write_metatypes(std::filesystem::path const& output, options const& opts = 
   stream << format_metatypes<Module>(opts) << '\n';
   return stream ? EXIT_SUCCESS : EXIT_FAILURE;
 }
+
+/** @brief the exporter program, driven by the command line the build passes it
+ *
+ * `reflex_build.qt.add_metatypes` runs the exporter as
+ * `<program> <output> -I <root> ...`, so an exporter's `main` is one line:
+ *
+ * ```cpp
+ * int main(int argc, char** argv)
+ * {
+ *   return reflex::qt::moc::export_main<app_types>(argc, argv);
+ * }
+ * ```
+ *
+ * The `-I` roots become @ref options::include_roots, which is how `inputFile`
+ * comes out relocatable.
+ *
+ * @return `EXIT_FAILURE` when no output path was given or the document could
+ *         not be written, `EXIT_SUCCESS` otherwise.
+ */
+template <typename Module> auto export_main(int argc, char** argv) -> int
+{
+  options     opts;
+  std::string output;
+
+  for(int i = 1; i < argc; ++i)
+  {
+    const std::string_view arg{argv[i]};
+    if(arg == "-I" and i + 1 < argc)
+    {
+      opts.include_roots.emplace_back(argv[++i]);
+    }
+    else if(arg.starts_with("-I"))
+    {
+      opts.include_roots.emplace_back(arg.substr(2));
+    }
+    else
+    {
+      output = arg;
+    }
+  }
+  return output.empty() ? EXIT_FAILURE : write_metatypes<Module>(output, opts);
+}
 } // namespace reflex::qt::moc
