@@ -26,6 +26,7 @@ compile time — fully type-safe, with zero overhead at runtime.
 | **reflex.serde** | Reflection-driven serialization / deserialization (JSON, BSON, CSV, XML, YAML backends) | [serde/README.md](serde/README.md) |
 | **reflex.py** | Python bindings derived from the class declaration, on top of nanobind | [py/README.md](py/README.md) |
 | **reflex.jinja** | Jinja-style templating over a reflection-derived context | [jinja/README.md](jinja/README.md) |
+| **reflex.qt** | Qt metaobjects built at compile time, with no `Q_OBJECT` and no moc | [qt/README.md](qt/README.md) |
 
 ---
 
@@ -167,6 +168,9 @@ With `REFLEX_MODULES=false` no `.cppm` is compiled and no `-fmodules` is passed.
 Eight of the nine libraries become interface targets and only `reflex.cli` still
 produces an archive. Tests and example programs are disabled in that mode, since
 their sources use `import`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+`reflex.qt` is the exception: the root `CMakeLists.txt` never adds it, so it builds
+under pcons alone. See [qt/README.md](qt/README.md).
 
 ---
 
