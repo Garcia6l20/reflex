@@ -103,6 +103,24 @@ struct [[= mocqt::qml{.name = "span"}]] twin_gadget : mocqt::gadget<twin_gadget>
 {
   [[= mocqt::prop{}]] int length = 0;
 
+  [[= mocqt::prop{}]] unsigned int span_uint = 0;
+
+  [[= mocqt::prop{}]] short span_short = 0;
+
+  [[= mocqt::prop{}]] unsigned short span_ushort = 0;
+
+  [[= mocqt::prop{}]] unsigned char span_uchar = 0;
+
+  [[= mocqt::prop{}]] signed char span_schar = 0;
+
+  [[= mocqt::prop{}]] long span_long = 0;
+
+  [[= mocqt::prop{}]] unsigned long span_ulong = 0;
+
+  [[= mocqt::prop{}]] long long span_llong = 0;
+
+  [[= mocqt::prop{}]] unsigned long long span_ullong = 0;
+
   [[= mocqt::invocable]] int doubled() const
   {
     return length * 2;

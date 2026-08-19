@@ -132,6 +132,15 @@ class mirror_gadget
   QML_VALUE_TYPE(span)
 
   Q_PROPERTY(int length MEMBER length)
+  Q_PROPERTY(unsigned int span_uint MEMBER span_uint)
+  Q_PROPERTY(short span_short MEMBER span_short)
+  Q_PROPERTY(unsigned short span_ushort MEMBER span_ushort)
+  Q_PROPERTY(unsigned char span_uchar MEMBER span_uchar)
+  Q_PROPERTY(signed char span_schar MEMBER span_schar)
+  Q_PROPERTY(long span_long MEMBER span_long)
+  Q_PROPERTY(unsigned long span_ulong MEMBER span_ulong)
+  Q_PROPERTY(long long span_llong MEMBER span_llong)
+  Q_PROPERTY(unsigned long long span_ullong MEMBER span_ullong)
 
 public:
   Q_INVOKABLE int doubled() const
@@ -139,7 +148,16 @@ public:
     return length * 2;
   }
 
-  int length = 0;
+  int                length      = 0;
+  unsigned int       span_uint   = 0;
+  short              span_short  = 0;
+  unsigned short     span_ushort = 0;
+  unsigned char      span_uchar  = 0;
+  signed char        span_schar  = 0;
+  long               span_long   = 0;
+  unsigned long      span_ulong  = 0;
+  long long          span_llong  = 0;
+  unsigned long long span_ullong = 0;
 
 public Q_SLOTS:
   void stretch(int by = 1)

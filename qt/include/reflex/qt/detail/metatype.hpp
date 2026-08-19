@@ -20,10 +20,43 @@ consteval meta::info normalized_type_of(meta::info R)
   return meta::remove_const(meta::remove_reference(meta::dealias(R)));
 }
 
-/** @brief the type name moc would emit for @p R, spaces removed */
+/** @brief the name Qt's own static type table gives @p R, empty when it holds none
+ *
+ * The table is where moc reads the spelling it writes: `uint` for `unsigned
+ * int`, `ushort` for `unsigned short`, `qlonglong` for `long long`. It is
+ * consulted rather than `QMetaType::fromType<T>().name()`, whose interface
+ * object is not constexpr and so cannot be read while the blob is built.
+ */
+consteval std::string builtin_type_name_of(meta::info R)
+{
+  const auto T = normalized_type_of(R);
+  if(false)
+  {
+  }
+#define X(__enum_mem, __id, __type)                              \
+  else if(normalized_type_of(^^__type) == T)                     \
+  {                                                              \
+    return #__type;                                              \
+  }
+  QT_FOR_EACH_STATIC_TYPE(X)
+#undef X
+  return {};
+}
+
+/** @brief the type name moc would emit for @p R
+ *
+ * A type Qt's static table names is spelled as that table spells it. Anything
+ * else keeps its `display_string_of` spelling with every space removed, which
+ * is what moc writes for a template argument list.
+ */
 consteval std::string normalized_type_name(meta::info R)
 {
-  return meta::display_string_of(normalized_type_of(R))
+  const auto T = normalized_type_of(R);
+  if(auto builtin = builtin_type_name_of(T); not builtin.empty())
+  {
+    return builtin;
+  }
+  return meta::display_string_of(T)
        | std::views::filter([](char c) { return c != ' '; })
        | std::ranges::to<std::string>();
 }
