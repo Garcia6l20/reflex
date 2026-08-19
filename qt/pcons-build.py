@@ -3,7 +3,7 @@ import subprocess
 from pcons import add_subdirectory, context
 
 from reflex_build.config import build_programs, build_testing
-from reflex_build.qt import add_metatypes, use_qt
+from reflex_build.qt import add_metatypes, qml_module, use_qt
 
 project = context.current_project
 env = project.default_environment
@@ -62,12 +62,12 @@ else:
                     include_roots=["examples"],
                 )
 
-                types = project.QtQmlModule(
+                types = qml_module(
                     f"reflex-qt-{name}-types",
                     env,
                     uri=uri,
                     qml_files=[f"qt/examples/{name}/{f}" for f in qml_files],
-                    metatypes=[metatypes],
+                    metatypes=metatypes,
                     link=[qt_qml.Qml, qt_lib],
                 )
                 types.depends(exporter)

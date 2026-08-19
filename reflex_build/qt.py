@@ -1,7 +1,8 @@
 import platform
 from pathlib import Path
+from xml.sax.saxutils import escape
 
-from pcons import context
+from pcons import PathToken, context
 from pcons.toolchains.qt import find_qt
 
 _patched = set()
@@ -76,3 +77,97 @@ def add_metatypes(name, sources, *, env=None, link=(), include_roots=()):
         write_if_different=True,
     )
     return output, command
+
+
+def _write_if_changed(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists() or path.read_text(encoding="utf-8") != content:
+        path.write_text(content, encoding="utf-8")
+
+
+def _qrc_document(prefix, entries):
+    lines = ["<RCC>", f'    <qresource prefix="{escape(prefix)}">']
+    for alias, path in entries:
+        lines.append(
+            f'        <file alias="{escape(alias)}">{escape(str(path))}</file>'
+        )
+    lines += ["    </qresource>", "</RCC>", ""]
+    return "\n".join(lines)
+
+
+def _set_node_vars(node, node_vars):
+    info = getattr(node, "_build_info", None)
+    if info is not None:
+        info["vars"] = node_vars
+
+
+def qml_module(name, env, *, uri, qml_files, metatypes, link=(), version="1.0"):
+    """Build a QML module whose types come from a metatypes document.
+
+    The reflex equivalent of ``project.QtQmlModule``, for a module moc never
+    sees: ``metatypes`` is the document ``add_metatypes`` writes, and it goes
+    to ``qmltyperegistrar`` as it is. A ``Q_OBJECT`` class in the same module
+    is therefore not published - merging the two documents is what stock
+    ``QtQmlModule`` would have to do, and no caller needs it.
+
+    ``qml_files`` are project-root relative, as ``QtQmlModule`` takes them.
+    Each one is embedded under ``:/qt/qml/<uri as path>/`` next to a
+    synthesized ``qmldir`` and the generated ``.qmltypes``, and its stem names
+    the QML type.
+
+    Returns an object target, so ``app.link(module)`` pulls the registration
+    and the resources into the application.
+    """
+    project = context.current_project
+    if not env.has_tool("qt"):
+        raise RuntimeError(
+            "qml_module() needs the qt toolchain on the environment. "
+            "Call use_qt(project, env, [...]) first."
+        )
+
+    major, _, minor = version.partition(".")
+    minor = minor or "0"
+    uri_path = uri.replace(".", "/")
+    root = project.root_dir
+    qt_dir = Path(env.get("build_dir", "build")) / f"qt.{name}"
+    qmltypes_name = f"{name}.qmltypes"
+
+    target = project.ObjectLibrary(name, env, sources=[])
+    if link:
+        target.link(*link)
+
+    registrar = env.qt.TypeRegistrar(
+        qt_dir / f"{name}_qmltyperegistrations.cpp", [metatypes]
+    )[0]
+    _set_node_vars(
+        registrar,
+        {
+            "QMLURI": uri,
+            "QMLMAJOR": major,
+            "QMLMINOR": minor,
+            "QMLTYPES": PathToken(path=f"qt.{name}/{qmltypes_name}", path_type="build"),
+            "QMLFOREIGN": [],
+        },
+    )
+
+    qmldir = [
+        f"module {uri}",
+        f"typeinfo {qmltypes_name}",
+        f"prefer :/qt/qml/{uri_path}/",
+    ]
+    qmldir += [
+        f"{Path(qml).stem} {major}.{minor} {Path(qml).name}" for qml in qml_files
+    ]
+    _write_if_changed(root / qt_dir / "qmldir", "\n".join(qmldir) + "\n")
+
+    entries = [(Path(qml).name, root / qml) for qml in qml_files]
+    entries.append(("qmldir", root / qt_dir / "qmldir"))
+    entries.append((qmltypes_name, root / qt_dir / qmltypes_name))
+    qrc = qt_dir / f"{name}.qrc"
+    _write_if_changed(root / qrc, _qrc_document(f"/qt/qml/{uri_path}", entries))
+
+    resources = env.qt.Rcc(qt_dir / f"qrc_{name}.cpp", qrc, name=f"qml_{name}")[0]
+    resources.implicit_deps.append(registrar)
+
+    target.add_sources([registrar, resources])
+    return target
