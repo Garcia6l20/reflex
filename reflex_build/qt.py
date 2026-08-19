@@ -2,6 +2,36 @@ import platform
 from pathlib import Path
 
 from pcons import context
+from pcons.toolchains.qt import find_qt
+
+_patched = set()
+
+
+def use_qt(project, env, modules, *, required=False):
+    """Find Qt and apply the two workarounds this toolchain needs.
+
+    Qt 6.11 headers trip ``-Wsfinae-incomplete`` on GCC 16, which ``-Werror``
+    turns fatal. It reproduces with ``<string>`` plus ``<QtCore/qmetatype.h>``
+    alone, so moving Qt's include directories to ``system_include_dirs`` is the
+    only lever short of dropping the warning repository-wide.
+
+    This Qt is built ``-reduce-relocations``: without ``-fPIC`` the link fails
+    with a copy relocation against the non-copyable protected symbol
+    ``QByteArray::_empty``.
+
+    Returns what ``find_qt`` returns, ``None`` included.
+    """
+    qt = find_qt(project, env, modules=modules, required=required)
+    if qt is None:
+        return None
+    for name, module in qt.modules.items():
+        if name in _patched:
+            continue
+        _patched.add(name)
+        module.public.system_include_dirs.extend(module.public.include_dirs)
+        module.public.include_dirs.clear()
+        module.public.compile_flags.append("-fPIC")
+    return qt
 
 
 def add_metatypes(name, sources, *, env=None, link=(), include_roots=()):

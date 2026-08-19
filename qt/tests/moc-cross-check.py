@@ -30,7 +30,7 @@ import tempfile
 QT_LIBEXEC = pathlib.Path("/usr/lib/qt6")
 HERE = pathlib.Path(__file__).resolve().parent
 DROPPED = ("lineNumber", "inputFile", "outputRevision")
-CLASS_NAMES = ("mirror", "twin")
+CLASS_NAMES = ("mirror", "twin", "mirror_qml", "twin_qml")
 
 
 def normalize(node):
@@ -66,6 +66,7 @@ def run_moc(header, out_cpp):
             QT_LIBEXEC / "moc",
             "-I/usr/include/qt6",
             "-I/usr/include/qt6/QtCore",
+            "-I/usr/include/qt6/QtQmlIntegration",
             "--output-json",
             "-o",
             out_cpp,

@@ -2,11 +2,13 @@
 
 #include <QtCore/qobject.h>
 #include <QtCore/qstring.h>
+#include <QtQmlIntegration/qqmlintegration.h>
 
 /** @file
  *
- * The moc side of the metatypes cross-check: a hand-written `Q_OBJECT` class
- * whose members match `twin` in `moc-pair.hpp` one for one, in the same order.
+ * The moc side of the metatypes cross-check: hand-written `Q_OBJECT` classes
+ * whose members match `twin` and `twin_qml` in `moc-pair.hpp` one for one, in
+ * the same order.
  * `moc --output-json` on this header and `write_metatypes` on `twin` must
  * produce the same document; `moc-cross-check.py` diffs them.
  *
@@ -16,7 +18,7 @@
 class mirror : public QObject
 {
   Q_OBJECT
-  Q_CLASSINFO("QML.Element", "auto")
+  QML_ELEMENT
   Q_CLASSINFO("author", "reflex")
 
   Q_PROPERTY(int count READ getCount WRITE setCount NOTIFY countChanged)
@@ -79,4 +81,27 @@ private Q_SLOTS:
 
 private:
   int count_ = 0;
+};
+
+/** @brief the QML macros, as one class, mirroring `twin_qml`
+ *
+ * Every `QML_*` macro moc turns into a class info and nothing else, which is
+ * what one `qt::qml{}` annotation stands for on the reflex side.
+ */
+class mirror_qml : public QObject
+{
+  Q_OBJECT
+  QML_NAMED_ELEMENT(Gauge)
+  QML_SINGLETON
+  QML_UNCREATABLE("ask the factory")
+  QML_ADDED_IN_VERSION(1, 2)
+  QML_REMOVED_IN_VERSION(2, 0)
+
+  Q_PROPERTY(int level MEMBER level NOTIFY levelChanged)
+
+public:
+  int level = 0;
+
+Q_SIGNALS:
+  void levelChanged();
 };

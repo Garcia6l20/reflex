@@ -1,15 +1,25 @@
 from pcons import context
 
+from reflex_build.qt import use_qt
 from reflex_build.testing import add_test
 
 project = context.current_project
 
 qt_lib = project.get_target("reflex.qt")
 
+qt_qml = use_qt(project, project.default_environment, ["Qml"])
+if qt_qml is None:
+    print("-- reflex.qt QML test skipped: Qt 6 Qml not found")
+
 current_dir = project.current_dir
-for src in current_dir.glob("test-*.cpp"):
+for src in sorted(current_dir.glob("test-*.cpp")):
     test_name = src.stem.removeprefix("test-")
-    test = add_test(test_name, [src.name], [qt_lib], group="qt")
+    libs = [qt_lib]
+    if test_name == "qml":
+        if qt_qml is None:
+            continue
+        libs.append(qt_qml.Qml)
+    test = add_test(test_name, [src.name], libs, group="qt")
     print(f"-- Test added: {test.name}")
 
 # Not a doctest: moc-cross-check.py runs it against real moc and qmltyperegistrar,

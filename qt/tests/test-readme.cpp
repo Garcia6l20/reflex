@@ -38,7 +38,7 @@ struct counter : qt::object<counter>
 
 namespace app
 {
-struct [[= qt::classinfo{"QML.Element", "auto"}]] controller : qt::object<controller>
+struct [[= qt::qml{}]] controller : qt::object<controller>
 {
   [[= qt::prop{}]] int count = 0;
 };
