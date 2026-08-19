@@ -118,6 +118,8 @@ e.pair(1);      // e.sum == 43, the default fills the missing argument
 `qt::defaulted<T>` marks an argument that may be omitted, and its value is given at
 construction. Qt publishes one method table entry per reachable arity, so `pair` appears as
 both `pair(int,int)` and `pair(int)` and a `SIGNAL(pair(int))` connect delivers once.
+Every `defaulted<T>` has to be trailing, the way a C++ default argument does; one followed
+by a plain argument is a compile error naming the argument that follows it.
 
 The count has to come from the signal's *type*. The metaobject emits the clone entries
 while it reflects over the class, before any object exists, and the defaults are
@@ -156,8 +158,12 @@ QMetaObject::invokeMethod(&s, "twice", Q_RETURN_ARG(int, doubled), Q_ARG(int, 21
 
 ### Properties
 
-`[[= qt::prop{}]]` on a data member publishes it as a `Q_PROPERTY`. Every flag defaults to what
-a plain `Q_PROPERTY ... MEMBER` gets from moc.
+`[[= qt::prop{}]]` on a data member publishes it as a `Q_PROPERTY`: readable, writable, and
+notifying through a generated `<name>Changed` signal. The moc declaration it matches is
+`Q_PROPERTY(int volume MEMBER volume NOTIFY volumeChanged)` plus the signal, not
+`MEMBER` alone: moc generates no notify signal for a `MEMBER` property, so a bare
+`Q_PROPERTY(int plainint MEMBER plainint_)` leaves the method table empty and
+`hasNotifySignal()` false. `prop{.notify = false}` is what reads back the same.
 
 ```cpp
 struct settings : qt::object<settings>
@@ -376,8 +382,10 @@ declares.
 ## Gadgets
 
 `reflex::qt::gadget<Super>` publishes a non-`QObject` value type, the way `Q_GADGET` does.
-Properties, invocables, class infos and enums all work. Signals, slots and timers do not,
-because a gadget has no metacall to carry them.
+Properties, slots, invocables, class infos and enums all work, the way moc publishes them
+on a `Q_GADGET`. Signals and timers do not: a gadget is not a `QObject`, so there is no
+`QMetaObject::activate` to emit a signal and no `timerEvent` to dispatch a timer. Declaring
+either is a compile error naming the member.
 
 ```cpp
 struct point : qt::gadget<point>
@@ -446,11 +454,14 @@ struct styled : qt::object<styled>
 would fill them. An enum-typed property carries `EnumOrFlag` and answers
 `QMetaProperty::isEnumType()`.
 
-Two things moc cannot do work here. A `using Options = QFlags<Option>;` is published
-without `Q_DECLARE_FLAGS`, and both the flag alias and the enumeration it wraps get their
-own descriptor, so `QMetaEnum::valueToKey` on a bare `Option` value resolves. A `QFlags`
-alias whose argument is declared in another class is skipped, because its enumerators
-belong to that class's metaobject.
+What moc cannot do is publish any of this unmarked: it emits what `Q_ENUM` and `Q_FLAG`
+name and nothing else. The pair itself moc does reach, through `Q_DECLARE_FLAGS(Options,
+Option)` plus both macros, which emits the same two descriptors as above, measured. What it
+cannot reach is the pair from a plain `using Options = QFlags<Option>;`: `Q_ENUM(Option)`
+plus `Q_FLAG(Options)` over an alias spelled that way collapses to the single `Option`
+descriptor and loses the flag entry. Here both get their own, so `QMetaEnum::valueToKey` on
+a bare `Option` value resolves. A `QFlags` alias whose argument is declared in another class
+is skipped, because its enumerators belong to that class's metaobject.
 
 ---
 
@@ -487,8 +498,8 @@ Without it the class does not compile, and the diagnostic names the member and t
 add:
 
 ```
-error: ... 'what()': 'reflex.qt cannot reach controller::onThing(int):
-                      add 'friend qt::access<controller>;' to controller'
+error: ... 'what()': 'reflex.qt cannot reach controller::onThing:
+                      add 'friend reflex::qt::access<controller>;' to controller'
 ```
 
 ---
@@ -710,9 +721,12 @@ document or nowhere.
   `false` on both sides.
 - **One descriptor per nested enumeration.** moc publishes what `Q_ENUM` and `Q_FLAG` mark.
   This publishes every nested enumeration and every `QFlags` alias over one, so a class with
-  a flag alias gets one more descriptor than moc emits for the same shape. It is a superset,
-  and moc cannot produce it: asking moc for `Q_ENUM(E)` and `Q_FLAG(QFlags<E>)` together
-  yields a single descriptor and loses the flag entry.
+  a flag alias gets one more descriptor than moc emits for the same shape, and
+  `QMetaObject::enumeratorCount()` reads the difference. It is a superset of what the macros
+  mark, not of what moc can emit: `Q_DECLARE_FLAGS(Options, Option)` plus `Q_ENUM(Option)`
+  plus `Q_FLAG(Options)` gets moc to the same pair, measured. Only the alias spelling loses
+  it - `Q_ENUM(E)` and `Q_FLAG(QFlags<E>)` over a `using` alias yields a single descriptor
+  and drops the flag entry.
 - **Signal parameter names.** Empty, where moc has them. See
   [Not supported yet](#not-supported-yet).
 - **The spelling of a type in the metatypes document.** moc echoes a property's or a

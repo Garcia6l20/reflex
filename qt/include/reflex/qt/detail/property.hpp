@@ -45,9 +45,11 @@ inline constexpr qt_style_t qt_style{};
 
 /** @brief marks a data member as a `Q_PROPERTY`
  *
- * Every flag defaults to what a plain `Q_PROPERTY ... MEMBER` gets from moc:
- * readable, writable, and notifying through a generated `<name>Changed`
- * signal. Turning one off is a designated initializer.
+ * The defaults are readable, writable, and notifying through a generated
+ * `<name>Changed` signal, which is `Q_PROPERTY(T x MEMBER x NOTIFY xChanged)`
+ * plus the signal rather than `MEMBER` alone: moc generates no notify signal
+ * for a `MEMBER` property, so `prop{.notify = false}` is the one that reads
+ * back like a bare `MEMBER`. Turning a flag off is a designated initializer.
  *
  * ```cpp
  * [[= prop{}]]                  int a;   // read, write, notify
