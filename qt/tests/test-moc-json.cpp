@@ -5,7 +5,13 @@
 
 #include <doctest/doctest.h>
 
+#include <QtCore/QMetaClassInfo>
+#include <QtCore/QMetaEnum>
+#include <QtCore/QMetaMethod>
+#include <QtCore/QMetaProperty>
+
 #include <filesystem>
+#include <format>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -284,8 +290,108 @@ TEST_CASE("a flags alias is described by its own name and the enumeration it ali
   CHECK_EQ(described.properties.front().type, "palette::Options");
 }
 
-TEST_CASE("the mirror class still compiles, so the cross-check pair stays a pair")
+static auto folded(char const* text) -> std::string
 {
-  static_assert(sizeof(mirror) > 0);
-  static_assert(sizeof(twin) > 0);
+  std::string out{text};
+  for(std::string_view owner :
+      {"mirror_gadget", "mirror_qml", "mirror", "twin_gadget", "twin_qml", "twin"})
+  {
+    for(auto at = out.find(owner); at != std::string::npos; at = out.find(owner))
+    {
+      out.replace(at, owner.size(), "CLASS");
+    }
+  }
+  return out;
+}
+
+static auto class_info_rows(QMetaObject const& meta) -> std::vector<std::string>
+{
+  std::vector<std::string> rows;
+  for(int i = meta.classInfoOffset(); i < meta.classInfoCount(); ++i)
+  {
+    rows.push_back(std::format("{} = {}", meta.classInfo(i).name(), meta.classInfo(i).value()));
+  }
+  return rows;
+}
+
+static auto method_rows(QMetaObject const& meta) -> std::vector<std::string>
+{
+  std::vector<std::string> rows;
+  for(int i = meta.methodOffset(); i < meta.methodCount(); ++i)
+  {
+    const QMetaMethod method = meta.method(i);
+    rows.push_back(std::format("{} {} {} {}",
+                               static_cast<int>(method.methodType()),
+                               static_cast<int>(method.access()),
+                               folded(method.typeName()),
+                               folded(method.methodSignature().constData())));
+  }
+  return rows;
+}
+
+static auto property_rows(QMetaObject const& meta) -> std::vector<std::string>
+{
+  std::vector<std::string> rows;
+  for(int i = meta.propertyOffset(); i < meta.propertyCount(); ++i)
+  {
+    const QMetaProperty property = meta.property(i);
+    rows.push_back(std::format(
+        "{} : {} r{} w{} c{} f{} q{} n{} s{} d{} u{} b{}",
+        property.name(),
+        folded(property.typeName()),
+        property.isReadable(),
+        property.isWritable(),
+        property.isConstant(),
+        property.isFinal(),
+        property.isRequired(),
+        property.hasNotifySignal()
+            ? folded(property.notifySignal().methodSignature().constData())
+            : std::string{"-"},
+        property.isStored(),
+        property.isDesignable(),
+        property.isUser(),
+        property.isBindable()));
+  }
+  return rows;
+}
+
+static auto enum_rows(QMetaObject const& meta) -> std::vector<std::string>
+{
+  std::vector<std::string> rows;
+  for(int i = meta.enumeratorOffset(); i < meta.enumeratorCount(); ++i)
+  {
+    const QMetaEnum enumerator = meta.enumerator(i);
+    std::string     row        = std::format("{} flag{} scoped{} in {}",
+                                  enumerator.name(),
+                                  enumerator.isFlag(),
+                                  enumerator.isScoped(),
+                                  folded(enumerator.scope()));
+    for(int k = 0; k < enumerator.keyCount(); ++k)
+    {
+      row += std::format(" {}={}", enumerator.key(k), enumerator.value(k));
+    }
+    rows.push_back(std::move(row));
+  }
+  return rows;
+}
+
+TEST_CASE("the metaobject reflex builds is the one moc builds for the mirror")
+{
+  CHECK(class_info_rows(twin::staticMetaObject) == class_info_rows(mirror::staticMetaObject));
+  CHECK(method_rows(twin::staticMetaObject) == method_rows(mirror::staticMetaObject));
+  CHECK(property_rows(twin::staticMetaObject) == property_rows(mirror::staticMetaObject));
+  CHECK(enum_rows(twin::staticMetaObject) == enum_rows(mirror::staticMetaObject));
+
+  CHECK(std::string_view{twin::staticMetaObject.superClass()->className()}
+        == mirror::staticMetaObject.superClass()->className());
+
+  CHECK(class_info_rows(twin_qml::staticMetaObject)
+        == class_info_rows(mirror_qml::staticMetaObject));
+  CHECK(property_rows(twin_qml::staticMetaObject) == property_rows(mirror_qml::staticMetaObject));
+
+  CHECK(class_info_rows(twin_gadget::staticMetaObject)
+        == class_info_rows(mirror_gadget::staticMetaObject));
+  CHECK(method_rows(twin_gadget::staticMetaObject) == method_rows(mirror_gadget::staticMetaObject));
+  CHECK(property_rows(twin_gadget::staticMetaObject)
+        == property_rows(mirror_gadget::staticMetaObject));
 }

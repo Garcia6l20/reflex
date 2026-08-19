@@ -16,14 +16,46 @@ if qt_qml is None:
     print("-- reflex.qt QML test skipped: Qt 6 Qml not found")
 
 current_dir = project.current_dir
+
+
+def qt_include_dirs(package):
+    """Every include directory the package publishes, for moc's own -I list.
+
+    use_qt moves Qt's directories to system_include_dirs, which is where moc
+    would otherwise never look.
+    """
+    dirs = []
+    for module in package.modules.values():
+        dirs.extend(str(d) for d in module.public.system_include_dirs)
+        dirs.extend(str(d) for d in module.public.include_dirs)
+    return list(dict.fromkeys(dirs))
+
+
+def moc_header(package, header):
+    """Run real moc on @p header and return the generated translation unit."""
+    env = project.default_environment.clone()
+    env.qt.mocincludes = qt_include_dirs(package)
+    out = Path(env.get("build_dir", "build")) / "qt.tests" / f"moc_{Path(header).stem}.cpp"
+    return env.qt.Moc(out, str(current_dir / header))[0]
+
+
+moc_qml_mirror = moc_header(qt_qml, "moc-qml-mirror.hpp") if qt_qml else None
+moc_mirror = moc_header(qt_qml, "moc-mirror.hpp") if qt_qml else None
+
 for src in sorted(current_dir.glob("test-*.cpp")):
     test_name = src.stem.removeprefix("test-")
     libs = [qt_lib]
+    sources = [src.name]
     if test_name == "qml":
         if qt_qml is None:
             continue
         libs.append(qt_qml.Qml)
-    test = add_test(test_name, [src.name], libs, group="qt")
+        sources.append(moc_qml_mirror)
+    if test_name == "moc-json":
+        if moc_mirror is None:
+            continue
+        sources.append(moc_mirror)
+    test = add_test(test_name, sources, libs, group="qt")
     print(f"-- Test added: {test.name}")
 
 exporter = project.Program(
