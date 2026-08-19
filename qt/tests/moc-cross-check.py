@@ -18,11 +18,14 @@ runs the cross-check from.
 
 Normalization drops what the two sides cannot agree on by construction: keys are
 sorted, `lineNumber` / `inputFile` / `outputRevision` are removed, and the class
-name is folded to CLASS on both sides so `mirror::Mode` and `twin::Mode` compare
-equal. Signal parameter names go too, and that one is a real divergence rather
-than a formatting one: a `signal<int>` data member carries types and no names,
-so reflex cannot produce them. They are dropped before qmltyperegistrar runs, so
-the generated .qmltypes are compared on everything else.
+name is folded to CLASS on both sides.
+
+Two real divergences are dropped on top of that, and both are recorded rather
+than papered over in the mirror: signal parameter names, which a `signal<int>`
+data member cannot carry, and the class qualification on a type name, which moc
+echoes from the declaration and reflection cannot see. Both are dropped before
+qmltyperegistrar runs, so the generated .qmltypes are compared on everything
+else.
 
 Everything else that differs is a finding.
 
@@ -91,6 +94,31 @@ def normalize(node):
     if isinstance(node, str):
         return re.sub(r"\b(%s)\b" % "|".join(CLASS_NAMES), "CLASS", node)
     return node
+
+
+QUALIFIED = re.compile(r"\b(%s)::" % "|".join(CLASS_NAMES))
+
+
+def drop_class_qualified_types(documents):
+    """Strip the declaring class off a type name, on both sides.
+
+    moc echoes a property's or a parameter's type as the author spelled it in
+    `Q_PROPERTY`: `Mode` where reflex writes `twin::Mode`. Reflection cannot see
+    the spelling, so this one cannot be matched. It is recorded here rather than
+    left to hide in a mirror written with the qualified spelling. The blob is
+    unaffected - it spells a nested enumeration unqualified on both sides - and
+    `qmltyperegistrar` resolves either.
+    """
+    for document in documents:
+        for described in document.get("classes", []):
+            for described_property in described.get("properties", []):
+                described_property["type"] = QUALIFIED.sub("", described_property["type"])
+            for group in ("methods", "signals", "slots"):
+                for method in described.get(group, []):
+                    method["returnType"] = QUALIFIED.sub("", method["returnType"])
+                    for argument in method.get("arguments", []):
+                        argument["type"] = QUALIFIED.sub("", argument["type"])
+    return documents
 
 
 def drop_signal_argument_names(documents):
@@ -190,14 +218,16 @@ def main():
     with tempfile.TemporaryDirectory() as raw:
         tmp = pathlib.Path(raw)
 
-        moc_documents = drop_signal_argument_names(
-            [run_moc(moc, headers, HERE / "moc-mirror.hpp", tmp / "moc_mirror.cpp")]
+        moc_documents = drop_class_qualified_types(
+            drop_signal_argument_names(
+                [run_moc(moc, headers, HERE / "moc-mirror.hpp", tmp / "moc_mirror.cpp")]
+            )
         )
 
         reflex_json = tmp / "reflex_twin.json"
         subprocess.run([args.exporter, reflex_json, "-C", args.compile_dir], check=True)
-        reflex_documents = drop_signal_argument_names(
-            json.loads(reflex_json.read_text())
+        reflex_documents = drop_class_qualified_types(
+            drop_signal_argument_names(json.loads(reflex_json.read_text()))
         )
 
         metatypes_diff = unified(

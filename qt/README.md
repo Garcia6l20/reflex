@@ -697,7 +697,9 @@ parameter names below are dropped from each side. `pcons test` runs it as
 
 ## Differences from moc
 
-Four, all understood, none observable through the `QMetaObject` API except the last.
+Five, all understood. Two are observable through the `QMetaObject` API: the enumeration
+descriptors and the signal parameter names. The other three show up in the metatypes
+document or nowhere.
 
 - **String table order.** moc orders the string table by first use, this orders it by kind.
   Both tables hold the same strings and every reference into them is an index, so nothing
@@ -713,6 +715,13 @@ Four, all understood, none observable through the `QMetaObject` API except the l
   yields a single descriptor and loses the flag entry.
 - **Signal parameter names.** Empty, where moc has them. See
   [Not supported yet](#not-supported-yet).
+- **The spelling of a type in the metatypes document.** moc echoes a property's or a
+  parameter's type as the author wrote it, so `Q_PROPERTY(Mode mode ...)` reads
+  `"type": "Mode"` and `Q_PROPERTY(mirror::Mode mode ...)` reads `"type": "mirror::Mode"`.
+  Reflection cannot see the spelling, so the document always carries the qualified name.
+  `qmltyperegistrar` resolves either, and the blob is unaffected: it spells a nested
+  enumeration unqualified on both sides. `qt/tests/moc-cross-check.py` drops the
+  qualification explicitly rather than letting the mirror hide the difference.
 
 ---
 

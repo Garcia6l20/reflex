@@ -25,7 +25,7 @@ class mirror : public QObject
   Q_PROPERTY(int count READ getCount WRITE setCount NOTIFY countChanged)
   Q_PROPERTY(int extra MEMBER extra NOTIFY extraChanged)
   Q_PROPERTY(QString title READ getTitle CONSTANT)
-  Q_PROPERTY(mirror::Mode mode MEMBER mode NOTIFY modeChanged FINAL REQUIRED)
+  Q_PROPERTY(Mode mode MEMBER mode NOTIFY modeChanged FINAL REQUIRED)
   Q_PROPERTY(int fixed MEMBER fixed CONSTANT)
   Q_PROPERTY(Qt::Alignment align MEMBER align NOTIFY alignChanged)
 
