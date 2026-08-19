@@ -60,12 +60,12 @@ private:
 
   [[= getter<^^count>]] int getCount() const
   {
-    return count * 2;
+    return count + 1;
   }
 
   [[= setter<^^count>]] void setCount(int value)
   {
-    count = value / 2;
+    count = value * 2;
   }
 
   [[= listener<^^count>]] void onCountChanged()
@@ -219,7 +219,7 @@ TEST_CASE("a private slot and a private invocable answer invokeMethod")
 
   int doubled = 0;
   REQUIRE(QMetaObject::invokeMethod(&c, "doubled", Q_RETURN_ARG(int, doubled)));
-  CHECK(doubled == 10);
+  CHECK(doubled == 40);
 }
 
 TEST_CASE("a private property reads and writes through its private accessors")
@@ -230,13 +230,13 @@ TEST_CASE("a private property reads and writes through its private accessors")
   QObject::connect(&c, &controller::propertyChanged<"count">, [&notified] { ++notified; });
 
   REQUIRE(c.setProperty("count", 20));
-  CHECK(c.property("count").toInt() == 20);
-  CHECK(c.property<"count">() == 20);
+  CHECK(c.property("count").toInt() == 41);
+  CHECK(c.property<"count">() == 41);
   CHECK(c.listened == 1);
   CHECK(notified == 1);
 
   c.setProperty<"count">(40);
-  CHECK(c.property<"count">() == 40);
+  CHECK(c.property<"count">() == 81);
   CHECK(c.listened == 2);
   CHECK(notified == 2);
 }
