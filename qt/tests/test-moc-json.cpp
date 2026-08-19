@@ -193,30 +193,39 @@ TEST_CASE("a class describes itself the way moc describes its Q_OBJECT mirror")
 
   SUBCASE("the method indices are the metaobject's own, notifiers included")
   {
-    REQUIRE_EQ(described.signal_methods.size(), 5u);
+    REQUIRE_EQ(described.signal_methods.size(), 6u);
     CHECK_EQ(described.signal_methods[0].name, "bumped");
     CHECK_EQ(described.signal_methods[0].index, 0);
-    CHECK_EQ(described.signal_methods[1].name, "countChanged");
-    CHECK_EQ(described.signal_methods[2].name, "extraChanged");
-    CHECK_EQ(described.signal_methods[3].name, "modeChanged");
-    CHECK_EQ(described.signal_methods[3].index, 3);
-    CHECK_EQ(described.signal_methods[4].name, "alignChanged");
+    CHECK_EQ(described.signal_methods[1].name, "nudged");
+    CHECK_EQ(described.signal_methods[2].name, "countChanged");
+    CHECK_EQ(described.signal_methods[3].name, "extraChanged");
+    CHECK_EQ(described.signal_methods[4].name, "modeChanged");
+    CHECK_EQ(described.signal_methods[4].index, 4);
+    CHECK_EQ(described.signal_methods[5].name, "alignChanged");
 
     REQUIRE_EQ(described.slot_methods.size(), 2u);
     CHECK_EQ(described.slot_methods[0].name, "increment");
-    CHECK_EQ(described.slot_methods[0].index, 5);
+    CHECK_EQ(described.slot_methods[0].index, 6);
     CHECK_EQ(described.slot_methods[0].access, "public");
     CHECK_EQ(described.slot_methods[1].name, "hidden");
     CHECK_EQ(described.slot_methods[1].access, "private");
 
     REQUIRE_EQ(described.methods.size(), 2u);
     CHECK_EQ(described.methods[0].name, "caption");
-    CHECK_EQ(described.methods[0].index, 7);
+    CHECK_EQ(described.methods[0].index, 8);
     CHECK_EQ(described.methods[0].returnType, "QString");
     CHECK_EQ(described.methods[0].isConst, true);
     CHECK_EQ(described.methods[1].name, "reset");
     CHECK_EQ(described.methods[1].returnType, "void");
     CHECK_FALSE(described.methods[1].isConst.has_value());
+  }
+
+  SUBCASE("a private signal is described public, a private slot stays private")
+  {
+    CHECK_EQ(described.signal_methods[1].name, "nudged");
+    CHECK_EQ(described.signal_methods[1].access, "public");
+    CHECK_EQ(described.slot_methods[1].name, "hidden");
+    CHECK_EQ(described.slot_methods[1].access, "private");
   }
 
   SUBCASE("a slot parameter keeps its name, a signal argument has none to keep")

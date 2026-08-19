@@ -77,6 +77,7 @@ public:
 
 Q_SIGNALS:
   void bumped(int amount);
+  void nudged(int amount);
   void countChanged();
   void extraChanged();
   void modeChanged();
