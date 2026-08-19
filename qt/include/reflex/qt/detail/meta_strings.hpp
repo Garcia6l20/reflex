@@ -310,6 +310,10 @@ template <typename Tag, typename Super> struct meta_strings
   {
     std::vector<constant_string> list;
 
+    for(auto const& s : qml_class_infos_of(^^Super))
+    {
+      list.push_back(constant_string{s});
+    }
     for(auto a : meta::annotations_of_with(^^Super, ^^qt::classinfo))
     {
       const auto entry = extract<qt::classinfo>(constant_of(a));
