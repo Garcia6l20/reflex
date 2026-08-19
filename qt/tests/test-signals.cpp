@@ -306,3 +306,36 @@ TEST_CASE("each notifier resolves to its own property")
   CHECK(levels == 1);
   CHECK(depths == 1);
 }
+
+struct sealed : reflex::qt::object<sealed>
+{
+  friend reflex::qt::access<sealed>;
+
+  [[= invocable]] void fire()
+  {
+    hushed(1);
+  }
+
+  [[= slot]] void onHushed(int n)
+  {
+    heard += n;
+  }
+
+  int heard = 0;
+
+private:
+  signal<int> hushed{this};
+};
+
+TEST_CASE("a private signal is published public the way every moc signal is")
+{
+  const auto index = sealed::staticMetaObject.indexOfSignal("hushed(int)");
+  REQUIRE(index >= 0);
+  CHECK(sealed::staticMetaObject.method(index).access() == QMetaMethod::Public);
+
+  sealed sender;
+  sealed receiver;
+  REQUIRE(QObject::connect(&sender, SIGNAL(hushed(int)), &receiver, SLOT(onHushed(int))));
+  sender.fire();
+  CHECK(receiver.heard == 1);
+}

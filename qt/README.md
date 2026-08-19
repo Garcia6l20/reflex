@@ -495,6 +495,12 @@ handlers and enums at once. A class whose annotated members are all public needs
 A base carrying private members writes its own line, because a member is spliced through
 the `access` of the class that declares it.
 
+A signal is the one member whose access does not reach the metaobject: it is published
+public wherever it is declared, because `Q_SIGNALS` is a public access specifier and moc has
+no spelling for a private signal. That is not cosmetic. The QML engine's property cache
+reads the access flag, and refuses to bind `on<Signal>` to anything else, with
+`Cannot assign to non-existent property` and nothing on stderr.
+
 Without it the class does not compile, and the diagnostic names the member and the line to
 add:
 
