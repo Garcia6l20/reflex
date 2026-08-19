@@ -165,3 +165,113 @@ public Q_SLOTS:
     length += by;
   }
 };
+
+/** @brief the base of the inheritance chain, mirroring `twin_base` */
+class mirror_base : public QObject
+{
+  Q_OBJECT
+
+  Q_PROPERTY(int level MEMBER level NOTIFY levelChanged)
+
+public:
+  int level = 0;
+
+Q_SIGNALS:
+  void levelChanged();
+
+public Q_SLOTS:
+  void climb()
+  {
+    ++level;
+  }
+};
+
+/** @brief a class deriving another metaobject class, mirroring `twin_derived` */
+class mirror_derived : public mirror_base
+{
+  Q_OBJECT
+
+  Q_PROPERTY(int depth MEMBER depth NOTIFY depthChanged)
+
+public:
+  int depth = 0;
+
+Q_SIGNALS:
+  void depthChanged();
+
+public Q_SLOTS:
+  void dive()
+  {
+    ++depth;
+  }
+};
+
+/** @brief a class declaring its own flags and a protected slot
+ *
+ * Mirrors `twin_flags`. `Q_DECLARE_FLAGS` is what reflex.qt sees as a plain
+ * `QFlags` alias next to the enumeration.
+ *
+ * Both `Q_ENUM(Option)` and `Q_FLAG(Options)` are written because reflex.qt
+ * publishes every nested enumeration and every `QFlags` alias over one, and has
+ * no spelling for publishing the flags alone. `Q_FLAG` by itself describes one
+ * enumeration named `Options` with `"alias": "Option"`; the pair describes two,
+ * the plain one first.
+ *
+ * The property type is spelled `mirror_flags::Options` rather than `Options`
+ * because moc 6.11.1 generates `assignFlags<Options>(_v, _t->())` - the member
+ * name dropped, which does not compile - for a `MEMBER` property typed with the
+ * class's own unqualified `QFlags` alias. The qualified spelling takes the
+ * ordinary member path and the metatypes document is the same either way.
+ */
+class mirror_flags : public QObject
+{
+  Q_OBJECT
+
+  Q_PROPERTY(mirror_flags::Options options MEMBER options NOTIFY optionsChanged)
+
+public:
+  enum Option
+  {
+    NoOption = 0x0,
+    First    = 0x1,
+    Second   = 0x2
+  };
+  Q_DECLARE_FLAGS(Options, Option)
+  Q_ENUM(Option)
+  Q_FLAG(Options)
+
+  Options options;
+
+Q_SIGNALS:
+  void optionsChanged();
+
+protected Q_SLOTS:
+  void guarded()
+  {
+    options = {};
+  }
+};
+
+/** @brief the accessors `naming::qt_style` finds by convention, mirroring `twin_styled` */
+class mirror_styled : public QObject
+{
+  Q_OBJECT
+
+  Q_PROPERTY(int weight READ getWeight WRITE setWeight NOTIFY weightChanged)
+
+public:
+  int getWeight() const
+  {
+    return weight;
+  }
+
+  void setWeight(int value)
+  {
+    weight = value;
+  }
+
+  int weight = 0;
+
+Q_SIGNALS:
+  void weightChanged();
+};

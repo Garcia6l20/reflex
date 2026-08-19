@@ -49,14 +49,12 @@ QT_LIBEXEC = pathlib.Path("/usr/lib/qt6")
 QT_HEADERS = pathlib.Path("/usr/include/qt6")
 HERE = pathlib.Path(__file__).resolve().parent
 DROPPED = ("lineNumber", "inputFile", "outputRevision")
-CLASS_NAMES = (
-    "mirror",
-    "twin",
-    "mirror_qml",
-    "twin_qml",
-    "mirror_gadget",
-    "twin_gadget",
-)
+
+# `mirror_base` and `twin_base` are one shape under two names, and so is every
+# other suffix the pair carries. Only the prefix is folded, so a diff still tells
+# one class of the pair from another - which is what makes `superClasses`
+# comparable.
+CLASS_NAME = re.compile(r"\b(?:mirror|twin)(?=\b|_)")
 
 
 def is_qt6(tool):
@@ -92,11 +90,11 @@ def normalize(node):
     if isinstance(node, list):
         return [normalize(v) for v in node]
     if isinstance(node, str):
-        return re.sub(r"\b(%s)\b" % "|".join(CLASS_NAMES), "CLASS", node)
+        return CLASS_NAME.sub("CLASS", node)
     return node
 
 
-QUALIFIED = re.compile(r"\b(%s)::" % "|".join(CLASS_NAMES))
+QUALIFIED = re.compile(r"\b(?:mirror|twin)(?:_\w+)?::")
 
 
 def drop_class_qualified_types(documents):
@@ -156,7 +154,7 @@ def clean_qmltypes(text):
         stripped = LINE_NUMBER.sub("", line)
         if "lineNumber" in line and not stripped.strip():
             continue
-        kept.append(re.sub(r"\b(%s)\b" % "|".join(CLASS_NAMES), "CLASS", stripped))
+        kept.append(CLASS_NAME.sub("CLASS", stripped))
     return kept
 
 

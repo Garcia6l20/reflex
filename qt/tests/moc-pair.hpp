@@ -131,3 +131,73 @@ struct [[= mocqt::qml{.name = "span"}]] twin_gadget : mocqt::gadget<twin_gadget>
     length += by;
   }
 };
+
+/** @brief the base of the inheritance chain, matching `mirror_base` */
+struct twin_base : mocqt::object<twin_base>
+{
+  [[= mocqt::prop{}]] int level = 0;
+
+  [[= mocqt::slot]] void climb()
+  {
+    ++level;
+  }
+};
+
+/** @brief a class deriving another reflex.qt class, matching `mirror_derived` */
+struct twin_derived : mocqt::object<twin_derived, twin_base>
+{
+  [[= mocqt::prop{}]] int depth = 0;
+
+  [[= mocqt::slot]] void dive()
+  {
+    ++depth;
+  }
+};
+
+/** @brief a class declaring its own flags and a protected slot, matching `mirror_flags` */
+struct twin_flags : mocqt::object<twin_flags>
+{
+  friend mocqt::access<twin_flags>;
+
+  enum Option
+  {
+    NoOption = 0x0,
+    First    = 0x1,
+    Second   = 0x2
+  };
+
+  using Options = QFlags<Option>;
+
+  [[= mocqt::prop{}]] Options options;
+
+protected:
+  [[= mocqt::slot]] void guarded()
+  {
+    options = {};
+  }
+};
+
+/** @brief accessors found by convention rather than by annotation, matching `mirror_styled` */
+struct[[= mocqt::naming::qt_style]] twin_styled : mocqt::object<twin_styled>
+{
+  friend mocqt::access<twin_styled>;
+
+  [[= mocqt::prop{}]] int weight = 0;
+
+  int getWeight() const
+  {
+    return weight;
+  }
+
+  void setWeight(int value)
+  {
+    weight = value;
+  }
+
+  void onWeightChanged()
+  {
+    ++notifications;
+  }
+
+  int notifications = 0;
+};
