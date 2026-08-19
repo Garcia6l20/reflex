@@ -163,7 +163,7 @@ notifying through a generated `<name>Changed` signal. The moc declaration it mat
 `Q_PROPERTY(int volume MEMBER volume NOTIFY volumeChanged)` plus the signal, not
 `MEMBER` alone: moc generates no notify signal for a `MEMBER` property, so a bare
 `Q_PROPERTY(int plainint MEMBER plainint_)` leaves the method table empty and
-`hasNotifySignal()` false. `prop{.notify = false}` is what reads back the same.
+`hasNotifySignal()` false. `prop{.notify = false}` is what reads back like that one.
 
 ```cpp
 struct settings : qt::object<settings>
@@ -455,13 +455,14 @@ would fill them. An enum-typed property carries `EnumOrFlag` and answers
 `QMetaProperty::isEnumType()`.
 
 What moc cannot do is publish any of this unmarked: it emits what `Q_ENUM` and `Q_FLAG`
-name and nothing else. The pair itself moc does reach, through `Q_DECLARE_FLAGS(Options,
-Option)` plus both macros, which emits the same two descriptors as above, measured. What it
-cannot reach is the pair from a plain `using Options = QFlags<Option>;`: `Q_ENUM(Option)`
-plus `Q_FLAG(Options)` over an alias spelled that way collapses to the single `Option`
-descriptor and loses the flag entry. Here both get their own, so `QMetaEnum::valueToKey` on
-a bare `Option` value resolves. A `QFlags` alias whose argument is declared in another class
-is skipped, because its enumerators belong to that class's metaobject.
+name and nothing else. The two descriptors themselves it does reach, from
+`Q_DECLARE_FLAGS(Options, Option)` plus both macros, which emits exactly the pair above.
+What it never reaches is that pair from a plain `using Options = QFlags<Option>;`:
+`Q_ENUM(Option)` plus `Q_FLAG(Options)` over an alias spelled that way collapses to the
+single `Option` descriptor and drops the flag entry. Here both get their own, so
+`QMetaEnum::valueToKey` on a bare `Option` value resolves. A `QFlags` alias whose argument is
+declared in another class is skipped, because its enumerators belong to that class's
+metaobject.
 
 ---
 
@@ -687,8 +688,8 @@ pass -C <the directory the compiler ran in>
 $ ./build/qt/reflex-qt-clock-export - -C build -I qt/examples   # writes the document
 ```
 
-Guessing is what it refuses. A recorded path that resolves to no file is an error too,
-rather than a spelling nothing can include.
+It refuses to guess rather than write a spelling nothing can include, and a path that
+resolves to no file is an error on the same grounds.
 
 ### `inputFile`
 
