@@ -289,10 +289,10 @@ struct qml
   /** @brief `QML.UncreatableReason`: why QML may not instantiate the type */
   constant_string uncreatable{""};
 
-  /** @brief `QML.AddedInVersion`: the minor version introducing the type */
+  /** @brief `QML.AddedInVersion`: the version introducing the type */
   qml_version added_in{};
 
-  /** @brief `QML.RemovedInVersion`: the minor version retiring the type */
+  /** @brief `QML.RemovedInVersion`: the version retiring the type */
   qml_version removed_in{};
 };
 

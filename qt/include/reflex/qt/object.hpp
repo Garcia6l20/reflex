@@ -43,7 +43,7 @@ namespace reflex::qt
  * `connect` accepts a `signal` data member where it expects a member function.
  *
  * A property gets a `<name>Changed` notify signal unless its annotation says
- * `.notify = false`, reachable from `connect` as
+ * `.notify = false` or `.constant = true`, reachable from `connect` as
  * `&Super::propertyChanged<"name">`.
  *
  * A `timer<^^handler>` data member declares a timer driving the member
