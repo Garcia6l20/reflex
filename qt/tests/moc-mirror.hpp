@@ -35,6 +35,13 @@ public:
   };
   Q_ENUM(Mode)
 
+  enum class Level : unsigned char
+  {
+    Low,
+    High
+  };
+  Q_ENUM(Level)
+
   int getCount() const
   {
     return count_;

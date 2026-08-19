@@ -98,12 +98,17 @@ TEST_CASE("a class describes itself the way moc describes its Q_OBJECT mirror")
   CHECK_EQ(described.classInfos[1].name, "author");
   CHECK_EQ(described.classInfos[1].value, "reflex");
 
-  REQUIRE_EQ(described.enums.size(), 1u);
+  REQUIRE_EQ(described.enums.size(), 2u);
   CHECK_EQ(described.enums.front().name, "Mode");
   CHECK_FALSE(described.enums.front().isFlag);
   CHECK_FALSE(described.enums.front().isClass);
   CHECK_FALSE(described.enums.front().alias.has_value());
+  CHECK_FALSE(described.enums.front().type.has_value());
   CHECK_EQ(described.enums.front().values, std::vector<std::string>{"Fast", "Slow"});
+
+  CHECK_EQ(described.enums.back().name, "Level");
+  CHECK(described.enums.back().isClass);
+  CHECK_EQ(described.enums.back().type, "uchar");
 
   REQUIRE_EQ(described.properties.size(), 5u);
 
