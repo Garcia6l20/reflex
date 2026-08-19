@@ -157,8 +157,11 @@ TEST_CASE("a class carrying no qml annotation publishes no class info")
 consteval
 {
   REFLEX_CONSTEVAL_NOTHROW(qt::detail::validate_qml(^^plain));
-  REFLEX_CONSTEVAL_THROWS(qt::detail::validate_qml(^^twice));
-  REFLEX_CONSTEVAL_THROWS(qt::detail::validate_qml(^^nameless));
+  REFLEX_CONSTEVAL_THROWS_WITH("twice carries more than one qml{} annotation; keep one",
+                               qt::detail::validate_qml(^^twice));
+  REFLEX_CONSTEVAL_THROWS_WITH("nameless carries an empty qml{} name; drop .name to publish it "
+                               "as auto",
+                               qt::detail::validate_qml(^^nameless));
 }
 
 static_assert(QQmlPrivate::QmlSingleton<lone>::Value);

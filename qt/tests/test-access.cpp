@@ -160,9 +160,13 @@ TEST_CASE("a member the friend declaration does not open is rejected by name")
     REFLEX_CONSTEVAL_NOTHROW(
         reflex::qt::access<controller>::require_reachable(member(^^controller, "onThing")));
 
-    REFLEX_CONSTEVAL_THROWS(
+    REFLEX_CONSTEVAL_THROWS_WITH(
+        "reflex.qt cannot reach unfriended::twice: add 'friend reflex::qt::access<unfriended>;' "
+        "to unfriended",
         reflex::qt::access<unfriended>::require_reachable(member(^^unfriended, "twice")));
-    REFLEX_CONSTEVAL_THROWS(
+    REFLEX_CONSTEVAL_THROWS_WITH(
+        "reflex.qt cannot reach unfriended::hidden: add 'friend reflex::qt::access<unfriended>;' "
+        "to unfriended",
         reflex::qt::access<unfriended>::require_reachable(member(^^unfriended, "hidden")));
   }
 }

@@ -87,10 +87,19 @@ TEST_CASE("exposing anything but a reachable reflex.qt class is rejected at comp
   consteval
   {
     moc::module_ m;
-    REFLEX_CONSTEVAL_THROWS(m.expose<int>());
-    REFLEX_CONSTEVAL_THROWS(m.expose<QObject>());
-    REFLEX_CONSTEVAL_THROWS(m.expose<shapes::helper>());
-    REFLEX_CONSTEVAL_THROWS(m.expose<hidden_property>());
+    REFLEX_CONSTEVAL_THROWS_WITH("int is not a reflex.qt class; a metatypes entry needs a type "
+                                 "deriving reflex::qt::gadget<T> or reflex::qt::object<T>",
+                                 m.expose<int>());
+    REFLEX_CONSTEVAL_THROWS_WITH("QObject is not a reflex.qt class; a metatypes entry needs a "
+                                 "type deriving reflex::qt::gadget<T> or reflex::qt::object<T>",
+                                 m.expose<QObject>());
+    REFLEX_CONSTEVAL_THROWS_WITH("shapes::helper is not a reflex.qt class; a metatypes entry "
+                                 "needs a type deriving reflex::qt::gadget<T> or "
+                                 "reflex::qt::object<T>",
+                                 m.expose<shapes::helper>());
+    REFLEX_CONSTEVAL_THROWS_WITH("reflex.qt cannot reach hidden_property::secret: add 'friend "
+                                 "reflex::qt::access<hidden_property>;' to hidden_property",
+                                 m.expose<hidden_property>());
     REFLEX_CONSTEVAL_NOTHROW(m.expose<shapes::dot>());
   }
 }
