@@ -226,21 +226,27 @@ REFLEX_EXPORT namespace reflex::meta
     return false;
   }
 
-  /** @brief the annotations of @p R, empty for anything `annotations_of` rejects
+  /** @brief the annotations of @p R, empty for a template or an unnamed bit-field
    *
    * `annotations_of` describes a type, type alias, variable, function, function
    * parameter, namespace, enumerator, base class relationship or non-static
-   * data member, and throws on anything else. A template is what reaches here:
-   * `members_of` hands back a member function template, a variable template and
-   * a nested class template alongside the rest, so a query walking a class runs
-   * into one whether or not the class was written with reflection in mind. The
-   * annotation is accepted on such a declaration and is readable on a
-   * specialization, so the emptiness is what the implementation can describe
-   * and not what the declaration carries.
+   * data member, and throws on anything else. A walk over a class runs into two
+   * of those: `members_of` hands back a member function template, a variable
+   * template and a nested class template alongside the rest, and it hands back
+   * an unnamed bit-field, which reports `is_nonstatic_data_member()` false.
+   * Both come back empty. An annotation is accepted on a template declaration
+   * and is readable on a specialization, so the emptiness is what the
+   * implementation can describe and not what the declaration carries.
    *
-   * Catching rather than testing the kind ties the answer to `annotations_of`:
-   * the day it describes a template, every query built on this one reports the
-   * annotations instead of nothing.
+   * Anything else propagates. `annotations_of_with` takes a raw `info`, so a
+   * caller can reach `annotations_of` with a value reflection or a
+   * `data_member_spec`; both throw on GCC 16.2.1 and neither is a query anyone
+   * means to make, so they become a diagnostic instead of a member that
+   * silently fails to publish.
+   *
+   * Catching rather than testing the kind up front ties the answer to
+   * `annotations_of`: the day it describes a template, every query built on
+   * this one reports the annotations instead of nothing.
    */
   consteval auto annotations_of_or_empty(info R) -> std::vector<info>
   {
@@ -250,7 +256,11 @@ REFLEX_EXPORT namespace reflex::meta
     }
     catch(std::meta::exception const&)
     {
-      return {};
+      if(is_template(R) or is_bit_field(R))
+      {
+        return {};
+      }
+      throw;
     }
   }
 
