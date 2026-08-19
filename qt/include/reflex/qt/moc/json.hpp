@@ -302,7 +302,11 @@ template <typename T> auto describe() -> class_meta
       constexpr auto return_text = std::define_static_string(
           detail::type_name_of<T>(qt::detail::call_return_type_of(entry.member)));
 
-      described_method.access     = std::string{detail::access_name_of(entry.member)};
+      constexpr auto access_text = entry.kind == qt::detail::method_kind::signal_member
+                                       ? std::string_view{"public"}
+                                       : detail::access_name_of(entry.member);
+
+      described_method.access     = std::string{access_text};
       described_method.lineNumber = int(source_location_of(entry.member).line());
       described_method.name       = std::string{identifier_of(entry.member)};
       described_method.returnType = std::string{return_text};

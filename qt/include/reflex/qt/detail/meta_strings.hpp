@@ -508,10 +508,18 @@ template <typename Tag, typename Super> struct meta_strings
     return QMC::AccessPrivate;
   }
 
-  static consteval uint method_flags_of(meta::info R, bool cloned)
+  /** @brief the `QMetaObject` flags of one method row
+   *
+   * A signal is public whatever its declaration says: `Q_SIGNALS` expands to a
+   * public access specifier, so moc has no spelling for a private signal and
+   * the QML engine's property cache reads the flag rather than the declaration.
+   * An `AccessPrivate` signal builds and connects, and QML then refuses to bind
+   * its `on<Signal>` handler.
+   */
+  static consteval uint method_flags_of(meta::info R, method_kind kind, bool cloned)
   {
     namespace QMC = QtMocConstants;
-    uint flags    = access_flags_of(R);
+    uint flags    = kind == method_kind::signal_member ? QMC::AccessPublic : access_flags_of(R);
     if(cloned)
     {
       flags |= QMC::MethodCloned;
@@ -551,7 +559,7 @@ template <typename Tag, typename Super> struct meta_strings
       }
       return data_type(index_of(identifier_of(methods[I].member)),
                        empty_string_index,
-                       method_flags_of(methods[I].member, methods[I].cloned),
+                       method_flags_of(methods[I].member, methods[I].kind, methods[I].cloned),
                        meta_type_id_of(call_return_type_of(methods[I].member)),
                        args);
     }
