@@ -92,6 +92,28 @@ consteval auto default_types_of(std::initializer_list<meta::info> args) -> std::
   return types;
 }
 
+/** @brief rejects a `defaulted<T>` signal argument that another argument follows
+ *
+ * The emitter fills the omitted arguments from the end, so a `defaulted<T>` that
+ * is not trailing would take the value of a later argument. C++ forbids the same
+ * shape on a function declaration.
+ */
+consteval bool check_trailing_defaults(std::initializer_list<meta::info> args)
+{
+  bool seen_default = false;
+  for(auto a : args)
+  {
+    const bool is_default = meta::is_template_instance_of(a, ^^defaulted);
+    REFLEX_META_CHECK(is_default or not seen_default,
+                      "the signal argument " + std::string{display_string_of(a)}
+                          + " follows a defaulted<> one; every defaulted<> argument of a signal "
+                            "has to be trailing, the way a C++ default argument has to be",
+                      a);
+    seen_default = seen_default or is_default;
+  }
+  return true;
+}
+
 /** @brief a Qt signal, declared as a data member of @p ObjectT
  *
  * ```cpp
@@ -107,6 +129,11 @@ consteval auto default_types_of(std::initializer_list<meta::info> args) -> std::
  */
 template <typename ObjectT, typename... Args> class signal_decl
 {
+  consteval
+  {
+    check_trailing_defaults({^^Args...});
+  }
+
 public:
   using arguments_type = std::tuple<drop_default_t<Args>...>;
   using defaults_type  = [:substitute(^^std::tuple, default_types_of({^^Args...})):];
