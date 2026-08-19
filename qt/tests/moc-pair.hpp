@@ -107,4 +107,9 @@ struct [[= mocqt::qml{.name = "span"}]] twin_gadget : mocqt::gadget<twin_gadget>
   {
     return length * 2;
   }
+
+  [[= mocqt::slot]] void stretch(int by)
+  {
+    length += by;
+  }
 };
