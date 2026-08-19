@@ -5,6 +5,7 @@
 #include <reflex/qt/access.hpp>
 #include <reflex/qt/detail/annotations.hpp>
 #include <reflex/qt/detail/metatype.hpp>
+#include <reflex/qt/detail/timer.hpp>
 
 #include <QtCore/qtmochelpers.h>
 
@@ -116,6 +117,34 @@ struct enum_entry
   meta::info keys;
 };
 
+/** @brief rejects a data member of @p Super only a `QObject` can carry
+ *
+ * A gadget publishes slots, invocables, properties and enumerations the way moc
+ * does for a `Q_GADGET`. What it cannot carry is a signal or a timer: it is not
+ * a `QObject`, so there is no `QMetaObject::activate` to emit one and no
+ * `timerEvent` to receive the other.
+ */
+consteval bool validate_gadget_members(meta::info Super)
+{
+  for(auto m : meta::nonstatic_data_members_of(Super, meta::access_context::unchecked()))
+  {
+    REFLEX_META_CHECK(
+        not meta::is_template_instance_of(dealias(remove_const(type_of(m))), ^^signal_decl),
+        "the signal " + std::string{identifier_of(m)} + " is declared on the gadget "
+            + std::string{identifier_of(Super)}
+            + ", which is not a QObject and has no QMetaObject::activate to emit it; derive from "
+              "reflex::qt::object instead",
+        m);
+    REFLEX_META_CHECK(not is_timer_member(m),
+                      "the timer " + std::string{identifier_of(m)} + " is declared on the gadget "
+                          + std::string{identifier_of(Super)}
+                          + ", which is not a QObject and has no timerEvent to dispatch it; derive "
+                            "from reflex::qt::object instead",
+                      m);
+  }
+  return true;
+}
+
 /** @brief the string table and the `QMetaObject` data blob of @p Super
  *
  * @p Tag is the per-class unique type moc calls `qt_meta_tag_*_t`; it selects
@@ -148,24 +177,15 @@ template <typename Tag, typename Super> struct meta_strings
     }
     else
     {
+      validate_gadget_members(^^Super);
       return std::span<const meta::info>{};
     }
   }();
 
-  static constexpr auto slot_members = [] consteval
-  {
-    if constexpr(is_object)
-    {
-      return reachable(define_static_array(
-          meta::member_functions_annotated_with(^^Super,
-                                                ^^qt::slot_t,
-                                                meta::access_context::unchecked())));
-    }
-    else
-    {
-      return std::span<const meta::info>{};
-    }
-  }();
+  static constexpr auto slot_members = reachable(
+      define_static_array(meta::member_functions_annotated_with(^^Super,
+                                                                ^^qt::slot_t,
+                                                                meta::access_context::unchecked())));
 
   static constexpr auto invocables = reachable(
       define_static_array(meta::member_functions_annotated_with(^^Super,

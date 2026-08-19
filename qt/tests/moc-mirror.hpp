@@ -140,4 +140,10 @@ public:
   }
 
   int length = 0;
+
+public Q_SLOTS:
+  void stretch(int by)
+  {
+    length += by;
+  }
 };
