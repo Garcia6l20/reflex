@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QtCore/qnamespace.h>
 #include <QtCore/qobject.h>
 #include <QtCore/qstring.h>
 #include <QtQmlIntegration/qqmlintegration.h>
@@ -26,6 +27,7 @@ class mirror : public QObject
   Q_PROPERTY(QString title READ getTitle CONSTANT)
   Q_PROPERTY(mirror::Mode mode MEMBER mode NOTIFY modeChanged FINAL REQUIRED)
   Q_PROPERTY(int fixed MEMBER fixed CONSTANT)
+  Q_PROPERTY(Qt::Alignment align MEMBER align NOTIFY alignChanged)
 
 public:
   enum Mode
@@ -71,11 +73,14 @@ public:
   Mode mode  = Fast;
   int  fixed = 7;
 
+  Qt::Alignment align = Qt::AlignLeft;
+
 Q_SIGNALS:
   void bumped(int amount);
   void countChanged();
   void extraChanged();
   void modeChanged();
+  void alignChanged();
 
 public Q_SLOTS:
   void increment(int by)

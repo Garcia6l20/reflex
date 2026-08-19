@@ -175,6 +175,10 @@ template <typename T> consteval auto type_name_of(meta::info R) -> std::string
       return std::string{display_string_of(^^T)} + "::" + std::string{identifier_of(e.type)};
     }
   }
+  if(const auto flags = qt::detail::flags_alias_name_of(normalized); not flags.empty())
+  {
+    return flags;
+  }
   return qt::detail::normalized_type_name(normalized);
 }
 } // namespace detail

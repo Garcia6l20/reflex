@@ -3,6 +3,7 @@
 #include <reflex/qt.hpp>
 #include <reflex/qt/moc/export.hpp>
 
+#include <QtCore/qnamespace.h>
 #include <QtCore/qstring.h>
 
 /** @file
@@ -44,6 +45,8 @@ public:
   [[= mocqt::prop{.final = true, .required = true}]] Mode mode = Fast;
 
   [[= mocqt::prop{.constant = true}]] int fixed = 7;
+
+  [[= mocqt::prop{}]] Qt::Alignment align = Qt::AlignLeft;
 
   signal<int> bumped{this};
 
