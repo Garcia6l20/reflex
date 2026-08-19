@@ -183,10 +183,27 @@ TEST_CASE("describe reads a real moc'ed metaobject too")
   CHECK(text.contains("  property    active : bool\n"));
 }
 
+struct detailed : reflex::qt::object<detailed, described>
+{
+  [[= prop{}]] QString label;
+};
+
 TEST_CASE("describe of an object reads its dynamic metaobject")
 {
-  described instance;
-  CHECK(reflex::qt::describe(instance) == reflex::qt::describe<described>());
+  detailed         instance;
+  described const& upcast = instance;
+
+  const std::string text = reflex::qt::describe(upcast);
+
+  CHECK(text.starts_with("class detailed\n"));
+  CHECK(text.contains("  property    label : QString\n"));
+  CHECK_FALSE(text.contains("  property    value : int\n"));
+  CHECK_FALSE(text.contains("  slot        reset()\n"));
+  CHECK(text == reflex::qt::describe<detailed>());
+  CHECK(text != reflex::qt::describe<described>());
+
+  described plain;
+  CHECK(reflex::qt::describe(plain) == reflex::qt::describe<described>());
 }
 
 TEST_CASE("a class publishes every classinfo annotation it carries")
