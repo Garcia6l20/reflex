@@ -85,6 +85,7 @@ struct enums_meta
   bool                       isFlag     = false;
   int                        lineNumber = 0;
   std::string                name;
+  std::optional<std::string> type;
   std::vector<std::string>   values;
 };
 
@@ -126,6 +127,26 @@ template <typename T> constexpr bool omitted(std::optional<T> const& value)
 template <typename T> constexpr bool omitted(std::vector<T> const& value)
 {
   return value.empty();
+}
+
+/** @brief whether @p E was written with an underlying type of its own
+ *
+ * moc echoes `: T` and writes nothing when the declaration carries none, and
+ * reflection cannot see the spelling. Direct-list-initialization from an integer
+ * is well-formed only for an enumeration with a fixed underlying type, which for
+ * an unscoped enumeration is exactly the declarations moc echoes. A scoped
+ * enumeration always has one, so the `int` it gets by default reads as absent -
+ * the one shape where this answers `false` and moc writes `"type": "int"`.
+ *
+ * The name itself comes from `QMetaType`, not from `display_string_of`: moc
+ * spells the type the way Qt's own table does, `uchar` rather than
+ * `unsigned char` and `qlonglong` rather than `long long`.
+ */
+template <typename E> consteval auto declares_underlying_type() -> bool
+{
+  constexpr bool fixed = requires { E{0}; };
+  return fixed
+     and (not std::is_scoped_enum_v<E> or not std::is_same_v<std::underlying_type_t<E>, int>);
 }
 
 consteval auto access_name_of(meta::info R) -> std::string_view
@@ -242,6 +263,11 @@ template <typename T> auto describe() -> class_meta
     if constexpr(flag)
     {
       described_enum.alias = std::string{identifier_of(e.keys)};
+    }
+    if constexpr(detail::declares_underlying_type<typename [:e.keys:]>())
+    {
+      constexpr auto underlying = meta::underlying_type(e.keys);
+      described_enum.type       = QMetaType::fromType<typename [:underlying:]>().name();
     }
     template for(constexpr auto k : std::define_static_array(meta::enumerators_of(e.keys)))
     {

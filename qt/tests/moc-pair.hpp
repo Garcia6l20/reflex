@@ -25,6 +25,12 @@ struct [[= mocqt::qml{}]] [[= mocqt::classinfo{"author", "reflex"}]] twin
     Slow
   };
 
+  enum class Level : unsigned char
+  {
+    Low,
+    High
+  };
+
 private:
   [[= mocqt::prop{}]] int count = 0;
 
