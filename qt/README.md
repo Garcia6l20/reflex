@@ -657,8 +657,13 @@ generated `.qmltypes` under `:/qt/qml/<uri as path>/`, and returns an object tar
 them.
 
 `qmltyperegistrar` generates the registration and the module compiles it, so nothing is
-hand-written. The generated file needs `T::staticMetaObject` and nothing else, which a
-reflex.qt class has.
+hand-written. The generated file includes the header `inputFile` names and instantiates
+`qmlRegisterTypesAndRevisions<T>`, which reads `QQmlPrivate::QmlResolved<T>`,
+`QmlExtended<T>`, `QmlSingleton<T>`, `QmlInterface<T>`, `QmlSequence<T>`,
+`QmlUncreatable<T>` and `QmlAnonymous<T>` alongside the metaobject. The primary templates
+answer for a class that declares none of the corresponding macros, which is why an ordinary
+reflex.qt class compiles there untouched, and why a singleton or an uncreatable type needs
+[`reflex/qt/qml.hpp`](#reflexqtqmlhpp) on that include line.
 
 Nothing merges moc's collection with the exporter's document, so one module publishes either
 reflex types or `Q_OBJECT` types, not both. A moc'ed class gets its own module through
@@ -670,22 +675,37 @@ off the JSON, and a class missing it fails at load with *Missing QML.Element cla
 while its `.qmltypes` looks perfect. reflex.qt feeds the blob and the document from the one
 annotation, so the two cannot disagree here.
 
-The exporter must run from the build directory. pcons compiles from there, so
-`source_location_of(...).file_name()` is a path relative to it and `weakly_canonical`
-resolves it against the process's working directory. Running the exporter by hand from the
-project root silently writes a path one directory up.
+The exporter needs to be told where the compiler ran. ninja compiles from the build
+directory with relative paths, so `source_location_of(...).file_name()` records one, and the
+binary carries nothing that says what it was relative to. `add_metatypes` passes
+`-C <build dir>` for that; a hand-run exporter must pass it too, from any working directory:
+
+```console
+$ ./build/qt/reflex-qt-clock-export - -I qt/examples
+cannot resolve ../qt/examples/clock/types.hpp: the compiler recorded a relative path,
+pass -C <the directory the compiler ran in>
+$ ./build/qt/reflex-qt-clock-export - -C build -I qt/examples   # writes the document
+```
+
+Guessing is what it refuses. A recorded path that resolves to no file is an error too,
+rather than a spelling nothing can include.
 
 ### `inputFile`
 
 `qmltyperegistrar` writes `#if __has_include(<inputFile>)` into the registration it
 generates, so the path has to resolve as an angled include on the line that compiles that
-file. The default is the absolute path the compiler saw, which always resolves. Name the
-include directories the consumer will pass to get the short, relocatable spelling:
+file. With no root matching, the spelling is the recorded path completed with `compile_dir`
+and canonicalized, so an absolute path off the machine that built it. Name the include
+directories the consumer will pass to get the short, relocatable spelling instead:
 
 ```cpp
-reflex::qt::moc::write_metatypes<app_types>(argv[1], {.include_roots = {"include"}});
+reflex::qt::moc::write_metatypes<app_types>(
+    argv[1], {.include_roots = {"include"}, .compile_dir = "/path/the/compiler/ran/in"});
 // /src/app/include/app/thing.hpp  ->  app/thing.hpp
 ```
+
+`compile_dir` is what `-C` fills in `export_main`. It can be left empty only where the
+compiler recorded absolute paths.
 
 ### What the document says
 
@@ -867,12 +887,13 @@ after actually building and running the suite against another Qt.
 ## Not supported yet
 
 **The QML macros that declare a type rather than a class info.** `QML_ATTACHED`,
-`QML_EXTENDED`, `QML_FOREIGN`, `QML_SEQUENTIAL_CONTAINER` and `QML_INTERFACE` each declare a
-nested typedef and a marker member function that Qt reads back off the class, the way
-`QML_SINGLETON` does. `qt::qml` covers the singleton and uncreatable pair; the rest would
-each need another `QQmlPrivate` specialization in `reflex/qt/qml.hpp`. The class infos are
-reachable through `qt::classinfo` meanwhile, which is enough for the `.qmltypes` and not
-enough for the engine.
+`QML_EXTENDED`, `QML_FOREIGN` and `QML_SEQUENTIAL_CONTAINER` each declare a nested typedef
+and a marker member function that Qt reads back off the class; `QML_INTERFACE` declares a
+nested enumeration and a marker instead, the same shape `QML_SINGLETON` has. `qt::qml`
+covers the singleton and uncreatable pair; the rest would each need another `QQmlPrivate`
+specialization in `reflex/qt/qml.hpp`. The class infos are reachable through
+`qt::classinfo` meanwhile, which is enough for the `.qmltypes` and not enough for the
+engine.
 
 **A QML import path on disk.** A pcons QML module lives in the binary's resources, so
 `qmllint` and `qmlls` need a directory tree with a `qmldir` in it.
