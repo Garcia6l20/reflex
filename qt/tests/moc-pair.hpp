@@ -37,6 +37,8 @@ private:
 public:
   [[= mocqt::prop{.final = true, .required = true}]] Mode mode = Fast;
 
+  [[= mocqt::prop{.constant = true}]] int fixed = 7;
+
   signal<int> bumped{this};
 
   [[= mocqt::getter<^^count>]] int getCount() const

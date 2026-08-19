@@ -25,6 +25,7 @@ class mirror : public QObject
   Q_PROPERTY(int extra MEMBER extra NOTIFY extraChanged)
   Q_PROPERTY(QString title READ getTitle CONSTANT)
   Q_PROPERTY(mirror::Mode mode MEMBER mode NOTIFY modeChanged FINAL REQUIRED)
+  Q_PROPERTY(int fixed MEMBER fixed CONSTANT)
 
 public:
   enum Mode
@@ -61,6 +62,7 @@ public:
 
   int  extra = 0;
   Mode mode  = Fast;
+  int  fixed = 7;
 
 Q_SIGNALS:
   void bumped(int amount);
