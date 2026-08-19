@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <format>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -78,10 +79,17 @@ TEST_CASE("the document names the header, the schema revision and one entry per 
 
 TEST_CASE("include_roots shortens inputFile to what qmltyperegistrar can include")
 {
+  const auto here = std::filesystem::weakly_canonical(
+                        std::filesystem::path{std::source_location::current().file_name()})
+                        .parent_path();
   const auto full = moc::metatypes_of<pair_types>().front().inputFile;
-  const auto root = std::filesystem::path{full}.parent_path().parent_path();
 
-  CHECK_EQ(moc::metatypes_of<pair_types>({{root}}).front().inputFile, "tests/moc-pair.hpp");
+  CHECK_EQ(full, (here / "moc-pair.hpp").generic_string());
+  CHECK_EQ(moc::metatypes_of<pair_types>({{here}}).front().inputFile, "moc-pair.hpp");
+  CHECK_EQ(moc::metatypes_of<pair_types>({{here.parent_path()}}).front().inputFile,
+           "tests/moc-pair.hpp");
+  CHECK_EQ(moc::metatypes_of<pair_types>({{here.parent_path().parent_path()}}).front().inputFile,
+           "qt/tests/moc-pair.hpp");
   CHECK_EQ(moc::metatypes_of<pair_types>({{"/nowhere"}}).front().inputFile, full);
 }
 
