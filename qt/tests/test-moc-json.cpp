@@ -110,7 +110,7 @@ TEST_CASE("a class describes itself the way moc describes its Q_OBJECT mirror")
   CHECK(described.enums.back().isClass);
   CHECK_EQ(described.enums.back().type, "uchar");
 
-  REQUIRE_EQ(described.properties.size(), 5u);
+  REQUIRE_EQ(described.properties.size(), 6u);
 
   SUBCASE("an accessor pair is read and write, never member")
   {
@@ -168,26 +168,36 @@ TEST_CASE("a class describes itself the way moc describes its Q_OBJECT mirror")
     CHECK_FALSE(fixed.notify.has_value());
   }
 
+  SUBCASE("a QFlags alias the class does not declare keeps its own name")
+  {
+    auto const& align = described.properties[5];
+    CHECK_EQ(align.name, "align");
+    CHECK_EQ(align.type, "Qt::Alignment");
+    CHECK_EQ(align.member, "align");
+    CHECK_EQ(align.notify, "alignChanged");
+  }
+
   SUBCASE("the method indices are the metaobject's own, notifiers included")
   {
-    REQUIRE_EQ(described.signal_methods.size(), 4u);
+    REQUIRE_EQ(described.signal_methods.size(), 5u);
     CHECK_EQ(described.signal_methods[0].name, "bumped");
     CHECK_EQ(described.signal_methods[0].index, 0);
     CHECK_EQ(described.signal_methods[1].name, "countChanged");
     CHECK_EQ(described.signal_methods[2].name, "extraChanged");
     CHECK_EQ(described.signal_methods[3].name, "modeChanged");
     CHECK_EQ(described.signal_methods[3].index, 3);
+    CHECK_EQ(described.signal_methods[4].name, "alignChanged");
 
     REQUIRE_EQ(described.slot_methods.size(), 2u);
     CHECK_EQ(described.slot_methods[0].name, "increment");
-    CHECK_EQ(described.slot_methods[0].index, 4);
+    CHECK_EQ(described.slot_methods[0].index, 5);
     CHECK_EQ(described.slot_methods[0].access, "public");
     CHECK_EQ(described.slot_methods[1].name, "hidden");
     CHECK_EQ(described.slot_methods[1].access, "private");
 
     REQUIRE_EQ(described.methods.size(), 2u);
     CHECK_EQ(described.methods[0].name, "caption");
-    CHECK_EQ(described.methods[0].index, 6);
+    CHECK_EQ(described.methods[0].index, 7);
     CHECK_EQ(described.methods[0].returnType, "QString");
     CHECK_EQ(described.methods[0].isConst, true);
     CHECK_EQ(described.methods[1].name, "reset");

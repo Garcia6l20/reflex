@@ -332,7 +332,9 @@ template <typename Tag, typename Super> struct meta_strings
    *
    * A nested enumeration is spelled unqualified there and shares its string
    * with its own descriptor, which is what lets `QMetaProperty::enumerator()`
-   * find it again.
+   * find it again. A `QFlags` alias `Super` does not declare keeps its own
+   * qualified name, the way moc echoes what the user wrote, rather than
+   * decaying to the specialization it stands for.
    */
   static consteval std::string type_name_of(meta::info R)
   {
@@ -343,6 +345,10 @@ template <typename Tag, typename Super> struct meta_strings
       {
         return std::string{identifier_of(e.type)};
       }
+    }
+    if(const auto flags = flags_alias_name_of(T); not flags.empty())
+    {
+      return flags;
     }
     return normalized_type_name(T);
   }
