@@ -16,6 +16,7 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <source_location>
 #include <string>
 #include <string_view>
 
@@ -525,9 +526,20 @@ TEST_CASE("README: a module body publishes what the metatypes document describes
 
 TEST_CASE("README: include_roots shortens inputFile to an angled include")
 {
+  const auto here = std::filesystem::weakly_canonical(
+      std::filesystem::path{std::source_location::current().file_name()});
   const auto full = reflex::qt::moc::metatypes_of<app_types>().front().inputFile;
-  const auto root = std::filesystem::path{full}.parent_path().parent_path();
 
-  CHECK(reflex::qt::moc::metatypes_of<app_types>({{root}}).front().inputFile
+  CHECK(full == here.generic_string());
+  CHECK(reflex::qt::moc::metatypes_of<app_types>({{here.parent_path()}}).front().inputFile
+        == "test-readme.cpp");
+  CHECK(reflex::qt::moc::metatypes_of<app_types>({{here.parent_path().parent_path()}})
+            .front()
+            .inputFile
         == "tests/test-readme.cpp");
+  CHECK(reflex::qt::moc::metatypes_of<app_types>(
+            {{here.parent_path().parent_path().parent_path()}})
+            .front()
+            .inputFile
+        == "qt/tests/test-readme.cpp");
 }
