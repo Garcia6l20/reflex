@@ -6,7 +6,7 @@ core = context.get_target("reflex.core")
 
 # Tests holding nothing but static_asserts: compiling them is the test, and they
 # register no doctest case for the runner to find.
-compile_only = {"derive"}
+compile_only = {"derive", "meta-member-named", "meta-annotation-templates"}
 
 current_dir = Project.current().current_dir
 for src in current_dir.glob("test-*.cpp"):
