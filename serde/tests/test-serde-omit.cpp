@@ -3,6 +3,7 @@
 
 import reflex.serde;
 import reflex.serde.json;
+import reflex.serde.bson;
 
 import std;
 
@@ -218,6 +219,83 @@ TEST_CASE("JSON round-trips a document whose empty fields were omitted")
 
   const auto text = to_json(source);
   auto       back = json::deserializer{text}.load<doc>();
+  CHECK(back.opt == std::nullopt);
+  CHECK(back.seq.empty());
+  CHECK(back.text.empty());
+  CHECK(back.table.empty());
+  CHECK(back.scalar == 5);
+}
+
+namespace
+{
+  struct nested_holder
+  {
+    [[= serde::omit_if_empty{}]] std::string outer;
+    doc                                      inner;
+  };
+
+  template <typename T> std::vector<std::byte> to_bson(T const& value)
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    serialize(ser, value);
+    return out;
+  }
+
+  static_assert(omits_when_empty(
+      nonstatic_data_members_of(^^nested_holder, std::meta::access_context::current())[0]));
+
+  bool bson_has_key(std::vector<std::byte> const& document, std::string_view key)
+  {
+    const auto bytes = std::string_view{reinterpret_cast<char const*>(document.data()),
+                                        document.size()};
+    return bytes.find(key) != std::string_view::npos;
+  }
+}
+
+TEST_CASE("BSON leaves an annotated empty field out")
+{
+  const auto document = to_bson(doc{});
+  CHECK_FALSE(bson_has_key(document, "opt"));
+  CHECK_FALSE(bson_has_key(document, "seq"));
+  CHECK_FALSE(bson_has_key(document, "text"));
+  CHECK_FALSE(bson_has_key(document, "table"));
+  CHECK(bson_has_key(document, "scalar"));
+  CHECK(document.size() < to_bson(plain{}).size());
+
+  const auto filled = to_bson(doc{.opt = 7, .seq = {1}, .text = "x", .table = {{"k", 2}},
+                                  .scalar = 3});
+  CHECK(bson_has_key(filled, "opt"));
+  CHECK(bson_has_key(filled, "seq"));
+  CHECK(bson_has_key(filled, "text"));
+  CHECK(bson_has_key(filled, "table"));
+}
+
+TEST_CASE("BSON keeps an unannotated empty field, which is what makes this opt-in")
+{
+  const auto document = to_bson(plain{});
+  CHECK(bson_has_key(document, "opt"));
+  CHECK(bson_has_key(document, "seq"));
+  CHECK(bson_has_key(document, "text"));
+  CHECK(bson_has_key(document, "table"));
+}
+
+TEST_CASE("BSON omits inside a nested document, not only at the root")
+{
+  const auto document = to_bson(nested_holder{});
+  CHECK_FALSE(bson_has_key(document, "outer"));
+  CHECK(bson_has_key(document, "inner"));
+  CHECK_FALSE(bson_has_key(document, "text"));
+  CHECK(bson_has_key(document, "scalar"));
+}
+
+TEST_CASE("BSON round-trips a document whose empty fields were omitted")
+{
+  auto source   = doc{};
+  source.scalar = 5;
+
+  const auto document = to_bson(source);
+  auto       back     = bson::deserializer{document}.load<doc>();
   CHECK(back.opt == std::nullopt);
   CHECK(back.seq.empty());
   CHECK(back.text.empty());

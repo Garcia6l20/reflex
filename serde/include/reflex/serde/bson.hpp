@@ -139,7 +139,15 @@ constexpr void write_document_value(bytes& out, std::string_view key, T const& v
                        decay(^^decltype(value)), std::meta::access_context::current())))
       {
         constexpr std::string_view member_name = serialized_name(member);
+        constexpr bool             omit        = serde::omits_when_empty(member);
         auto const&                member_val  = value.[:member:];
+        if constexpr(omit)
+        {
+          if(serde::is_empty_value(member_val))
+          {
+            continue;
+          }
+        }
         reflex::visit([&](auto const& v) { write_element(doc, member_name, v); }, member_val);
       }
     }
@@ -296,7 +304,15 @@ template <typename T> constexpr void encode_root(bytes& out, T const& value)
                          nonstatic_data_members_of(^^U, std::meta::access_context::current())))
         {
           constexpr std::string_view member_name = serialized_name(member);
+          constexpr bool             omit        = serde::omits_when_empty(member);
           auto const&                member_val  = value.[:member:];
+          if constexpr(omit)
+          {
+            if(serde::is_empty_value(member_val))
+            {
+              continue;
+            }
+          }
           reflex::visit([&](auto const& v) { write_element(doc, member_name, v); }, member_val);
         }
       }
