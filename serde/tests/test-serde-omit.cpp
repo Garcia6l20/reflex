@@ -7,6 +7,7 @@ import reflex.serde.bson;
 import reflex.serde.yaml;
 import reflex.serde.toml;
 import reflex.serde.xml;
+import reflex.serde.csv;
 
 import std;
 
@@ -597,4 +598,60 @@ TEST_CASE("serde::no_omit keeps a text member a type-level annotation would have
 {
   CHECK(to_xml(xml_body{}) == "<xml_body></xml_body>");
   CHECK(to_xml(xml_body{.body = "x"}) == "<xml_body>x</xml_body>");
+}
+
+namespace
+{
+  struct csv_row
+  {
+    [[= serde::omit_if_empty{}]] std::string text;
+    int                                      scalar;
+  };
+
+  struct[[= serde::omit_if_empty{}]] csv_typed_row
+  {
+    std::optional<int> opt;
+    std::string        text;
+  };
+
+  struct[[= serde::omit_if_empty{}]] csv_cancelled_row
+  {
+    [[= serde::no_omit]] std::optional<int> opt;
+    [[= serde::no_omit]] std::string        text;
+  };
+
+  struct csv_plain_row
+  {
+    std::optional<int> opt;
+    std::string        text;
+  };
+
+  consteval {
+    REFLEX_CONSTEVAL_THROWS_WITH("fixed column set", csv::detail::reject_omission<csv_row>());
+    REFLEX_CONSTEVAL_THROWS_WITH("fixed column set",
+                                 csv::detail::reject_omission<csv_typed_row>());
+    REFLEX_CONSTEVAL_NOTHROW(csv::detail::reject_omission<csv_cancelled_row>());
+    REFLEX_CONSTEVAL_NOTHROW(csv::detail::reject_omission<csv_plain_row>());
+  }
+
+  template <typename T> std::string to_csv(std::vector<T> const& rows)
+  {
+    std::string     out;
+    csv::serializer ser{out};
+    ser.dump(rows);
+    return out;
+  }
+}
+
+TEST_CASE("CSV writes an empty cell for an empty optional, which is its answer to omission")
+{
+  auto rows = std::vector<csv_plain_row>{csv_plain_row{}, csv_plain_row{.opt = 1, .text = "x"}};
+  CHECK(to_csv(rows) == "opt,text\r\n,\r\n1,x\r\n");
+}
+
+TEST_CASE("CSV writes a serde::no_omit row the way it writes an unannotated one")
+{
+  auto cancelled = std::vector<csv_cancelled_row>{csv_cancelled_row{}};
+  auto plain_rows = std::vector<csv_plain_row>{csv_plain_row{}};
+  CHECK(to_csv(cancelled) == to_csv(plain_rows));
 }
