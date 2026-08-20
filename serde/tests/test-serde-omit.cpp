@@ -5,6 +5,7 @@ import reflex.serde;
 import reflex.serde.json;
 import reflex.serde.bson;
 import reflex.serde.yaml;
+import reflex.serde.toml;
 
 import std;
 
@@ -372,4 +373,131 @@ TEST_CASE("YAML round-trips a document whose empty fields were omitted")
   CHECK(back.scalar == 5);
 
   CHECK(yaml::deserializer{to_yaml(all_omittable{})}.load<all_omittable>().seq.empty());
+}
+
+namespace
+{
+  struct[[= serde::omit_if_empty{}]] toml_leaves
+  {
+    std::vector<int> seq;
+    std::string      text;
+    int              scalar;
+  };
+
+  struct toml_sub
+  {
+    int inner = 0;
+  };
+
+  struct[[= serde::omit_if_empty{^^std::map, ^^std::vector}]] toml_shapes
+  {
+    int                             scalar;
+    std::map<std::string, toml_sub> table;
+    std::vector<toml_sub>           rows;
+  };
+
+  struct toml_row
+  {
+    [[= serde::omit_if_empty{}]] std::string text;
+    int                                      scalar;
+  };
+
+  struct toml_inline_host
+  {
+    std::vector<toml_row> rows;
+  };
+
+
+
+  struct only_optional
+  {
+    std::optional<int> opt;
+  };
+
+  struct only_optional_host
+  {
+    std::vector<only_optional> rows;
+  };
+
+  struct toml_grid_host
+  {
+    std::vector<std::vector<toml_row>> grid;
+  };
+
+  struct only_optional_grid
+  {
+    std::vector<std::vector<only_optional>> grid;
+  };
+
+  struct all_omittable_grid
+  {
+    std::vector<std::vector<all_omittable>> grid;
+  };
+
+  template <typename T> std::string to_toml(T const& value)
+  {
+    std::string      out;
+    toml::serializer ser{out};
+    serialize(ser, value);
+    return out;
+  }
+}
+
+TEST_CASE("TOML leaves an annotated empty leaf out")
+{
+  CHECK(to_toml(toml_leaves{}) == "scalar = 0");
+  CHECK(to_toml(toml_leaves{.seq = {1}, .text = "x", .scalar = 3})
+        == "seq = [1]\ntext = \"x\"\nscalar = 3");
+}
+
+TEST_CASE("TOML keeps an unannotated empty leaf, which is what makes this opt-in")
+{
+  CHECK(to_toml(plain{}) == "seq = []\ntext = \"\"\nscalar = 0\n[table]");
+}
+
+TEST_CASE("TOML leaves out the whole header of an annotated empty table")
+{
+  CHECK(to_toml(toml_shapes{}) == "scalar = 0");
+
+  auto filled = toml_shapes{};
+  filled.table.emplace("t", toml_sub{1});
+  filled.rows.push_back(toml_sub{2});
+  const auto text = to_toml(filled);
+  CHECK(text.contains("[table.t]"));
+  CHECK(text.contains("[[rows]]"));
+}
+
+TEST_CASE("TOML omits inside an array of tables and inside an inline table")
+{
+  auto rows = toml_inline_host{};
+  rows.rows.push_back(toml_row{.text = {}, .scalar = 1});
+  rows.rows.push_back(toml_row{.text = "x", .scalar = 2});
+  CHECK(to_toml(rows) == "[[rows]]\nscalar = 1\n[[rows]]\ntext = \"x\"\nscalar = 2");
+
+  auto grid = toml_grid_host{};
+  grid.grid.push_back({toml_row{.text = {}, .scalar = 1}, toml_row{.text = "x", .scalar = 2}});
+  CHECK(to_toml(grid) == "grid = [[{ scalar = 1 }, { text = \"x\", scalar = 2 }]]");
+}
+
+TEST_CASE("TOML writes an all-omitted inline table the way it already writes an all-null one")
+{
+  auto annotated = all_omittable_grid{};
+  annotated.grid.push_back({all_omittable{}});
+  auto unannotated = only_optional_grid{};
+  unannotated.grid.push_back({only_optional{}});
+
+  CHECK(to_toml(annotated) == "grid = [[{  }]]");
+  CHECK(to_toml(annotated) == to_toml(unannotated));
+}
+
+TEST_CASE("TOML round-trips a document whose empty fields were omitted")
+{
+  auto source   = toml_leaves{};
+  source.scalar = 5;
+
+  const auto text = to_toml(source);
+  auto       back = toml::deserializer{text}.load<toml_leaves>();
+  CHECK(back.seq.empty());
+  CHECK(back.text.empty());
+  CHECK(back.scalar == 5);
 }

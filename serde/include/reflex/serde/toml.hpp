@@ -888,6 +888,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
         bool first = true;
         template for(constexpr auto member : members)
         {
+          constexpr bool omit = serde::omits_when_empty(member);
+          if constexpr(omit)
+          {
+            if(serde::is_empty_value(value.[:member:]))
+            {
+              continue;
+            }
+          }
           first = ser.write_inline_pair(first, detail::assign_key<member>(), value.[:member:]);
         }
         ser.write_raw(" }");
@@ -900,6 +908,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
         using shape = detail::shape_t<typename[:type_of(member):]>;
         if constexpr(not(detail::header_table_c<shape> or detail::table_array_c<shape>))
         {
+          constexpr bool omit = serde::omits_when_empty(member);
+          if constexpr(omit)
+          {
+            if(serde::is_empty_value(value.[:member:]))
+            {
+              continue;
+            }
+          }
           ser.write_pair(detail::assign_key<member>(), value.[:member:]);
         }
       }
@@ -910,6 +926,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
         using shape = detail::shape_t<typename[:type_of(member):]>;
         if constexpr(detail::header_table_c<shape>)
         {
+          constexpr bool omit = serde::omits_when_empty(member);
+          if constexpr(omit)
+          {
+            if(serde::is_empty_value(value.[:member:]))
+            {
+              continue;
+            }
+          }
           ser.write_table(detail::key_name<member>(), value.[:member:]);
         }
       }
@@ -920,6 +944,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
         using shape = detail::shape_t<typename[:type_of(member):]>;
         if constexpr(detail::table_array_c<shape>)
         {
+          constexpr bool omit = serde::omits_when_empty(member);
+          if constexpr(omit)
+          {
+            if(serde::is_empty_value(value.[:member:]))
+            {
+              continue;
+            }
+          }
           ser.write_table_array(detail::key_name<member>(), value.[:member:]);
         }
       }
