@@ -199,6 +199,77 @@ struct [[= serde::naming::camel_case]] api_response
 
 ---
 
+## Omitting an empty field
+
+`serde::omit_if_empty` leaves a field out of the output when it carries nothing: a
+disengaged `std::optional`, an empty range, an empty string, or a `std::array` of
+char whose first byte is NUL. It is opt-in per field, because emitting `null` or
+`[]` is what most consumers expect.
+
+```cpp
+import reflex.serde;
+
+struct config
+{
+  [[= serde::omit_if_empty{}]] std::optional<int> port;
+  [[= serde::omit_if_empty{}]] std::vector<int>   ids;
+  std::string                                     host;
+};
+// JSON, empty: {"host":""}
+// JSON, filled: {"port":8080,"ids":[1],"host":"localhost"}
+```
+
+On a type it reaches every field, and a list of types narrows which ones. An entry
+naming a template matches any instance of it, an entry naming a type matches that
+type:
+
+```cpp
+struct [[= serde::omit_if_empty{^^std::optional, ^^std::string}]] request
+{
+  std::optional<int>       timeout;   // omitted when disengaged
+  std::string              body;      // omitted when empty
+  std::vector<std::string> headers;   // kept, the list excludes it
+  [[= serde::no_omit]] std::string trace;  // kept, whatever the type-level annotation says
+};
+```
+
+`serde::no_omit` cancels a type-level annotation on one field. It is also the way
+past the two backends that refuse to omit, below.
+
+The annotation is rejected, with a message, where it could not mean anything:
+
+- on a field whose type can never be empty, such as an `int` or a
+  `std::array<int, 3>`
+- on a field its own type list excludes
+- `serde::no_omit` on a type rather than on a field
+
+### What each backend does with it
+
+| backend | an annotated empty field |
+|---|---|
+| JSON | the key is absent. An all-omitted aggregate writes `{}` |
+| BSON | the element is absent |
+| YAML | the line is absent. An all-omitted mapping writes `{}` |
+| TOML | the assignment, or the whole `[header]`, is absent |
+| XML | the child element or the attribute is absent |
+| CSV | rejected at compile time |
+
+CSV refuses because the header fixes the column set: dropping a cell would shift
+every later column, and an empty optional already writes an empty cell. XML
+refuses on an `xml::text` or `xml::raw_content` field, which is the element's own
+body rather than a key that can vanish. Both refusals name `serde::no_omit` as the
+way out.
+
+XML and TOML already drop some empty fields without any annotation, and that has
+not changed. XML omits a disengaged optional and an empty sequence, TOML omits a
+disengaged optional key and an empty array of tables. On those fields the
+annotation asks for what already happens, and what it adds is the empty string and
+the empty table.
+
+Reading is unaffected. Every backend already leaves a field at its default when
+the document does not mention it, so a document whose empty fields were omitted
+round-trips to an equal value.
+
 ## XML attributes
 
 Annotate a member with `xml::attribute` to serialize it as an attribute on the

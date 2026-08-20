@@ -655,3 +655,32 @@ TEST_CASE("CSV writes a serde::no_omit row the way it writes an unannotated one"
   auto plain_rows = std::vector<csv_plain_row>{csv_plain_row{}};
   CHECK(to_csv(cancelled) == to_csv(plain_rows));
 }
+
+namespace
+{
+  struct readme_config
+  {
+    [[= serde::omit_if_empty{}]] std::optional<int> port;
+    [[= serde::omit_if_empty{}]] std::vector<int>   ids;
+    std::string                                     host;
+  };
+
+  struct[[= serde::omit_if_empty{^^std::optional, ^^std::string}]] readme_request
+  {
+    std::optional<int>              timeout;
+    std::string                     body;
+    std::vector<std::string>        headers;
+    [[= serde::no_omit]] std::string trace;
+  };
+}
+
+TEST_CASE("README: omitting an empty field")
+{
+  CHECK(to_json(readme_config{}) == R"({"host":""})");
+  CHECK(to_json(readme_config{.port = 8080, .ids = {1}, .host = "localhost"})
+        == R"({"port":8080,"ids":[1],"host":"localhost"})");
+
+  CHECK(to_json(readme_request{}) == R"({"headers":[],"trace":""})");
+  CHECK(to_json(readme_request{.timeout = 1, .body = "b", .headers = {"h"}, .trace = "t"})
+        == R"({"timeout":1,"body":"b","headers":["h"],"trace":"t"})");
+}
