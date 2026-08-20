@@ -1,21 +1,29 @@
 #include <clock/types.hpp>
 
-#include <QtCore/qcoreapplication.h>
 #include <QtCore/qtimer.h>
+#include <QtGui/qguiapplication.h>
 #include <QtQml/qqmlapplicationengine.h>
 
 #include <cstdlib>
 #include <print>
+#include <string_view>
 
 int main(int argc, char** argv)
 {
-  QCoreApplication      app(argc, argv);
+  const bool checking = argc > 1 and std::string_view{argv[1]} == "--check";
+
+  QGuiApplication       app(argc, argv);
   QQmlApplicationEngine engine;
 
-  engine.loadFromModule("Reflex.Clock", "Main");
+  engine.loadFromModule("Reflex.Clock", checking ? "Check" : "Main");
   if(engine.rootObjects().isEmpty())
   {
     return EXIT_FAILURE;
+  }
+
+  if(not checking)
+  {
+    return QGuiApplication::exec();
   }
 
   auto* const clock = qobject_cast<clock_example::Clock*>(
@@ -25,11 +33,12 @@ int main(int argc, char** argv)
     return EXIT_FAILURE;
   }
 
-  QObject::connect(&app,
-                   &QCoreApplication::aboutToQuit,
-                   clock,
-                   [clock] { std::println("observed {} label updates", clock->observed()); });
+  QObject::connect(&app, &QCoreApplication::aboutToQuit, clock, [clock] {
+    std::println(
+        "{} ticks {} observed {} note {}", clock->caption().toStdString(), clock->ticks,
+        clock->observed(), clock->note().toStdString());
+  });
   QTimer::singleShot(3000, &app, [] { QCoreApplication::exit(EXIT_FAILURE); });
 
-  return QCoreApplication::exec();
+  return QGuiApplication::exec();
 }
