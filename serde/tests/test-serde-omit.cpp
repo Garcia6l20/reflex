@@ -2,6 +2,7 @@
 #include <reflex/const_check.hpp>
 
 import reflex.serde;
+import reflex.serde.json;
 
 import std;
 
@@ -155,4 +156,71 @@ TEST_CASE("an empty value is recognised whatever shape it takes")
   CHECK(is_empty_value(null_text));
   CHECK(is_empty_value(no_text));
   CHECK_FALSE(is_empty_value(some_text));
+}
+
+namespace
+{
+  struct[[= serde::omit_if_empty{}]] doc
+  {
+    std::optional<int>         opt;
+    std::vector<int>           seq;
+    std::string                text;
+    std::map<std::string, int> table;
+    int                        scalar;
+  };
+
+  struct spread
+  {
+    [[= serde::omit_if_empty{}]] std::string head;
+    int                                      middle;
+    [[= serde::omit_if_empty{}]] std::string tail;
+  };
+
+  struct[[= serde::omit_if_empty{}]] all_omittable
+  {
+    std::optional<int> opt;
+    std::vector<int>   seq;
+  };
+
+  template <typename T> std::string to_json(T const& value)
+  {
+    std::string      out;
+    json::serializer ser{out};
+    serialize(ser, value);
+    return out;
+  }
+}
+
+TEST_CASE("JSON leaves an annotated empty field out")
+{
+  CHECK(to_json(doc{}) == R"({"scalar":0})");
+  CHECK(to_json(doc{.opt = 7, .seq = {1}, .text = "x", .table = {{"k", 2}}, .scalar = 3})
+        == R"({"opt":7,"seq":[1],"text":"x","table":{"k":2},"scalar":3})");
+}
+
+TEST_CASE("JSON keeps an unannotated empty field, which is what makes this opt-in")
+{
+  CHECK(to_json(plain{}) == R"({"opt":null,"seq":[],"text":"","table":{},"scalar":0})");
+}
+
+TEST_CASE("JSON writes no stray separator around an omitted field")
+{
+  CHECK(to_json(spread{}) == R"({"middle":0})");
+  CHECK(to_json(spread{.head = "h", .middle = 1, .tail = {}}) == R"({"head":"h","middle":1})");
+  CHECK(to_json(spread{.head = {}, .middle = 1, .tail = "t"}) == R"({"middle":1,"tail":"t"})");
+  CHECK(to_json(all_omittable{}) == "{}");
+}
+
+TEST_CASE("JSON round-trips a document whose empty fields were omitted")
+{
+  auto source   = doc{};
+  source.scalar = 5;
+
+  const auto text = to_json(source);
+  auto       back = json::deserializer{text}.load<doc>();
+  CHECK(back.opt == std::nullopt);
+  CHECK(back.seq.empty());
+  CHECK(back.text.empty());
+  CHECK(back.table.empty());
+  CHECK(back.scalar == 5);
 }
