@@ -64,3 +64,39 @@
       throw std::meta::exception("unexpected rejection from: " #__VA_ARGS__, ^^::);                \
     }                                                                                              \
   } while(false)
+
+// The expression must reject its input, with a message containing `expected`.
+#define REFLEX_CONSTEVAL_THROWS_WITH(expected, ...)                                                \
+  do                                                                                               \
+  {                                                                                                \
+    bool reflex_threw = false;                                                                     \
+    bool reflex_found = false;                                                                     \
+    try                                                                                            \
+    {                                                                                              \
+      __VA_ARGS__;                                                                                 \
+    }                                                                                              \
+    catch(std::meta::exception const& reflex_error)                                                \
+    {                                                                                              \
+      reflex_threw = true;                                                                         \
+      for(const char* at = reflex_error.what(); *at and not reflex_found; ++at)                    \
+      {                                                                                            \
+        const char* text  = at;                                                                    \
+        const char* probe = (expected);                                                            \
+        while(*probe and *text == *probe)                                                          \
+        {                                                                                          \
+          ++text;                                                                                  \
+          ++probe;                                                                                 \
+        }                                                                                          \
+        reflex_found = *probe == '\0';                                                             \
+      }                                                                                            \
+    }                                                                                              \
+    if(not reflex_threw)                                                                           \
+    {                                                                                              \
+      throw std::meta::exception("expected a rejection from: " #__VA_ARGS__, ^^::);                \
+    }                                                                                              \
+    if(not reflex_found)                                                                           \
+    {                                                                                              \
+      throw std::meta::exception("the rejection of " #__VA_ARGS__ " does not say " #expected,      \
+                                 ^^::);                                                            \
+    }                                                                                              \
+  } while(false)
