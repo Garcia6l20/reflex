@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Run the QML examples offscreen and lint their QML against the types they publish.
+"""Run the QML examples in check mode and lint their QML against the types they publish.
 
     python3 qt/examples/qml-check.py build
 
-Each example must exit 0, print its one summary line on stdout, and print
-nothing on stderr: a QML resolution failure leaves the exit code at 0, so an
-empty stderr is the assertion that matters. `qmllint` then reads the `.qmltypes`
+`--check` loads the headless `Check.qml` rather than the window `Main.qml`, drives
+every published shape from QML and quits. Each example must exit 0, print its one
+summary line on stdout, and print nothing on stderr: a QML resolution failure
+leaves the exit code at 0, so an empty stderr is the assertion that matters. `qmllint` then reads the `.qmltypes`
 `qmltyperegistrar` generated from the reflex metatypes document and checks every
 name the QML uses against it, which is what proves the metadata rather than the
 plumbing. `QMLLINT` in the environment overrides the Qt 6 path it defaults to,
@@ -31,10 +32,9 @@ QMLLINT = pathlib.Path(os.environ.get("QMLLINT", "/usr/lib/qt6/bin/qmllint"))
 HERE = pathlib.Path(__file__).resolve().parent
 
 EXAMPLES = {
-    "clock": ("Reflex.Clock", "observed 5 label updates"),
-    "sandbox": (
-        "Reflex.Sandbox",
-        "span [-5, 15] width 20 shade 2 observed 4 note reflex sandbox",
+    "clock": (
+        "Reflex.Clock",
+        "span [-5, 10] width 15 shade 2 ticks 10 observed 11 note reflex clock",
     ),
 }
 
@@ -42,7 +42,7 @@ EXAMPLES = {
 def run_example(build, name, expected):
     program = build / "qt" / f"reflex-qt-{name}"
     result = subprocess.run(
-        [program],
+        [program, "--check"],
         capture_output=True,
         text=True,
         timeout=60,

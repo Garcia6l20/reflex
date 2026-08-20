@@ -52,9 +52,9 @@ else:
                 """Run the widgets example"""
                 subprocess.run([str(example.output_nodes[0].path)], check=True)
 
-        qt_qml = use_qt(project, env, ["Qml"])
+        qt_qml = use_qt(project, env, ["Qml", "Quick"])
         if qt_qml is None:
-            print("-- reflex.qt QML examples skipped: Qt 6 Qml not found")
+            print("-- reflex.qt QML examples skipped: Qt 6 Qml or Quick not found")
         else:
             from_root = project.current_dir.relative_to(project.root_dir)
 
@@ -82,7 +82,7 @@ else:
                     f"reflex-qt-{name}",
                     env,
                     sources=[f"{here}/{s}" for s in sources],
-                    link=[qt_qml.Qml, qt_lib],
+                    link=[qt_qml.Qml, qt_qml.Quick, qt_lib],
                 )
                 app.private.include_dirs.append("examples")
                 app.link(types)
@@ -92,10 +92,10 @@ else:
                 return app
 
             clock_app = qml_example(
-                "clock", "Reflex.Clock", sources=["main.cpp"], qml_files=["Main.qml"]
-            )
-            sandbox_app = qml_example(
-                "sandbox", "Reflex.Sandbox", sources=["main.cpp"], qml_files=["Main.qml"]
+                "clock",
+                "Reflex.Clock",
+                sources=["main.cpp"],
+                qml_files=["Main.qml", "Check.qml"],
             )
 
             @qt_example.command()
@@ -103,7 +103,3 @@ else:
                 """Run the QML clock example"""
                 subprocess.run([str(clock_app.output_nodes[0].path)], check=True)
 
-            @qt_example.command()
-            def sandbox():
-                """Run the QML sandbox example"""
-                subprocess.run([str(sandbox_app.output_nodes[0].path)], check=True)

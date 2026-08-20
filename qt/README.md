@@ -858,12 +858,16 @@ with
 ```console
 $ pcons run qt-example widgets
 $ pcons run qt-example clock
-$ pcons run qt-example sandbox
 ```
 
-`clock` and `sandbox` are QML modules. `qt/examples/qml-check.py` runs both offscreen,
-checks that each exits 0, prints its summary line and writes nothing to stderr, then lints
-their QML against the `.qmltypes` the build generated:
+Both open a window. `widgets` is a `QWidget` counter, `clock` is a QML module: a ticking
+clock, a `span` value type, a `Settings` singleton and a `Palette` enumeration, all
+published from reflection and driven from `Main.qml`.
+
+`reflex-qt-clock --check` loads `Check.qml` instead, a headless root that exercises every
+published shape and quits. `qt/examples/qml-check.py` runs that offscreen, checks it exits
+0, prints its summary line and writes nothing to stderr, then lints both QML files against
+the `.qmltypes` the build generated:
 
 ```console
 $ python3 qt/examples/qml-check.py build
@@ -973,5 +977,4 @@ working C++26 reflection and has been built and run nowhere else.
 ---
 
 > See [tests](tests) for more examples, [examples/widgets](examples/widgets) for a working
-> application, and [examples/clock](examples/clock) and
-> [examples/sandbox](examples/sandbox) for QML modules.
+> application, and [examples/clock](examples/clock) for a QML module.
