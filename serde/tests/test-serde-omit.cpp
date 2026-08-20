@@ -4,6 +4,7 @@
 import reflex.serde;
 import reflex.serde.json;
 import reflex.serde.bson;
+import reflex.serde.yaml;
 
 import std;
 
@@ -301,4 +302,74 @@ TEST_CASE("BSON round-trips a document whose empty fields were omitted")
   CHECK(back.text.empty());
   CHECK(back.table.empty());
   CHECK(back.scalar == 5);
+}
+
+namespace
+{
+  struct empty_struct
+  {
+  };
+
+  struct nested_yaml
+  {
+    all_omittable inner;
+    int           after;
+  };
+
+  struct nested_empty_struct
+  {
+    empty_struct inner;
+    int          after;
+  };
+
+  template <typename T> std::string to_yaml(T const& value)
+  {
+    std::string      out;
+    yaml::serializer ser{out};
+    serialize(ser, value);
+    return out;
+  }
+}
+
+TEST_CASE("YAML leaves an annotated empty field out")
+{
+  CHECK(to_yaml(doc{}) == "scalar: 0");
+  CHECK(to_yaml(doc{.opt = 7, .seq = {1}, .text = "x", .table = {{"k", 2}}, .scalar = 3})
+        == "opt: 7\nseq:\n  - 1\ntext: x\ntable:\n  k: 2\nscalar: 3");
+}
+
+TEST_CASE("YAML keeps an unannotated empty field, which is what makes this opt-in")
+{
+  CHECK(to_yaml(plain{}) == "opt: null\nseq: []\ntext: ''\ntable: {}\nscalar: 0");
+}
+
+TEST_CASE("YAML writes a flow mapping when every field is omitted")
+{
+  CHECK(to_yaml(all_omittable{}) == "{}");
+  CHECK(to_yaml(nested_empty_struct{}) == "inner: {}\nafter: 0");
+  CHECK(to_yaml(nested_yaml{}) == "inner:\n  {}\nafter: 0");
+  CHECK(yaml::deserializer{to_yaml(nested_yaml{})}.load<nested_yaml>().after == 0);
+}
+
+TEST_CASE("YAML leaves no blank line where a field was omitted")
+{
+  CHECK(to_yaml(spread{}) == "middle: 0");
+  CHECK(to_yaml(spread{.head = "h", .middle = 1, .tail = {}}) == "head: h\nmiddle: 1");
+  CHECK(to_yaml(spread{.head = {}, .middle = 1, .tail = "t"}) == "middle: 1\ntail: t");
+}
+
+TEST_CASE("YAML round-trips a document whose empty fields were omitted")
+{
+  auto source   = doc{};
+  source.scalar = 5;
+
+  const auto text = to_yaml(source);
+  auto       back = yaml::deserializer{text}.load<doc>();
+  CHECK(back.opt == std::nullopt);
+  CHECK(back.seq.empty());
+  CHECK(back.text.empty());
+  CHECK(back.table.empty());
+  CHECK(back.scalar == 5);
+
+  CHECK(yaml::deserializer{to_yaml(all_omittable{})}.load<all_omittable>().seq.empty());
 }
