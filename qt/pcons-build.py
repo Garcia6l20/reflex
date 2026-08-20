@@ -2,7 +2,7 @@ import subprocess
 
 from pcons import add_subdirectory, context
 
-from reflex_build.config import build_programs, build_testing
+from reflex_build.config import build_programs, build_testing, qt_allow_untested
 from reflex_build.qt import add_metatypes, qml_module, use_qt
 
 project = context.current_project
@@ -14,6 +14,8 @@ if qt is None:
     print("-- reflex.qt skipped: Qt 6 not found")
 else:
     qt_lib = project.HeaderOnlyLibrary("reflex.qt", include_dirs=["include"])
+    if qt_allow_untested:
+        qt_lib.public.defines.append("REFLEX_QT_ALLOW_UNTESTED_QT")
     qt_lib.public.link_libs.extend(
         [
             project.get_target("reflex.core"),

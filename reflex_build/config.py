@@ -34,6 +34,7 @@ if not build_modules and (_want_testing or _want_programs):
 
 build_testing = _want_testing and build_modules
 build_programs = _want_programs and build_modules
+qt_allow_untested = get_var("REFLEX_QT_ALLOW_UNTESTED_QT", False)
 
 # =============================================================================
 # Libraries
