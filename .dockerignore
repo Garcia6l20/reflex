@@ -1,0 +1,9 @@
+.git/
+.venv/
+.cache/
+.ruff_cache/
+build/
+build-*/
+local/
+old/
+**/__pycache__/
