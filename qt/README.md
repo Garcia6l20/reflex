@@ -873,12 +873,20 @@ $ python3 qt/examples/qml-check.py build
 
 ## Qt version
 
-Qt **6.11.x** only. `detail/version.hpp` asserts the window:
+Qt **6.10.x** and **6.11.x**. `detail/version.hpp` asserts the window:
 
 ```
 static assertion failed: reflex.qt reproduces moc's private metaobject layout and is
-only tested against Qt 6.11.x; define REFLEX_QT_ALLOW_UNTESTED_QT to try anyway
+only tested against Qt 6.10.x and 6.11.x; configure with
+REFLEX_QT_ALLOW_UNTESTED_QT=true to try anyway
 ```
+
+Both are measured, not assumed: the suite and `qt.moc-cross-check` run green on 6.11.1
+against the host's moc and on 6.10.2 against the CI image's. The two versions differ in one
+place, and only in the metatypes document: moc gained a property's `override` and `virtual`
+keys in 6.11, so `reflex.qt` writes them there and leaves them out on 6.10.
+`qmltyperegistrar` reads neither, and the `.qmltypes` generated from the two documents are
+identical.
 
 The pin is not caution. `reflex.qt` fills `QtMocHelpers::UintData`, `FunctionData`,
 `PropertyData`, `EnumData` and `StringRefStorage` and specializes
@@ -888,8 +896,9 @@ metaobject data layout has changed between Qt minor releases before. `qtmochelpe
 `qtmocconstants.h` are public headers in 6.11.1, so no `private_headers=` is needed, but
 the layout they describe is still unstable.
 
-`REFLEX_QT_ALLOW_UNTESTED_QT` turns the assertion off. Widen the window in the header only
-after actually building and running the suite against another Qt.
+`pcons REFLEX_QT_ALLOW_UNTESTED_QT=true` turns the assertion off, through `reflex_build`'s
+`get_var` like the other build options. Widen the window in the header only after actually
+building and running the suite against another Qt, as 6.10 was.
 
 ---
 

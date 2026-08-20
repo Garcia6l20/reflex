@@ -6,6 +6,7 @@
 #include <reflex/qt/detail/meta_strings.hpp>
 #include <reflex/qt/detail/metatype.hpp>
 #include <reflex/qt/detail/property.hpp>
+#include <reflex/qt/detail/version.hpp>
 #include <reflex/qt/moc/module.hpp>
 #include <reflex/serde/json.hpp>
 
@@ -26,6 +27,23 @@ namespace reflex::qt::moc
  * 6.11.1 does not read it.
  */
 inline constexpr int output_revision = 69;
+
+namespace detail
+{
+/** @brief `false` where moc writes a property's `override` and `virtual`, absent where it does not
+ *
+ * moc gained the two keys in 6.11. Emitting them against 6.10 would describe a
+ * property in a shape that Qt's own moc never writes, so they are left out
+ * there. `qmltyperegistrar` reads neither: the `.qmltypes` it generates from the
+ * two documents are identical.
+ */
+inline constexpr std::optional<bool> moc_accessor_kind =
+#if QT_VERSION >= QT_VERSION_CHECK(6, 11, 0)
+    false;
+#else
+    std::nullopt;
+#endif
+}
 
 struct named_value
 {
@@ -61,15 +79,15 @@ struct property_meta
   std::optional<std::string>           member;
   std::string                          name;
   std::optional<std::string>           notify;
-  [[= serde::rename{"override"}]] bool override_ = false;
-  std::optional<std::string>           read;
-  bool                                 required   = false;
-  bool                                 scriptable = true;
-  bool                                 stored     = true;
-  std::string                          type;
-  bool                                 user = false;
-  [[= serde::rename{"virtual"}]] bool  virtual_ = false;
-  std::optional<std::string>           write;
+  [[= serde::rename{"override"}]] std::optional<bool> override_ = detail::moc_accessor_kind;
+  std::optional<std::string>                          read;
+  bool                                                required   = false;
+  bool                                                scriptable = true;
+  bool                                                stored     = true;
+  std::string                                         type;
+  bool                                                user     = false;
+  [[= serde::rename{"virtual"}]] std::optional<bool>  virtual_ = detail::moc_accessor_kind;
+  std::optional<std::string>                          write;
 };
 
 struct superclass_meta

@@ -258,8 +258,16 @@ TEST_CASE("the field names moc's schema reserves survive the C++ spelling")
 
   CHECK_NE(json.find("\"signals\":["), std::string::npos);
   CHECK_NE(json.find("\"slots\":["), std::string::npos);
-  CHECK_NE(json.find("\"virtual\":false"), std::string::npos);
-  CHECK_NE(json.find("\"override\":false"), std::string::npos);
+  if constexpr(moc::detail::moc_accessor_kind.has_value())
+  {
+    CHECK_NE(json.find("\"virtual\":false"), std::string::npos);
+    CHECK_NE(json.find("\"override\":false"), std::string::npos);
+  }
+  else
+  {
+    CHECK_EQ(json.find("\"virtual\""), std::string::npos);
+    CHECK_EQ(json.find("\"override\""), std::string::npos);
+  }
   CHECK_EQ(json.find("signal_methods"), std::string::npos);
   CHECK_EQ(json.find("virtual_"), std::string::npos);
 }
