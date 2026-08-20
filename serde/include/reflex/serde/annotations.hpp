@@ -201,6 +201,32 @@ REFLEX_EXPORT namespace reflex::serde
     }
   }
 
+  /** @brief Whether every member of an aggregate is omitted from the output.
+   *
+   * The same question the writers ask member by member, asked of the whole
+   * aggregate, so a backend that has to choose a layout before it starts writing
+   * can know it will write nothing. False for a type with no annotated member,
+   * so a caller pays nothing for a shape this cannot reach.
+   */
+  template <typename Agg> constexpr bool omits_every_member(Agg const& value)
+  {
+    bool omitted = true;
+    template for(constexpr auto member : define_static_array(nonstatic_data_members_of(
+                     ^^Agg, std::meta::access_context::current())))
+    {
+      constexpr bool omit = omits_when_empty(member);
+      if constexpr(omit)
+      {
+        omitted = omitted and is_empty_value(value.[:member:]);
+      }
+      else
+      {
+        omitted = false;
+      }
+    }
+    return omitted;
+  }
+
   consteval constant_string serialized_name(meta::info member_info)
   {
     auto rename_annotations = meta::annotations_of_with(member_info, ^^rename);

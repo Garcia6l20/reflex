@@ -350,8 +350,22 @@ TEST_CASE("YAML writes a flow mapping when every field is omitted")
 {
   CHECK(to_yaml(all_omittable{}) == "{}");
   CHECK(to_yaml(nested_empty_struct{}) == "inner: {}\nafter: 0");
-  CHECK(to_yaml(nested_yaml{}) == "inner:\n  {}\nafter: 0");
+  CHECK(to_yaml(nested_yaml{}) == to_yaml(nested_empty_struct{}));
+  CHECK(to_yaml(nested_yaml{}) == "inner: {}\nafter: 0");
   CHECK(yaml::deserializer{to_yaml(nested_yaml{})}.load<nested_yaml>().after == 0);
+
+  auto filled  = nested_yaml{};
+  filled.inner.seq.push_back(1);
+  CHECK(to_yaml(filled) == "inner:\n  seq:\n    - 1\nafter: 0");
+}
+
+TEST_CASE("YAML writes an all-omitted sequence element inline too")
+{
+  auto rows = std::vector<all_omittable>{all_omittable{}, all_omittable{}};
+  CHECK(to_yaml(rows) == "- {}\n- {}");
+
+  auto empties = std::vector<empty_struct>{empty_struct{}, empty_struct{}};
+  CHECK(to_yaml(rows) == to_yaml(empties));
 }
 
 TEST_CASE("YAML leaves no blank line where a field was omitted")

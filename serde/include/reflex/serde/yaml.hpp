@@ -180,7 +180,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
     else if constexpr(aggregate_c<T>)
     {
-      return member_count<T>() == 0;
+      return member_count<T>() == 0 or serde::omits_every_member(value);
     }
     else
     {
