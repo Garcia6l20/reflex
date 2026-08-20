@@ -6,6 +6,7 @@ import reflex.serde.json;
 import reflex.serde.bson;
 import reflex.serde.yaml;
 import reflex.serde.toml;
+import reflex.serde.xml;
 
 import std;
 
@@ -500,4 +501,100 @@ TEST_CASE("TOML round-trips a document whose empty fields were omitted")
   CHECK(back.seq.empty());
   CHECK(back.text.empty());
   CHECK(back.scalar == 5);
+}
+
+namespace
+{
+  struct xml_doc
+  {
+    [[= xml::attribute, = serde::omit_if_empty{}]] std::string currency;
+    [[= serde::omit_if_empty{}]] std::string                   label;
+    std::optional<int>                                         opt;
+    std::vector<int>                                           seq;
+    int                                                        scalar;
+  };
+
+  struct xml_plain
+  {
+    [[= xml::attribute]] std::string currency;
+    std::string                      text;
+    std::optional<int>               opt;
+    std::vector<int>                 seq;
+    int                              scalar;
+  };
+
+  struct[[= serde::omit_if_empty{}]] xml_body
+  {
+    [[= xml::text, = serde::no_omit]] std::string body;
+  };
+
+  struct xml_bad_body
+  {
+    [[= xml::text, = serde::omit_if_empty{}]] std::string body;
+  };
+
+  struct xml_bad_raw
+  {
+    [[= xml::raw_content, = serde::omit_if_empty{}]] std::string body;
+  };
+
+  template <typename T> std::string to_xml(T const& value)
+  {
+    std::string     out;
+    xml::serializer ser{out};
+    serialize(ser, value);
+    return out;
+  }
+}
+
+TEST_CASE("XML leaves an annotated empty attribute and child element out")
+{
+  CHECK(to_xml(xml_doc{}) == "<xml_doc><scalar>0</scalar></xml_doc>");
+  CHECK(to_xml(xml_doc{.currency = "EUR", .label = "x", .opt = 1, .seq = {3}, .scalar = 4})
+        == "<xml_doc currency=\"EUR\"><label>x</label><opt>1</opt><seq>3</seq>"
+           "<scalar>4</scalar></xml_doc>");
+}
+
+TEST_CASE("XML keeps an unannotated empty string, which is what makes this opt-in")
+{
+  CHECK(to_xml(xml_plain{}) == "<xml_plain currency=\"\"><text></text><scalar>0</scalar></xml_plain>");
+}
+
+TEST_CASE("XML already omitted an empty optional and an empty sequence, annotation or not")
+{
+  const auto text = to_xml(xml_plain{});
+  CHECK_FALSE(text.contains("<opt"));
+  CHECK_FALSE(text.contains("<seq"));
+}
+
+TEST_CASE("XML round-trips a document whose empty fields were omitted")
+{
+  auto source   = xml_doc{};
+  source.scalar = 5;
+
+  const auto text = to_xml(source);
+  auto       back = xml::deserializer{text}.load<xml_doc>();
+  CHECK(back.currency.empty());
+  CHECK(back.label.empty());
+  CHECK(back.opt == std::nullopt);
+  CHECK(back.seq.empty());
+  CHECK(back.scalar == 5);
+}
+
+namespace
+{
+  consteval {
+    REFLEX_CONSTEVAL_THROWS_WITH("element's own body",
+                                 xml::detail::reject_body_omission<xml_bad_body>());
+    REFLEX_CONSTEVAL_THROWS_WITH("element's own body",
+                                 xml::detail::reject_body_omission<xml_bad_raw>());
+    REFLEX_CONSTEVAL_NOTHROW(xml::detail::reject_body_omission<xml_body>());
+    REFLEX_CONSTEVAL_NOTHROW(xml::detail::reject_body_omission<xml_doc>());
+  }
+}
+
+TEST_CASE("serde::no_omit keeps a text member a type-level annotation would have rejected")
+{
+  CHECK(to_xml(xml_body{}) == "<xml_body></xml_body>");
+  CHECK(to_xml(xml_body{.body = "x"}) == "<xml_body>x</xml_body>");
 }
