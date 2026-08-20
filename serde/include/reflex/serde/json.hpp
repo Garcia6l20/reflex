@@ -378,6 +378,15 @@ REFLEX_EXPORT namespace reflex::serde::json
     template for(constexpr auto member : define_static_array(
                      nonstatic_data_members_of(type, std::meta::access_context::current())))
     {
+      constexpr bool omit         = serde::omits_when_empty(member);
+      auto const&    member_value = value.[:member:];
+      if constexpr(omit)
+      {
+        if(serde::is_empty_value(member_value))
+        {
+          continue;
+        }
+      }
       if(not first)
       {
         ser.write_char(',');
@@ -388,7 +397,6 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
       static constexpr std::string_view key_token = detail::quoted_key<member>();
       ser.write_raw(key_token);
-      auto const& member_value = value.[:member:];
       reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
     }
     ser.write_char('}');

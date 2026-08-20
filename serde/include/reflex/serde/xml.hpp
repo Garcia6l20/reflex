@@ -17,6 +17,7 @@
 #include <reflex/serde.hpp>
 #endif
 
+#include <reflex/const_check.hpp>
 #include <reflex/serde/detail/io.hpp>
 
 REFLEX_EXPORT namespace reflex::serde::xml
@@ -189,6 +190,22 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
   namespace detail
   {
+  template <typename T> consteval void reject_body_omission()
+  {
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^T, std::meta::access_context::current())))
+    {
+      if constexpr(is_text(member) or is_raw_content(member))
+      {
+        REFLEX_META_CHECK(
+            not serde::omits_when_empty(member),
+            "an xml::text or xml::raw_content member is the element's own body, not a key that can "
+            "vanish: put serde::no_omit on it, or drop the serde::omit_if_empty",
+            ^^serde::omit_if_empty);
+      }
+    }
+  }
+
   template <typename T> consteval bool element_fields_ok()
   {
     bool ok       = true;
@@ -730,6 +747,11 @@ REFLEX_EXPORT namespace reflex::serde::xml
   OutputIt tag_invoke(
       tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value)
   {
+    consteval
+    {
+      detail::reject_body_omission<Agg>();
+    }
+
     constexpr std::string_view type_prefix = ns_prefix_of(^^Agg);
     constexpr std::string_view type_uri    = ns_uri_of(^^Agg);
     // at the document root a namespaced type prefixes its own type name
@@ -757,7 +779,18 @@ REFLEX_EXPORT namespace reflex::serde::xml
         // attributes take a prefix only from a member-level ns annotation
         constexpr std::string_view apfx = ns_prefix_of(member);
         constexpr std::string_view aqn  = detail::qualified(apfx, serialized_name(member));
-        detail::write_attribute(ser, aqn, value.[:member:]);
+        constexpr bool             omit = serde::omits_when_empty(member);
+        if constexpr(omit)
+        {
+          if(not serde::is_empty_value(value.[:member:]))
+          {
+            detail::write_attribute(ser, aqn, value.[:member:]);
+          }
+        }
+        else
+        {
+          detail::write_attribute(ser, aqn, value.[:member:]);
+        }
       }
     }
 
@@ -817,7 +850,22 @@ REFLEX_EXPORT namespace reflex::serde::xml
           constexpr std::string_view mpfx = ns_prefix_of(member);
           constexpr std::string_view cpfx = mpfx.empty() ? type_prefix : mpfx;
           constexpr std::string_view cqn  = detail::qualified(cpfx, serialized_name(member));
-          if constexpr(is_cdata(member))
+          constexpr bool             omit = serde::omits_when_empty(member);
+          if constexpr(omit)
+          {
+            if(not serde::is_empty_value(value.[:member:]))
+            {
+              if constexpr(is_cdata(member))
+              {
+                detail::write_cdata_element(ser, cqn, std::string_view{value.[:member:]});
+              }
+              else
+              {
+                detail::write_field(ser, cqn, value.[:member:]);
+              }
+            }
+          }
+          else if constexpr(is_cdata(member))
           {
             detail::write_cdata_element(ser, cqn, std::string_view{value.[:member:]});
           }

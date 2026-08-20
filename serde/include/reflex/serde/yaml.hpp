@@ -180,7 +180,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
     else if constexpr(aggregate_c<T>)
     {
-      return member_count<T>() == 0;
+      return member_count<T>() == 0 or serde::omits_every_member(value);
     }
     else
     {
@@ -592,6 +592,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       template for(constexpr auto member : define_static_array(
                        nonstatic_data_members_of(type, std::meta::access_context::current())))
       {
+        constexpr bool omit = serde::omits_when_empty(member);
+        if constexpr(omit)
+        {
+          if(serde::is_empty_value(value.[:member:]))
+          {
+            continue;
+          }
+        }
         if(not first)
         {
           ser.newline();
@@ -601,6 +609,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         static constexpr std::string_view key_token = detail::plain_key<member>();
         ser.write_raw(key_token);
         ser.write_member(value.[:member:]);
+      }
+      if(first)
+      {
+        ser.write_raw("{}");
       }
       return ser.out();
     }

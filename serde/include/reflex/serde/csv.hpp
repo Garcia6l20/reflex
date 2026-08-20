@@ -15,6 +15,7 @@
 #include <reflex/serde.hpp>
 #endif
 
+#include <reflex/const_check.hpp>
 #include <reflex/serde/detail/escape.hpp>
 #include <reflex/serde/detail/io.hpp>
 
@@ -141,11 +142,30 @@ REFLEX_EXPORT namespace reflex::serde::csv
     }
   }
 
+  template <typename Row> consteval void reject_omission()
+  {
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^Row, std::meta::access_context::current())))
+    {
+      REFLEX_META_CHECK(
+          not serde::omits_when_empty(member),
+          "CSV has a fixed column set, so a field cannot be omitted: dropping a cell would shift "
+          "every later column, and an empty optional already writes an empty cell. Put "
+          "serde::no_omit on this member",
+          ^^serde::omit_if_empty);
+    }
+  }
+
   // Writes one CRLF-terminated record: `write_cell<member>(ser)` emits each cell, this handles
   // the comma separator and the line ending.
   template <csv_row_c Row, typename Ser, typename WriteCell>
   void write_record(Ser& ser, WriteCell write_cell)
   {
+    consteval
+    {
+      reject_omission<Row>();
+    }
+
     bool first = true;
     template for(constexpr auto member : define_static_array(
                      nonstatic_data_members_of(^^Row, std::meta::access_context::current())))
