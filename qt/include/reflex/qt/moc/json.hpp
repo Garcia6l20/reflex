@@ -51,13 +51,13 @@ struct named_value
   std::string value;
 };
 
-struct meta_argument
+struct [[= serde::omit_if_empty{^^std::optional, ^^std::vector}]] meta_argument
 {
   std::optional<std::string> name;
   std::string                type;
 };
 
-struct method_meta
+struct [[= serde::omit_if_empty{^^std::optional, ^^std::vector}]] method_meta
 {
   std::string                access;
   std::vector<meta_argument> arguments;
@@ -69,7 +69,7 @@ struct method_meta
   std::string                returnType;
 };
 
-struct property_meta
+struct [[= serde::omit_if_empty{^^std::optional, ^^std::vector}]] property_meta
 {
   bool                                 constant   = false;
   bool                                 designable = true;
@@ -96,7 +96,7 @@ struct superclass_meta
   std::string name;
 };
 
-struct enums_meta
+struct [[= serde::omit_if_empty{^^std::optional, ^^std::vector}]] enums_meta
 {
   std::optional<std::string> alias;
   bool                       isClass    = false;
@@ -107,7 +107,7 @@ struct enums_meta
   std::vector<std::string>   values;
 };
 
-struct class_meta
+struct [[= serde::omit_if_empty{^^std::optional, ^^std::vector}]] class_meta
 {
   std::vector<named_value>   classInfos;
   std::string                className;
@@ -123,7 +123,7 @@ struct class_meta
   std::vector<superclass_meta>                            superClasses;
 };
 
-struct filemeta_data
+struct [[= serde::omit_if_empty{^^std::optional, ^^std::vector}]] filemeta_data
 {
   std::vector<class_meta> classes;
   std::string             inputFile;
@@ -132,21 +132,6 @@ struct filemeta_data
 
 namespace detail
 {
-constexpr bool omitted(auto const&)
-{
-  return false;
-}
-
-template <typename T> constexpr bool omitted(std::optional<T> const& value)
-{
-  return not value.has_value();
-}
-
-template <typename T> constexpr bool omitted(std::vector<T> const& value)
-{
-  return value.empty();
-}
-
 /** @brief whether @p E was written with an underlying type of its own
  *
  * moc echoes `: T` and writes nothing when the declaration carries none, and
@@ -370,39 +355,5 @@ template <typename T> auto describe() -> class_meta
   }
 
   return described;
-}
-
-/** @brief serializes a metatypes aggregate the way moc writes one
- *
- * An absent field is left out rather than written as `null` or `[]`: moc omits
- * it, and `qmltyperegistrar` reads presence, so a `notify` written as `null`
- * would name a signal that does not exist. serde's own aggregate serializer
- * writes every member, which is why this takes over for the schema types.
- */
-template <typename OutputIt, typename Agg>
-  requires(meta::is_class_type(^^Agg) and std::is_aggregate_v<Agg>
-           and meta::parent_of(^^Agg) == ^^reflex::qt::moc)
-auto tag_invoke(tag_t<serde::serialize>, serde::json::serializer<OutputIt>& ser, Agg const& value)
-    -> OutputIt
-{
-  ser.write_char('{');
-  bool first = true;
-  template for(constexpr auto member : std::define_static_array(
-                   meta::nonstatic_data_members_of(^^Agg, meta::access_context::current())))
-  {
-    auto const& field = value.[:member:];
-    if(not detail::omitted(field))
-    {
-      if(not first)
-      {
-        ser.write_char(',');
-      }
-      first = false;
-      ser.write_raw(serde::json::detail::quoted_key<member>());
-      serde::serialize(ser, field);
-    }
-  }
-  ser.write_char('}');
-  return ser.out();
 }
 } // namespace reflex::qt::moc
