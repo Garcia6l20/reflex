@@ -18,3 +18,4 @@ toolchain = find_c_toolchain(prefer=["gcc"])
 coverage = get_var("REFLEX_COVERAGE", False)
 build_testing = get_var("REFLEX_BUILD_TESTS", False) or coverage
 build_programs = get_var("REFLEX_BUILD_PROGRAMS", False)
+qt_allow_untested = get_var("REFLEX_QT_ALLOW_UNTESTED_QT", False)
