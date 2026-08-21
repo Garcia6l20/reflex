@@ -300,11 +300,34 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   //   unary     := '-' unary | primary
   //   primary   := literal | identifier | call | '(' expr ')'
   //
-  template <typename ContextT> struct parser
+  struct cursor
   {
     lexer lex;
     token current;
 
+    explicit cursor(std::string_view src) : lex{src}
+    {
+      advance();
+    }
+
+    void advance()
+    {
+      current = lex.next();
+    }
+
+    bool at(token_kind k) const noexcept
+    {
+      return current.kind == k;
+    }
+
+    auto advance_guard()
+    {
+      return reflex::scope_guard{[this] { advance(); }};
+    }
+  };
+
+  template <typename ContextT> struct parser : cursor
+  {
     using context_type = ContextT;
     using value_type   = typename ContextT::value_type;
     using array_type   = typename ContextT::array_type;
@@ -323,22 +346,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     const context_type* ctx{nullptr};
 
-    explicit parser(std::string_view src, const context_type* c = nullptr) : lex{src}, ctx{c}
-    {
-      advance();
-    }
+    explicit parser(std::string_view src, const context_type* c = nullptr) : cursor{src}, ctx{c}
+    {}
 
     // === helpers
-
-    void advance()
-    {
-      current = lex.next();
-    }
-
-    bool at(token_kind k) const noexcept
-    {
-      return current.kind == k;
-    }
 
     void push_call_arg(args_vector& args, value_type arg)
     {
@@ -731,17 +742,17 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       {
         case token_kind::integer:
         {
-          reflex::scope_guard _ = [this] { advance(); };
+          auto _ = advance_guard();
           return parse_literal<std::int64_t>(current.lexeme);
         }
         case token_kind::real:
         {
-          reflex::scope_guard _ = [this] { advance(); };
+          auto _ = advance_guard();
           return parse_literal<double>(current.lexeme);
         }
         case token_kind::boolean:
         {
-          reflex::scope_guard _ = [this] { advance(); };
+          auto _ = advance_guard();
           return parse_literal<bool>(current.lexeme);
         }
         case token_kind::null_:
@@ -751,7 +762,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         }
         case token_kind::string:
         {
-          reflex::scope_guard _ = [this] { advance(); };
+          auto _ = advance_guard();
           return parse_string(current.lexeme);
         }
         case token_kind::identifier:
