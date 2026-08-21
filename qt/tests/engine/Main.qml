@@ -14,5 +14,18 @@ QtObject {
         onPinged: value => root.heard = value
     }
 
-    Component.onCompleted: probe.ping()
+    property int held: 0
+
+    property IntHolder holder: IntHolder {
+        id: holder
+
+        value: 20
+
+        onDoubled: value => root.held = value
+    }
+
+    Component.onCompleted: {
+        probe.ping()
+        holder.twice()
+    }
 }
