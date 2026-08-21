@@ -414,6 +414,70 @@ const QVariant boxed = QVariant::fromValue(p);
 
 ---
 
+## Class templates
+
+A class template is a `reflex.qt` class like any other. moc parses source text and never
+sees an instantiation, so `Q_OBJECT` inside a template does not link and the standing
+workaround is a non-template base holding the signals. `staticMetaObject` here is built by
+reflecting over the instantiated type, so the template carries its own signals, slots,
+invocables and properties.
+
+```cpp
+template <typename T> struct stack : qt::object<stack<T>>
+{
+  using base = qt::object<stack<T>>;
+  template <typename... Args> using signal = typename base::template signal<Args...>;
+
+  signal<T> pushed{this};
+
+  [[= qt::slot]] void push(T v)
+  {
+    items.push_back(v);
+    this->template setProperty<"depth">(int(items.size()));
+    pushed(v);
+  }
+
+  [[= qt::prop{}]] int depth = 0;
+
+  std::vector<T> items;
+};
+```
+
+```cpp
+stack<int> s;
+QObject::connect(&s, &stack<int>::pushed, [](int v) { /* ... */ });
+QObject::connect(&s, &stack<int>::propertyChanged<"depth">, [] { /* ... */ });
+
+QMetaObject::invokeMethod(&s, "push", Q_ARG(int, 7));
+s.metaObject()->className();  // "stack<int>"
+```
+
+Each instantiation gets its own `QMetaObject`, named the way the type is spelled, so
+`stack<int>` and `stack<QString>` are unrelated to `qobject_cast` and to
+`QMetaObject::inherits`. Non-type parameters read the same, `fixed<double, 4>`. Gadgets
+work too, and `QMetaType::fromType<fixed<double, 4>>().name()` is `fixed<double,4>`.
+
+Two spellings the language forces, neither of them specific to reflex: the base is
+dependent, so `signal` needs the `using` line above or `typename base::template signal<T>`
+at each declaration, and `setProperty` needs `this->template`.
+
+QML needs a name it can spell, and an annotation on a template would apply to every
+instantiation, so `qt::qml` goes on a plain class deriving one:
+
+```cpp
+class [[= qt::qml{.name = "IntStack"}]] int_stack : public qt::object<int_stack, stack<int>>
+{
+public:
+  using qt::object<int_stack, stack<int>>::object;
+};
+```
+
+The engine builds it, and the properties and signals declared in `stack<int>` bind from QML
+the way its own do. `REFLEX_QT_MODULE` walks the types of a namespace and a class template
+is not a type, so nothing else in the module document changes.
+
+---
+
 ## Enums and flags
 
 Every nested enumeration is published, and so is every member alias of a `QFlags`

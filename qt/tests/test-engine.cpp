@@ -70,3 +70,24 @@ TEST_CASE("a private signal binds its QML handler")
 
   CHECK(engine.rootObjects().constFirst()->property("heard").toInt() == 42);
 }
+
+TEST_CASE("the engine drives a class template through a named subclass")
+{
+  application();
+
+  QQmlApplicationEngine engine;
+  const auto            errors = load_errors(engine);
+  INFO("QQmlComponent::errors(): " << errors);
+  CHECK(errors.empty());
+
+  engine.loadFromModule("Reflex.EngineTest", "Main");
+  REQUIRE_FALSE(engine.rootObjects().isEmpty());
+
+  auto* const root = engine.rootObjects().constFirst();
+  CHECK(root->property("held").toInt() == 40);
+
+  auto* const holder = root->property("holder").value<QObject*>();
+  REQUIRE(holder != nullptr);
+  CHECK(std::string{holder->metaObject()->superClass()->className()} == "engine_test::holder<int>");
+  CHECK(holder->property("value").toInt() == 20);
+}

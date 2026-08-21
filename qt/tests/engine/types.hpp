@@ -35,4 +35,36 @@ public:
 private:
   signal<int> pinged{this};
 };
+
+/** @brief a class template, published to QML through @ref int_holder
+ *
+ * moc cannot parse an instantiation, so a `Q_OBJECT` template is a link error.
+ * The metaobject here comes from reflection over `holder<T>` itself.
+ */
+template <typename T> class holder : public qt::object<holder<T>>
+{
+  using base = qt::object<holder<T>>;
+
+public:
+  template <typename... Args> using signal = typename base::template signal<Args...>;
+
+  using base::base;
+
+  [[= qt::prop{}]] T value{};
+
+  /** @brief Emits @ref doubled with @ref value twice over. */
+  [[= qt::invocable]] void twice()
+  {
+    doubled(value + value);
+  }
+
+  signal<T> doubled{this};
+};
+
+/** @brief `holder<int>` under a name QML can spell */
+class [[= qt::qml{.name = "IntHolder"}]] int_holder : public qt::object<int_holder, holder<int>>
+{
+public:
+  using qt::object<int_holder, holder<int>>::object;
+};
 } // namespace engine_test

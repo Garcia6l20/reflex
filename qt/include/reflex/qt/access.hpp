@@ -73,7 +73,7 @@ template <typename Super> struct access
    */
   static consteval bool require_reachable(meta::info M)
   {
-    const std::string owner{identifier_of(meta::parent_of(M))};
+    const std::string owner{display_string_of(meta::parent_of(M))};
     REFLEX_META_CHECK(reachable(M),
                       "reflex.qt cannot reach " + owner + "::" + meta::spelling_of(M)
                           + ": add 'friend reflex::qt::access<" + owner + ">;' to " + owner,
