@@ -15,6 +15,6 @@ build_dir = Path(os.environ.get("PCONS_BUILD_DIR", project_dir / "build"))
 config = Configure(build_dir=build_dir)
 toolchain = find_c_toolchain(prefer=["gcc"])
 
-build_testing = get_var("REFLEX_BUILD_TESTS", False)
+coverage = get_var("REFLEX_COVERAGE", False)
+build_testing = get_var("REFLEX_BUILD_TESTS", False) or coverage
 build_programs = get_var("REFLEX_BUILD_PROGRAMS", False)
-
