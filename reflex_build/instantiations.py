@@ -7,8 +7,10 @@ instantiation and a consteval function leave no symbol, so read the numbers off
 a -O0 build.
 """
 
+import hashlib
 import json
 import re
+import struct
 import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
@@ -32,6 +34,8 @@ class Row:
 
     count: int
     size: int
+    distinct: int = 0
+    waste: int = 0
 
 
 def strip_arguments(name: str) -> str:
@@ -90,6 +94,122 @@ def object_files(paths: list[Path]) -> list[Path]:
     return found
 
 
+RELOCATION_WIDTH = {1: 8, 2: 4, 4: 4, 9: 4, 11: 4, 41: 4, 42: 4, 43: 4}
+
+
+def demangle(names: list[str]) -> dict[str, str]:
+    """Map every mangled name in @p names to its demangled spelling, in one pass."""
+    if not names:
+        return {}
+    result = subprocess.run(
+        ["c++filt"],
+        input="\n".join(names),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return dict(zip(names, result.stdout.splitlines()))
+
+
+def read_object(path: Path) -> dict[str, tuple]:
+    """Map each function symbol of @p path to a comparable form of its code.
+
+    The bytes a relocation patches are masked out and replaced by the relocation
+    target, so two instantiations that differ only in which specialization they
+    call still compare as the same shape. objdump answers the same question, but
+    it walks the symbol table once per section, which takes minutes on an object
+    holding tens of thousands of COMDAT sections.
+    """
+    data = path.read_bytes()
+    if data[:4] != b"\x7fELF" or data[4] != 2:
+        return {}
+
+    (shoff,) = struct.unpack_from("<Q", data, 0x28)
+    shentsize, shnum, _shstrndx = struct.unpack_from("<HHH", data, 0x3A)
+    headers = []
+    for i in range(shnum):
+        base = shoff + i * shentsize
+        name, kind, _flags, _addr, offset, size, link, info, _align, entsize = (
+            struct.unpack_from("<IIQQQQIIQQ", data, base)
+        )
+        headers.append((name, kind, offset, size, link, info, entsize))
+
+    def name_at(table: int, offset: int) -> str:
+        end = data.index(b"\0", table + offset)
+        return data[table + offset : end].decode("utf-8", "replace")
+
+    symtab = next((h for h in headers if h[1] == 2), None)
+    if symtab is None:
+        return {}
+    strtab = headers[symtab[4]][2]
+
+    symbols = []
+    for base in range(symtab[2], symtab[2] + symtab[3], symtab[6]):
+        name, info, _other, shndx, value, size = struct.unpack_from(
+            "<IBBHQQ", data, base
+        )
+        symbols.append((name_at(strtab, name), info & 0xF, shndx, value, size))
+
+    relocations: dict[int, list] = defaultdict(list)
+    for header in headers:
+        if header[1] != 4:
+            continue
+        for base in range(header[2], header[2] + header[3], header[6]):
+            offset, info, addend = struct.unpack_from("<QQq", data, base)
+            relocations[header[5]].append(
+                (offset, info >> 32, info & 0xFFFFFFFF, addend)
+            )
+
+    bodies: dict[str, tuple] = {}
+    for name, kind, shndx, value, size in symbols:
+        if kind != 2 or not size or shndx == 0 or shndx >= len(headers):
+            continue
+        section = headers[shndx]
+        if section[1] != 1:
+            continue
+        code = bytearray(data[section[2] + value : section[2] + value + size])
+        patched = []
+        for offset, sym, reloc, addend in relocations.get(shndx, ()):
+            if not value <= offset < value + size:
+                continue
+            local = offset - value
+            width = RELOCATION_WIDTH.get(reloc, 4)
+            code[local : local + width] = b"\0" * min(width, len(code) - local)
+            target = symbols[sym][0] if sym < len(symbols) else ""
+            patched.append((local, reloc, target, addend))
+        bodies[name] = (bytes(code), tuple(patched))
+    return bodies
+
+
+def read_bodies(files: list[Path]) -> dict[str, str]:
+    """Map each demangled symbol to a digest of its code.
+
+    A relocation target is folded to the signature of what it names, so an
+    instantiation calling its own specialization of a helper matches one calling
+    another specialization of the same helper.
+    """
+    raw: dict[str, tuple] = {}
+    for path in files:
+        for name, body in read_object(path).items():
+            raw.setdefault(name, body)
+
+    targets = {target for _, patched in raw.values() for _, _, target, _ in patched}
+    spelling = demangle(sorted(set(raw) | targets))
+    folded = {
+        target: strip_arguments(spelling.get(target, target)) for target in targets
+    }
+
+    bodies: dict[str, str] = {}
+    for name, (code, patched) in raw.items():
+        shape = hashlib.blake2b(code, digest_size=16)
+        for local, reloc, target, addend in patched:
+            shape.update(
+                f"|{local}:{reloc}:{addend}:{folded.get(target, target)}".encode()
+            )
+        bodies[spelling.get(name, name)] = shape.hexdigest()
+    return bodies
+
+
 def read_symbols(files: list[Path], all_types: bool) -> dict[str, int]:
     """Map each distinct demangled symbol to its size, deduplicated across objects."""
     sizes: dict[str, int] = {}
@@ -120,14 +240,31 @@ def read_symbols(files: list[Path], all_types: bool) -> dict[str, int]:
     return sizes
 
 
-def collect(files: list[Path], *, all_symbols: bool, by_class: bool) -> dict[str, Row]:
+def collect(
+    files: list[Path], *, all_symbols: bool, by_class: bool, bodies: bool = False
+) -> dict[str, Row]:
     """Group the symbols of @p files by signature, one row per template."""
+    sizes = read_symbols(files, all_symbols)
     rows: dict[str, Row] = defaultdict(lambda: Row(0, 0))
-    for name, size in read_symbols(files, all_symbols).items():
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for name, size in sizes.items():
         signature = strip_arguments(name)
         key = class_of(signature) if by_class else signature
         rows[key].count += 1
         rows[key].size += size
+        grouped[key].append(name)
+
+    if bodies:
+        code = read_bodies(files)
+        for key, names in grouped.items():
+            seen: dict[str, int] = {}
+            for name in names:
+                body = code.get(name)
+                if body is None:
+                    continue
+                seen.setdefault(body, sizes[name])
+            rows[key].distinct = len(seen)
+            rows[key].waste = rows[key].size - sum(seen.values())
     return dict(rows)
 
 
@@ -143,8 +280,33 @@ def dump(rows: dict[str, Row]) -> str:
     )
 
 
-def report(rows: dict[str, Row], top: int, floor: int, by_size: bool) -> None:
+def percent(part: int, whole: int) -> float:
+    return 100.0 * part / whole if whole else 0.0
+
+
+def report(
+    rows: dict[str, Row], top: int, floor: int, by_size: bool, bodies: bool = False
+) -> None:
     selected = [(key, row) for key, row in rows.items() if row.count >= floor]
+    if bodies:
+        shared = [item for item in selected if item[1].distinct and item[1].waste > 0]
+        shared.sort(key=lambda item: item[1].waste, reverse=True)
+        print(
+            f"{'count':>7} {'shapes':>7} {'bytes':>10} {'waste':>10} {'waste%':>7}"
+            "  signature"
+        )
+        for key, row in shared[:top]:
+            print(
+                f"{row.count:>7} {row.distinct:>7} {row.size:>10} {row.waste:>10} "
+                f"{percent(row.waste, row.size):>6.1f}%  {key}"
+            )
+        waste = sum(row.waste for _, row in shared)
+        size = sum(row.size for _, row in shared)
+        print(
+            f"\n{waste} bytes in duplicate bodies over {len(shared)} signatures, "
+            f"{percent(waste, size):.1f}% of the {size} they occupy"
+        )
+        return
     selected.sort(
         key=lambda item: item[1].size if by_size else item[1].count, reverse=True
     )
@@ -225,6 +387,12 @@ def register() -> None:
         type=click.Path(exists=True, path_type=Path),
         help="Diff against counts saved earlier.",
     )
+    @click.option(
+        "--bodies",
+        is_flag=True,
+        help="Compare the emitted code and rank the templates whose body does not "
+        "depend on its type.",
+    )
     @click.option("--json", "as_json", is_flag=True, help="Print the counts as JSON.")
     @click.argument("paths", nargs=-1, type=click.Path(exists=True, path_type=Path))
     def instantiations(
@@ -236,6 +404,7 @@ def register() -> None:
         all_symbols: bool,
         save: Path | None,
         baseline: Path | None,
+        bodies: bool,
         as_json: bool,
         paths: tuple[Path, ...],
     ) -> None:
@@ -248,7 +417,9 @@ def register() -> None:
         if not files:
             raise click.ClickException("No object files found.")
 
-        rows = collect(files, all_symbols=all_symbols, by_class=group == "class")
+        rows = collect(
+            files, all_symbols=all_symbols, by_class=group == "class", bodies=bodies
+        )
         if pattern:
             keep = re.compile(pattern)
             rows = {key: row for key, row in rows.items() if keep.search(key)}
@@ -262,4 +433,4 @@ def register() -> None:
         elif baseline:
             report_delta(rows, load_baseline(baseline), limit, sort == "size")
         else:
-            report(rows, limit, floor, sort == "size")
+            report(rows, limit, floor, sort == "size", bodies)
