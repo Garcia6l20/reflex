@@ -74,35 +74,140 @@ REFLEX_EXPORT namespace reflex::jinja::expr
           v);
     }
 
+    static const value_type& resolve(const value_type& v)
+    {
+      const value_type* p = &v;
+      if constexpr(value_type::template can_hold<value_type&>())
+      {
+        while(auto inner = p->template get<value_type&>())
+        {
+          p = &*inner;
+        }
+      }
+      return *p;
+    }
+
+    template <typename T> static const T* alternative_of(const value_type& v)
+    {
+      if constexpr(value_type::template can_hold<T>())
+      {
+        if(auto held = v.template get<T>())
+        {
+          return &*held;
+        }
+      }
+      if constexpr(value_type::template can_hold<T&>())
+      {
+        if(auto held = v.template get<T&>())
+        {
+          return &*held;
+        }
+      }
+      return nullptr;
+    }
+
+    static std::optional<double> number_of(const value_type& v)
+    {
+      if constexpr(integral_type_info != meta::null)
+      {
+        if(auto* i = alternative_of<integral_type>(v))
+        {
+          return static_cast<double>(*i);
+        }
+      }
+      if(auto* d = alternative_of<double>(v))
+      {
+        return *d;
+      }
+      if(auto* b = alternative_of<bool>(v))
+      {
+        return static_cast<double>(*b);
+      }
+      return std::nullopt;
+    }
+
+    static const std::string* string_of(const value_type& v)
+    {
+      return alternative_of<std::string>(v);
+    }
+
+    template <typename T> static bool parses_to(std::string_view text, const T& value)
+    {
+      auto parsed = parse<T>(text);
+      return parsed and (std::move(parsed).value() == value);
+    }
+
+    static bool equal_text(std::string_view lhs, const value_type& b)
+    {
+      if(auto* rhs = string_of(b))
+      {
+        return lhs == *rhs;
+      }
+      if(auto* rhs = alternative_of<bool>(b))
+      {
+        return parses_to(lhs, *rhs);
+      }
+      if constexpr(integral_type_info != meta::null)
+      {
+        if(auto* rhs = alternative_of<integral_type>(b))
+        {
+          return parses_to(lhs, *rhs);
+        }
+      }
+      if(auto* rhs = alternative_of<double>(b))
+      {
+        return parses_to(lhs, *rhs);
+      }
+      return false;
+    }
+
     static bool equal(const value_type& a, const value_type& b)
     {
+      const value_type& rb = resolve(b);
       return reflex::visit(
-          [&]<typename LHS, typename RHS>(LHS const& lhs, RHS const& rhs) -> bool {
+          [&]<typename LHS>(LHS const& lhs) -> bool {
             using DLHS = std::decay_t<LHS>;
-            using DRHS = std::decay_t<RHS>;
-            if constexpr(eq_comparable_c<DLHS, DRHS>)
+            if(auto* rhs = alternative_of<DLHS>(rb))
             {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdouble-promotion"
-              return lhs == rhs;
-#pragma GCC diagnostic pop
+              if constexpr(eq_comparable_c<DLHS, DLHS>)
+              {
+                return lhs == *rhs;
+              }
+              else
+              {
+                return false;
+              }
             }
-            else if constexpr(parsable_c<DLHS> and str_c<DRHS>)
+            if constexpr(std::is_arithmetic_v<DLHS>)
             {
-              auto parsed = parse<DLHS>(rhs);
-              return parsed and (std::move(parsed).value() == lhs);
+              if(auto rhs = number_of(rb))
+              {
+                return static_cast<double>(lhs) == *rhs;
+              }
+              if(auto* rhs = string_of(rb))
+              {
+                return parses_to(*rhs, lhs);
+              }
+              return false;
             }
-            else if constexpr(str_c<DLHS> and parsable_c<DRHS>)
+            else if constexpr(str_c<DLHS>)
             {
-              auto parsed = parse<DRHS>(lhs);
-              return parsed and (rhs == std::move(parsed).value());
+              return equal_text(lhs, rb);
+            }
+            else if constexpr(parsable_c<DLHS>)
+            {
+              if(auto* rhs = string_of(rb))
+              {
+                return parses_to(*rhs, lhs);
+              }
+              return false;
             }
             else
             {
               return false;
             }
           },
-          a, b);
+          a);
     }
 
     // Returns negative / zero / positive like strcmp. Numeric only: an ordering over anything else
