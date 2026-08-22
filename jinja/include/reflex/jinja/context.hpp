@@ -349,18 +349,26 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     template <typename T> std::optional<T&> get(std::string_view name) const
     {
-      std::optional<T&> result;
-      visit(name, [&result]<typename U>(U&& v) {
-        if constexpr(requires { result = v; })
-        {
-          result = v;
-        }
-        else
-        {
-          result = std::nullopt;
-        }
-      });
-      return result;
+      if constexpr(value_type::template can_hold<T&>())
+      {
+        value_type held = operator[](name);
+        return held.template get<T&>();
+      }
+      else
+      {
+        std::optional<T&> result;
+        visit(name, [&result]<typename U>(U&& v) {
+          if constexpr(requires { result = v; })
+          {
+            result = v;
+          }
+          else
+          {
+            result = std::nullopt;
+          }
+        });
+        return result;
+      }
     }
 
     // value_type& operator[](std::string_view name) noexcept
