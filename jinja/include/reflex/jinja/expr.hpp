@@ -466,30 +466,60 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       return left;
     }
 
-    value_type parse_or()
+    value_type parse_left_assoc(value_type (parser::*next)(),
+                                std::span<const token_kind> operators,
+                                value_type (*apply)(token_kind, const value_type&,
+                                                    const value_type&))
     {
-      auto left = parse_and();
-      while(at(token_kind::or_))
+      auto left = (this->*next)();
+      while(std::ranges::contains(operators, current.kind))
       {
+        const auto op = current.kind;
         advance();
-        auto right = parse_and();
-        left =
-            {std::get<bool>(ops::coerce_bool(left)) or std::get<bool>(ops::coerce_bool(right))};
+        auto right = (this->*next)();
+        left       = apply(op, left, right);
       }
       return left;
     }
 
+    static value_type apply_or(token_kind, const value_type& left, const value_type& right)
+    {
+      return {std::get<bool>(ops::coerce_bool(left)) or std::get<bool>(ops::coerce_bool(right))};
+    }
+
+    static value_type apply_and(token_kind, const value_type& left, const value_type& right)
+    {
+      return {std::get<bool>(ops::coerce_bool(left)) and std::get<bool>(ops::coerce_bool(right))};
+    }
+
+    static value_type apply_add(token_kind op, const value_type& left, const value_type& right)
+    {
+      return op == token_kind::plus ? ops::arith_add(left, right) : ops::arith_sub(left, right);
+    }
+
+    static value_type apply_mul(token_kind op, const value_type& left, const value_type& right)
+    {
+      switch(op)
+      {
+        case token_kind::star:
+          return ops::arith_mul(left, right);
+        case token_kind::slash:
+          return ops::arith_div(left, right);
+        default:
+          return ops::arith_mod(left, right);
+      }
+    }
+
+    value_type parse_or()
+    {
+      static constexpr token_kind operators[]{token_kind::or_};
+      return parse_left_assoc(&parser::parse_and, operators, &parser::apply_or);
+    }
+
     value_type parse_and()
     {
-      auto left = parse_not();
-      while(at(token_kind::and_))
-      {
-        advance();
-        auto right = parse_not();
-        left =
-            {std::get<bool>(ops::coerce_bool(left)) and std::get<bool>(ops::coerce_bool(right))};
-      }
-      return left;
+      static constexpr token_kind operators[]{token_kind::and_};
+      return parse_left_assoc(&parser::parse_not, operators, &parser::apply_and);
     }
 
     value_type parse_not()
@@ -545,41 +575,15 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     value_type parse_add()
     {
-      auto left = parse_mul();
-      while(at(token_kind::plus) or at(token_kind::minus))
-      {
-        bool is_add = at(token_kind::plus);
-        advance();
-        auto right = parse_mul();
-        left       = is_add ? ops::arith_add(left, right) : ops::arith_sub(left, right);
-      }
-      return left;
+      static constexpr token_kind operators[]{token_kind::plus, token_kind::minus};
+      return parse_left_assoc(&parser::parse_mul, operators, &parser::apply_add);
     }
 
     value_type parse_mul()
     {
-      auto left = parse_unary();
-      while(at(token_kind::star) or at(token_kind::slash) or at(token_kind::percent))
-      {
-        auto op = current.kind;
-        advance();
-        auto right = parse_unary();
-        switch(op)
-        {
-          case token_kind::star:
-            left = ops::arith_mul(left, right);
-            break;
-          case token_kind::slash:
-            left = ops::arith_div(left, right);
-            break;
-          case token_kind::percent:
-            left = ops::arith_mod(left, right);
-            break;
-          default:
-            break;
-        }
-      }
-      return left;
+      static constexpr token_kind operators[]{
+          token_kind::star, token_kind::slash, token_kind::percent};
+      return parse_left_assoc(&parser::parse_unary, operators, &parser::apply_mul);
     }
 
     value_type parse_unary()
