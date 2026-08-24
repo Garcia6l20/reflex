@@ -1249,7 +1249,11 @@ REFLEX_EXPORT namespace reflex::cli
               do
               {
                 // consume all remaining arguments
-                auto view             = std::string_view(*it);
+                auto view = std::string_view(*it);
+                if(view.empty())
+                {
+                  continue;
+                }
                 trackers.current.view = view;
                 auto parsed           = reflex::parse_strict<typename T::value_type>(view);
                 if(not parsed)
