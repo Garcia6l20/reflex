@@ -2,12 +2,16 @@ import platform
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+import pcons
 from pcons import PathToken, context
 from pcons.toolchains.qt import find_qt
 
 from reflex_build.config import build_dir
 
 _patched = set()
+
+PCONS_TESTED = (0, 28)
+_scan_warned = False
 
 
 def use_qt(project, env, modules, *, required=False):
@@ -72,7 +76,10 @@ def add_metatypes(name, sources, *, env=None, link=(), include_roots=()):
     flags = [
         token
         for root in roots
-        for token in ("-I", str(root if root.is_absolute() else project.current_dir / root))
+        for token in (
+            "-I",
+            str(root if root.is_absolute() else project.current_dir / root),
+        )
     ]
 
     run = "" if platform.system() == "Windows" else "./"
@@ -106,6 +113,44 @@ def _set_node_vars(node, node_vars):
     info = getattr(node, "_build_info", None)
     if info is not None:
         info["vars"] = node_vars
+
+
+def _pcons_version():
+    """The major and minor of the running pcons, or PCONS_TESTED when unreadable.
+
+    A pre-release or local segment is not an integer, and a version this cannot
+    read is not a reason to fail a configure.
+    """
+    parts = pcons.__version__.split(".")[:2]
+    try:
+        return tuple(int(part) for part in parts)
+    except ValueError:
+        return PCONS_TESTED
+
+
+def generated_env(env):
+    """A clone of @p env that takes no part in the C++ module scan.
+
+    pcons scans every C++ source of an environment that has a module
+    interface in it, and the scan is one build edge feeding one dyndep file.
+    A generated source in that set makes the dyndep depend on whatever
+    produces it, and the qmltyperegistrar output is produced by running a
+    program built from scanned sources, which closes a cycle ninja refuses to
+    build. The clone qualifies for nothing, so its objects compile outside the
+    scan, since it holds no module interface of its own. Nothing generated
+    here imports a module.
+    """
+    global _scan_warned
+
+    if not _scan_warned and _pcons_version() > PCONS_TESTED:
+        _scan_warned = True
+        tested = ".".join(str(part) for part in PCONS_TESTED)
+        print(
+            f"-- reflex.qt: the QML module clones its environment to dodge a dyndep"
+            f" cycle in pcons {tested}; pcons {pcons.__version__} is newer, check"
+            " whether the clone is still needed"
+        )
+    return env.clone()
 
 
 def qml_module(name, env, *, uri, qml_files, metatypes, link=(), version="1.0"):
@@ -143,7 +188,7 @@ def qml_module(name, env, *, uri, qml_files, metatypes, link=(), version="1.0"):
     qt_dir = Path(env.get("build_dir", "build")) / f"qt.{name}"
     qmltypes_name = f"{name}.qmltypes"
 
-    target = project.ObjectLibrary(name, env, sources=[])
+    target = project.ObjectLibrary(name, generated_env(env), sources=[])
     if link:
         target.link(*link)
 
