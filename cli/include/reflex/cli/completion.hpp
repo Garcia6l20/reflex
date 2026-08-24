@@ -260,14 +260,19 @@ REFLEX_EXPORT namespace reflex::cli::detail
           {
             bool completed = false;
 
-            trackers.args_track.last_used([&]<auto arg> {
+            auto complete_argument = [&]<auto arg> {
               using completer = arg_completer<arg, config>;
               if constexpr(completer::has_comp)
               {
                 completions.append_range(completer::complete(cmd, view, terminated));
                 completed = true;
               }
-            });
+            };
+            trackers.args_track.last_used(complete_argument);
+            if(not completed)
+            {
+              trackers.args_track.first_unused(complete_argument);
+            }
 
             if(completed and not view.empty())
             {

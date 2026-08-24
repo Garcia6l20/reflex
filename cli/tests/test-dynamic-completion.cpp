@@ -179,3 +179,45 @@ TEST_CASE("reflex::cli:dynamic completion")
     CHECK(std::ranges::contains(v, "*.zip"sv));
   }
 }
+
+auto optional_argument_completer(std::string_view current)
+{
+  constexpr std::array names{"alpha"sv, "beta"sv, "gamma"sv};
+  return names | std::views::filter([current](auto name) { return name.starts_with(current); })
+       | std::views::transform([](auto name) {
+           return cli::completion<>{.value = std::string(name), .description = "name"};
+         })
+       | std::ranges::to<std::vector>();
+}
+
+struct[[= cli::command{"Command with an optional argument."}]] optional_argument_cli
+{
+  [[= cli::option{"-l/--list", "List names."}.flag()]] bool list = false;
+
+  [[= cli::argument{"Name."}, = cli::complete{^^optional_argument_completer}]]
+  std::optional<std::string> name;
+
+  int operator()() const { return 0; }
+};
+
+TEST_CASE("reflex::cli:completion of an unconsumed optional argument")
+{
+  SUBCASE("empty word")
+  {
+    auto v = completion_values(complete<optional_argument_cli>("optional_argument_cli ", 2))
+           | std::views::transform(&cli::completion<>::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "alpha"sv));
+    CHECK(std::ranges::contains(v, "beta"sv));
+    CHECK(std::ranges::contains(v, "gamma"sv));
+    CHECK(std::ranges::contains(v, "--list"sv));
+  }
+  SUBCASE("partial word")
+  {
+    auto v = completion_values(complete<optional_argument_cli>("optional_argument_cli b", 2))
+           | std::views::transform(&cli::completion<>::value)
+           | std::ranges::to<std::vector>();
+    CHECK(std::ranges::contains(v, "beta"sv));
+    CHECK(not std::ranges::contains(v, "alpha"sv));
+  }
+}
