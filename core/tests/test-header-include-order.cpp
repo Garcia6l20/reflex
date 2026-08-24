@@ -20,7 +20,7 @@ using namespace reflex;
 
 namespace
 {
-  enum class colour
+  enum class [[= derive(Parse)]] colour
   {
     red,
     green,
@@ -51,6 +51,9 @@ TEST_CASE("reflex: hash.hpp and parse.hpp coexist in one translation unit")
   }
   SUBCASE("enum parsing still dispatches")
   {
-    CHECK_EQ(meta::enum_to_string(colour::blue), "blue");
+    const auto c = parse<colour>("blue");
+    REQUIRE(c.has_value());
+    CHECK(c.value() == colour::blue);
+    CHECK_EQ(enum_value_name(colour::green), "green");
   }
 }

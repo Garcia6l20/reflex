@@ -591,36 +591,6 @@ REFLEX_EXPORT namespace reflex::meta
     return ^^typename wrapper_type::template method_type<class_type>;
   }
 
-  template <typename E>
-    requires std::is_enum_v<E>
-  constexpr std::string enum_to_string(E value)
-  {
-    std::string result = "<unnamed>";
-    template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
-    {
-      if(value == [:e:])
-      {
-        result = std::string(identifier_of(e));
-      }
-    }
-    return result;
-  }
-
-  template <typename E>
-    requires std::is_enum_v<E>
-  constexpr std::optional<E> string_to_enum(std::string_view name)
-  {
-    std::optional<E> result = std::nullopt;
-    template for(constexpr auto e : define_static_array(enumerators_of(^^E)))
-    {
-      if(name == identifier_of(e))
-      {
-        result = [:e:];
-      }
-    }
-    return result;
-  }
-
   consteval bool is_alias_type(std::meta::info R)
   {
     return is_type(R) and (dealias(R) != R);
