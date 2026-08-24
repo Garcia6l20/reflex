@@ -158,3 +158,9 @@ primary build system, pcons, always builds the modules.
 
 ---
 
+
+## Contributing
+
+Building from the primary build system, running the tests, the coverage and
+instantiation reports, and the conventions a patch follows are in
+[CONTRIBUTING.md](CONTRIBUTING.md).

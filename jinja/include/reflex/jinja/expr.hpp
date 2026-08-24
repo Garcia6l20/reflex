@@ -300,11 +300,34 @@ REFLEX_EXPORT namespace reflex::jinja::expr
   //   unary     := '-' unary | primary
   //   primary   := literal | identifier | call | '(' expr ')'
   //
-  template <typename ContextT> struct parser
+  struct cursor
   {
     lexer lex;
     token current;
 
+    explicit cursor(std::string_view src) : lex{src}
+    {
+      advance();
+    }
+
+    void advance()
+    {
+      current = lex.next();
+    }
+
+    bool at(token_kind k) const noexcept
+    {
+      return current.kind == k;
+    }
+
+    auto advance_guard()
+    {
+      return reflex::scope_guard{[this] { advance(); }};
+    }
+  };
+
+  template <typename ContextT> struct parser : cursor
+  {
     using context_type = ContextT;
     using value_type   = typename ContextT::value_type;
     using array_type   = typename ContextT::array_type;
@@ -323,22 +346,10 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     const context_type* ctx{nullptr};
 
-    explicit parser(std::string_view src, const context_type* c = nullptr) : lex{src}, ctx{c}
-    {
-      advance();
-    }
+    explicit parser(std::string_view src, const context_type* c = nullptr) : cursor{src}, ctx{c}
+    {}
 
     // === helpers
-
-    void advance()
-    {
-      current = lex.next();
-    }
-
-    bool at(token_kind k) const noexcept
-    {
-      return current.kind == k;
-    }
 
     void push_call_arg(args_vector& args, value_type arg)
     {
@@ -455,30 +466,60 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       return left;
     }
 
-    value_type parse_or()
+    value_type parse_left_assoc(value_type (parser::*next)(),
+                                std::span<const token_kind> operators,
+                                value_type (*apply)(token_kind, const value_type&,
+                                                    const value_type&))
     {
-      auto left = parse_and();
-      while(at(token_kind::or_))
+      auto left = (this->*next)();
+      while(std::ranges::contains(operators, current.kind))
       {
+        const auto op = current.kind;
         advance();
-        auto right = parse_and();
-        left =
-            {std::get<bool>(ops::coerce_bool(left)) or std::get<bool>(ops::coerce_bool(right))};
+        auto right = (this->*next)();
+        left       = apply(op, left, right);
       }
       return left;
     }
 
+    static value_type apply_or(token_kind, const value_type& left, const value_type& right)
+    {
+      return {std::get<bool>(ops::coerce_bool(left)) or std::get<bool>(ops::coerce_bool(right))};
+    }
+
+    static value_type apply_and(token_kind, const value_type& left, const value_type& right)
+    {
+      return {std::get<bool>(ops::coerce_bool(left)) and std::get<bool>(ops::coerce_bool(right))};
+    }
+
+    static value_type apply_add(token_kind op, const value_type& left, const value_type& right)
+    {
+      return op == token_kind::plus ? ops::arith_add(left, right) : ops::arith_sub(left, right);
+    }
+
+    static value_type apply_mul(token_kind op, const value_type& left, const value_type& right)
+    {
+      switch(op)
+      {
+        case token_kind::star:
+          return ops::arith_mul(left, right);
+        case token_kind::slash:
+          return ops::arith_div(left, right);
+        default:
+          return ops::arith_mod(left, right);
+      }
+    }
+
+    value_type parse_or()
+    {
+      static constexpr token_kind operators[]{token_kind::or_};
+      return parse_left_assoc(&parser::parse_and, operators, &parser::apply_or);
+    }
+
     value_type parse_and()
     {
-      auto left = parse_not();
-      while(at(token_kind::and_))
-      {
-        advance();
-        auto right = parse_not();
-        left =
-            {std::get<bool>(ops::coerce_bool(left)) and std::get<bool>(ops::coerce_bool(right))};
-      }
-      return left;
+      static constexpr token_kind operators[]{token_kind::and_};
+      return parse_left_assoc(&parser::parse_not, operators, &parser::apply_and);
     }
 
     value_type parse_not()
@@ -534,41 +575,15 @@ REFLEX_EXPORT namespace reflex::jinja::expr
 
     value_type parse_add()
     {
-      auto left = parse_mul();
-      while(at(token_kind::plus) or at(token_kind::minus))
-      {
-        bool is_add = at(token_kind::plus);
-        advance();
-        auto right = parse_mul();
-        left       = is_add ? ops::arith_add(left, right) : ops::arith_sub(left, right);
-      }
-      return left;
+      static constexpr token_kind operators[]{token_kind::plus, token_kind::minus};
+      return parse_left_assoc(&parser::parse_mul, operators, &parser::apply_add);
     }
 
     value_type parse_mul()
     {
-      auto left = parse_unary();
-      while(at(token_kind::star) or at(token_kind::slash) or at(token_kind::percent))
-      {
-        auto op = current.kind;
-        advance();
-        auto right = parse_unary();
-        switch(op)
-        {
-          case token_kind::star:
-            left = ops::arith_mul(left, right);
-            break;
-          case token_kind::slash:
-            left = ops::arith_div(left, right);
-            break;
-          case token_kind::percent:
-            left = ops::arith_mod(left, right);
-            break;
-          default:
-            break;
-        }
-      }
-      return left;
+      static constexpr token_kind operators[]{
+          token_kind::star, token_kind::slash, token_kind::percent};
+      return parse_left_assoc(&parser::parse_unary, operators, &parser::apply_mul);
     }
 
     value_type parse_unary()
@@ -731,17 +746,17 @@ REFLEX_EXPORT namespace reflex::jinja::expr
       {
         case token_kind::integer:
         {
-          reflex::scope_guard _ = [this] { advance(); };
+          auto _ = advance_guard();
           return parse_literal<std::int64_t>(current.lexeme);
         }
         case token_kind::real:
         {
-          reflex::scope_guard _ = [this] { advance(); };
+          auto _ = advance_guard();
           return parse_literal<double>(current.lexeme);
         }
         case token_kind::boolean:
         {
-          reflex::scope_guard _ = [this] { advance(); };
+          auto _ = advance_guard();
           return parse_literal<bool>(current.lexeme);
         }
         case token_kind::null_:
@@ -751,7 +766,7 @@ REFLEX_EXPORT namespace reflex::jinja::expr
         }
         case token_kind::string:
         {
-          reflex::scope_guard _ = [this] { advance(); };
+          auto _ = advance_guard();
           return parse_string(current.lexeme);
         }
         case token_kind::identifier:

@@ -1,6 +1,8 @@
 from pcons import Project, add_subdirectory, get_var
 
-from reflex_build.config import VARIANT, build_dir, project_dir, toolchain
+from reflex_build import coverage as coverage_command
+from reflex_build import instantiations as instantiations_command
+from reflex_build.config import VARIANT, build_dir, coverage, project_dir, toolchain
 
 # =============================================================================
 # Warnings
@@ -51,6 +53,12 @@ if project.is_top_level:
     if VARIANT == "release":
         # After the variant, so it wins over the preset's -O2.
         env.cxx.flags.append("-O3")
+
+    if coverage:
+        if not env.has_preset("coverage"):
+            raise RuntimeError(f"{toolchain.name} has no coverage preset")
+        env.apply_preset("coverage")
+        env.cxx.flags.extend(["-O0", "-fprofile-abs-path"])
 else:
     # A sub-project with no environment of its own inherits the enclosing
     # project's, so there is nothing to register here.
@@ -62,3 +70,6 @@ add_subdirectory("poly")
 add_subdirectory("serde")
 add_subdirectory("jinja")
 add_subdirectory("py")
+
+coverage_command.register()
+instantiations_command.register()

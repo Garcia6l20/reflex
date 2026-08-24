@@ -5,6 +5,8 @@ from pcons.util.source_location import get_caller_location
 from reflex_build import requirements  # noqa: F401  (registers the Conan finder)
 from reflex_build.config import build_dir, build_testing
 
+tests: list[Target] = []
+
 if build_testing:
     print("Tests enabled - building test utilities")
 
@@ -80,6 +82,7 @@ if build_testing:
         if group:
             project.Alias(f"test-{group}", test)
 
+        tests.append(test)
         return test
 
     def add_python_test(
@@ -110,4 +113,5 @@ if build_testing:
         if group:
             project.Alias(f"test-{group}", extension)
 
+        tests.append(extension)
         return test

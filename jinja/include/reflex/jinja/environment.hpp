@@ -193,6 +193,11 @@ REFLEX_EXPORT namespace reflex::jinja
   namespace detail
   {
 
+  inline auto include_pop_guard(render_state& state)
+  {
+    return scope_guard{[&state] { state.include_stack.pop_back(); }};
+  }
+
   template <typename OutputIt, typename ContextT>
   OutputIt
       render_include_to(OutputIt out, std::string_view name, ContextT& ctx, render_state& state)
@@ -203,7 +208,7 @@ REFLEX_EXPORT namespace reflex::jinja
     }
 
     state.include_stack.push_back(name);
-    scope_guard pop{[&] { state.include_stack.pop_back(); }};
+    auto pop = include_pop_guard(state);
 
     // The includer's block overrides do not apply to the included template.
     render_state sub{.env = state.env, .include_stack = state.include_stack, .block_overrides = {}};

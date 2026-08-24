@@ -98,6 +98,17 @@ TEST_CASE("reflex::jinja::expr: basic evaluation")
     // string equality
     CHECK(std::get<bool>(expr::evaluate(JINJA("a" == "a"))) == true);
     CHECK(std::get<bool>(expr::evaluate(JINJA("a" == "b"))) == false);
+
+    // a string compares against a number by parsing it, either way round
+    CHECK(std::get<bool>(expr::evaluate(JINJA("1" == 1))) == true);
+    CHECK(std::get<bool>(expr::evaluate(JINJA(1 == "1"))) == true);
+    CHECK(std::get<bool>(expr::evaluate(JINJA("2" == 1))) == false);
+    CHECK(std::get<bool>(expr::evaluate(JINJA("1.5" == 1.5))) == true);
+    CHECK(std::get<bool>(expr::evaluate(JINJA(1.5 == "1.5"))) == true);
+    CHECK(std::get<bool>(expr::evaluate(JINJA("true" == true))) == true);
+    CHECK(std::get<bool>(expr::evaluate(JINJA(true == "true"))) == true);
+    CHECK(std::get<bool>(expr::evaluate(JINJA("abc" == 1))) == false);
+    CHECK(std::get<bool>(expr::evaluate(JINJA("abc" == "abc"))) == true);
     CHECK(std::get<bool>(expr::evaluate(JINJA("a" != "b"))) == true);
   }
 
