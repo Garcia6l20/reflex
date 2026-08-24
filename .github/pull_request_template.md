@@ -29,7 +29,7 @@ pcons test -L <group>
 - [ ] `pcons test` passes
 - [ ] New behaviour comes with a test
 - [ ] New public entities carry doxygen documentation
-- [ ] README or module documentation updated if the public API changed
+- [ ] README/CONTRIBUTING.md or module documentation updated if the public API changed
 
 ## Breaking changes
 
