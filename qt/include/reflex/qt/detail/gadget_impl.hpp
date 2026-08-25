@@ -214,6 +214,14 @@ template <typename Super> struct gadget_impl
         }
       }
     }
+
+    // moc emits no arm for either on 6.10.2 and 6.11.1: a property's and a
+    // method argument's metatype reach Qt through the QMetaObject's metatype
+    // array, and moc never calls qRegisterMetaType. Kept for an older Qt
+    // reached through REFLEX_QT_ALLOW_UNTESTED_QT, where neither was measured.
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 10, 0)
+
     else if(c == QMetaObject::RegisterPropertyMetaType)
     {
       *reinterpret_cast<int*>(a[0]) = -1;
@@ -255,6 +263,7 @@ template <typename Super> struct gadget_impl
         }
       }
     }
+#endif
   }
 };
 }
