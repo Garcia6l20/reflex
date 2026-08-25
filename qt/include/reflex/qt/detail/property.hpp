@@ -1,16 +1,21 @@
 #pragma once
 
 #include <reflex/const_check.hpp>
+#include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
+#include <reflex/qt/access.hpp>
 #include <reflex/utils.hpp>
 
 #include <algorithm>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace reflex::qt
 {
+template <typename Super, typename ParentT> class object;
+
 /** @brief accessor naming conventions, annotating the class itself */
 namespace naming
 {
@@ -406,6 +411,61 @@ consteval auto required_member_named(meta::info Super, std::string_view name) ->
                         + std::string{name},
                     Super);
   return p;
+}
+
+/** @brief Reads the property @p Property of @p Super out of @p self.
+ *
+ * At namespace scope rather than in `gadget<Super>`, so a type that does not
+ * derive the CRTP base is read the same way.
+ */
+template <typename Super, meta::info Property> auto read_property(auto& self)
+{
+  [[maybe_unused]] static constexpr bool checked = check_readable(^^Super, Property);
+
+  static constexpr auto reader = accessor_for<^^getter_t>(^^Super, Property);
+  if constexpr(reader != meta::null)
+  {
+    return qt::access<Super>::template call<reader>(self);
+  }
+  else
+  {
+    return qt::access<Super>::template member<Property>(self);
+  }
+}
+
+/** @brief Writes @p value to the property @p Property of @p Super, notifying once. */
+template <typename Super, meta::info Property, typename T> void write_property(auto& self, T&& value)
+{
+  [[maybe_unused]] static constexpr bool checked = check_writable(^^Super, Property);
+
+  static constexpr auto writer  = accessor_for<^^setter_t>(^^Super, Property);
+  static constexpr auto handler = accessor_for<^^listener_t>(^^Super, Property);
+
+  if constexpr(writer != meta::null)
+  {
+    qt::access<Super>::template call<writer>(self, std::forward<T>(value));
+  }
+  else
+  {
+    auto& target = qt::access<Super>::template member<Property>(self);
+    if constexpr(requires { target == value; })
+    {
+      if(target == value)
+      {
+        return;
+      }
+    }
+    target = std::forward<T>(value);
+  }
+  if constexpr(handler != meta::null)
+  {
+    qt::access<Super>::template call<handler>(self);
+  }
+  if constexpr(meta::is_subclass_of(^^Super, ^^qt::object, meta::access_context::unchecked())
+               and property_spec_of(Property).notifying())
+  {
+    self.template propertyChanged<constant_string{identifier_of(Property)}>();
+  }
 }
 } // namespace detail
 } // namespace reflex::qt

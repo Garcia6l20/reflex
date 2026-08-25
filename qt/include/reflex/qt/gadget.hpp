@@ -37,17 +37,7 @@ public:
 
   template <meta::info Property> auto property(this auto& self)
   {
-    [[maybe_unused]] static constexpr bool checked = detail::check_readable(^^Super, Property);
-
-    static constexpr auto reader = detail::accessor_for<^^getter_t>(^^Super, Property);
-    if constexpr(reader != meta::null)
-    {
-      return access<Super>::template call<reader>(self);
-    }
-    else
-    {
-      return access<Super>::template member<Property>(self);
-    }
+    return detail::read_property<Super, Property>(self);
   }
 
   /** @brief Reads the property named @p name, including one a base declares.
@@ -65,36 +55,7 @@ public:
 
   template <meta::info Property, typename T> void setProperty(this auto& self, T&& value)
   {
-    [[maybe_unused]] static constexpr bool checked = detail::check_writable(^^Super, Property);
-
-    static constexpr auto writer  = detail::accessor_for<^^setter_t>(^^Super, Property);
-    static constexpr auto handler = detail::accessor_for<^^listener_t>(^^Super, Property);
-
-    if constexpr(writer != meta::null)
-    {
-      access<Super>::template call<writer>(self, std::forward<T>(value));
-    }
-    else
-    {
-      auto& target = access<Super>::template member<Property>(self);
-      if constexpr(requires { target == value; })
-      {
-        if(target == value)
-        {
-          return;
-        }
-      }
-      target = std::forward<T>(value);
-    }
-    if constexpr(handler != meta::null)
-    {
-      access<Super>::template call<handler>(self);
-    }
-    if constexpr(detail::gadget_impl<Super>::strings::is_object
-                 and detail::property_spec_of(Property).notifying())
-    {
-      self.template propertyChanged<constant_string{identifier_of(Property)}>();
-    }
+    detail::write_property<Super, Property>(self, std::forward<T>(value));
   }
 
   /** @brief Writes @p value to the property named @p name, notifying once.

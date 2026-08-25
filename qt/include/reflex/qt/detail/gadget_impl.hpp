@@ -192,7 +192,7 @@ template <typename Super> struct gadget_impl
           {
             using property_type = [:type_of(strings::properties[i]):];
             *reinterpret_cast<property_type*>(a[0]) =
-                self->template property<strings::properties[i]>();
+                read_property<Super, strings::properties[i]>(*self);
             return;
           }
         }
@@ -207,8 +207,8 @@ template <typename Super> struct gadget_impl
           if(int(i) == id)
           {
             using property_type = [:type_of(strings::properties[i]):];
-            self->template setProperty<strings::properties[i]>(
-                *reinterpret_cast<property_type*>(a[0]));
+            write_property<Super, strings::properties[i]>(*self,
+                                                          *reinterpret_cast<property_type*>(a[0]));
             return;
           }
         }
