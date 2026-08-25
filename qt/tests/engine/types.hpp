@@ -15,6 +15,26 @@ namespace qt = reflex::qt;
  */
 namespace engine_test
 {
+/** @brief a QML value type published without a base, by `make_gadget` below */
+struct [[= qt::qml{.name = "vec2"}]] vec2
+{
+  [[= qt::prop{}]] int dx = 0;
+  [[= qt::prop{}]] int dy = 0;
+
+  [[= qt::invocable]] int norm2() const
+  {
+    return dx * dx + dy * dy;
+  }
+};
+}
+
+consteval
+{
+  qt::make_gadget(^^engine_test::vec2);
+}
+
+namespace engine_test
+{
 /** @brief the one type `Main.qml` instantiates, published as `Probe` */
 class [[= qt::qml{.name = "Probe"}]] probe : public qt::object<probe>
 {
@@ -25,6 +45,9 @@ public:
 
   /** @brief what @ref ping carries, written from QML */
   [[= qt::prop{}]] int level = 0;
+
+  /** @brief an adopted gadget reached as a QML value type */
+  [[= qt::prop{}]] vec2 offset{3, 4};
 
   /** @brief Emits @ref pinged with @ref level plus one. */
   [[= qt::invocable]] void ping()

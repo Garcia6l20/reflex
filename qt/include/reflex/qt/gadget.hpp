@@ -3,6 +3,7 @@
 #include <reflex/constant.hpp>
 #include <reflex/meta.hpp>
 #include <reflex/qt/access.hpp>
+#include <reflex/qt/adopt.hpp>
 #include <reflex/qt/detail/annotations.hpp>
 #include <reflex/qt/detail/gadget_impl.hpp>
 
@@ -112,9 +113,10 @@ struct IsPointerToGadgetHelper<Super*, void>
 
 template <typename Super>
   requires(reflex::meta::is_complete_type(^^Super)
-           and reflex::meta::is_subclass_of(^^Super,
-                                            ^^reflex::qt::gadget,
-                                            reflex::meta::access_context::unchecked()))
+           and (reflex::meta::is_subclass_of(^^Super,
+                                             ^^reflex::qt::gadget,
+                                             reflex::meta::access_context::unchecked())
+                or reflex::qt::adopted<Super>))
 struct QMetaTypeId<Super>
 {
   enum

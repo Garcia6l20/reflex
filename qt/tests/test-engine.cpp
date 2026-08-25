@@ -71,6 +71,23 @@ TEST_CASE("a private signal binds its QML handler")
   CHECK(engine.rootObjects().constFirst()->property("heard").toInt() == 42);
 }
 
+TEST_CASE("the engine reads an adopted gadget as a QML value type")
+{
+  application();
+
+  QQmlApplicationEngine engine;
+  const auto            errors = load_errors(engine);
+  INFO("QQmlComponent::errors(): " << errors);
+  CHECK(errors.empty());
+
+  engine.loadFromModule("Reflex.EngineTest", "Main");
+  REQUIRE_FALSE(engine.rootObjects().isEmpty());
+
+  auto* const root = engine.rootObjects().constFirst();
+  CHECK(root->property("reach").toInt() == 7);
+  CHECK(root->property("offsetNorm2").toInt() == 25);
+}
+
 TEST_CASE("the engine drives a class template through a named subclass")
 {
   application();

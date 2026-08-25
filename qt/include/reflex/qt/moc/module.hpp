@@ -18,15 +18,17 @@ namespace reflex::qt::moc
 {
 namespace detail
 {
-/** @brief whether @p R names a complete class built on a reflex.qt CRTP base
+/** @brief whether @p R names a complete class reflex.qt publishes to Qt
  *
- * `object<Super, ParentT>` derives `gadget<Super>`, so one test admits both.
+ * `object<Super, ParentT>` derives `gadget<Super>`, so one test admits both,
+ * and a struct `make_gadget` adopted carries no base at all.
  */
 consteval bool is_exposable(meta::info R)
 {
   return meta::is_type(R) and not meta::is_type_alias(R) and meta::is_class_type(R)
      and meta::is_complete_type(R)
-     and meta::is_subclass_of(R, ^^qt::gadget, meta::access_context::unchecked());
+     and (meta::is_subclass_of(R, ^^qt::gadget, meta::access_context::unchecked())
+          or qt::is_adopted(R));
 }
 
 /** @brief whether @p M is a member reflex.qt publishes to Qt
@@ -94,7 +96,8 @@ template <typename T> consteval void check_exposable()
   REFLEX_META_CHECK(is_exposable(^^T),
                     std::string{display_string_of(^^T)}
                         + " is not a reflex.qt class; a metatypes entry needs a type deriving "
-                          "reflex::qt::gadget<T> or reflex::qt::object<T>",
+                          "reflex::qt::gadget<T> or reflex::qt::object<T>, or one adopted with "
+                          "reflex::qt::make_gadget",
                     ^^T);
 
   for(auto m : meta::members_of(^^T, meta::access_context::unchecked()))

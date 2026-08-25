@@ -414,6 +414,61 @@ const QVariant boxed = QVariant::fromValue(p);
 
 ---
 
+## Adopted gadgets
+
+A struct that does not derive `qt::gadget<T>` is published by a consteval block:
+
+```cpp
+struct vec2
+{
+  [[= qt::prop{}]] int x = 0;
+  [[= qt::prop{}]] int y = 0;
+
+  [[= qt::invocable]] int norm2() const
+  {
+    return x * x + y * y;
+  }
+};
+
+consteval
+{
+  reflex::qt::make_gadget(^^vec2);
+}
+```
+
+`vec2` then carries everything `struct vec2 : qt::gadget<vec2>` would, and Qt cannot tell
+the two apart: the same property and method tables, `QMetaType::IsGadget`, `QVariant`, the
+metatypes document, QML value types. What it does not carry is the base, so `vec2{3, 4}`
+braces flat where the CRTP spelling needs `vec2{{}, 3, 4}`, and a type a generator writes
+or a header you do not own can be published without touching it.
+
+The metaobject lives outside the class, since nothing can add a member to one from outside:
+
+```cpp
+const QMetaObject& mo = qt::meta_object_of<vec2>();
+```
+
+`meta_object_of<T>()` answers `T::staticMetaObject` for a CRTP class and the adopted one
+otherwise, so it reads either. `qt::adopted<T>` and `qt::is_adopted(^^T)` say which.
+
+Two rules come with the consteval block, and neither is diagnosed:
+
+- **It sits at global scope.** The mark completes a specialization of a reflex.qt template,
+  and a specialization has to be declared in a namespace enclosing the template it
+  specializes. Inside another namespace GCC rejects it as `specialization of ... in
+  different namespace`. The type itself can live anywhere: `make_gadget(^^app::vec2)`.
+- **It precedes every query of `adopted<T>`.** The flag is a variable template and its value
+  is cached from the first instantiation, so a mark that comes after one is silently lost -
+  the class publishes nothing and no diagnostic says so. Put the block right under the type.
+
+An annotation is still an annotation: a property needs `[[= qt::prop{}]]` on the member, so a
+type whose definition is genuinely out of reach is adopted for its metatype and its class
+name rather than for a property table. A signal or a timer is rejected the way it is on any
+gadget. `qt::object` has no counterpart: `metaObject()`, `qt_metacast` and `qt_metacall` are
+virtual overrides over a real `QObject` base, and nothing outside a class body supplies those.
+
+---
+
 ## Class templates
 
 A class template is a `reflex.qt` class like any other. moc parses source text and never

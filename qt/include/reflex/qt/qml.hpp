@@ -31,7 +31,8 @@ template <typename Super>
 concept qml_class =
     meta::is_complete_type(^^Super) and meta::is_class_type(^^Super)
     and (meta::is_subclass_of(^^Super, ^^qt::object, meta::access_context::unchecked())
-         or meta::is_subclass_of(^^Super, ^^qt::gadget, meta::access_context::unchecked()))
+         or meta::is_subclass_of(^^Super, ^^qt::gadget, meta::access_context::unchecked())
+         or qt::adopted<Super>)
     and meta::has_annotation(^^Super, ^^qt::qml);
 
 /** @brief a `qml_class` whose annotation asks for a QML singleton */
@@ -59,6 +60,22 @@ template <typename Super>
 struct QmlUncreatable<Super, void>
 {
   static constexpr bool Value = true;
+};
+
+/** @brief hands QML the metaobject an adopted type keeps outside itself
+ *
+ * Qt's own specialization is keyed on `decltype(T::staticMetaObject)`, which an
+ * adopted type does not declare, so it never matches one and the two are never
+ * both candidates.
+ */
+template <typename Super>
+  requires reflex::qt::adopted<Super>
+struct StaticMetaObject<Super, void>
+{
+  static const QMetaObject* staticMetaObject()
+  {
+    return &reflex::qt::adopted_meta_object<Super>;
+  }
 };
 }
 QT_END_NAMESPACE

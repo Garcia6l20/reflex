@@ -42,6 +42,22 @@ struct counter : qt::object<counter>
   [[= qt::prop{}]] int value = 0;
 };
 
+struct vec2
+{
+  [[= qt::prop{}]] int x = 0;
+  [[= qt::prop{}]] int y = 0;
+
+  [[= qt::invocable]] int norm2() const
+  {
+    return x * x + y * y;
+  }
+};
+
+consteval
+{
+  reflex::qt::make_gadget(^^vec2);
+}
+
 namespace app
 {
 struct [[= qt::qml{}]] controller : qt::object<controller>
@@ -431,6 +447,23 @@ TEST_CASE("README: gadgets")
 
   CHECK(std::string_view{QMetaType::fromType<point>().name()} == "point");
   CHECK(QMetaType::fromType<point*>().flags().testFlag(QMetaType::PointerToGadget));
+}
+
+TEST_CASE("README: adopted gadgets")
+{
+  const QMetaObject& mo = qt::meta_object_of<vec2>();
+  vec2               v{3, 4};
+
+  CHECK(mo.property(mo.indexOfProperty("x")).writeOnGadget(&v, 5));
+  CHECK(v.x == 5);
+
+  int norm2 = 0;
+  CHECK(mo.method(mo.indexOfMethod("norm2()")).invokeOnGadget(&v, qReturnArg(norm2)));
+  CHECK(norm2 == 41);
+
+  CHECK(QMetaType::fromType<vec2>().flags().testFlag(QMetaType::IsGadget));
+  CHECK(qt::adopted<vec2>);
+  static_assert(qt::is_adopted(^^vec2));
 }
 
 TEST_CASE("README: enums and flags")

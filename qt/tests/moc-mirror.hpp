@@ -276,3 +276,22 @@ public:
 Q_SIGNALS:
   void weightChanged();
 };
+
+/** @brief the QML value type an adopted struct produces, mirroring `twin_adopted` */
+class mirror_adopted
+{
+  Q_GADGET
+  QML_VALUE_TYPE(vec)
+
+  Q_PROPERTY(int dx MEMBER dx)
+  Q_PROPERTY(int dy MEMBER dy)
+
+public:
+  Q_INVOKABLE int norm2() const
+  {
+    return dx * dx + dy * dy;
+  }
+
+  int dx = 0;
+  int dy = 0;
+};

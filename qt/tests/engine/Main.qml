@@ -6,6 +6,10 @@ QtObject {
 
     property int heard: 0
 
+    property int reach: probe.offset.dx + probe.offset.dy
+
+    property int offsetNorm2: probe.offset.norm2()
+
     property Probe probe: Probe {
         id: probe
 

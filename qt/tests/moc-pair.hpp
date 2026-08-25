@@ -212,3 +212,20 @@ struct[[= mocqt::naming::qt_style]] twin_styled : mocqt::object<twin_styled>
 
   int notifications = 0;
 };
+
+/** @brief a struct published by `make_gadget` rather than by a base, matching `mirror_adopted` */
+struct [[= mocqt::qml{.name = "vec"}]] twin_adopted
+{
+  [[= mocqt::prop{}]] int dx = 0;
+  [[= mocqt::prop{}]] int dy = 0;
+
+  [[= mocqt::invocable]] int norm2() const
+  {
+    return dx * dx + dy * dy;
+  }
+};
+
+consteval
+{
+  mocqt::make_gadget(^^twin_adopted);
+}

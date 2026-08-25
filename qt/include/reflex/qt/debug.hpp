@@ -1,5 +1,7 @@
 #pragma once
 
+#include <reflex/qt/adopt.hpp>
+
 #include <QtCore/qmetaobject.h>
 #include <QtCore/qobject.h>
 
@@ -77,7 +79,7 @@ constexpr const char* method_kind_name(QMetaMethod::MethodType type) noexcept
 
 template <typename T> [[nodiscard]] std::string describe()
 {
-  return describe(T::staticMetaObject);
+  return describe(meta_object_of<T>());
 }
 
 /** @brief prints what `describe` renders, to stdout */

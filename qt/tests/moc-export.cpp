@@ -11,6 +11,7 @@ REFLEX_QT_MODULE(pair_types, m)
   m.expose<twin_derived>();
   m.expose<twin_flags>();
   m.expose<twin_styled>();
+  m.expose<twin_adopted>();
 }
 
 int main(int argc, char** argv) { return reflex::qt::moc::export_main<pair_types>(argc, argv); }
