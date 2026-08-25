@@ -130,7 +130,7 @@ template <typename Super> struct gadget_impl
     }
   }
 
-  static void qt_static_metacall(QObject* o, QMetaObject::Call c, int id, void** a)
+  [[gnu::noinline]] static void qt_static_metacall(QObject* o, QMetaObject::Call c, int id, void** a)
   {
     [[maybe_unused]] auto* self = recover(o);
 
