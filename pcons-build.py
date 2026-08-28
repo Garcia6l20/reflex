@@ -2,7 +2,14 @@ from pcons import Project, add_subdirectory, get_var
 
 from reflex_build import coverage as coverage_command
 from reflex_build import instantiations as instantiations_command
-from reflex_build.config import VARIANT, build_dir, coverage, project_dir, toolchain
+from reflex_build.config import (
+    VARIANT,
+    build_dir,
+    coverage,
+    libraries,
+    project_dir,
+    toolchain,
+)
 
 # =============================================================================
 # Warnings
@@ -65,11 +72,10 @@ else:
     env = project.default_environment
 
 add_subdirectory("core")
-add_subdirectory("cli")
-add_subdirectory("poly")
-add_subdirectory("serde")
-add_subdirectory("jinja")
-add_subdirectory("py")
+
+for library, library_enabled in libraries.items():
+    if library_enabled:
+        add_subdirectory(library)
 
 coverage_command.register()
 instantiations_command.register()

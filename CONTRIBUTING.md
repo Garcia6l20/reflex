@@ -56,6 +56,21 @@ The options are `REFLEX_BUILD_TESTS`, `REFLEX_BUILD_PROGRAMS` for the examples,
 `REFLEX_COVERAGE`, `REFLEX_WERROR`, which is on by default, and `REFLEX_MODULES`,
 which is on by default too.
 
+Each optional library has an option of its own, `REFLEX_CLI`, `REFLEX_POLY`,
+`REFLEX_SERDE`, `REFLEX_JINJA` and `REFLEX_PY`, all on by default. There is no
+`REFLEX_CORE`: everything needs it. Turning one off turns off whatever depends
+on it, transitively, and says so:
+
+```bash
+pcons REFLEX_POLY=false
+REFLEX_SERDE disabled: it needs REFLEX_POLY
+REFLEX_JINJA disabled: it needs REFLEX_SERDE
+```
+
+Asking for a library and disabling something it needs in the same run is a
+contradiction rather than a preference, so `REFLEX_JINJA=true REFLEX_SERDE=false`
+is an error naming both.
+
 `REFLEX_MODULES=false` builds a consumer that cannot use C++ named modules:
 nothing is compiled as a `.cppm` and no `-fmodules` reaches any translation
 unit. Every public header carries the guards that make this work, so the two
