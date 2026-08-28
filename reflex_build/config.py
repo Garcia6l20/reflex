@@ -16,5 +16,21 @@ config = Configure(build_dir=build_dir)
 toolchain = find_c_toolchain(prefer=["gcc"])
 
 coverage = get_var("REFLEX_COVERAGE", False)
-build_testing = get_var("REFLEX_BUILD_TESTS", False) or coverage
-build_programs = get_var("REFLEX_BUILD_PROGRAMS", False)
+build_modules = get_var("REFLEX_MODULES", True)
+
+_want_testing = get_var("REFLEX_BUILD_TESTS", False) or coverage
+_want_programs = get_var("REFLEX_BUILD_PROGRAMS", False)
+
+if coverage and not build_modules:
+    raise RuntimeError(
+        "REFLEX_COVERAGE needs tests, and the test sources import modules: "
+        "it cannot be combined with REFLEX_MODULES=false"
+    )
+
+if not build_modules and (_want_testing or _want_programs):
+    print(
+        "REFLEX_MODULES=false: tests and programs disabled, their sources import modules"
+    )
+
+build_testing = _want_testing and build_modules
+build_programs = _want_programs and build_modules
