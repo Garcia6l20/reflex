@@ -1,20 +1,15 @@
 from pcons import add_subdirectory, context
 
-from reflex_build.testing import build_testing
+from reflex_build.config import build_testing
+from reflex_build.library import reflex_library
 
 project = context.current_project
-env = project.default_environment
 
-poly = project.StaticLibrary(
+reflex_library(
     "reflex.poly",
-    env,
-    sources=[
-        "modules/reflex/poly.cppm",
-    ],
+    module_sources=["modules/reflex/poly.cppm"],
+    link_libs=[project.get_target("reflex.core")],
 )
-poly.public.include_dirs.append("include")
-poly.public.link_libs.append(project.get_target("reflex.core"))
-
 
 if build_testing:
     add_subdirectory("tests")

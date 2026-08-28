@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from pathlib import Path
 
 from pcons import context
@@ -12,7 +13,7 @@ def reflex_library(
     module_sources: list[str],
     sources: list[str] | None = None,
     include_dir: str | Path | None = "include",
-    link_libs: list[Target] | None = None,
+    link_libs: Sequence[Target] | None = None,
 ) -> Target:
     """Declare a reflex library in whichever build mode is active.
 
