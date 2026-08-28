@@ -71,6 +71,14 @@ Asking for a library and disabling something it needs in the same run is a
 contradiction rather than a preference, so `REFLEX_JINJA=true REFLEX_SERDE=false`
 is an error naming both.
 
+`REFLEX_PY` also turns itself off when what it needs is not there, since
+neither piece is fetched by default. nanobind is taken from what `pcons-fetch`
+unpacked into the build directory, or from an installed `nanobind` Python
+package if one is importable and ships `src/nb_combined.cpp`. Missing that, or
+missing `Python.h`, prints a notice and skips `reflex.py`. It no longer fails
+the whole configure, which a project vendoring reflex for its C++ libraries has
+no way to act on.
+
 `REFLEX_MODULES=false` builds a consumer that cannot use C++ named modules:
 nothing is compiled as a `.cppm` and no `-fmodules` reaches any translation
 unit. Every public header carries the guards that make this work, so the two

@@ -9,11 +9,12 @@ env = project.default_environment
 
 nanobind = nanobind_library(project, env)
 
-reflex_library(
-    "reflex.py",
-    module_sources=["modules/reflex/py.cppm"],
-    link_libs=[project.get_target("reflex.core"), nanobind],
-)
+if nanobind is not None:
+    reflex_library(
+        "reflex.py",
+        module_sources=["modules/reflex/py.cppm"],
+        link_libs=[project.get_target("reflex.core"), nanobind],
+    )
 
-if build_testing:
-    add_subdirectory("tests")
+    if build_testing:
+        add_subdirectory("tests")
