@@ -53,7 +53,25 @@ that one run through the environment, and the next bare `pcons` silently drops
 every test target.
 
 The options are `REFLEX_BUILD_TESTS`, `REFLEX_BUILD_PROGRAMS` for the examples,
-`REFLEX_COVERAGE` and `REFLEX_WERROR`, which is on by default.
+`REFLEX_COVERAGE`, `REFLEX_WERROR`, which is on by default, and `REFLEX_MODULES`,
+which is on by default too.
+
+`REFLEX_MODULES=false` builds a consumer that cannot use C++ named modules:
+nothing is compiled as a `.cppm` and no `-fmodules` reaches any translation
+unit. Every public header carries the guards that make this work, so the two
+forms are the same source. It needs its own build directory, named twice the way
+the coverage build is, and its own `pcons-fetch` run:
+
+```bash
+PCONS_BUILD_DIR=$PWD/build-nomod pcons -B build-nomod REFLEX_MODULES=false
+```
+
+It forces `REFLEX_BUILD_TESTS` and `REFLEX_BUILD_PROGRAMS` off, with a printed
+notice, and makes `REFLEX_COVERAGE` an error: 29 of the 54 test sources and
+`serde/programs/convert.cpp` use `import`, and 27 of them use `import std;`,
+which cannot work without `-fmodules`. The header build's only gate is that the
+nine libraries compile. Do not carry a measurement from one mode to the other,
+they do not generate the same code.
 
 ## Testing
 

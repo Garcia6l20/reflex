@@ -153,8 +153,20 @@ ctest --test-dir build
 `REFLEX_CXX_MODULES_ENABLED` is **OFF** by default, so this builds the header-only
 form of every library and nothing is compiled as a C++20 module. CMake's module
 support is not stable enough here yet. Turn it on with
-`-DREFLEX_CXX_MODULES_ENABLED=ON` to get `import reflex.core;` and the rest; the
-primary build system, pcons, always builds the modules.
+`-DREFLEX_CXX_MODULES_ENABLED=ON` to get `import reflex.core;` and the rest.
+
+The primary build system, pcons, defaults the other way and has the same switch
+under a different name:
+
+```bash
+pcons                                                       # modules
+pcons -B build-nomod REFLEX_MODULES=false                   # headers only
+```
+
+With `REFLEX_MODULES=false` no `.cppm` is compiled and no `-fmodules` is passed.
+Eight of the nine libraries become interface targets and only `reflex.cli` still
+produces an archive. Tests and example programs are disabled in that mode, since
+their sources use `import`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
