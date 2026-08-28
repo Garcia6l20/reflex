@@ -1,16 +1,9 @@
-from pcons import add_subdirectory, context
+from pcons import add_subdirectory
 
-from reflex_build.testing import build_testing
+from reflex_build.config import build_testing
+from reflex_build.library import reflex_library
 
-project = context.current_project
-env = project.default_environment
-project.StaticLibrary(
-    "reflex.core",
-    env,
-    sources=[
-        "modules/reflex/core.cppm",
-    ],
-).public.include_dirs.append("include")
+reflex_library("reflex.core", module_sources=["modules/reflex/core.cppm"])
 
 if build_testing:
     add_subdirectory("tests")

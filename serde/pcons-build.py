@@ -1,73 +1,23 @@
 from pcons import add_subdirectory, context
 
 from reflex_build.config import build_programs, build_testing
+from reflex_build.library import reflex_library
 
 project = context.current_project
-env = project.default_environment
 
-serde = project.StaticLibrary(
+serde = reflex_library(
     "reflex.serde",
-    env,
-    sources=[
-        "modules/reflex/serde.cppm",
-    ],
+    module_sources=["modules/reflex/serde.cppm"],
+    link_libs=project.get_targets("reflex.poly", "reflex.core"),
 )
-serde.public.include_dirs.append("include")
-serde.public.link_libs.extend(project.get_targets("reflex.poly", "reflex.core"))
 
-serde_json = project.StaticLibrary(
-    "reflex.serde.json",
-    env,
-    sources=[
-        "modules/reflex/serde_json.cppm",
-    ],
-)
-serde_json.public.link_libs.append(serde)
-
-serde_bson = project.StaticLibrary(
-    "reflex.serde.bson",
-    env,
-    sources=[
-        "modules/reflex/serde_bson.cppm",
-    ],
-)
-serde_bson.public.link_libs.append(serde)
-
-serde_csv = project.StaticLibrary(
-    "reflex.serde.csv",
-    env,
-    sources=[
-        "modules/reflex/serde_csv.cppm",
-    ],
-)
-serde_csv.public.link_libs.append(serde)
-
-serde_xml = project.StaticLibrary(
-    "reflex.serde.xml",
-    env,
-    sources=[
-        "modules/reflex/serde_xml.cppm",
-    ],
-)
-serde_xml.public.link_libs.append(serde)
-
-serde_yaml = project.StaticLibrary(
-    "reflex.serde.yaml",
-    env,
-    sources=[
-        "modules/reflex/serde_yaml.cppm",
-    ],
-)
-serde_yaml.public.link_libs.append(serde)
-
-serde_toml = project.StaticLibrary(
-    "reflex.serde.toml",
-    env,
-    sources=[
-        "modules/reflex/serde_toml.cppm",
-    ],
-)
-serde_toml.public.link_libs.append(serde)
+for backend in ("json", "bson", "csv", "xml", "yaml", "toml"):
+    reflex_library(
+        f"reflex.serde.{backend}",
+        module_sources=[f"modules/reflex/serde_{backend}.cppm"],
+        include_dir=None,
+        link_libs=[serde],
+    )
 
 if build_programs:
     add_subdirectory("programs")

@@ -53,7 +53,48 @@ that one run through the environment, and the next bare `pcons` silently drops
 every test target.
 
 The options are `REFLEX_BUILD_TESTS`, `REFLEX_BUILD_PROGRAMS` for the examples,
-`REFLEX_COVERAGE` and `REFLEX_WERROR`, which is on by default.
+`REFLEX_COVERAGE`, `REFLEX_WERROR`, which is on by default, and `REFLEX_MODULES`,
+which is on by default too.
+
+Each optional library has an option of its own, `REFLEX_CLI`, `REFLEX_POLY`,
+`REFLEX_SERDE`, `REFLEX_JINJA` and `REFLEX_PY`, all on by default. There is no
+`REFLEX_CORE`: everything needs it. Turning one off turns off whatever depends
+on it, transitively, and says so:
+
+```bash
+pcons REFLEX_POLY=false
+REFLEX_SERDE disabled: it needs REFLEX_POLY
+REFLEX_JINJA disabled: it needs REFLEX_SERDE
+```
+
+Asking for a library and disabling something it needs in the same run is a
+contradiction rather than a preference, so `REFLEX_JINJA=true REFLEX_SERDE=false`
+is an error naming both.
+
+`REFLEX_PY` also turns itself off when what it needs is not there, since
+neither piece is fetched by default. nanobind is taken from what `pcons-fetch`
+unpacked into the build directory, or from an installed `nanobind` Python
+package if one is importable and ships `src/nb_combined.cpp`. Missing that, or
+missing `Python.h`, prints a notice and skips `reflex.py`. It no longer fails
+the whole configure, which a project vendoring reflex for its C++ libraries has
+no way to act on.
+
+`REFLEX_MODULES=false` builds a consumer that cannot use C++ named modules:
+nothing is compiled as a `.cppm` and no `-fmodules` reaches any translation
+unit. Every public header carries the guards that make this work, so the two
+forms are the same source. It needs its own build directory, named twice the way
+the coverage build is, and its own `pcons-fetch` run:
+
+```bash
+PCONS_BUILD_DIR=$PWD/build-nomod pcons -B build-nomod REFLEX_MODULES=false
+```
+
+It forces `REFLEX_BUILD_TESTS` and `REFLEX_BUILD_PROGRAMS` off, with a printed
+notice, and makes `REFLEX_COVERAGE` an error: 29 of the 54 test sources and
+`serde/programs/convert.cpp` use `import`, and 27 of them use `import std;`,
+which cannot work without `-fmodules`. The header build's only gate is that the
+nine libraries compile. Do not carry a measurement from one mode to the other,
+they do not generate the same code.
 
 ## Testing
 
