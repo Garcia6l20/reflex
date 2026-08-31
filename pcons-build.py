@@ -77,5 +77,6 @@ for library, library_enabled in libraries.items():
     if library_enabled:
         add_subdirectory(library)
 
-coverage_command.register()
-instantiations_command.register()
+if project.is_top_level:
+    coverage_command.register()
+    instantiations_command.register()
