@@ -288,7 +288,7 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
 template <typename T> constexpr void encode_root(bytes& out, T const& value)
 {
   using U = std::decay_t<T>;
-  if constexpr(map_c<U> or (aggregate_c<U> and !bson_scalar_c<U>))
+  if constexpr(map_c<U> or (aggregate_c<U> and !bson_scalar_c<U> and !seq_c<U>))
   {
     make_document(out, [&](bytes& doc) {
       if constexpr(map_c<U>)
@@ -859,11 +859,16 @@ REFLEX_EXPORT namespace reflex::serde::bson
         {
           throw std::runtime_error("Expected BSON array type");
         }
-        value.clear();
-        read_document([this, &value](detail::bson_type elem_type, std::string_view) {
+        if constexpr(requires { value.clear(); })
+        {
+          value.clear();
+        }
+        auto push =
+            serde::detail::make_pusher(value, "Array has more elements than target type can hold");
+        read_document([this, &push](detail::bson_type elem_type, std::string_view) {
           typename value_t::value_type elem{};
           read_element(elem_type, elem);
-          value.push_back(std::move(elem));
+          push(std::move(elem));
         });
       }
       else if constexpr(map_c<value_t>)

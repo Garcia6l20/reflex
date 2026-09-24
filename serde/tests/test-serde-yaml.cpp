@@ -669,6 +669,18 @@ TEST_CASE("reflex::serde::yaml: a char array inside a sequence stays a scalar")
   CHECK(dump(std::vector<std::array<char, 4>>{a}) == "- ab");
 }
 
+TEST_CASE("reflex::serde::yaml: a std::array of aggregates round-trips")
+{
+  const std::array<Inner, 2> value = {
+      Inner{1, "one"},
+      Inner{2, "two"}
+  };
+  const auto text = dump(value);
+  CHECK_EQ(text, "- a: 1\n  b: one\n- a: 2\n  b: two");
+  check_load<std::array<Inner, 2>>(text, value);
+  check_load_throws<std::array<Inner, 1>>(text);
+}
+
 TEST_CASE("reflex::serde::yaml: mappings with runtime keys")
 {
   CHECK(dump(std::map<std::string, int>{{"a", 1}, {"b", 2}}) == "a: 1\nb: 2");

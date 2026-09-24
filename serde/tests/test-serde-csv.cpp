@@ -372,3 +372,26 @@ TEST_CASE("reflex::serde::csv: an owning string destination is unaffected")
 static_assert(not csv::csv_row_c<Nested>);
 static_assert(not csv::csv_row_c<WithVector>);
 static_assert(csv::csv_row_c<Row>);
+
+struct ArrayRow
+{
+  std::array<int, 3> xs;
+};
+static_assert(not csv::csv_row_c<ArrayRow>);
+
+struct CharArrayRow
+{
+  std::array<char, 4> tag;
+};
+static_assert(csv::csv_row_c<CharArrayRow>);
+
+TEST_CASE("reflex::serde::csv: a char array field round-trips as a scalar cell")
+{
+  std::string     out;
+  csv::serializer ser{out};
+  ser.dump(CharArrayRow{{'a', 'b', '\0', '\0'}});
+  CHECK_EQ(out, "tag\r\nab\r\n");
+
+  const auto value = csv::deserializer{out}.load<CharArrayRow>();
+  CHECK_EQ(value.tag, (std::array<char, 4>{'a', 'b', '\0', '\0'}));
+}

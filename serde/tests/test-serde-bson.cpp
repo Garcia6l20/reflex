@@ -133,6 +133,43 @@ TEST_CASE("reflex::serde::bson: sequence and map")
     CHECK_EQ(value.at("a"), 1);
     CHECK_EQ(value.at("b"), 2);
   }
+
+  SUBCASE("fixed-size array")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::array<int, 3>     arr = {1, 2, 3};
+
+    ser.dump(arr);
+    auto value = bson::deserializer{out}.load<std::array<int, 3>>();
+
+    CHECK_EQ(value, (std::array<int, 3>{1, 2, 3}));
+  }
+
+  SUBCASE("fixed-size array of aggregates")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::array<S, 2>       arr = {
+        S{1, "one", 1.0},
+        S{2, "two", 2.0}
+    };
+
+    ser.dump(arr);
+    auto value = bson::deserializer{out}.load<std::array<S, 2>>();
+
+    CHECK_EQ(value, arr);
+  }
+
+  SUBCASE("fixed-size array: too many elements throws")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::vector<int>       arr = {1, 2, 3, 4};
+
+    ser.dump(arr);
+    CHECK_THROWS_AS((bson::deserializer{out}.load<std::array<int, 3>>()), std::out_of_range);
+  }
 }
 
 TEST_CASE("reflex::serde::bson: aggregate")
