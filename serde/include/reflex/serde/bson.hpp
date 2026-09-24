@@ -23,6 +23,10 @@ using bytes = std::vector<std::byte>;
 template <typename T>
 concept bson_scalar_c = decays_to_c<T, bson::decimal128> or decays_to_c<T, bson::datetime>;
 
+template <typename T>
+concept byte_seq_c =
+    seq_c<T> and std::same_as<typename std::remove_cvref_t<T>::value_type, std::byte>;
+
 enum class bson_type : std::uint8_t
 {
   eof        = 0x00,
@@ -30,6 +34,7 @@ enum class bson_type : std::uint8_t
   string     = 0x02,
   document   = 0x03,
   array      = 0x04,
+  binary     = 0x05,
   datetime   = 0x09,
   boolean    = 0x08,
   null       = 0x0A,
@@ -261,6 +266,14 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
     append(out, detail::bson_type::datetime);
     append(out, key);
     append(out, value.millis_since_epoch);
+  }
+  else if constexpr(detail::byte_seq_c<value_t>)
+  {
+    append(out, detail::bson_type::binary);
+    append(out, key);
+    append(out, static_cast<std::int32_t>(value.size()));
+    append(out, std::byte{0x00});
+    out.append_range(value);
   }
   else if constexpr(seq_c<value_t>)
   {
@@ -502,6 +515,35 @@ REFLEX_EXPORT namespace reflex::serde::bson
           }
         }
         return bytes;
+      }
+
+      constexpr void read_bytes_into(std::byte* dest, std::size_t n)
+      {
+        if constexpr(contiguous_byte_or_char)
+        {
+          require(n);
+
+          const auto* first = std::to_address(range.begin());
+          if consteval
+          {
+            for(std::size_t i = 0; i < n; ++i)
+            {
+              dest[i] = std::bit_cast<std::byte>(first[i]);
+            }
+          }
+          else
+          {
+            std::memcpy(dest, first, n);
+          }
+          advance(n);
+        }
+        else
+        {
+          for(std::size_t i = 0; i < n; ++i)
+          {
+            dest[i] = read_byte();
+          }
+        }
       }
 
       template <typename T> constexpr auto read_as()
@@ -851,6 +893,51 @@ REFLEX_EXPORT namespace reflex::serde::bson
             return;
           default:
             throw std::runtime_error("Expected BSON numeric type");
+        }
+      }
+      else if constexpr(detail::byte_seq_c<value_t>)
+      {
+        if(type != detail::bson_type::binary)
+        {
+          throw std::runtime_error("Expected BSON binary type");
+        }
+        const auto length = cursor_.template read<std::int32_t>();
+        if(length < 0)
+        {
+          throw std::runtime_error("Invalid BSON binary length");
+        }
+        const auto n = static_cast<std::size_t>(length);
+        cursor_.require(n);
+        const auto subtype = cursor_.read_byte();
+        if(subtype != std::byte{0x00})
+        {
+          throw std::runtime_error(std::format(
+              "Unsupported BSON binary subtype: {:#04x}", std::to_integer<unsigned>(subtype)));
+        }
+        if constexpr(requires { value.resize(n); })
+        {
+          if constexpr(cursor_t::sized_input)
+          {
+            value.resize(n);
+            cursor_.read_bytes_into(value.data(), n);
+          }
+          else
+          {
+            constexpr std::size_t max_unchecked_reserve = 64 * 1024;
+            value.reserve(std::min(n, max_unchecked_reserve));
+            for(std::size_t i = 0; i < n; ++i)
+            {
+              value.push_back(cursor_.read_byte());
+            }
+          }
+        }
+        else
+        {
+          if(n > value.size())
+          {
+            throw std::out_of_range("Array has more elements than target type can hold");
+          }
+          cursor_.read_bytes_into(value.data(), n);
         }
       }
       else if constexpr(seq_c<value_t>)

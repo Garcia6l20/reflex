@@ -172,6 +172,161 @@ TEST_CASE("reflex::serde::bson: sequence and map")
   }
 }
 
+TEST_CASE("reflex::serde::bson: std::byte ranges are BSON binary")
+{
+  SUBCASE("vector round-trips as binary, subtype 0")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::vector<std::byte> bin = {
+        std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+
+    ser.dump(bin);
+
+    CHECK_EQ(out[4], static_cast<std::byte>(0x05));
+    const auto length =
+        static_cast<int>(out[11]) | (static_cast<int>(out[12]) << 8)
+        | (static_cast<int>(out[13]) << 16) | (static_cast<int>(out[14]) << 24);
+    CHECK_EQ(length, 4);
+    CHECK_EQ(out[15], std::byte{0x00});
+
+    auto value = bson::deserializer{out}.load<std::vector<std::byte>>();
+    CHECK_EQ(value, bin);
+  }
+
+  SUBCASE("empty vector round-trips")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::vector<std::byte> bin;
+
+    ser.dump(bin);
+    auto value = bson::deserializer{out}.load<std::vector<std::byte>>();
+    CHECK(value.empty());
+  }
+
+  SUBCASE("fixed-size array round-trips")
+  {
+    std::vector<std::byte>   out;
+    bson::serializer         ser{out};
+    std::array<std::byte, 3> bin = {std::byte{1}, std::byte{2}, std::byte{3}};
+
+    ser.dump(bin);
+    auto value = bson::deserializer{out}.load<std::array<std::byte, 3>>();
+    CHECK_EQ(value, bin);
+  }
+
+  SUBCASE("fixed-size array: too many bytes throws")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::vector<std::byte> bin = {std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+
+    ser.dump(bin);
+    CHECK_THROWS_AS(
+        (bson::deserializer{out}.load<std::array<std::byte, 3>>()), std::out_of_range);
+  }
+
+  SUBCASE("fixed-size array: fewer bytes than the destination leaves the rest zeroed")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::vector<std::byte> bin = {std::byte{1}, std::byte{2}};
+
+    ser.dump(bin);
+    auto value = bson::deserializer{out}.load<std::array<std::byte, 3>>();
+    CHECK_EQ(value, (std::array<std::byte, 3>{std::byte{1}, std::byte{2}, std::byte{0}}));
+  }
+
+  SUBCASE("truncated binary payload throws")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::vector<std::byte> bin = {std::byte{1}, std::byte{2}, std::byte{3}};
+
+    ser.dump(bin);
+    out.pop_back();
+    CHECK_THROWS_AS(
+        (bson::deserializer{out}.load<std::vector<std::byte>>()), std::runtime_error);
+  }
+
+  SUBCASE("std::uint8_t keeps its existing array-of-int32 encoding, not binary")
+  {
+    std::vector<std::byte>    out;
+    bson::serializer          ser{out};
+    std::vector<std::uint8_t> u8 = {1, 2, 3};
+
+    ser.dump(u8);
+
+    CHECK_EQ(out[4], static_cast<std::byte>(0x04));
+
+    auto value = bson::deserializer{out}.load<std::vector<std::uint8_t>>();
+    CHECK_EQ(value, u8);
+  }
+
+  SUBCASE("a huge declared length against a short buffer throws instead of allocating")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::vector<std::byte> bin = {std::byte{1}, std::byte{2}};
+    ser.dump(bin);
+
+    const std::int32_t huge = 0x7FFFFFFF;
+    std::memcpy(out.data() + 11, &huge, sizeof(huge));
+
+    CHECK_THROWS_AS((bson::deserializer{out}.load<std::vector<std::byte>>()), std::runtime_error);
+  }
+
+  SUBCASE("a huge declared length on a streaming, unsized cursor throws without allocating it")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::vector<std::byte> bin = {std::byte{1}, std::byte{2}};
+    ser.dump(bin);
+
+    const std::int32_t huge = 0x7FFFFFFF;
+    std::memcpy(out.data() + 11, &huge, sizeof(huge));
+
+    const std::string    raw{reinterpret_cast<char const*>(out.data()), out.size()};
+    std::istringstream   in{raw, std::ios::binary};
+    CHECK_THROWS_AS((bson::deserializer{in}.load<std::vector<std::byte>>()), std::runtime_error);
+  }
+
+  SUBCASE("a subtype other than 0 (generic) throws")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    std::vector<std::byte> bin = {std::byte{1}, std::byte{2}};
+    ser.dump(bin);
+
+    out[15] = std::byte{0x80};
+
+    bool threw = false;
+    try
+    {
+      bson::deserializer{out}.load<std::vector<std::byte>>();
+    }
+    catch(std::runtime_error const& e)
+    {
+      threw = true;
+      CHECK(std::string_view{e.what()}.contains("0x80"));
+    }
+    CHECK(threw);
+  }
+
+  SUBCASE("writing from a std::span<std::byte const>")
+  {
+    std::vector<std::byte> src = {std::byte{9}, std::byte{8}, std::byte{7}};
+
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(std::span<std::byte const>{src});
+
+    auto value = bson::deserializer{out}.load<std::vector<std::byte>>();
+    CHECK_EQ(value, src);
+  }
+}
+
 TEST_CASE("reflex::serde::bson: aggregate")
 {
   std::vector<std::byte> out;
