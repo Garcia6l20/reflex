@@ -228,7 +228,7 @@ def add_stub(project, env, extension, name: str):
             str(out),
         ],
     )
-    stub.add_dependency(extension)
+    stub.depends(extension)
     project.Alias("py-stubs", stub)
     return stub
 

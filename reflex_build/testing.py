@@ -108,7 +108,7 @@ if build_testing:
         )
         # program is an interpreter, not a Target, so the extension is not
         # pulled in by itself.
-        test.add_dependency(extension)
+        test.depends(extension)
 
         if group:
             project.Alias(f"test-{group}", extension)
