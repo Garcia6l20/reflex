@@ -34,7 +34,11 @@ REFLEX_EXPORT namespace reflex
 
   template <typename T>
   concept byte_like_c = std::same_as<T, char> or std::same_as<T, unsigned char>
-                     or std::same_as<T, std::byte>;
+                     or std::same_as<T, std::byte> or std::same_as<T, char8_t>;
+
+  template <typename R>
+  concept byte_range_c = std::ranges::contiguous_range<R const> and std::ranges::sized_range<R const>
+                      and byte_like_c<std::ranges::range_value_t<R const>>;
   }
 
   /** @brief Incremental FIPS 180-4 SHA-256 hasher.
@@ -50,6 +54,7 @@ REFLEX_EXPORT namespace reflex
     /** @brief 32-byte SHA-256 digest. */
     using digest = std::array<std::byte, digest_size>;
 
+    /** @brief Constructs a hasher holding the initial FIPS 180-4 state. */
     constexpr sha256() noexcept
     {
       reset();
@@ -64,31 +69,43 @@ REFLEX_EXPORT namespace reflex
       bit_len_    = 0;
     }
 
-    /** @brief Absorbs @p data into the running hash. */
+    /** @brief Absorbs @p data into the running hash.
+     * @param data the bytes to absorb, appended after any data already absorbed.
+     */
     constexpr void update(std::span<std::byte const> data) noexcept
     {
       bit_len_ += static_cast<std::uint64_t>(data.size()) * 8;
       absorb(data.data(), data.size());
     }
 
-    /** @brief Absorbs the bytes of @p s into the running hash. */
+    /** @brief Absorbs the bytes of @p s into the running hash.
+     * @param s the characters to absorb, appended after any data already absorbed.
+     */
     constexpr void update(std::string_view s) noexcept
     {
       bit_len_ += static_cast<std::uint64_t>(s.size()) * 8;
       absorb(s.data(), s.size());
     }
 
-    /** @brief Absorbs a contiguous range of `char`, `unsigned char` or `std::byte`. */
-    template <std::ranges::contiguous_range R>
-      requires _sha256_detail::byte_like_c<std::ranges::range_value_t<R>>
-           and (not std::convertible_to<R const&, std::string_view>)
+    /** @brief Absorbs a contiguous, sized range of `char`, `char8_t`, `unsigned char` or `std::byte`.
+     * @param r the range to absorb, appended after any data already absorbed.
+     */
+    template <_sha256_detail::byte_range_c R>
+      requires(not std::convertible_to<R const&, std::string_view>)
     constexpr void update(R const& r) noexcept
     {
       bit_len_ += static_cast<std::uint64_t>(std::ranges::size(r)) * 8;
       absorb(std::ranges::data(r), std::ranges::size(r));
     }
 
-    /** @brief Pads and finalizes a copy of the state, leaving @c *this untouched. */
+    /** @brief Pads and finalizes a copy of the state, leaving @c *this untouched.
+     *
+     * Safe to call repeatedly, each call returns the same digest. @c update() may
+     * be called again afterwards to continue absorbing more data from where
+     * @c finish() left off.
+     *
+     * @return the 32-byte digest of everything absorbed so far.
+     */
     constexpr digest finish() const noexcept
     {
       sha256 copy = *this;
@@ -219,7 +236,10 @@ REFLEX_EXPORT namespace reflex
     std::uint64_t                bit_len_    = 0;
   };
 
-  /** @brief One-shot SHA-256 digest of @p data. */
+  /** @brief One-shot SHA-256 digest of @p data.
+   * @param data the bytes to hash.
+   * @return the 32-byte digest of @p data.
+   */
   constexpr sha256::digest sha256_of(std::span<std::byte const> data) noexcept
   {
     sha256 h;
@@ -227,7 +247,10 @@ REFLEX_EXPORT namespace reflex
     return h.finish();
   }
 
-  /** @brief One-shot SHA-256 digest of @p s. */
+  /** @brief One-shot SHA-256 digest of @p s.
+   * @param s the characters to hash.
+   * @return the 32-byte digest of @p s.
+   */
   constexpr sha256::digest sha256_of(std::string_view s) noexcept
   {
     sha256 h;
@@ -235,10 +258,12 @@ REFLEX_EXPORT namespace reflex
     return h.finish();
   }
 
-  /** @brief One-shot SHA-256 digest of a contiguous range of `char`, `unsigned char` or `std::byte`. */
-  template <std::ranges::contiguous_range R>
-    requires _sha256_detail::byte_like_c<std::ranges::range_value_t<R>>
-         and (not std::convertible_to<R const&, std::string_view>)
+  /** @brief One-shot SHA-256 digest of a contiguous, sized range of `char`, `char8_t`, `unsigned char` or `std::byte`.
+   * @param r the range to hash.
+   * @return the 32-byte digest of @p r.
+   */
+  template <_sha256_detail::byte_range_c R>
+    requires(not std::convertible_to<R const&, std::string_view>)
   constexpr sha256::digest sha256_of(R const& r) noexcept
   {
     sha256 h;
@@ -246,7 +271,13 @@ REFLEX_EXPORT namespace reflex
     return h.finish();
   }
 
-  /** @brief Lower-case hex encoding of @p d, as a fixed 64-character buffer. */
+  /** @brief Lower-case hex encoding of @p d, as a fixed 64-character buffer.
+   *
+   * The result is not NUL-terminated.
+   *
+   * @param d the digest to encode.
+   * @return 64 lower-case hex digits, two per byte of @p d.
+   */
   constexpr std::array<char, sha256::digest_size * 2> to_hex(sha256::digest const& d) noexcept
   {
     constexpr char digits[] = "0123456789abcdef";

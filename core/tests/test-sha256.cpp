@@ -59,6 +59,51 @@ TEST_CASE("reflex::sha256: one million 'a'")
         == to_digest("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"sv));
 }
 
+TEST_CASE("reflex::sha256: block-boundary lengths of 'a'")
+{
+  struct boundary_vector
+  {
+    std::size_t      length;
+    std::string_view hex;
+  };
+
+  const boundary_vector vectors[] = {
+      {55, "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"sv},
+      {56, "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"sv},
+      {63, "7d3e74a05d7db15bce4ad9ec0658ea98e3f06eeecf16b4c6fff2da457ddc2f34"sv},
+      {64, "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"sv},
+      {65, "635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0"sv},
+      {119, "31eba51c313a5c08226adf18d4a359cfdfd8d2e816b13f4af952f7ea6584dcfb"sv},
+      {120, "2f3d335432c70b580af0e8e1b3674a7c020d683aa5f73aaaedfdc55af904c21c"sv},
+  };
+
+  for(auto const& v : vectors)
+  {
+    CAPTURE(v.length);
+    std::string msg(v.length, 'a');
+    CHECK(hex_view(to_hex(sha256_of(std::string_view{msg}))) == v.hex);
+  }
+}
+
+TEST_CASE("reflex::sha256: finish() is idempotent and update() may continue after it")
+{
+  sha256 h;
+  h.update("hello "sv);
+  auto first  = h.finish();
+  auto second = h.finish();
+  CHECK(first == second);
+
+  h.update("world"sv);
+  auto combined = h.finish();
+  CHECK(combined == sha256_of("hello world"sv));
+}
+
+TEST_CASE("reflex::sha256: char8_t range is accepted")
+{
+  std::u8string_view s = u8"reflex sha256";
+  CHECK(sha256_of(s) == sha256_of("reflex sha256"sv));
+}
+
 TEST_CASE("reflex::sha256: split across many update() calls equals one-shot")
 {
   std::string msg(5000, '\0');
@@ -73,7 +118,7 @@ TEST_CASE("reflex::sha256: split across many update() calls equals one-shot")
   {
     sha256 h;
     std::string_view remaining{msg};
-    while(!remaining.empty())
+    while(not remaining.empty())
     {
       auto take = std::min(chunk, remaining.size());
       h.update(remaining.substr(0, take));
