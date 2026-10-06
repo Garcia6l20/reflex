@@ -11,6 +11,7 @@
 #include <reflex/overload_set.hpp>
 #endif
 
+#include <reflex/py/gc.hpp>
 #include <reflex/py/nanobind.hpp>
 #include <reflex/py/operators.hpp>
 #include <reflex/py/policy.hpp>
@@ -171,7 +172,7 @@ REFLEX_EXPORT namespace reflex::py
      */
     consteval auto is_bindable_callable(std::meta::info m) -> bool
     {
-      if(not std::meta::is_function(m) or is_skipped(m))
+      if(not std::meta::is_function(m) or is_skipped(m) or is_gc_hook(m))
       {
         return false;
       }
@@ -1016,8 +1017,19 @@ REFLEX_EXPORT namespace reflex::py
 
       using class_type = [:class_type_of(^^T, base):];
 
-      auto c = with_doc<^^T>(
-          [&](auto... doc) { return class_type(scope, name ? name : written, doc...); });
+      constexpr bool traversed = is_traversed(^^T);
+
+      auto c = with_doc<^^T>([&](auto... doc) {
+        if constexpr(traversed)
+        {
+          return class_type(
+              scope, name ? name : written, doc..., nb::type_slots(gc_slots<T>()));
+        }
+        else
+        {
+          return class_type(scope, name ? name : written, doc...);
+        }
+      });
 
       bind_constructors<T>(c);
       bind_data_members<T>(c);
