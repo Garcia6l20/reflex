@@ -1017,13 +1017,14 @@ REFLEX_EXPORT namespace reflex::py
 
       using class_type = [:class_type_of(^^T, base):];
 
+      // GCC 16.2.1: is_traversed(^^T) evaluated inside the with_doc lambda's if constexpr reads
+      // false, hoisted here.
       constexpr bool traversed = is_traversed(^^T);
 
       auto c = with_doc<^^T>([&](auto... doc) {
         if constexpr(traversed)
         {
-          return class_type(
-              scope, name ? name : written, doc..., nb::type_slots(gc_slots<T>()));
+          return class_type(scope, name ? name : written, doc..., nb::type_slots(gc_slots<T>()));
         }
         else
         {
