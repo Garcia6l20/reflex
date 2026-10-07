@@ -214,7 +214,6 @@ def add_stub(project, env, extension, name: str):
     out = module_dir(project)
 
     stub = project.Command(
-        f"{name}-stub",
         env,
         target=out / f"{name}.pyi",
         command=[
@@ -227,6 +226,7 @@ def add_stub(project, env, extension, name: str):
             "-i",
             str(out),
         ],
+        name = f"{name}-stub",
     )
     stub.depends(extension)
     project.Alias("py-stubs", stub)

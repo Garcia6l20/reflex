@@ -91,9 +91,55 @@ struct [[= py::doc{"what it is"}]] [[= py::naming::snake_case]] widget
 | `py::naming::<case>` | class, enum, namespace | how its members are spelled |
 | `py::returns{policy}` | member function | what nanobind does with the result |
 | `py::submodule` | nested namespace | follow it when binding the parent |
+| `py::traverse` | data member, member function | report Python references to the cycle collector |
+| `py::clear` | member function | drop them when the collector breaks a cycle |
 
 A `py::naming` on a scope governs what is inside it, never what the scope itself
 is called. A `py::rename` on one overload renames the whole set.
+
+## Cycles through native members
+
+A native member holding a Python object is a reference CPython's cycle collector
+cannot see. A cycle running through one, such as a Python subclass instance
+stored in its own `nb::object` member, is never collected. `py::traverse` makes
+the bound type a GC type with `tp_traverse` and `tp_clear`:
+
+```cpp
+class machine
+{
+public:
+  [[= py::traverse]] nb::object                        on_stop;
+  [[= py::traverse]] std::map<std::string, nb::object> models;
+
+private:
+  [[= py::traverse]] void report(py::gc_visitor& visit) const noexcept
+  {
+    for(auto* p : engine_.peripherals())
+    {
+      visit(nb::find(p));
+    }
+  }
+  [[= py::clear]] void forget() noexcept;
+};
+```
+
+- A data member is visited and, on a clear, reset without allocating: `None` for
+  a bare `nb::object`, a null handle for a subclass such as `nb::list`, `T{}` for
+  the rest. It holds an `nb::object`, a `std::optional` of one, a range of them or
+  a map holding them, nested as deep as needed.
+- A member function is called with a `py::gc_visitor` for references no data
+  member expresses. It must report each reference the object owns exactly once,
+  and nothing it does not own, or the collector frees a live object or never
+  frees a dead one.
+- A `py::clear` function runs after the data members are reset. Both hooks must be
+  `noexcept`, which is checked.
+- Only a Python object owning its C++ instance reports anything. A view, such as a
+  class-typed member read through its owner or a `T&` return, reports nothing.
+- Private members count, and so do those of every base. The functions are never
+  published as methods.
+- A base bound by hand with `nb::dynamic_attr()` loses nanobind's traversal of
+  `__dict__` in a derived class carrying `py::traverse`: a cycle through that
+  dictionary is not collected.
 
 ## Binding a namespace
 

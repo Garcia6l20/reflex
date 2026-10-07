@@ -22,6 +22,13 @@ REFLEX_EXPORT namespace reflex::py
     return meta::has_annotation(r, ^^skip_t);
   }
 
+  /** @brief is @p r a function the cycle collector calls rather than Python */
+  consteval auto is_gc_hook(std::meta::info r) -> bool
+  {
+    return std::meta::is_function(r)
+       and (meta::has_annotation(r, ^^traverse_t) or meta::has_annotation(r, ^^clear_t));
+  }
+
   /** @brief is @p r exposed without a setter
    *
    * A const data member has no setter to expose, so the annotation is only one

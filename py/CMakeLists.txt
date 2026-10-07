@@ -21,6 +21,7 @@ reflex_add_cxx_module_library(reflex.py
   include/reflex/py.hpp
   include/reflex/py/annotations.hpp
   include/reflex/py/bind.hpp
+  include/reflex/py/gc.hpp
   include/reflex/py/nanobind.hpp
   include/reflex/py/operators.hpp
   include/reflex/py/policy.hpp

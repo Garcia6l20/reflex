@@ -108,6 +108,58 @@ REFLEX_EXPORT namespace reflex::py
   {};
   inline constexpr submodule_t submodule{};
 
+  /** @brief show CPython's cycle collector the Python references a class owns
+   *
+   * A native member holding a Python object is an edge the collector cannot
+   * see, so a cycle running through one is never collected. Annotating any
+   * member of a bound class this way gives its Python type `tp_traverse` and
+   * `tp_clear`, and makes it a GC type.
+   *
+   * On a data member, the member is visited and, on a clear, reset without
+   * allocating: a bare `nb::object` to `None`, another `nb::object` subclass
+   * to a null handle, anything else to `T{}`. It may be an `nb::object` or
+   * anything derived from one, a `std::optional` of one, a range of them or a
+   * map whose keys or values are one, nested as deep as needed.
+   *
+   * On a member function, it is called as `f(visitor)` on a const object with a
+   * py::gc_visitor, for references a data member cannot express: objects found
+   * through `nb::find` on native state, or held deeper than the class itself.
+   * It must be noexcept, and visit each reference the object owns exactly
+   * once, and nothing it does not own.
+   *
+   * Only a Python object owning its C++ instance reports or clears anything. A
+   * view made under rv_policy::reference or reference_internal, a class-typed
+   * member read through its owner or a `T&` return, reports nothing: the
+   * references belong to the owner.
+   *
+   * Annotated members of a base are honoured too, private ones included. The
+   * functions are never published as methods. A base bound by hand with
+   * `nb::dynamic_attr()` loses nanobind's own traversal of `__dict__`, so a
+   * cycle through that dictionary is not collected.
+   *
+   * @code
+   * class holder
+   * {
+   *   [[= py::traverse]] nb::object callback;
+   *   [[= py::traverse]] void visit_models(py::gc_visitor& visit) const noexcept;
+   *   [[= py::clear]] void drop_models() noexcept;
+   * };
+   * @endcode
+   */
+  struct traverse_t
+  {};
+  inline constexpr traverse_t traverse{};
+
+  /** @brief a member function run by `tp_clear` to break a cycle
+   *
+   * Called as `f()` after the annotated data members are reset. It must be
+   * noexcept, and the object it runs on stays alive and may still be used
+   * afterwards, so it drops references rather than destroying state.
+   */
+  struct clear_t
+  {};
+  inline constexpr clear_t clear{};
+
   /** @brief how a member's name is spelled in Python, when it does not say */
   using naming = caseconv::naming;
 
