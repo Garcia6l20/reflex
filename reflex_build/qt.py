@@ -201,7 +201,12 @@ def qml_module(name, env, *, uri, qml_files, metatypes, link=(), version="1.0"):
             "QMLURI": uri,
             "QMLMAJOR": major,
             "QMLMINOR": minor,
-            "QMLTYPES": PathToken(path=f"qt.{name}/{qmltypes_name}", path_type="build"),
+            "QMLTYPES": PathToken(
+                path=str(
+                    (qt_dir / qmltypes_name).resolve().relative_to(build_dir.resolve())
+                ),
+                path_type="build",
+            ),
             "QMLFOREIGN": [],
         },
     )
