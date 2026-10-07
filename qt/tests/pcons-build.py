@@ -133,7 +133,7 @@ if moc and registrar and headers:
         ],
         labels=["qt"],
     )
-    cross_check.add_dependency(exporter)
+    cross_check.depends(exporter)
     project.Alias("test-qt", exporter)
     print(f"-- Test added: {cross_check.name}")
 else:
