@@ -10,7 +10,7 @@ from reflex_build.config import build_dir
 
 _patched = set()
 
-PCONS_TESTED = (0, 28)
+PCONS_TESTED = (0, 30)
 _scan_warned = False
 
 
