@@ -533,6 +533,10 @@ REFLEX_EXPORT namespace reflex::serde::bson
           }
           else
           {
+            if(n == 0)
+            {
+              return;
+            }
             std::memcpy(dest, first, n);
           }
           advance(n);
