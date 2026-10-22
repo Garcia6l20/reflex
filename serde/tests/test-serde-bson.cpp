@@ -327,6 +327,48 @@ TEST_CASE("reflex::serde::bson: std::byte ranges are BSON binary")
   }
 }
 
+struct Blob
+{
+  std::string            name;
+  std::vector<std::byte> payload;
+
+  bool operator==(Blob const&) const = default;
+};
+
+TEST_CASE("reflex::serde::bson: bson::value holds binary")
+{
+  const bson::binary bin = {std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+
+  SUBCASE("generic decode of a typed-written struct")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(Blob{"blob", bin});
+
+    auto value = bson::deserializer{out}.load<bson::value>();
+
+    auto& object = std::get<bson::object>(value);
+    CHECK_EQ(std::get<std::string>(object.at("name")), "blob");
+    CHECK_EQ(std::get<bson::binary>(object.at("payload")), bin);
+  }
+
+  SUBCASE("value round-trip")
+  {
+    bson::value in = bson::object{
+        {"empty", bson::binary{}                                },
+        {"bin",   bin                                           },
+        {"list",  bson::array{bson::value{bin}, bson::value{7}}},
+    };
+
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(in);
+
+    auto back = bson::deserializer{out}.load<bson::value>();
+    CHECK(back == in);
+  }
+}
+
 TEST_CASE("reflex::serde::bson: aggregate")
 {
   std::vector<std::byte> out;
