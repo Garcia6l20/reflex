@@ -79,4 +79,14 @@ TEST_CASE("reflex::serde::json and bson: interoperability")
     ser.dump(typed);
     std::println("Serialized BSON value as JSON: {}", out);
   }
+
+  SUBCASE("bson::value binary json serialized")
+  {
+    bson::value typed = bson::binary{std::byte{0xDE}, std::byte{0xAD}};
+
+    std::string      out;
+    json::serializer ser{out};
+    ser.dump(typed);
+    CHECK(out == "[222,173]");
+  }
 }

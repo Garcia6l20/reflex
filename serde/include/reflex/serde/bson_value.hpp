@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <stdfloat>
+#include <vector>
 #endif
 
 REFLEX_EXPORT namespace reflex::serde::bson
@@ -25,6 +26,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
   using number     = double;
   using boolean    = bool;
   using decimal128 = std::float128_t;
+  using binary     = std::vector<std::byte>;
 
   struct datetime
   {
@@ -61,7 +63,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
     constexpr auto operator<=>(datetime const&) const noexcept = default;
   };
 
-  using value  = poly::var<int32, int64, number, boolean, string, decimal128, datetime>;
+  using value  = poly::var<int32, int64, number, boolean, string, decimal128, datetime, binary>;
   using object = value::obj_type;
   using array  = value::arr_type;
 

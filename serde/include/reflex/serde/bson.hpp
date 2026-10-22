@@ -1017,6 +1017,9 @@ REFLEX_EXPORT namespace reflex::serde::bson
           case detail::bson_type::datetime:
             value = bson::datetime{cursor_.template read<std::int64_t>()};
             return;
+          case detail::bson_type::binary:
+            read_element(type, value.template emplace<bson::binary>());
+            return;
           case detail::bson_type::document:
           {
             auto& object = value.template emplace<bson::object>();
