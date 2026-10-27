@@ -418,6 +418,61 @@ TEST_CASE("reflex::serde::json::deserializer: custom var")
   }
 }
 
+struct jt_tagged_xy
+{
+  int x;
+  int y = 7;
+};
+
+using jt_tagged_var = poly::var<json::string, json::number, json::boolean, jt_tagged_xy>;
+
+TEST_CASE("reflex::serde::json::deserializer: a tagged object missing a member")
+{
+  const std::string id    = std::to_string(std::hash<std::string_view>{}("jt_tagged_xy"));
+  const std::string doc   = R"({"t":{"__type":)" + id + R"(,"x":1}})";
+  const auto        value = json::deserializer{doc}.load<jt_tagged_var>();
+  REQUIRE(value.at("t")->is<jt_tagged_xy>());
+  CHECK_EQ(value.at("t")->as<jt_tagged_xy>().x, 1);
+  CHECK_EQ(value.at("t")->as<jt_tagged_xy>().y, 7);
+}
+
+struct jt_bytes
+{
+  std::string            name;
+  std::vector<std::byte> data;
+
+  constexpr bool operator==(jt_bytes const&) const = default;
+};
+
+TEST_CASE("reflex::serde::json: std::byte round-trips")
+{
+  const std::vector<std::byte> bytes{std::byte{0}, std::byte{0x7f}, std::byte{0xff}};
+  SUBCASE("a byte vector")
+  {
+    std::string      out;
+    json::serializer ser{out};
+    serialize(ser, bytes);
+    CHECK_EQ(out, "[0,127,255]");
+    CHECK_EQ(json::deserializer{out}.load<std::vector<std::byte>>(), bytes);
+  }
+  SUBCASE("an aggregate holding a byte vector")
+  {
+    const jt_bytes   value{"blob", bytes};
+    std::string      out;
+    json::serializer ser{out};
+    serialize(ser, value);
+    CHECK_EQ(out, R"({"name":"blob","data":[0,127,255]})");
+    CHECK_EQ(json::deserializer{out}.load<jt_bytes>(), value);
+  }
+  SUBCASE("a value past a byte is rejected")
+  {
+    CHECK_THROWS_AS(json::deserializer{"256"sv}.load<std::byte>(), std::out_of_range);
+    CHECK_THROWS_AS(json::deserializer{"-1"sv}.load<std::byte>(), std::out_of_range);
+    CHECK_THROWS_AS(
+        json::deserializer{"[1,256]"sv}.load<std::vector<std::byte>>(), std::out_of_range);
+  }
+}
+
 TEST_CASE("reflex::core::json file roundtrip")
 {
   const std::filesystem::path json_path = "test.json";
