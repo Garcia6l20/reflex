@@ -8,7 +8,9 @@
 #include <bit>
 #include <charconv>
 #include <cstring>
+#include <limits>
 #include <span>
+#include <stdexcept>
 
 #include <reflex/serde.hpp>
 #include <reflex/serde/bson_value.hpp>
@@ -271,6 +273,10 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   {
     append(out, detail::bson_type::binary);
     append(out, key);
+    if(value.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+    {
+      throw std::length_error("BSON binary payload exceeds the int32 length field");
+    }
     append(out, static_cast<std::int32_t>(value.size()));
     append(out, std::byte{0x00});
     out.append_range(value);
