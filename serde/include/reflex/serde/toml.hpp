@@ -345,6 +345,10 @@ REFLEX_EXPORT namespace reflex::serde::toml
   template <typename T>
   concept var_c = meta::is_template_instance_of(^^T, ^^poly::var);
 
+  template <typename T>
+  concept optional_table_c = optional_c<std::remove_cvref_t<T>>
+                         and object_visitable_c<typename std::remove_cvref_t<T>::value_type>;
+
   // The entry object_visitor creates on a miss holds null, so the path makes it a
   // table. Only null is converted; anything else is a broken document rule the
   // var's own visitor reports better. Free function and unconstrained template
@@ -357,6 +361,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
       {
         value.ensure_object();
       }
+    }
+    else if constexpr(optional_table_c<T>)
+    {
+      if(not value.has_value())
+      {
+        value.emplace();
+      }
+      make_table(*value);
     }
   }
 
@@ -371,6 +383,12 @@ REFLEX_EXPORT namespace reflex::serde::toml
     if(rest.empty())
     {
       fn(node);
+      return;
+    }
+    if constexpr(optional_table_c<Node>)
+    {
+      make_table(node);
+      table_descend<Skip>(rest, *node, fn, full, name);
       return;
     }
     make_table(node);

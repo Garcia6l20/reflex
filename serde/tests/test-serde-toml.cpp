@@ -1502,3 +1502,74 @@ TEST_CASE("reflex::serde::toml: round trip - an absent optional stays absent")
   check_typed_round_trip(rt_opt{1, 2, "three"});
   check_typed_round_trip(rt_opt{1, std::nullopt, "three"});
 }
+
+struct ot_tls
+{
+  bool on = false;
+
+  bool operator==(ot_tls const&) const = default;
+};
+
+struct ot_backup
+{
+  int                   port = 0;
+  std::optional<ot_tls> tls;
+
+  bool operator==(ot_backup const&) const = default;
+};
+
+struct ot_doc
+{
+  int                      a = 0;
+  std::optional<ot_backup> backup;
+
+  bool operator==(ot_doc const&) const = default;
+};
+
+static ot_doc ot_make(int a, int port, std::optional<ot_tls> tls)
+{
+  return ot_doc{
+      a, ot_backup{port, tls}
+  };
+}
+
+TEST_CASE("reflex::serde::toml: round trip - an engaged optional table is a header")
+{
+  const ot_doc engaged = ot_make(1, 2, std::nullopt);
+  CHECK(dump(engaged) == "a = 1\n[backup]\nport = 2");
+  check_typed_round_trip(engaged);
+
+  const ot_doc absent{1, std::nullopt};
+  CHECK(dump(absent) == "a = 1");
+  check_typed_round_trip(absent);
+  check_load<ot_doc>("a = 1\n", absent);
+
+  const ot_doc nested = ot_make(1, 2, ot_tls{true});
+  CHECK(dump(nested) == "a = 1\n[backup]\nport = 2\n[backup.tls]\non = true");
+  check_typed_round_trip(nested);
+  check_load<ot_doc>("[backup.tls]\non = true\n", ot_make(0, 0, ot_tls{true}));
+  check_load<ot_doc>("[backup]\n", ot_make(0, 0, std::nullopt));
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: a dotted key reaches into an optional table")
+{
+  check_load<ot_doc>("a = 1\nbackup.port = 3\n", ot_make(1, 3, std::nullopt));
+  check_load<ot_doc>("backup.tls.on = true\n", ot_make(0, 0, ot_tls{true}));
+  check_load<ot_doc>("[backup]\ntls.on = true\n", ot_make(0, 0, ot_tls{true}));
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: an optional table is defined once")
+{
+  check_load_throws<ot_doc>("[backup]\nport = 1\n[backup]\nport = 2\n");
+  check_load_throws<ot_doc>("[backup]\n[backup]\n");
+  check_load_throws<ot_doc>("backup.port = 1\n[backup]\n");
+  check_load_throws<ot_doc>("[backup.tls]\n[backup.tls]\n");
+}
+
+TEST_CASE("reflex::serde::toml::deserializer: unknown keys under an optional table are skipped")
+{
+  constexpr toml::read_options skip{.unknown_keys = unknown_keys::skip};
+  const std::string  text = "a = 1\n[backup]\nextra = 5\nport = 4\n[backup.gone]\nx = 1\n";
+  toml::deserializer de{text, std::cw<skip>};
+  CHECK(de.load<ot_doc>() == ot_make(1, 4, std::nullopt));
+}

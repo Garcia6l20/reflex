@@ -320,6 +320,35 @@ TEST_CASE("reflex::serde::toml capture: an optional inline table anchors to the 
   CHECK_EQ(comment(c.backup).trailing, "on backup");
 }
 
+TEST_CASE(
+    "reflex::serde::toml capture: an optional [header] table anchors to the node of its value")
+{
+  const auto [v, c] = ta_load<ta_opt>(
+      "a = 1\n# above backup\n[backup] # on backup\n# above port\nport = 2 # on port\n");
+  REQUIRE(v.backup.has_value());
+  CHECK_EQ(v.backup->port, 2);
+  CHECK(comment(c.backup).leading == ta_lines{"above backup"});
+  CHECK_EQ(comment(c.backup).trailing, "on backup");
+  CHECK(c.backup.port.leading == ta_lines{"above port"});
+  CHECK_EQ(c.backup.port.trailing, "on port");
+}
+
+TEST_CASE("reflex::serde::toml capture: a dotted key into an optional table anchors to its leaf")
+{
+  const auto [v, c] = ta_load<ta_opt>("a = 1\n# above port\nbackup.port = 2 # on port\n");
+  REQUIRE(v.backup.has_value());
+  CHECK_EQ(v.backup->port, 2);
+  CHECK(c.backup.port.leading == ta_lines{"above port"});
+  CHECK_EQ(c.backup.port.trailing, "on port");
+}
+
+TEST_CASE("reflex::serde::toml capture: an absent optional table stays absent")
+{
+  const auto [v, c] = ta_load<ta_opt>("# above a\na = 1\n");
+  CHECK_FALSE(v.backup.has_value());
+  CHECK(comment(c.backup).leading.empty());
+}
+
 TEST_CASE("reflex::serde::toml capture: a control character in a comment still throws")
 {
   CHECK_THROWS_WITH(

@@ -88,6 +88,14 @@ struct tw_nested
   constexpr bool operator==(tw_nested const&) const = default;
 };
 
+struct tw_backed
+{
+  int                    value = 0;
+  std::optional<tw_port> backup;
+
+  constexpr bool operator==(tw_backed const&) const = default;
+};
+
 static constexpr char tw_config_text[] = {
 #embed "fixtures/comments/toml/config.toml"
 };
@@ -326,4 +334,21 @@ port = 2
   CHECK(back_comments.grid.leading == tw_lines{"above grid"});
   CHECK_EQ(back_comments.limits.trailing, "on limits");
   CHECK(back_comments.items.leading.empty());
+}
+
+TEST_CASE("reflex::serde::toml write: a commented optional [header] table round-trips")
+{
+  const std::string input      = "value = 1\n# above backup\n[backup] # on backup\n# above port\n"
+                                 "port = 2 # on port\n";
+  const auto [value, comments] = tw_load<tw_backed>(input);
+  REQUIRE(value.backup.has_value());
+  CHECK_EQ(value.backup->port, 2);
+  CHECK(comment(comments.backup).leading == tw_lines{"above backup"});
+  CHECK_EQ(comment(comments.backup).trailing, "on backup");
+  CHECK(comments.backup.port.leading == tw_lines{"above port"});
+  CHECK_EQ(tw_dump(value, comments), input);
+
+  const auto [absent, absent_comments] = tw_load<tw_backed>("# above value\nvalue = 1\n");
+  CHECK_FALSE(absent.backup.has_value());
+  CHECK_EQ(tw_dump(absent, absent_comments), "# above value\nvalue = 1\n");
 }
