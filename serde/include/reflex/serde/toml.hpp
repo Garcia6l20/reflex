@@ -458,6 +458,50 @@ REFLEX_EXPORT namespace reflex::serde::toml
           root);
     }
   }
+
+  struct no_locate
+  {
+    constexpr void operator()(std::span<segment const>) const noexcept
+    {}
+  };
+
+  /** @brief The block of the comment node @p path names below @p node, the tree of @p Model.
+   *
+   * @return null when the path leaves the reflected aggregates, through an array of tables, a
+   * map, a poly::var or a key no member is named after
+   */
+  template <typename Model, typename Node>
+  serde::comment_block* comment_target(std::span<segment const> path, Node& node)
+  {
+    if(path.empty() or path.front().index != no_index)
+    {
+      return nullptr;
+    }
+    const std::string_view key = path.front().name;
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^Model, std::meta::access_context::current())))
+    {
+      constexpr auto             nm   = serde::detail::comment_member_of<member>();
+      constexpr std::string_view name = serialized_name(member);
+      using F                         = shape_t<typename[:type_of(member):]>;
+      if(key == name)
+      {
+        if(path.size() == 1)
+        {
+          return &serde::comment(node.[:nm:]);
+        }
+        if constexpr(serde::detail::reflected_aggregate_c<F>)
+        {
+          return comment_target<F>(path.subspan(1), node.[:nm:]);
+        }
+        else
+        {
+          return nullptr;
+        }
+      }
+    }
+    return nullptr;
+  }
   } // namespace detail
 
   /** @brief Output options of toml::serializer, its second template argument. */
@@ -1022,6 +1066,11 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // by the encoded path, so "[[a]] b = 1" twice is not a duplicate key.
     std::map<std::string, detail::path_entry> paths_;
 
+    friend serde::detail::subrange_deserializer<InputIt>;
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^serde::detail::comment_capture
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
   public:
     using base::base;
 
@@ -1536,6 +1585,17 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // and addresses every assignment by its full path. Only reachable at depth 0.
     template <typename Root> void read_document(Root& root)
     {
+      if constexpr(Opts.comments and serde::detail::reflected_aggregate_c<Root>)
+      {
+        if(comments_.active)
+        {
+          if(auto* node = comments_.slot.template take<serde::comments_of<Root>>())
+          {
+            read_document_commented_(root, *node);
+            return;
+          }
+        }
+      }
       table_path_.clear();
       header_buf_.clear();
       paths_.clear();
@@ -1558,6 +1618,142 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
   private:
+    template <typename Node>
+    void begin_commented(Node&)
+      requires(Opts.comments)
+    {}
+
+    template <typename Node>
+    void end_commented(Node&)
+      requires(Opts.comments)
+    {}
+
+    /** @brief read_document, with every comment and blank line routed into @p node.
+     *
+     * Lines above a key or a header go to its leading, a comment after it on the same line to its
+     * trailing, and what is left at the end of input to the root footer. At the first key or
+     * header, the lines up to and including the last blank one are the document header, the root's
+     * leading. Lines whose key or header has no node are dropped with it.
+     */
+    template <typename Root, typename Node> void read_document_commented_(Root& root, Node& node)
+    {
+      table_path_.clear();
+      header_buf_.clear();
+      paths_.clear();
+
+      std::vector<std::string> pending;
+      serde::comment_block     discarded;
+      bool                     fresh  = true;
+      bool                     header = true;
+      while(capture_content_line_(pending, fresh))
+      {
+        serde::comment_block* target = nullptr;
+        if(peek_at(0) == '[')
+        {
+          read_header_();
+          materialize_table_(root);
+          target = detail::comment_target<Root>(table_path_, node);
+        }
+        else
+        {
+          read_assignment_(root, [&](std::span<detail::segment const> path) {
+            target = detail::comment_target<Root>(path, node);
+          });
+        }
+        if(std::exchange(header, false))
+        {
+          const auto last  = std::ranges::find(pending.rbegin(), pending.rend(), serde::blank_line);
+          const auto split = last.base();
+          auto&      leading = serde::comment(node).leading;
+          leading.insert(
+              leading.end(), std::make_move_iterator(pending.begin()),
+              std::make_move_iterator(split));
+          pending.erase(pending.begin(), split);
+        }
+        serde::comment_block& block = target != nullptr ? *target : discarded;
+        block.leading.insert(
+            block.leading.end(), std::make_move_iterator(pending.begin()),
+            std::make_move_iterator(pending.end()));
+        pending.clear();
+        capture_trailing_(block.trailing);
+        fresh     = false;
+        discarded = {};
+      }
+      auto& footer = serde::comment(node).footer;
+      footer.insert(
+          footer.end(), std::make_move_iterator(pending.begin()),
+          std::make_move_iterator(pending.end()));
+      serde::layout_of(node).final_newline = fresh;
+    }
+
+    /** @brief next_content_line, keeping each comment line and each blank line in @p pending.
+     *
+     * @p fresh is true when the cursor sits at the start of a line, which is what tells an empty
+     * line from the rest of the line a value ended on. At end of input it says whether the input
+     * ended with a line break.
+     */
+    bool capture_content_line_(std::vector<std::string>& pending, bool& fresh)
+    {
+      while(true)
+      {
+        skip_ws();
+        if(at_end())
+        {
+          return false;
+        }
+        if(not at_line_end())
+        {
+          if(peek_at(0) != '#')
+          {
+            return true;
+          }
+          pending.push_back(read_comment_text_());
+        }
+        else if(fresh)
+        {
+          pending.emplace_back(serde::blank_line);
+        }
+        if(not next_line())
+        {
+          fresh = false;
+          return false;
+        }
+        fresh = true;
+      }
+    }
+
+    void capture_trailing_(std::string& out)
+    {
+      skip_ws();
+      if(at_line_end())
+      {
+        return;
+      }
+      if(peek_at(0) == '#')
+      {
+        out = read_comment_text_();
+        return;
+      }
+      throw std::runtime_error("TOML: unexpected content after a value");
+    }
+
+    std::string read_comment_text_()
+    {
+      advance();
+      std::string raw;
+      while(not at_line_end())
+      {
+        const char c = peek_at(0);
+        if(c != '\t' and serde::detail::is_control(c))
+        {
+          throw std::runtime_error(
+              "TOML: a control character other than tab cannot appear in a comment");
+        }
+        raw += advance();
+      }
+      return std::string{serde::detail::comment_body(raw)};
+    }
+
     // The table every following assignment belongs to, until the next header.
     void read_header_()
     {
@@ -1706,7 +1902,8 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     // Both relative to the table the last header named.
-    template <typename Root> void read_assignment_(Root& root)
+    template <typename Root, typename Locate = detail::no_locate>
+    void read_assignment_(Root& root, Locate&& locate = {})
     {
       std::array<std::string_view, serde::max_key_depth> keys{};
       const std::size_t                                  count = read_key_path(keys);
@@ -1743,6 +1940,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
       const auto path = std::span<detail::segment const>{full.data(), n};
       record_assignment_(path, table_path_.size());
+      locate(path);
 
       const std::string where = detail::join_path(path);
       auto              assign = [this]<typename V>(V& v) {
