@@ -137,9 +137,9 @@ REFLEX_EXPORT namespace reflex::serde::json
 
   // What may legally follow a number: a structural character, or whitespace
   // before one.
-  constexpr bool ends_number(char c) noexcept
+  template <bool Comments = false> constexpr bool ends_number(char c) noexcept
   {
-    return c == ',' or c == ']' or c == '}' or reflex::is_space(c);
+    return c == ',' or c == ']' or c == '}' or reflex::is_space(c) or (Comments and c == '/');
   }
 
   // `"name":` is a constant, so it is built once at compile time and promoted to
@@ -612,12 +612,113 @@ REFLEX_EXPORT namespace reflex::serde::json
     // Narrowing to " \t\n\r" would change what parses.
     void ltrim()
     {
-      while(not at_end() and reflex::is_space(*cursor_.begin()))
+      if constexpr(Opts.comments)
       {
-        cursor_.advance(1);
+        skip_space_and_comments();
+      }
+      else
+      {
+        while(not at_end() and reflex::is_space(*cursor_.begin()))
+        {
+          cursor_.advance(1);
+        }
       }
     }
 
+    /** @brief Skips what may precede a value: nothing, or whitespace and comments when the
+     * read options accept comments, so a value opening the document may follow a comment.
+     */
+    void skip_to_value()
+    {
+      if constexpr(Opts.comments)
+      {
+        skip_space_and_comments();
+      }
+    }
+
+    /** @brief Skips whitespace, line comments and block comments. */
+    void skip_space_and_comments()
+      requires(Opts.comments)
+    {
+      while(not at_end())
+      {
+        const char c = *cursor_.begin();
+        if(reflex::is_space(c))
+        {
+          cursor_.advance(1);
+          continue;
+        }
+        if(c != '/')
+        {
+          return;
+        }
+        cursor_.advance(1);
+        const char kind = at_end() ? '\0' : *cursor_.begin();
+        if(kind == '/')
+        {
+          cursor_.advance(1);
+          skip_line_comment();
+        }
+        else if(kind == '*')
+        {
+          cursor_.advance(1);
+          skip_block_comment();
+        }
+        else
+        {
+          throw std::runtime_error("Unexpected '/' in JSON");
+        }
+      }
+    }
+
+  private:
+    void skip_line_comment()
+    {
+      if constexpr(base::bulk_scan)
+      {
+        const std::string_view rest = this->rest();
+        const std::size_t      end  = rest.find('\n');
+        this->skip(end == std::string_view::npos ? rest.size() : end);
+      }
+      else
+      {
+        while(not at_end() and *cursor_.begin() != '\n')
+        {
+          cursor_.advance(1);
+        }
+      }
+    }
+
+    void skip_block_comment()
+    {
+      if constexpr(base::bulk_scan)
+      {
+        const std::string_view rest = this->rest();
+        const std::size_t      end  = rest.find("*/");
+        if(end == std::string_view::npos)
+        {
+          throw std::runtime_error("Unterminated JSON comment");
+        }
+        this->skip(end + 2);
+      }
+      else
+      {
+        bool star = false;
+        while(not at_end())
+        {
+          const char c = *cursor_.begin();
+          cursor_.advance(1);
+          if(star and c == '/')
+          {
+            return;
+          }
+          star = c == '*';
+        }
+        throw std::runtime_error("Unterminated JSON comment");
+      }
+    }
+
+  public:
     // Reads an object key and hands back a view of it.
     //
     // The view points into the input buffer, not into anything the parse owns,
@@ -672,6 +773,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     friend auto
         tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<json::null_t>)
     {
+      de.skip_to_value();
       de.expect("null");
       return null;
     }
@@ -682,6 +784,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         deserializer& de,
         std::type_identity<std::optional<T>>)
     {
+      de.skip_to_value();
       if(de.peek() == 'n')
       {
         de.expect("null");
@@ -742,6 +845,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       requires serde::detail::borrowed_string_sink_c<Str> and deserializer::bulk_scan
     friend Str tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
+      de.skip_to_value();
       if(de.advance() != '"')
       {
         throw std::runtime_error("Expected '\"' at start of JSON string");
@@ -801,6 +905,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       requires serde::detail::string_sink_c<Str>
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
+      de.skip_to_value();
       if(de.advance() != '"')
       {
         throw std::runtime_error("Expected '\"' at start of JSON string");
@@ -934,6 +1039,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <number_c Num>
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Num>)
     {
+      de.skip_to_value();
       Num value;
       if constexpr(deserializer::bulk_scan)
       {
@@ -945,7 +1051,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         // Anything else, `1.2.3` being the case that used to slip through, is
         // trailing garbage and is rejected here rather than left for the next
         // token to fail on with an unrelated message.
-        if(ec != std::errc{} or (ptr != last and not detail::ends_number(*ptr)))
+        if(ec != std::errc{} or (ptr != last and not detail::ends_number<Opts.comments>(*ptr)))
         {
           throw std::runtime_error("Failed to parse number");
         }
@@ -973,8 +1079,12 @@ REFLEX_EXPORT namespace reflex::serde::json
         // permissive than the parser, and what stopped the collector must be a
         // character that may follow a number, which covers `1.5abc`.
         auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
-        if(ec != std::errc{} or ptr != token.data() + token.size()
-           or (not de.at_end() and not detail::ends_number(de.peek())))
+        if(ec
+           != std::errc{}
+           or ptr
+           != token.data()
+           + token.size()
+           or (not de.at_end() and not detail::ends_number<Opts.comments>(de.peek())))
         {
           throw std::runtime_error("Failed to parse number");
         }
@@ -984,6 +1094,7 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<boolean>)
     {
+      de.skip_to_value();
       if(de.peek() == 't')
       {
         de.expect("true");
@@ -1014,6 +1125,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <seq_c Seq>
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Seq>)
     {
+      de.skip_to_value();
       if(de.advance() != '[')
         throw std::runtime_error("Expected '[' at start of JSON array");
 
@@ -1040,6 +1152,14 @@ REFLEX_EXPORT namespace reflex::serde::json
         if(sep == ',')
         {
           de.ltrim();
+          if constexpr(Opts.trailing_commas)
+          {
+            if(not de.at_end() and de.peek() == ']')
+            {
+              de.advance();
+              break;
+            }
+          }
           continue;
         }
         if(sep == ']')
@@ -1089,6 +1209,7 @@ REFLEX_EXPORT namespace reflex::serde::json
   auto tag_invoke(
       tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Map>)
   {
+    de.skip_to_value();
     if(de.advance() != '{')
       throw std::runtime_error("Expected '{' at start of JSON object");
 
@@ -1183,6 +1304,15 @@ REFLEX_EXPORT namespace reflex::serde::json
       const char sep = de.advance();
       if(sep == ',')
       {
+        if constexpr(Opts.trailing_commas)
+        {
+          de.ltrim();
+          if(not de.at_end() and de.peek() == '}')
+          {
+            de.advance();
+            break;
+          }
+        }
         continue;
       }
       if(sep == '}')
