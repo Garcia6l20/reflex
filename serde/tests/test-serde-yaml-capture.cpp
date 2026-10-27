@@ -168,12 +168,7 @@ TEST_CASE("reflex::serde::yaml capture: the stream cursor reads the same tree")
   const auto [v, c]   = de.load_commented<ya_cfg>();
   const auto expected = ya_load<ya_cfg>(ya_document);
   CHECK(v == ya_expected);
-  CHECK_EQ(comment(c), comment(expected.comments));
-  CHECK_EQ(c.value, expected.comments.value);
-  CHECK_EQ(comment(c.srv), comment(expected.comments.srv));
-  CHECK_EQ(c.srv.port, expected.comments.srv.port);
-  CHECK_EQ(c.list, expected.comments.list);
-  CHECK_EQ(c.name, expected.comments.name);
+  CHECK(c == expected.comments);
 }
 
 TEST_CASE("reflex::serde::yaml capture: a section comment above a key keeps its blank line")

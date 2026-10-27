@@ -75,24 +75,6 @@ template <std::size_t N> static std::string jw_text(char const (&bytes)[N])
   return std::string{bytes, N};
 }
 
-template <typename N> static bool jw_same(N const& a, N const& b)
-{
-  if constexpr(requires { a == b; })
-  {
-    return a == b;
-  }
-  else
-  {
-    bool same = true;
-    template for(constexpr auto m : std::define_static_array(
-                     nonstatic_data_members_of(^^N, std::meta::access_context::unchecked())))
-    {
-      same = same and jw_same(a.[:m:], b.[:m:]);
-    }
-    return same;
-  }
-}
-
 constexpr json::read_options jw_read{.comments = true};
 constexpr json::options      jw_write{.indent = 2, .comments = true};
 
@@ -128,7 +110,7 @@ TEST_CASE("reflex::serde::json5 write: an unchanged round trip is byte-identical
   CHECK_EQ(out, input);
   const auto [cfg_back, back] = jw_load<jw_config>(out);
   CHECK(cfg_back == cfg);
-  CHECK(jw_same(back, comments));
+  CHECK(back == comments);
 }
 
 TEST_CASE("reflex::serde::json5 write: a 4-space input stays 4-space")
@@ -174,7 +156,7 @@ TEST_CASE("reflex::serde::json5 write: a hand-built tree gives the documented sh
   CHECK(back == value);
   CHECK_EQ(layout_of(back_comments).indent, 2);
   layout_of(c).indent = 2;
-  CHECK(jw_same(back_comments, c));
+  CHECK(back_comments == c);
 }
 
 TEST_CASE("reflex::serde::json5 write: an empty tree writes the pretty bytes and a final newline")
@@ -210,7 +192,7 @@ TEST_CASE("reflex::serde::json5 write: an empty aggregate keeps its trailing and
   comment(c).footer   = {"f"};
   const auto out      = jw_dump(jw_empty{}, c);
   CHECK_EQ(out, "{ // t\n  // f\n}\n");
-  CHECK(jw_same(jw_load<jw_empty>(out).comments, c));
+  CHECK(jw_load<jw_empty>(out).comments == c);
   CHECK_EQ(jw_dump(jw_empty{}, comments_of<jw_empty>{}), "{}\n");
 }
 

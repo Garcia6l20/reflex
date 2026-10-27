@@ -158,6 +158,136 @@ TEST_CASE("reflex::serde::comments_of: accessors")
   CHECK_NE(copy, tree._self);
 }
 
+static_assert(requires(ct_outer_tree const& a) {
+  { a == a } -> std::same_as<bool>;
+  { a != a } -> std::same_as<bool>;
+});
+static_assert(ct_outer_tree{} == ct_outer_tree{});
+static_assert(serde::comments_of<ct_dynamic>{} == serde::comments_of<ct_dynamic>{});
+
+static ct_outer_tree ct_filled_tree()
+{
+  ct_outer_tree tree;
+  serde::comment(tree).leading         = {"header", std::string(serde::blank_line)};
+  serde::comment(tree).trailing        = "root";
+  serde::comment(tree).footer          = {"footer"};
+  serde::layout_of(tree)               = {.indent = 4, .indent_char = ' ', .final_newline = false};
+  tree.value.leading                   = {"value"};
+  serde::comment(tree.srv).leading     = {"section"};
+  tree.srv.port.trailing               = "port";
+  serde::comment(tree.backup).trailing = "backup";
+  tree.backup.host.leading             = {"backup host"};
+  tree.list.footer                     = {"list end"};
+  tree.tags.trailing                   = "tags";
+  return tree;
+}
+
+TEST_CASE("reflex::serde::comments_of: operator==")
+{
+  const ct_outer_tree base  = ct_filled_tree();
+  ct_outer_tree       other = ct_filled_tree();
+
+  SUBCASE("equal trees compare equal")
+  {
+    CHECK(base == other);
+    CHECK_FALSE(base != other);
+    CHECK(ct_outer_tree{} == ct_outer_tree{});
+  }
+
+  SUBCASE("a nested leading comment differs")
+  {
+    serde::comment(other.srv).leading.push_back("more");
+    CHECK_FALSE(base == other);
+    CHECK(base != other);
+  }
+
+  SUBCASE("a nested leaf differs")
+  {
+    other.srv.port.trailing = "changed";
+    CHECK_FALSE(base == other);
+  }
+
+  SUBCASE("the optional member's node differs")
+  {
+    other.backup.host.leading.clear();
+    CHECK(base != other);
+  }
+
+  SUBCASE("_self differs")
+  {
+    SUBCASE("trailing")
+    {
+      serde::comment(other).trailing = "other";
+    }
+    SUBCASE("footer")
+    {
+      serde::comment(other).footer.push_back("more");
+    }
+    SUBCASE("leading")
+    {
+      serde::comment(other).leading.pop_back();
+    }
+    CHECK_FALSE(base == other);
+    CHECK(base != other);
+  }
+
+  SUBCASE("the layout differs")
+  {
+    SUBCASE("indent")
+    {
+      serde::layout_of(other).indent = 2;
+    }
+    SUBCASE("indent_char")
+    {
+      serde::layout_of(other).indent_char = '\t';
+    }
+    SUBCASE("final_newline")
+    {
+      serde::layout_of(other).final_newline = true;
+    }
+    CHECK_FALSE(base == other);
+    CHECK(base != other);
+  }
+
+  SUBCASE("a sequence or map member's block differs")
+  {
+    SUBCASE("sequence")
+    {
+      other.list.footer.clear();
+    }
+    SUBCASE("map")
+    {
+      other.tags.trailing.clear();
+    }
+    CHECK(base != other);
+  }
+}
+
+TEST_CASE("reflex::serde::comments_of: operator== on poly::var, std::array and const members")
+{
+  serde::comments_of<ct_dynamic> lhs;
+  serde::comments_of<ct_dynamic> rhs;
+  lhs.any.leading         = {"any"};
+  rhs.any.leading         = {"any"};
+  lhs.fixed.host.trailing = "host";
+  rhs.fixed.host.trailing = "host";
+  CHECK(lhs == rhs);
+
+  SUBCASE("poly::var")
+  {
+    rhs.any.trailing = "x";
+  }
+  SUBCASE("std::array")
+  {
+    rhs.pair.leading = {"pair"};
+  }
+  SUBCASE("const nested member")
+  {
+    serde::comment(rhs.fixed).footer = {"end"};
+  }
+  CHECK(lhs != rhs);
+}
+
 TEST_CASE("reflex::serde::detail::comment_slot")
 {
   serde::comments_of<ct_inner> inner;

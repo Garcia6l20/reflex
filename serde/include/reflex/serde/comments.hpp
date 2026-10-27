@@ -159,6 +159,26 @@ REFLEX_EXPORT namespace reflex::serde
   /** @brief A generated comment tree, the node of a reflected aggregate. */
   template <typename N>
   concept comment_tree_c = is_comment_tree(^^N);
+
+  /** @brief Compares two comment trees member by member, `_self` included.
+   *
+   * Declared in the namespace of serde::detail::comment_holder, so argument-dependent lookup
+   * finds it for every generated tree, and `!=` is synthesized from it.
+   *
+   * @return true when every non-static data member of @p lhs equals the one of @p rhs
+   */
+  template <comment_tree_c Node> constexpr bool operator==(Node const& lhs, Node const& rhs)
+  {
+    template for(constexpr auto m : std::define_static_array(
+                     nonstatic_data_members_of(^^Node, std::meta::access_context::unchecked())))
+    {
+      if(not(lhs.[:m:] == rhs.[:m:]))
+      {
+        return false;
+      }
+    }
+    return true;
+  }
   } // namespace detail
 
   /** @brief The comment tree of @p T, members named after @p T's C++ members.
