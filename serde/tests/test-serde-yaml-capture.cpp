@@ -424,3 +424,59 @@ TEST_CASE("reflex::serde::yaml capture: a sequence root keeps no inner comment i
   });
   CHECK_EQ(c.footer, lines_t{"head"});
 }
+
+struct ya_entry
+{
+  int a = 0;
+
+  bool operator==(ya_entry const&) const = default;
+};
+
+struct ya_entries
+{
+  std::vector<ya_entry> items;
+  int                   after = 0;
+
+  bool operator==(ya_entries const&) const = default;
+};
+
+struct ya_holder
+{
+  ya_entry e;
+  int      b = 0;
+
+  bool operator==(ya_holder const&) const = default;
+};
+
+template <typename T> static serde::commented<T> ya_load_skip(std::string_view text)
+{
+  yaml::deserializer de{text, std::cw<ya_keep_skip>};
+  return de.load_commented<T>();
+}
+
+TEST_CASE("reflex::serde::yaml capture: an empty skipped key keeps its parent's sequence entries")
+{
+  CHECK(
+      ya_load_skip<std::vector<ya_entry>>("- a: 1\n  junk:\n- a: 2\n- a: 3").value
+      == std::vector<ya_entry>{{1}, {2}, {3}});
+  CHECK(
+      ya_load_skip<std::vector<ya_entry>>("- a: 1\n  junk:\n  - x\n- a: 2\n").value
+      == std::vector<ya_entry>{{1}, {2}});
+  CHECK(
+      ya_load_skip<ya_entries>("items:\n  - a: 1\n    junk:\n  - a: 2\nafter: 5\n").value
+      == ya_entries{
+          {{1}, {2}},
+          5
+  });
+  CHECK(
+      ya_load_skip<ya_entries>("items:\n- a: 1\n  junk:\n- a: 2\nafter: 5\n").value
+      == ya_entries{
+          {{1}, {2}},
+          5
+  });
+  CHECK(ya_load_skip<ya_holder>("e:\n  a: 1\n  junk:\n  - x\nb: 2\n").value == ya_holder{{1}, 2});
+  CHECK(ya_load_skip<ya_holder>("e:\n  a: 1\n  junk:\n  - x\n").value == ya_holder{{1}, 0});
+  CHECK_THROWS_WITH(
+      std::ignore = ya_load_skip<ya_holder>("e:\n  a: 1\n  junk:\n- x\nb: 2\n"),
+      "YAML: expected ':' after the key '- x'");
+}

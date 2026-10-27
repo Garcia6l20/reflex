@@ -1474,7 +1474,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
             st.lines.clear();
             const std::size_t scan_before = st.scan;
             const std::size_t at          = next_content_line();
-            if(at != npos and not deeper_than_block(at) and at_sequence_entry())
+            if(at == base and at_sequence_entry())
             {
               std::ignore = this->template load<std::vector<yaml::value>>();
             }
@@ -2918,7 +2918,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         if(not serde::object_try_visit_flat(key, value, load_member))
         {
           const std::size_t at = de.next_content_line();
-          if(at != de.npos and not de.deeper_than_block(at) and de.at_sequence_entry())
+          if(at == base and de.at_sequence_entry())
           {
             std::ignore = de.template load<std::vector<yaml::value>>();
           }
