@@ -458,6 +458,52 @@ REFLEX_EXPORT namespace reflex::serde::toml
           root);
     }
   }
+
+  struct no_locate
+  {
+    constexpr void operator()(std::span<segment const>) const noexcept
+    {}
+  };
+
+  struct toml_access;
+
+  /** @brief The block of the comment node @p path names below @p node, the tree of @p Model.
+   *
+   * @return null when the path leaves the reflected aggregates, through an array of tables, a
+   * map, a poly::var or a key no member is named after
+   */
+  template <typename Model, typename Node>
+  serde::comment_block* comment_target(std::span<segment const> path, Node& node)
+  {
+    if(path.empty() or path.front().index != no_index)
+    {
+      return nullptr;
+    }
+    const std::string_view key = path.front().name;
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^Model, std::meta::access_context::current())))
+    {
+      constexpr auto             nm   = serde::detail::comment_member_of<member>();
+      constexpr std::string_view name = serialized_name(member);
+      using F                         = shape_t<typename[:type_of(member):]>;
+      if(key == name)
+      {
+        if(path.size() == 1)
+        {
+          return &serde::comment(node.[:nm:]);
+        }
+        if constexpr(serde::detail::reflected_aggregate_c<F>)
+        {
+          return comment_target<F>(path.subspan(1), node.[:nm:]);
+        }
+        else
+        {
+          return nullptr;
+        }
+      }
+    }
+    return nullptr;
+  }
   } // namespace detail
 
   /** @brief Output options of toml::serializer, its second template argument. */
@@ -490,6 +536,163 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // The break goes before a line rather than after, so a document has neither a
     // leading nor a trailing newline.
     bool wrote_line_ = false;
+
+    friend serde::detail::serializer_base<OutputIt>;
+    friend struct detail::toml_access;
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^serde::detail::comment_emit
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    /** @brief Writes `# ` and @p text, `#` alone for an empty one.
+     *
+     * @throws std::runtime_error when @p text holds a line break or a control character other
+     * than tab, which the reader rejects
+     */
+    void write_comment(std::string_view text)
+      requires(Opts.comments)
+    {
+      serde::detail::check_comment_line(text, "", format_name);
+      if(std::ranges::any_of(
+             text, [](char c) { return c != '\t' and serde::detail::is_control(c); }))
+      {
+        throw std::runtime_error(
+            "TOML: a comment cannot hold a control character other than tab: '"
+            + std::string(text)
+            + "'");
+      }
+      if(text.empty())
+      {
+        this->write_char('#');
+        return;
+      }
+      this->write_raw("# ");
+      this->write_raw(text);
+    }
+
+    /** @brief Writes @p lines, each on its own line, a blank line entry as an empty line. */
+    void write_comment_lines(std::vector<std::string> const& lines)
+      requires(Opts.comments)
+    {
+      for(auto const& line : lines)
+      {
+        begin_line();
+        if(line != serde::blank_line)
+        {
+          write_comment(line);
+        }
+      }
+    }
+
+    void write_trailing(std::string const& text)
+      requires(Opts.comments)
+    {
+      if(not text.empty())
+      {
+        this->write_char(' ');
+        write_comment(text);
+      }
+    }
+
+    /** @brief write_pair, with the lines of @p block above the line and its trailing after the
+     * value. Nothing is written for a key that is omitted, its comments included.
+     */
+    template <typename T>
+    void write_commented_pair(
+        std::string_view            key_token,
+        T const&                    value,
+        serde::comment_block const* block)
+      requires(Opts.comments)
+    {
+      if constexpr(optional_c<std::remove_cvref_t<T>>)
+      {
+        if(value.has_value())
+        {
+          write_commented_pair(key_token, *value, block);
+        }
+      }
+      else if(block == nullptr)
+      {
+        write_pair(key_token, value);
+      }
+      else if(not detail::holds_null(value))
+      {
+        write_comment_lines(block->leading);
+        begin_line();
+        this->write_raw(key_token);
+        write_inline(value);
+        write_trailing(block->trailing);
+      }
+    }
+
+    /** @brief write_table, with the leading of @p node above the header, its trailing after the
+     * header, and its footer after the table's body.
+     *
+     * The footer has no position of its own in TOML: read back, it is the leading of the next
+     * header, or the root footer after the last table.
+     */
+    template <typename T, typename Node>
+    void write_commented_table(std::string_view key, T const& value, Node const* node)
+      requires(Opts.comments)
+    {
+      if constexpr(optional_c<std::remove_cvref_t<T>>)
+      {
+        if(value.has_value())
+        {
+          write_commented_table(key, *value, node);
+        }
+      }
+      else if(node == nullptr)
+      {
+        write_table(key, value);
+      }
+      else
+      {
+        serde::comment_block const& block = serde::comment(*node);
+        write_comment_lines(block.leading);
+        {
+          const path_guard guard{*this, key};
+          begin_line();
+          this->write_char('[');
+          this->write_raw(path_);
+          this->write_char(']');
+          write_trailing(block.trailing);
+          if constexpr(serde::detail::comment_tree_c<Node>)
+          {
+            comments_.slot.give(*node);
+          }
+          serialize(*this, value);
+          comments_.slot = {};
+        }
+        write_comment_lines(block.footer);
+      }
+    }
+
+    /** @brief Writes the root's leading lines, called by dump(value, comments). */
+    template <typename Node>
+    void begin_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      write_comment_lines(serde::comment(node).leading);
+    }
+
+    /** @brief Writes the root's footer and, when the layout asks for it, a final line break.
+     * A root trailing has no line in TOML and is not written.
+     */
+    template <typename Node>
+    void end_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      write_comment_lines(serde::comment(node).footer);
+      bool final_newline = true;
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        final_newline = serde::layout_of(node).final_newline;
+      }
+      if(final_newline and wrote_line_)
+      {
+        this->write_char('\n');
+      }
+    }
 
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
@@ -894,107 +1097,155 @@ REFLEX_EXPORT namespace reflex::serde::toml
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
 
-  // Three passes over the members, and pass 1 must never emit a header: a key
-  // written after a [subtable] header belongs to that subtable, so a `port` line
-  // trailing a [server.tls] header becomes server.tls.port, not server.port - a
-  // valid document that means something else. Passes 2 and 3 split only so plain
-  // subtables precede arrays of tables; either order of those is correct.
-  //
-  // Inside an array or an inline table there is no line for a header to sit on,
-  // so the same aggregate goes out inline. That is what inline_depth_ answers.
+  namespace detail
+  {
+  /** @brief The one way into the TOML serializer's private comment state, for the namespace-scope
+   * aggregate writer.
+   */
+  struct toml_access
+  {
+    template <typename Agg, typename Ser> static auto take_node(Ser& ser)
+    {
+      return ser.comments_.slot.template take<serde::comments_of<Agg> const>();
+    }
+
+    // Three passes over the members, and pass 1 must never emit a header: a key
+    // written after a [subtable] header belongs to that subtable, so a `port` line
+    // trailing a [server.tls] header becomes server.tls.port, not server.port - a
+    // valid document that means something else. Passes 2 and 3 split only so plain
+    // subtables precede arrays of tables; either order of those is correct.
+    //
+    // Inside an array or an inline table there is no line for a header to sit on,
+    // so the same aggregate goes out inline. That is what inline_depth_ answers.
+    template <typename OutputIt, options Opts, typename Agg, typename NodePtr>
+    static OutputIt write_aggregate(serializer<OutputIt, Opts>& ser, Agg const& value, NodePtr node)
+    {
+      static constexpr auto type    = decay(type_of(^^value));
+      static constexpr auto members = define_static_array(
+          nonstatic_data_members_of(type, std::meta::access_context::current()));
+
+      if constexpr(members.size() == 0)
+      {
+        if(ser.inline_mode())
+        {
+          ser.write_raw("{}");
+        }
+        return ser.out();
+      }
+      else
+      {
+        if(ser.inline_mode())
+        {
+          ser.write_raw("{ ");
+          bool first = true;
+          template for(constexpr auto member : members)
+          {
+            constexpr bool omit = serde::omits_when_empty(member);
+            if constexpr(omit)
+            {
+              if(serde::is_empty_value(value.[:member:]))
+              {
+                continue;
+              }
+            }
+            first = ser.write_inline_pair(first, detail::assign_key<member>(), value.[:member:]);
+          }
+          ser.write_raw(" }");
+          return ser.out();
+        }
+
+        // Pass 1 - every leaf and every array of leaves, as "key = value".
+        template for(constexpr auto member : members)
+        {
+          using shape = detail::shape_t<typename[:type_of(member):]>;
+          if constexpr(not(detail::header_table_c<shape> or detail::table_array_c<shape>))
+          {
+            constexpr bool omit = serde::omits_when_empty(member);
+            if constexpr(omit)
+            {
+              if(serde::is_empty_value(value.[:member:]))
+              {
+                continue;
+              }
+            }
+            if constexpr(std::is_null_pointer_v<NodePtr>)
+            {
+              ser.write_pair(detail::assign_key<member>(), value.[:member:]);
+            }
+            else
+            {
+              constexpr auto nm = serde::detail::comment_member_of<member>();
+              ser.write_commented_pair(
+                  detail::assign_key<member>(),
+                  value.[:member:], node == nullptr ? nullptr : &serde::comment(node->[:nm:]));
+            }
+          }
+        }
+
+        // Pass 2 - every table, as "[path.key]" and then its own body.
+        template for(constexpr auto member : members)
+        {
+          using shape = detail::shape_t<typename[:type_of(member):]>;
+          if constexpr(detail::header_table_c<shape>)
+          {
+            constexpr bool omit = serde::omits_when_empty(member);
+            if constexpr(omit)
+            {
+              if(serde::is_empty_value(value.[:member:]))
+              {
+                continue;
+              }
+            }
+            if constexpr(std::is_null_pointer_v<NodePtr>)
+            {
+              ser.write_table(detail::key_name<member>(), value.[:member:]);
+            }
+            else
+            {
+              constexpr auto nm = serde::detail::comment_member_of<member>();
+              ser.write_commented_table(
+                  detail::key_name<member>(), value.[:member:], node == nullptr ? nullptr : &node->
+                                                    [:nm:]);
+            }
+          }
+        }
+
+        // Pass 3 - every array of tables, as repeated "[[path.key]]".
+        template for(constexpr auto member : members)
+        {
+          using shape = detail::shape_t<typename[:type_of(member):]>;
+          if constexpr(detail::table_array_c<shape>)
+          {
+            constexpr bool omit = serde::omits_when_empty(member);
+            if constexpr(omit)
+            {
+              if(serde::is_empty_value(value.[:member:]))
+              {
+                continue;
+              }
+            }
+            ser.write_table_array(detail::key_name<member>(), value.[:member:]);
+          }
+        }
+        return ser.out();
+      }
+    }
+  };
+  } // namespace detail
+
   template <typename OutputIt, options Opts, aggregate_c Agg>
     requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char, N> is an aggregate
   OutputIt tag_invoke(
       tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value)
   {
-    static constexpr auto type    = decay(type_of(^^value));
-    static constexpr auto members = define_static_array(
-        nonstatic_data_members_of(type, std::meta::access_context::current()));
-
-    if constexpr(members.size() == 0)
+    if constexpr(Opts.comments)
     {
-      if(ser.inline_mode())
-      {
-        ser.write_raw("{}");
-      }
-      return ser.out();
+      return detail::toml_access::write_aggregate(
+          ser, value, detail::toml_access::take_node<Agg>(ser));
     }
     else
     {
-      if(ser.inline_mode())
-      {
-        ser.write_raw("{ ");
-        bool first = true;
-        template for(constexpr auto member : members)
-        {
-          constexpr bool omit = serde::omits_when_empty(member);
-          if constexpr(omit)
-          {
-            if(serde::is_empty_value(value.[:member:]))
-            {
-              continue;
-            }
-          }
-          first = ser.write_inline_pair(first, detail::assign_key<member>(), value.[:member:]);
-        }
-        ser.write_raw(" }");
-        return ser.out();
-      }
-
-      // Pass 1 - every leaf and every array of leaves, as "key = value".
-      template for(constexpr auto member : members)
-      {
-        using shape = detail::shape_t<typename[:type_of(member):]>;
-        if constexpr(not(detail::header_table_c<shape> or detail::table_array_c<shape>))
-        {
-          constexpr bool omit = serde::omits_when_empty(member);
-          if constexpr(omit)
-          {
-            if(serde::is_empty_value(value.[:member:]))
-            {
-              continue;
-            }
-          }
-          ser.write_pair(detail::assign_key<member>(), value.[:member:]);
-        }
-      }
-
-      // Pass 2 - every table, as "[path.key]" and then its own body.
-      template for(constexpr auto member : members)
-      {
-        using shape = detail::shape_t<typename[:type_of(member):]>;
-        if constexpr(detail::header_table_c<shape>)
-        {
-          constexpr bool omit = serde::omits_when_empty(member);
-          if constexpr(omit)
-          {
-            if(serde::is_empty_value(value.[:member:]))
-            {
-              continue;
-            }
-          }
-          ser.write_table(detail::key_name<member>(), value.[:member:]);
-        }
-      }
-
-      // Pass 3 - every array of tables, as repeated "[[path.key]]".
-      template for(constexpr auto member : members)
-      {
-        using shape = detail::shape_t<typename[:type_of(member):]>;
-        if constexpr(detail::table_array_c<shape>)
-        {
-          constexpr bool omit = serde::omits_when_empty(member);
-          if constexpr(omit)
-          {
-            if(serde::is_empty_value(value.[:member:]))
-            {
-              continue;
-            }
-          }
-          ser.write_table_array(detail::key_name<member>(), value.[:member:]);
-        }
-      }
-      return ser.out();
+      return detail::toml_access::write_aggregate(ser, value, nullptr);
     }
   }
 
@@ -1021,6 +1272,11 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // Every path the document has claimed, and how; see detail::path_kind. Keyed
     // by the encoded path, so "[[a]] b = 1" twice is not a duplicate key.
     std::map<std::string, detail::path_entry> paths_;
+
+    friend serde::detail::subrange_deserializer<InputIt>;
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^serde::detail::comment_capture
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
 
   public:
     using base::base;
@@ -1536,6 +1792,17 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // and addresses every assignment by its full path. Only reachable at depth 0.
     template <typename Root> void read_document(Root& root)
     {
+      if constexpr(Opts.comments and serde::detail::reflected_aggregate_c<Root>)
+      {
+        if(comments_.active)
+        {
+          if(auto* node = comments_.slot.template take<serde::comments_of<Root>>())
+          {
+            read_document_commented_(root, *node);
+            return;
+          }
+        }
+      }
       table_path_.clear();
       header_buf_.clear();
       paths_.clear();
@@ -1558,6 +1825,142 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
   private:
+    template <typename Node>
+    void begin_commented(Node&)
+      requires(Opts.comments)
+    {}
+
+    template <typename Node>
+    void end_commented(Node&)
+      requires(Opts.comments)
+    {}
+
+    /** @brief read_document, with every comment and blank line routed into @p node.
+     *
+     * Lines above a key or a header go to its leading, a comment after it on the same line to its
+     * trailing, and what is left at the end of input to the root footer. At the first key or
+     * header, the lines up to and including the last blank one are the document header, the root's
+     * leading. Lines whose key or header has no node are dropped with it.
+     */
+    template <typename Root, typename Node> void read_document_commented_(Root& root, Node& node)
+    {
+      table_path_.clear();
+      header_buf_.clear();
+      paths_.clear();
+
+      std::vector<std::string> pending;
+      serde::comment_block     discarded;
+      bool                     fresh  = true;
+      bool                     header = true;
+      while(capture_content_line_(pending, fresh))
+      {
+        serde::comment_block* target = nullptr;
+        if(peek_at(0) == '[')
+        {
+          read_header_();
+          materialize_table_(root);
+          target = detail::comment_target<Root>(table_path_, node);
+        }
+        else
+        {
+          read_assignment_(root, [&](std::span<detail::segment const> path) {
+            target = detail::comment_target<Root>(path, node);
+          });
+        }
+        if(std::exchange(header, false))
+        {
+          const auto last  = std::ranges::find(pending.rbegin(), pending.rend(), serde::blank_line);
+          const auto split = last.base();
+          auto&      leading = serde::comment(node).leading;
+          leading.insert(
+              leading.end(), std::make_move_iterator(pending.begin()),
+              std::make_move_iterator(split));
+          pending.erase(pending.begin(), split);
+        }
+        serde::comment_block& block = target != nullptr ? *target : discarded;
+        block.leading.insert(
+            block.leading.end(), std::make_move_iterator(pending.begin()),
+            std::make_move_iterator(pending.end()));
+        pending.clear();
+        capture_trailing_(block.trailing);
+        fresh     = false;
+        discarded = {};
+      }
+      auto& footer = serde::comment(node).footer;
+      footer.insert(
+          footer.end(), std::make_move_iterator(pending.begin()),
+          std::make_move_iterator(pending.end()));
+      serde::layout_of(node).final_newline = fresh;
+    }
+
+    /** @brief next_content_line, keeping each comment line and each blank line in @p pending.
+     *
+     * @p fresh is true when the cursor sits at the start of a line, which is what tells an empty
+     * line from the rest of the line a value ended on. At end of input it says whether the input
+     * ended with a line break.
+     */
+    bool capture_content_line_(std::vector<std::string>& pending, bool& fresh)
+    {
+      while(true)
+      {
+        skip_ws();
+        if(at_end())
+        {
+          return false;
+        }
+        if(not at_line_end())
+        {
+          if(peek_at(0) != '#')
+          {
+            return true;
+          }
+          pending.push_back(read_comment_text_());
+        }
+        else if(fresh)
+        {
+          pending.emplace_back(serde::blank_line);
+        }
+        if(not next_line())
+        {
+          fresh = false;
+          return false;
+        }
+        fresh = true;
+      }
+    }
+
+    void capture_trailing_(std::string& out)
+    {
+      skip_ws();
+      if(at_line_end())
+      {
+        return;
+      }
+      if(peek_at(0) == '#')
+      {
+        out = read_comment_text_();
+        return;
+      }
+      throw std::runtime_error("TOML: unexpected content after a value");
+    }
+
+    std::string read_comment_text_()
+    {
+      advance();
+      std::string raw;
+      while(not at_line_end())
+      {
+        const char c = peek_at(0);
+        if(c != '\t' and serde::detail::is_control(c))
+        {
+          throw std::runtime_error(
+              "TOML: a control character other than tab cannot appear in a comment");
+        }
+        raw += advance();
+      }
+      return std::string{serde::detail::comment_body(raw)};
+    }
+
     // The table every following assignment belongs to, until the next header.
     void read_header_()
     {
@@ -1706,7 +2109,8 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     // Both relative to the table the last header named.
-    template <typename Root> void read_assignment_(Root& root)
+    template <typename Root, typename Locate = detail::no_locate>
+    void read_assignment_(Root& root, Locate&& locate = {})
     {
       std::array<std::string_view, serde::max_key_depth> keys{};
       const std::size_t                                  count = read_key_path(keys);
@@ -1743,6 +2147,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
       const auto path = std::span<detail::segment const>{full.data(), n};
       record_assignment_(path, table_path_.size());
+      locate(path);
 
       const std::string where = detail::join_path(path);
       auto              assign = [this]<typename V>(V& v) {

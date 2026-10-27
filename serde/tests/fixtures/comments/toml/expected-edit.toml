@@ -1,0 +1,30 @@
+# Application configuration
+# Edited by hand.
+
+# Display name
+name = "reflex" # shown in the title bar
+workers = 4
+
+# Tuning
+ratio = 0.25 # between 0 and 1
+debug = false
+ports = [80, 443]
+
+# Server settings
+[srv] # the public listener
+# port to listen on
+port = 9090 # or 80 behind a proxy
+host = "localhost"
+
+[srv.tls]
+on = true # off in development
+cert = "server.pem"
+
+# Logging
+
+# one of debug, info, warn
+[log]
+level = "info"
+#
+
+# end of configuration
