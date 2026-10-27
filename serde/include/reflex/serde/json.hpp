@@ -191,6 +191,10 @@ REFLEX_EXPORT namespace reflex::serde::json
                 }
                 [[maybe_unused]] auto object_value_it = std::ranges::find_if(
                     obj, [name](auto const& pair) { return pair.first == name; });
+                if(object_value_it == obj.end())
+                {
+                  continue;
+                }
                 auto& member_value = agg_value.[:member:];
                 visit(
                     [&]<typename U>([[maybe_unused]] U&& v) {

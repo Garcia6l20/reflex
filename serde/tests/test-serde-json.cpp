@@ -418,6 +418,24 @@ TEST_CASE("reflex::serde::json::deserializer: custom var")
   }
 }
 
+struct jt_tagged_xy
+{
+  int x;
+  int y = 7;
+};
+
+using jt_tagged_var = poly::var<json::string, json::number, json::boolean, jt_tagged_xy>;
+
+TEST_CASE("reflex::serde::json::deserializer: a tagged object missing a member")
+{
+  const std::string id    = std::to_string(std::hash<std::string_view>{}("jt_tagged_xy"));
+  const std::string doc   = R"({"t":{"__type":)" + id + R"(,"x":1}})";
+  const auto        value = json::deserializer{doc}.load<jt_tagged_var>();
+  REQUIRE(value.at("t")->is<jt_tagged_xy>());
+  CHECK_EQ(value.at("t")->as<jt_tagged_xy>().x, 1);
+  CHECK_EQ(value.at("t")->as<jt_tagged_xy>().y, 7);
+}
+
 TEST_CASE("reflex::core::json file roundtrip")
 {
   const std::filesystem::path json_path = "test.json";
