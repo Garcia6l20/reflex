@@ -35,6 +35,21 @@ struct uk_pooled
   constexpr bool operator==(uk_pooled const&) const = default;
 };
 
+struct uk_entry
+{
+  int a = 0;
+
+  constexpr bool operator==(uk_entry const&) const = default;
+};
+
+struct uk_entries
+{
+  std::vector<uk_entry> items;
+  int                   after = 0;
+
+  constexpr bool operator==(uk_entries const&) const = default;
+};
+
 const uk_config uk_expected{
     1,
     {8080, "h"},
@@ -302,6 +317,33 @@ TEST_CASE("reflex::serde::yaml: unknown_keys::skip")
         uk_config{
             1, {8080, "h"},
              ""
+    });
+  }
+  SUBCASE("an empty unknown key keeps its parent's sequence entries")
+  {
+    CHECK_EQ(
+        yaml_skip_load<std::vector<uk_entry>>("- a: 1\n  junk:\n- a: 2\n- a: 3"),
+        std::vector<uk_entry>{{1}, {2}, {3}});
+    CHECK_EQ(
+        yaml_skip_load<std::vector<uk_entry>>("- a: 1\n  junk:\n  - x\n  - y\n- a: 2\n"),
+        std::vector<uk_entry>{{1}, {2}});
+    CHECK_EQ(
+        yaml_skip_load<uk_entries>("items:\n  - a: 1\n    junk:\n  - a: 2\nafter: 5\n"),
+        uk_entries{
+            {{1}, {2}},
+            5
+    });
+    CHECK_EQ(
+        yaml_skip_load<uk_entries>("items:\n- a: 1\n  junk:\n- a: 2\nafter: 5\n"),
+        uk_entries{
+            {{1}, {2}},
+            5
+    });
+    CHECK_EQ(
+        yaml_skip_load<uk_entries>("items:\n- a: 1\n  junk:\n  - x\n- a: 2\nafter: 5\n"),
+        uk_entries{
+            {{1}, {2}},
+            5
     });
   }
   SUBCASE("comments around a skipped key")

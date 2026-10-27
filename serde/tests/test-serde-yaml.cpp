@@ -1466,3 +1466,29 @@ TEST_CASE("reflex::serde::yaml: the depth counter returns to zero after a nested
   ser.dump(Inner{1, "two"});
   CHECK(out == "a: 1\nb: two"); // same serializer, depth back at 0
 }
+
+struct yaml_blob
+{
+  std::string            name;
+  std::vector<std::byte> data;
+
+  bool operator==(yaml_blob const&) const = default;
+};
+
+TEST_CASE("reflex::serde::yaml::deserializer: a std::byte reads back as an integer in 0..255")
+{
+  const std::vector<std::byte> bytes{std::byte{0}, std::byte{0x7F}, std::byte{0xFF}};
+  CHECK(dump(bytes) == "- 0\n- 127\n- 255");
+  check_load<std::vector<std::byte>>(dump(bytes), bytes);
+
+  const yaml_blob blob{"b", bytes};
+  check_load<yaml_blob>(dump(blob), blob);
+
+  CHECK_THROWS_WITH(
+      std::ignore = yaml::deserializer{"256"sv}.load<std::byte>(),
+      "YAML: a byte holds an integer from 0 to 255, got 256");
+  CHECK_THROWS_WITH(
+      std::ignore = yaml::deserializer{"-1"sv}.load<std::byte>(),
+      "YAML: a byte holds an integer from 0 to 255, got -1");
+  check_load_throws<std::vector<std::byte>>("- 1\n- 256");
+}

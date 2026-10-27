@@ -1573,3 +1573,29 @@ TEST_CASE("reflex::serde::toml::deserializer: unknown keys under an optional tab
   toml::deserializer de{text, std::cw<skip>};
   CHECK(de.load<ot_doc>() == ot_make(1, 4, std::nullopt));
 }
+
+struct toml_blob
+{
+  std::string            name;
+  std::vector<std::byte> data;
+
+  bool operator==(toml_blob const&) const = default;
+};
+
+TEST_CASE("reflex::serde::toml::deserializer: a std::byte reads back as an integer in 0..255")
+{
+  const std::vector<std::byte> bytes{std::byte{0}, std::byte{0x7F}, std::byte{0xFF}};
+  check_load<std::vector<std::byte>>("[0, 127, 255]", bytes);
+
+  const toml_blob blob{"b", bytes};
+  CHECK(dump(blob) == "name = \"b\"\ndata = [0, 127, 255]");
+  check_load<toml_blob>(dump(blob), blob);
+
+  CHECK_THROWS_WITH(
+      std::ignore = toml::deserializer{"256"sv}.load<std::byte>(),
+      "TOML: a byte holds an integer from 0 to 255, got 256");
+  CHECK_THROWS_WITH(
+      std::ignore = toml::deserializer{"-1"sv}.load<std::byte>(),
+      "TOML: a byte holds an integer from 0 to 255, got -1");
+  check_load_throws<toml_blob>("data = [1, 256]\n");
+}
