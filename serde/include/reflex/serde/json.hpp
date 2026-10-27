@@ -235,128 +235,216 @@ REFLEX_EXPORT namespace reflex::serde::json
       return backend.comments_.active;
     }
 
-    template <typename De> static void skip_to_value(De& de)
+    struct no_object_capture
     {
-      de.skip_to_value();
-    }
+      template <typename De> explicit no_object_capture(De&)
+      {}
 
-    template <typename Map, typename De> static Map read_commented_object(De& de)
+      void opened()
+      {}
+
+      void before_key()
+      {}
+
+      void after_key()
+      {}
+
+      void after_colon()
+      {}
+
+      template <typename Map, typename V> void enter(Map&, V&)
+      {}
+
+      void skipped()
+      {}
+
+      void leave()
+      {}
+
+      void close()
+      {}
+    };
+
+    template <typename Map, typename De> class object_capture
     {
-      using node_type      = serde::comments_of<Map>;
-      constexpr auto opts  = De::read_opts;
-      auto&          cap   = de.comments_;
-      node_type*     node  = cap.slot.template take<node_type>();
-      const bool     root  = std::exchange(cap.root, false) and node != nullptr;
-      bool           found = false;
+      using node_type = serde::comments_of<Map>;
 
-      serde::comment_block  discarded;
-      serde::comment_block* prev = nullptr;
+      De&                      de_;
+      node_type*               node_;
+      bool                     root_;
+      serde::comment_block     discarded_;
+      serde::comment_block*    prev_ = nullptr;
+      std::vector<std::string> leading_;
 
-      auto take_trailing = [&] {
-        if(node == nullptr)
+      void take_trailing()
+      {
+        if(node_ == nullptr)
         {
           return;
         }
-        de.take_trailing(prev != nullptr ? prev->trailing : serde::comment(*node).trailing);
-      };
-      auto close = [&] {
-        take_trailing();
-        if(node == nullptr)
+        de_.take_trailing(prev_ != nullptr ? prev_->trailing : serde::comment(*node_).trailing);
+      }
+
+      void measure()
+      {
+        auto& cap = de_.comments_;
+        if(root_ and cap.broke_line and serde::layout_of(*node_).indent == 0)
         {
-          de.drop_pending();
-          return;
-        }
-        de.take_leading(serde::comment(*node).footer);
-      };
-      auto measure = [&] {
-        if(root and cap.broke_line and serde::layout_of(*node).indent == 0)
-        {
-          serde::layout_of(*node).indent =
+          serde::layout_of(*node_).indent =
               static_cast<std::uint8_t>(std::min<std::size_t>(cap.line_column, 255));
-          serde::layout_of(*node).indent_char = cap.indent_char;
+          serde::layout_of(*node_).indent_char = cap.indent_char;
         }
-      };
-      auto colon = [&] {
-        de.ltrim();
-        if(de.advance() != ':')
+      }
+
+      template <std::meta::info Member> void attach()
+      {
+        constexpr auto node_member = serde::detail::comment_member_of<Member>();
+        using member_node          = std::remove_cvref_t<typename[:type_of(node_member):]>;
+        if(node_ == nullptr)
         {
-          throw std::runtime_error("Expected ':' after object key");
+          return;
         }
-        de.ltrim();
-        de.drop_pending();
-      };
+        auto& block = serde::comment(node_->[:node_member:]);
+        block.leading.insert(
+            block.leading.end(), std::make_move_iterator(leading_.begin()),
+            std::make_move_iterator(leading_.end()));
+        leading_.clear();
+        prev_ = &block;
+        if constexpr(not std::same_as<member_node, serde::comment_block>)
+        {
+          de_.comments_.slot.give(node_->[:node_member:]);
+        }
+      }
+
+    public:
+      explicit object_capture(De& de)
+          : de_{de}, node_{de.comments_.slot.template take<node_type>()},
+            root_{std::exchange(de.comments_.root, false) and node_ != nullptr}
+      {}
+
+      void opened()
+      {
+        take_trailing();
+        measure();
+      }
+
+      void before_key()
+      {
+        measure();
+      }
+
+      void after_key()
+      {
+        take_trailing();
+        if(node_ != nullptr)
+        {
+          de_.take_leading(leading_);
+        }
+        else
+        {
+          de_.drop_pending();
+        }
+      }
+
+      void after_colon()
+      {
+        de_.drop_pending();
+      }
+
+      template <typename V> void enter(Map& value, V& v)
+      {
+        template for(constexpr auto member : define_static_array(
+                         nonstatic_data_members_of(^^Map, std::meta::access_context::current())))
+        {
+          if constexpr(std::same_as<typename[:type_of(member):], V>)
+          {
+            if(std::addressof(value.[:member:]) == std::addressof(v))
+            {
+              attach<member>();
+              return;
+            }
+          }
+        }
+      }
+
+      void skipped()
+      {
+        leading_.clear();
+        prev_ = &discarded_;
+      }
+
+      void leave()
+      {
+        de_.comments_.slot = {};
+        de_.drop_pending();
+      }
+
+      void close()
+      {
+        take_trailing();
+        if(node_ == nullptr)
+        {
+          de_.drop_pending();
+          return;
+        }
+        de_.take_leading(serde::comment(*node_).footer);
+      }
+    };
+
+    template <typename Map, bool Commented, typename De>
+    [[gnu::always_inline]] static inline Map read_object(De& de)
+    {
+      using capture_type  = typename[:Commented ? ^^object_capture<Map, De> : ^^no_object_capture:];
+      constexpr auto opts = De::read_opts;
+      capture_type   cap{de};
 
       de.skip_to_value();
       if(de.advance() != '{')
       {
         throw std::runtime_error("Expected '{' at start of JSON object");
       }
-      de.ltrim();
-      take_trailing();
-      measure();
 
-      Map value{};
+      de.ltrim();
+      cap.opened();
       if(not de.at_end() and de.peek() == '}')
       {
         de.advance();
-        close();
-        return value;
+        cap.close();
+        return Map{};
       }
 
+      Map value{};
       while(true)
       {
         de.ltrim();
-        measure();
-        [[maybe_unused]] const std::string_view key = de.read_key();
-        found                                       = false;
-        template for(constexpr auto member : define_static_array(
-                         nonstatic_data_members_of(^^Map, std::meta::access_context::current())))
+        cap.before_key();
+        const std::string_view key = de.read_key();
+        cap.after_key();
+        de.ltrim();
+        if(de.advance() != ':')
         {
-          constexpr std::string_view name        = serialized_name(member);
-          constexpr auto             node_member = serde::detail::comment_member_of<member>();
-          using member_node = std::remove_cvref_t<typename[:type_of(node_member):]>;
-          if(not found and key == name)
+          throw std::runtime_error("Expected ':' after object key");
+        }
+        de.ltrim();
+        cap.after_colon();
+
+        auto load_member = [&de, &cap, &value]<typename V>(V& v) {
+          cap.enter(value, v);
+          load_object_member(de, v);
+          cap.leave();
+        };
+        if constexpr(opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          if(not serde::object_try_visit_flat(key, value, load_member))
           {
-            found = true;
-            take_trailing();
-            if(node != nullptr)
-            {
-              auto& block = serde::comment(node->[:node_member:]);
-              de.take_leading(block.leading);
-              prev = &block;
-            }
-            else
-            {
-              de.drop_pending();
-            }
-            colon();
-            if constexpr(not std::same_as<member_node, serde::comment_block>)
-            {
-              if(node != nullptr)
-              {
-                cap.slot.give(node->[:node_member:]);
-              }
-            }
-            load_object_member(de, value.[:member:]);
-            cap.slot = {};
-            de.drop_pending();
+            cap.skipped();
+            std::ignore = de.template load<json::value>();
+            cap.leave();
           }
         }
-        if(not found)
+        else
         {
-          if constexpr(opts.unknown_keys == serde::unknown_keys::skip)
-          {
-            take_trailing();
-            de.drop_pending();
-            prev = &discarded;
-            colon();
-            std::ignore = de.template load<json::value>();
-            de.drop_pending();
-          }
-          else
-          {
-            throw std::runtime_error("Key not found in object");
-          }
+          serde::object_visit_flat(key, value, load_member);
         }
 
         de.ltrim();
@@ -369,7 +457,7 @@ REFLEX_EXPORT namespace reflex::serde::json
             if(not de.at_end() and de.peek() == '}')
             {
               de.advance();
-              close();
+              cap.close();
               break;
             }
           }
@@ -377,7 +465,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         }
         if(sep == '}')
         {
-          close();
+          cap.close();
           break;
         }
         throw std::runtime_error("Expected ',' or '}' in object");
@@ -1914,67 +2002,10 @@ REFLEX_EXPORT namespace reflex::serde::json
     {
       if(detail::json_access::commenting(de))
       {
-        return detail::json_access::read_commented_object<Map>(de);
+        return detail::json_access::read_object<Map, true>(de);
       }
     }
-    detail::json_access::skip_to_value(de);
-    if(de.advance() != '{')
-      throw std::runtime_error("Expected '{' at start of JSON object");
-
-    de.ltrim();
-    if(!de.at_end() and de.peek() == '}')
-    {
-      de.advance();
-      return Map{};
-    }
-
-    Map value{};
-    while(true)
-    {
-      de.ltrim();
-      const std::string_view key = de.read_key();
-      de.ltrim();
-      if(de.advance() != ':')
-      {
-        throw std::runtime_error("Expected ':' after object key");
-      }
-      de.ltrim();
-
-      auto load_member = [&de]<typename V>(V& v) { detail::load_object_member(de, v); };
-      if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
-      {
-        if(not serde::object_try_visit_flat(key, value, load_member))
-        {
-          std::ignore = de.template load<json::value>();
-        }
-      }
-      else
-      {
-        serde::object_visit_flat(key, value, load_member);
-      }
-
-      de.ltrim();
-      const char sep = de.advance();
-      if(sep == ',')
-      {
-        if constexpr(Opts.trailing_commas)
-        {
-          de.ltrim();
-          if(not de.at_end() and de.peek() == '}')
-          {
-            de.advance();
-            break;
-          }
-        }
-        continue;
-      }
-      if(sep == '}')
-      {
-        break;
-      }
-      throw std::runtime_error("Expected ',' or '}' in object");
-    }
-    return value;
+    return detail::json_access::read_object<Map, false>(de);
   }
 
 } // namespace reflex::serde::json
