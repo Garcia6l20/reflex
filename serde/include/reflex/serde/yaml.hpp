@@ -254,6 +254,36 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     std::string text;
     bool        quoted = false;
   };
+
+  /** @brief One comment line or blank line read but not yet attached to a node.
+   *
+   * @p scan numbers the next_content_line() call that read it, which tells the lines a value
+   * read inside itself from the lines after its end.
+   */
+  struct pending_line
+  {
+    std::string text;
+    std::size_t column    = 0;
+    std::size_t scan      = 0;
+    bool        same_line = false;
+    bool        blank     = false;
+  };
+
+  /** @brief The YAML deserializer's capture state, held when its read options accept comments.
+   *
+   * @p held_blanks counts blank lines a scalar reader crossed while looking for a continuation,
+   * pushed by the next scan. @p indent is the first nesting step measured.
+   */
+  struct capture_state : serde::detail::comment_capture
+  {
+    std::vector<pending_line> lines;
+    std::size_t               scan          = 0;
+    std::size_t               held_blanks   = 0;
+    std::uint8_t              indent        = 0;
+    bool                      final_newline = true;
+  };
+
+  struct read_access;
   } // namespace detail
 
   /** @brief Output options of yaml::serializer, its second template argument. */
@@ -672,6 +702,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // a second document.
     bool doc_started_ = false;
 
+    [[no_unique_address]] typename[:Opts.comments ? ^^detail::capture_state
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    friend serde::detail::subrange_deserializer<InputIt>;
+    friend detail::read_access;
+
   public:
     using base::base;
 
@@ -731,6 +767,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       {
         throw std::runtime_error("YAML: a tab cannot be used to indent a node");
       }
+      if constexpr(Opts.comments)
+      {
+        comments_.line_column = column();
+      }
       return column();
     }
 
@@ -749,6 +789,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       if(peek_at(0) == '#')
       {
+        if constexpr(Opts.comments)
+        {
+          if(comments_.active)
+          {
+            capture_comment_(column() > comments_.line_column);
+            return;
+          }
+        }
         skip_to_line_end();
         return;
       }
@@ -765,6 +813,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // line. Without it, a key is skipped every time a nested block ends.
     std::size_t next_content_line()
     {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active)
+        {
+          return next_content_line_capturing_();
+        }
+      }
       if(column() == 0)
       {
         // A fresh line, nothing consumed from it yet.
@@ -870,6 +925,342 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       const char after = peek_at(3);
       return after == '\0' or after == ' ' or after == '\t' or is_break(after);
+    }
+
+    void capture_comment_(bool same_line)
+    {
+      const std::size_t col = column();
+      advance();
+      std::string raw;
+      while(not at_line_end())
+      {
+        raw.push_back(advance());
+      }
+      comments_.lines.push_back(
+          {.text      = std::string(serde::detail::comment_body(raw)),
+           .column    = col,
+           .scan      = comments_.scan,
+           .same_line = same_line,
+           .blank     = false});
+    }
+
+    void push_blank_()
+    {
+      comments_.lines.push_back(
+          {.text = {}, .column = 0, .scan = comments_.scan, .same_line = false, .blank = true});
+    }
+
+    void hold_blanks_(std::size_t n)
+    {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active)
+        {
+          comments_.held_blanks += n;
+        }
+      }
+    }
+
+    std::size_t next_content_line_capturing_()
+    {
+      auto&      st      = comments_;
+      const char c       = at_line_end() ? '\n' : peek_at(0);
+      const bool on_node = c != '\n' and c != ' ' and c != '\t' and c != '#';
+      if(on_node and st.held_blanks == 0 and not(column() == 0 and marker_here_()))
+      {
+        return column() == 0 ? on_content_() : column();
+      }
+      ++st.scan;
+      for(; st.held_blanks != 0; --st.held_blanks)
+      {
+        push_blank_();
+      }
+      if(column() == 0)
+      {
+        skip_indent();
+        if(at_end())
+        {
+          st.final_newline = column() == 0;
+          return npos;
+        }
+        if(at_line_end())
+        {
+          push_blank_();
+        }
+        else if(peek_at(0) == '#')
+        {
+          capture_comment_(false);
+        }
+        else
+        {
+          const std::size_t indent = on_content_();
+          if(indent != marker_consumed_)
+          {
+            return indent;
+          }
+          st.lines.clear();
+        }
+      }
+      else if(on_node)
+      {
+        return column();
+      }
+      else
+      {
+        finish_line();
+      }
+
+      while(true)
+      {
+        if(not next_line())
+        {
+          st.final_newline = false;
+          return npos;
+        }
+        skip_indent();
+        if(at_end())
+        {
+          st.final_newline = column() == 0;
+          return npos;
+        }
+        if(at_line_end())
+        {
+          push_blank_();
+          continue;
+        }
+        if(peek_at(0) == '#')
+        {
+          capture_comment_(false);
+          continue;
+        }
+        const std::size_t indent = on_content_();
+        if(indent != marker_consumed_)
+        {
+          return indent;
+        }
+        st.lines.clear();
+      }
+    }
+
+    void move_lines_(std::vector<std::string>& to, std::size_t count)
+    {
+      auto& lines = comments_.lines;
+      for(std::size_t i = 0; i < count; ++i)
+      {
+        to.push_back(lines[i].blank ? std::string(serde::blank_line) : std::move(lines[i].text));
+      }
+      lines.erase(lines.begin(), lines.begin() + static_cast<std::ptrdiff_t>(count));
+    }
+
+    void take_trailing_(serde::comment_block* block)
+    {
+      auto& lines = comments_.lines;
+      if(lines.empty() or not lines.front().same_line)
+      {
+        return;
+      }
+      if(block != nullptr)
+      {
+        block->trailing = std::move(lines.front().text);
+      }
+      lines.erase(lines.begin());
+    }
+
+    void take_footer_(std::vector<std::string>& footer, std::size_t base)
+    {
+      auto&       lines = comments_.lines;
+      std::size_t end   = 0;
+      for(std::size_t i = 0; i < lines.size(); ++i)
+      {
+        if(lines[i].blank)
+        {
+          continue;
+        }
+        if(lines[i].same_line or lines[i].column < base)
+        {
+          break;
+        }
+        end = i + 1;
+      }
+      move_lines_(footer, end);
+    }
+
+    void drop_value_lines_(std::size_t scan_before, std::size_t base)
+    {
+      auto& lines = comments_.lines;
+      if(comments_.scan == scan_before)
+      {
+        return;
+      }
+      std::vector<detail::pending_line> kept;
+      std::size_t                       i = 0;
+      if(not lines.empty() and lines.front().same_line and lines.front().scan <= scan_before + 1)
+      {
+        kept.push_back(std::move(lines.front()));
+        i = 1;
+      }
+      while(i < lines.size() and lines[i].scan != comments_.scan)
+      {
+        ++i;
+      }
+      std::size_t tail = i;
+      for(std::size_t j = i; j < lines.size(); ++j)
+      {
+        if(not lines[j].blank and (lines[j].same_line or lines[j].column > base))
+        {
+          tail = j + 1;
+        }
+      }
+      for(std::size_t j = tail; j < lines.size(); ++j)
+      {
+        kept.push_back(std::move(lines[j]));
+      }
+      lines = std::move(kept);
+    }
+
+    template <typename Node> void begin_commented(Node&)
+    {
+      auto& st = comments_;
+      st.lines.clear();
+      st.scan          = 0;
+      st.held_blanks   = 0;
+      st.indent        = 0;
+      st.final_newline = true;
+      st.root          = true;
+    }
+
+    template <typename Node> void end_commented(Node& node)
+    {
+      std::ignore  = next_content_line();
+      auto& footer = serde::comment(node).footer;
+      move_lines_(footer, comments_.lines.size());
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        serde::layout_of(node) = {
+            .indent        = comments_.indent,
+            .indent_char   = ' ',
+            .final_newline = comments_.final_newline};
+      }
+    }
+
+    template <typename Agg, typename V>
+    serde::comment_block* load_member_commented_(serde::comments_of<Agg>& node, Agg& value, V& v)
+    {
+      serde::comment_block* block = nullptr;
+      bool                  gave  = false;
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+      {
+        constexpr bool same_type = dealias(type_of(member)) == dealias(^^V);
+        if constexpr(same_type)
+        {
+          if(block == nullptr and &value.[:member:] == &v)
+          {
+            constexpr auto node_member = serde::detail::comment_member_of<member>();
+            auto&          sub         = node.[:node_member:];
+            block                      = &serde::comment(sub);
+            move_lines_(block->leading, comments_.lines.size());
+            if constexpr(serde::detail::comment_tree_c<std::remove_cvref_t<decltype(sub)>>)
+            {
+              comments_.slot.give(sub);
+              gave = true;
+            }
+          }
+        }
+      }
+      const std::size_t scan_before = comments_.scan;
+      v                             = this->template load<std::remove_cvref_t<V>>();
+      const bool captured           = gave and comments_.slot.node == nullptr;
+      comments_.slot                = {};
+      if(not captured)
+      {
+        drop_value_lines_(scan_before, block_indent_);
+      }
+      return block;
+    }
+
+    template <typename Agg>
+    Agg read_mapping_commented_(std::size_t base, serde::comments_of<Agg>& node)
+    {
+      auto& st   = comments_;
+      auto& self = serde::comment(node);
+      if(st.indent == 0 and block_indent_ != no_block and base > block_indent_)
+      {
+        st.indent = static_cast<std::uint8_t>(std::min<std::size_t>(base - block_indent_, 255));
+      }
+      take_trailing_(&self);
+      if(std::exchange(st.root, false))
+      {
+        std::size_t header = 0;
+        for(std::size_t i = 0; i < st.lines.size(); ++i)
+        {
+          if(st.lines[i].blank)
+          {
+            header = i + 1;
+          }
+        }
+        move_lines_(self.leading, header);
+      }
+
+      Agg  value{};
+      auto scope = enter_block(base);
+
+      while(true)
+      {
+        const std::string_view key = read_key();
+        if(at_line_end() or peek_at(0) != ':')
+        {
+          throw std::runtime_error(std::format("YAML: expected ':' after the key '{}'", key));
+        }
+        advance();
+        skip_separation();
+
+        serde::comment_block* block       = nullptr;
+        auto                  load_member = [&]<typename V>(V& v) {
+          block = this->template load_member_commented_<Agg>(node, value, v);
+        };
+        if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          if(not serde::object_try_visit_flat(key, value, load_member))
+          {
+            st.lines.clear();
+            const std::size_t scan_before = st.scan;
+            const std::size_t at          = next_content_line();
+            if(at != npos and not deeper_than_block(at) and at_sequence_entry())
+            {
+              std::ignore = this->template load<std::vector<yaml::value>>();
+            }
+            else
+            {
+              std::ignore = this->template load<yaml::value>();
+            }
+            drop_value_lines_(scan_before, base);
+          }
+        }
+        else
+        {
+          serde::object_visit_flat(key, value, load_member);
+        }
+
+        const std::size_t next = next_content_line();
+        take_trailing_(block);
+        if(next == npos or next < base)
+        {
+          take_footer_(self.footer, base);
+          break;
+        }
+        if(next > base)
+        {
+          throw std::runtime_error(
+              "YAML: a line inside this mapping is indented deeper than its key. A plain"
+              " value continues onto deeper lines, so this line is one of the forms that"
+              " cannot. Either it is misaligned, and belongs at the same indent as the other"
+              " keys; or it looks like a mapping of its own, which real YAML rejects here"
+              " too; or it continues a quoted scalar, which this backend reads on one line"
+              " only. Use a '|' or '>' block scalar for a value that will not fold");
+        }
+      }
+      return value;
     }
 
   public:
@@ -1167,6 +1558,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // allows for.
     void skip_flow_space()
     {
+      [[maybe_unused]] bool crossed = false;
       while(not at_end())
       {
         const char c = peek_at(0);
@@ -1178,6 +1570,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         if(is_break(c))
         {
           next_line();
+          crossed = true;
           continue;
         }
         if(c == '#')
@@ -1186,6 +1579,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           continue;
         }
         break;
+      }
+      if constexpr(Opts.comments)
+      {
+        if(crossed)
+        {
+          comments_.line_column = column();
+        }
       }
     }
 
@@ -1607,6 +2007,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           break;
         }
       }
+      hold_blanks_(blanks);
       return lines.empty() ? std::move(first) : fold_lines_(lines);
     }
 
@@ -1825,6 +2226,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           advance();
           ++indent;
         }
+        if constexpr(Opts.comments)
+        {
+          comments_.line_column = indent;
+        }
         if(at_line_end())
         {
           lines.emplace_back(); // a blank line is body content until proven otherwise
@@ -1876,6 +2281,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         {
           out.push_back('\n');
         }
+      }
+      if(chomp != '+')
+      {
+        hold_blanks_(trailing);
       }
       out.append(trailing, '\n');
 
@@ -2083,6 +2492,28 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
   REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
+  namespace detail
+  {
+  /** @brief The private capture members of yaml::deserializer, reached from its free readers. */
+  struct read_access
+  {
+    template <typename Agg, typename De> static serde::comments_of<Agg>* take_node(De& de)
+    {
+      if(not de.comments_.active)
+      {
+        return nullptr;
+      }
+      return de.comments_.slot.template take<serde::comments_of<Agg>>();
+    }
+
+    template <typename Agg, typename De>
+    static Agg read_mapping(De& de, std::size_t base, serde::comments_of<Agg>& node)
+    {
+      return de.template read_mapping_commented_<Agg>(base, node);
+    }
+  };
+  }
+
   // A block sequence, one "- " per entry.
   //
   // Two things make this harder than a block mapping.
@@ -2210,6 +2641,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     if(de.peek_at(0) == '{')
     {
       return de.template read_flow_mapping<Map>();
+    }
+
+    if constexpr(Opts.comments and serde::detail::reflected_aggregate_c<Map>)
+    {
+      if(auto* node = detail::read_access::take_node<Map>(de))
+      {
+        return detail::read_access::read_mapping<Map>(de, base, *node);
+      }
     }
 
     Map  value{};
