@@ -1391,40 +1391,50 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
     }
 
-    template <typename Agg, typename V>
-    serde::comment_block* load_member_commented_(serde::comments_of<Agg>& node, Agg& value, V& v)
+    void skip_unknown_value_(std::size_t base)
     {
-      serde::comment_block* block = nullptr;
-      bool                  gave  = false;
-      template for(constexpr auto member : define_static_array(
-                       nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+      const std::size_t at = next_content_line();
+      if(at == base and at_sequence_entry())
       {
-        constexpr bool same_type = dealias(type_of(member)) == dealias(^^V);
-        if constexpr(same_type)
+        std::ignore = this->template load<std::vector<yaml::value>>();
+      }
+      else
+      {
+        std::ignore = this->template load<yaml::value>();
+      }
+    }
+
+    template <typename Agg>
+    serde::comment_block*
+        load_member_commented_(std::string_view key, serde::comments_of<Agg>& node, Agg& value)
+    {
+      template for(constexpr auto& member : serde::object_visitor<Agg>::__members())
+      {
+        constexpr std::string_view name = serialized_name(member);
+        if(key == name)
         {
-          if(block == nullptr and &value.[:member:] == &v)
+          constexpr auto node_member = serde::detail::comment_member_of<member>();
+          using sub_type             = std::remove_cvref_t<decltype(node.[:node_member:])>;
+          constexpr bool tree        = serde::detail::comment_tree_c<sub_type>;
+          auto&          sub         = node.[:node_member:];
+          auto*          block       = &serde::comment(sub);
+          move_lines_(block->leading, comments_.lines.size());
+          if constexpr(tree)
           {
-            constexpr auto node_member = serde::detail::comment_member_of<member>();
-            auto&          sub         = node.[:node_member:];
-            block                      = &serde::comment(sub);
-            move_lines_(block->leading, comments_.lines.size());
-            if constexpr(serde::detail::comment_tree_c<std::remove_cvref_t<decltype(sub)>>)
-            {
-              comments_.slot.give(sub);
-              gave = true;
-            }
+            comments_.slot.give(sub);
           }
+          const std::size_t scan_before = comments_.scan;
+          value.[:member:] = this->template load<std::remove_cvref_t<decltype(value.[:member:])>>();
+          const bool captured = tree and comments_.slot.node == nullptr;
+          comments_.slot      = {};
+          if(not captured)
+          {
+            drop_value_lines_(scan_before, block_indent_);
+          }
+          return block;
         }
       }
-      const std::size_t scan_before = comments_.scan;
-      v                             = this->template load<std::remove_cvref_t<V>>();
-      const bool captured           = gave and comments_.slot.node == nullptr;
-      comments_.slot                = {};
-      if(not captured)
-      {
-        drop_value_lines_(scan_before, block_indent_);
-      }
-      return block;
+      return nullptr;
     }
 
     template <typename Agg>
@@ -1463,31 +1473,20 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         advance();
         skip_separation();
 
-        serde::comment_block* block       = nullptr;
-        auto                  load_member = [&]<typename V>(V& v) {
-          block = this->template load_member_commented_<Agg>(node, value, v);
-        };
-        if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+        serde::comment_block* block = this->template load_member_commented_<Agg>(key, node, value);
+        if(block == nullptr)
         {
-          if(not serde::object_try_visit_flat(key, value, load_member))
+          if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
           {
             st.lines.clear();
             const std::size_t scan_before = st.scan;
-            const std::size_t at          = next_content_line();
-            if(at == base and at_sequence_entry())
-            {
-              std::ignore = this->template load<std::vector<yaml::value>>();
-            }
-            else
-            {
-              std::ignore = this->template load<yaml::value>();
-            }
+            skip_unknown_value_(base);
             drop_value_lines_(scan_before, base);
           }
-        }
-        else
-        {
-          serde::object_visit_flat(key, value, load_member);
+          else
+          {
+            throw std::runtime_error("Key not found in object");
+          }
         }
 
         const std::size_t next = next_content_line();
@@ -2759,6 +2758,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     {
       return de.template read_mapping_commented_<Agg>(base, node);
     }
+
+    template <typename De> static void skip_unknown_value(De& de, std::size_t base)
+    {
+      de.skip_unknown_value_(base);
+    }
   };
   }
 
@@ -2917,15 +2921,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       {
         if(not serde::object_try_visit_flat(key, value, load_member))
         {
-          const std::size_t at = de.next_content_line();
-          if(at == base and de.at_sequence_entry())
-          {
-            std::ignore = de.template load<std::vector<yaml::value>>();
-          }
-          else
-          {
-            std::ignore = de.template load<yaml::value>();
-          }
+          detail::read_access::skip_unknown_value(de, base);
         }
       }
       else
