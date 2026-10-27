@@ -286,7 +286,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     {
       de.ltrim();
       measure();
-      const std::string_view key = de.read_key();
+      [[maybe_unused]] const std::string_view key = de.read_key();
       found                      = false;
       template for(constexpr auto member : define_static_array(
                        nonstatic_data_members_of(^^Map, std::meta::access_context::current())))
@@ -364,9 +364,92 @@ REFLEX_EXPORT namespace reflex::serde::json
     return value;
   }
 
+  template <typename Ser, typename Agg> void write_commented_object(Ser& ser, Agg const& value)
+  {
+    using node_type       = serde::comments_of<Agg>;
+    auto&            emit = ser.comments_;
+    node_type const* node = emit.slot.template take<node_type const>();
+    std::string_view deferred;
+
+    typename Ser::nest members;
+
+    auto flush_deferred = [&] {
+      if(not deferred.empty())
+      {
+        ser.write_char(' ');
+        ser.write_comment(deferred);
+        deferred = {};
+      }
+    };
+
+    ser.write_char('{');
+    if(node != nullptr and not serde::comment(*node).trailing.empty())
+    {
+      ser.write_char(' ');
+      ser.write_comment(serde::comment(*node).trailing);
+      members.enter(ser);
+    }
+
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+    {
+      constexpr bool omit        = serde::omits_when_empty(member);
+      constexpr auto node_member = serde::detail::comment_member_of<member>();
+      constexpr bool scalar_node =
+          std::same_as<std::remove_cvref_t<typename[:type_of(node_member):]>, serde::comment_block>;
+      auto const& member_value = value.[:member:];
+      if constexpr(omit)
+      {
+        if(serde::is_empty_value(member_value))
+        {
+          continue;
+        }
+      }
+      members.open(ser);
+      flush_deferred();
+      if(node != nullptr)
+      {
+        ser.write_comment_lines(serde::comment(node->[:node_member:]).leading);
+      }
+      ser.newline();
+      static constexpr std::string_view key_token = quoted_key<member, true>();
+      ser.write_raw(key_token);
+      if constexpr(not scalar_node)
+      {
+        if(node != nullptr)
+        {
+          emit.slot.give(node->[:node_member:]);
+        }
+      }
+      reflex::visit([&ser](auto const& v) { serialize(ser, v); }, member_value);
+      const bool written_inside = emit.slot.node == nullptr;
+      emit.slot                 = {};
+      if(node != nullptr and (scalar_node or not written_inside))
+      {
+        deferred = serde::comment(node->[:node_member:]).trailing;
+      }
+    }
+    flush_deferred();
+    if(node != nullptr and not serde::comment(*node).footer.empty())
+    {
+      members.enter(ser);
+      ser.write_comment_lines(serde::comment(*node).footer);
+    }
+    members.close(ser, '}');
+  }
+
   struct indent_state
   {
     int depth = 0;
+  };
+
+  /** @brief The indent state of a serializer writing comments: @p width and @p fill come from
+   * the layout read with the tree, 0 when it measured nothing.
+   */
+  struct layout_indent_state : indent_state
+  {
+    int  width = 0;
+    char fill  = ' ';
   };
 
   struct no_indent_state
@@ -492,12 +575,28 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     static constexpr std::string_view key_separator = Opts.indent > 0 ? ": " : ":";
 
-    [[no_unique_address]] std::
-        conditional_t<(Opts.indent > 0), detail::indent_state, detail::no_indent_state> indent_;
+    [[no_unique_address]] std::conditional_t<
+        Opts.comments,
+        detail::layout_indent_state,
+        std::conditional_t<(Opts.indent > 0), detail::indent_state, detail::no_indent_state>>
+        indent_;
 
-    /** @brief The width of one indent level. */
+    [[no_unique_address]] std::
+        conditional_t<Opts.comments, serde::detail::comment_emit, serde::detail::no_comment_state>
+            comments_;
+
+    /** @brief The width of one indent level: the layout of the tree being written, when it
+     * measured one, otherwise the options'.
+     */
     constexpr int indent_width() const
     {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active and indent_.width > 0)
+        {
+          return indent_.width;
+        }
+      }
       return Opts.indent;
     }
 
@@ -507,14 +606,111 @@ REFLEX_EXPORT namespace reflex::serde::json
     {
       static constexpr std::string_view spaces = "                                                "
                                                  "                ";
+      static constexpr std::string_view tabs = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t";
+      std::string_view                  run  = spaces;
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active and indent_.width > 0 and indent_.fill == '\t')
+        {
+          run = tabs;
+        }
+      }
       this->write_char('\n');
       auto n = static_cast<std::size_t>(indent_.depth * indent_width());
       while(n > 0)
       {
-        const std::size_t run = std::min(n, spaces.size());
-        this->write_raw(spaces.substr(0, run));
-        n -= run;
+        const std::size_t len = std::min(n, run.size());
+        this->write_raw(run.substr(0, len));
+        n -= len;
       }
+    }
+
+    /** @brief Writes `// ` and @p text, or a bare `//` for an empty @p text.
+     * @throws std::runtime_error when @p text holds a line break
+     */
+    void write_comment(std::string_view text)
+      requires(Opts.comments)
+    {
+      serde::detail::check_comment_line(text, "", format_name);
+      if(text.empty())
+      {
+        this->write_raw("//");
+        return;
+      }
+      this->write_raw("// ");
+      this->write_raw(text);
+    }
+
+    /** @brief Writes @p lines, each on its own line at the current depth, a blank line entry as
+     * an empty line.
+     */
+    void write_comment_lines(std::vector<std::string> const& lines)
+      requires(Opts.comments)
+    {
+      for(auto const& line : lines)
+      {
+        if(line == serde::blank_line)
+        {
+          this->write_char('\n');
+        }
+        else
+        {
+          newline();
+          write_comment(line);
+        }
+      }
+    }
+
+    /** @brief Takes the indent from @p node's layout and writes its header, called by
+     * dump(value, comments).
+     */
+    template <typename Node>
+    void begin_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        indent_.width = serde::layout_of(node).indent;
+        indent_.fill  = serde::layout_of(node).indent_char;
+      }
+      for(auto const& line : serde::comment(node).leading)
+      {
+        if(line != serde::blank_line)
+        {
+          write_comment(line);
+        }
+        this->write_char('\n');
+      }
+    }
+
+    /** @brief Writes the footer of a root that is not an aggregate and the final line break,
+     * called by dump(value, comments).
+     */
+    template <typename Node>
+    void end_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      bool final_newline = true;
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        final_newline = serde::layout_of(node).final_newline;
+      }
+      else
+      {
+        for(auto const& line : node.footer)
+        {
+          this->write_char('\n');
+          if(line != serde::blank_line)
+          {
+            write_comment(line);
+          }
+        }
+      }
+      if(final_newline)
+      {
+        this->write_char('\n');
+      }
+      indent_.width = 0;
     }
 
     /** @brief One container being written: separators, line breaks and the depth it opened.
@@ -546,11 +742,27 @@ REFLEX_EXPORT namespace reflex::serde::json
       /** @brief Writes what precedes the next item: a comma after the first, then its line. */
       void item(serializer& ser)
       {
+        open(ser);
+        if constexpr(Opts.indent > 0)
+        {
+          ser.newline();
+        }
+      }
+
+      /** @brief Writes the comma before the next item, after the first, and enters the depth. */
+      void open(serializer& ser)
+      {
         if(not first_)
         {
           ser.write_char(',');
         }
         first_ = false;
+        enter(ser);
+      }
+
+      /** @brief Enters the depth if not yet entered, so the closing token goes on its own line. */
+      void enter(serializer& ser)
+      {
         if constexpr(Opts.indent > 0)
         {
           if(ser_ == nullptr)
@@ -558,7 +770,6 @@ REFLEX_EXPORT namespace reflex::serde::json
             ser_ = &ser;
             ++ser.indent_.depth;
           }
-          ser.newline();
         }
       }
 
@@ -778,9 +989,18 @@ REFLEX_EXPORT namespace reflex::serde::json
       tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value,
       TagT = {})
   {
-    ser.write_char('{');
-
     constexpr bool tag = TagT::value;
+
+    if constexpr(Opts.comments and not tag and serde::detail::reflected_aggregate_c<Agg>)
+    {
+      if(ser.comments_.active)
+      {
+        detail::write_commented_object(ser, value);
+        return ser.out();
+      }
+    }
+
+    ser.write_char('{');
 
     typename serializer<OutputIt, Opts>::nest members;
 
