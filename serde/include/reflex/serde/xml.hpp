@@ -704,7 +704,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
   /** @brief Input options of xml::deserializer, its second template argument. */
   struct read_options
   {
-    bool comments = false;
+    bool                comments     = false;
+    serde::unknown_keys unknown_keys = serde::unknown_keys::skip;
 
     constexpr bool operator==(read_options const&) const = default;
   };
@@ -1691,6 +1692,10 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
         if(not matched)
         {
+          if constexpr(Opts.unknown_keys == serde::unknown_keys::error)
+          {
+            throw std::runtime_error(std::format("XML: no member matches the element '{}'", name));
+          }
           skip_subtree(self_closing);
         }
       }

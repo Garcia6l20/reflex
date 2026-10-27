@@ -13,6 +13,18 @@
 
 REFLEX_EXPORT namespace reflex::serde
 {
+  /**
+   * @brief What a reader does with a key no member of the destination aggregate matches.
+   *
+   * A field of each text backend's `read_options`. JSON, YAML and TOML default to `error`, XML to
+   * `skip`, which is what each did before the option existed.
+   */
+  enum class unknown_keys
+  {
+    error,
+    skip,
+  };
+
   namespace detail
   {
     // First eight bytes of a name, little-end first, zero padded. Bounded: it
@@ -84,8 +96,8 @@ REFLEX_EXPORT namespace reflex::serde
       return false;
     }
 
-    template <typename Fn, decays_to_c<T> Agg>
-    static inline constexpr decltype(auto) operator()(
+    template <bool Try, typename Fn, decays_to_c<T> Agg>
+    static inline constexpr decltype(auto) __visit(
         [[maybe_unused]] Fn&&             fn,
         [[maybe_unused]] std::string_view key,
         [[maybe_unused]] Agg&&            agg)
@@ -99,7 +111,15 @@ REFLEX_EXPORT namespace reflex::serde
           constexpr std::string_view name = serialized_name(member);
           if(key == name)
           {
-            return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            if constexpr(Try)
+            {
+              std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+              return true;
+            }
+            else
+            {
+              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            }
           }
         }
       }
@@ -113,7 +133,15 @@ REFLEX_EXPORT namespace reflex::serde
           constexpr std::string_view name = serialized_name(member);
           if(key.size() == name.size() and kw == detail::name_word(name) and key == name)
           {
-            return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            if constexpr(Try)
+            {
+              std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+              return true;
+            }
+            else
+            {
+              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            }
           }
         }
       }
@@ -127,11 +155,38 @@ REFLEX_EXPORT namespace reflex::serde
           constexpr std::string_view name = serialized_name(member);
           if(kd == detail::name_digest(name) and key == name)
           {
-            return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            if constexpr(Try)
+            {
+              std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+              return true;
+            }
+            else
+            {
+              return std::forward<Fn>(fn)(std::forward<Agg>(agg).[:member:]);
+            }
           }
         }
       }
-      throw std::runtime_error("Key not found in object");
+      if constexpr(Try)
+      {
+        return false;
+      }
+      else
+      {
+        throw std::runtime_error("Key not found in object");
+      }
+    }
+
+    template <typename Fn, decays_to_c<T> Agg>
+    static inline constexpr decltype(auto) operator()(Fn&& fn, std::string_view key, Agg&& agg)
+    {
+      return __visit<false>(std::forward<Fn>(fn), key, std::forward<Agg>(agg));
+    }
+
+    template <typename Fn, decays_to_c<T> Agg>
+    static inline constexpr bool try_visit(Fn&& fn, std::string_view key, Agg&& agg)
+    {
+      return __visit<true>(std::forward<Fn>(fn), key, std::forward<Agg>(agg));
     }
   };
 
@@ -242,6 +297,42 @@ REFLEX_EXPORT namespace reflex::serde
   constexpr decltype(auto) object_visit_flat(std::string_view key, T && value, Fn && fn)
   {
     return object_visitor<std::decay_t<T>>{}(std::forward<Fn>(fn), key, std::forward<T>(value));
+  }
+
+  /**
+   * @brief Visit the one member named by the whole @p key, a dot included, and report a miss.
+   *
+   * The non-throwing form of `object_visit_flat`. A reader under `unknown_keys::skip` calls it and
+   * discards the value when no member matched. The callback's result is discarded. An aggregate
+   * visitor answers through its `try_visit`. Any other visitor is called as it is, and a miss is a
+   * callback it left uncalled: a map inserts the key and never misses.
+   *
+   * @param key The member name, as read from a document.
+   * @param value The object to look the member up in.
+   * @param fn Called with the member, at most once.
+   * @return Whether @p fn was called.
+   */
+  template <object_visitable_c T, typename Fn>
+  constexpr bool object_try_visit_flat(std::string_view key, T && value, Fn && fn)
+  {
+    using visitor = object_visitor<std::decay_t<T>>;
+    if constexpr(requires {
+                   visitor::try_visit(std::forward<Fn>(fn), key, std::forward<T>(value));
+                 })
+    {
+      return visitor::try_visit(std::forward<Fn>(fn), key, std::forward<T>(value));
+    }
+    else
+    {
+      bool matched = false;
+      visitor{}(
+          [&]<typename M>(M&& member) {
+            matched = true;
+            std::forward<Fn>(fn)(std::forward<M>(member));
+          },
+          key, std::forward<T>(value));
+      return matched;
+    }
   }
 
   // Longest dotted path object_visit will split. Keys reach this function

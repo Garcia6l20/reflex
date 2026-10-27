@@ -176,8 +176,9 @@ REFLEX_EXPORT namespace reflex::serde::json
   /** @brief Input options of json::deserializer, its second template argument. */
   struct read_options
   {
-    bool comments        = false;
-    bool trailing_commas = false;
+    bool                comments        = false;
+    bool                trailing_commas = false;
+    serde::unknown_keys unknown_keys    = serde::unknown_keys::error;
 
     constexpr bool operator==(read_options const&) const = default;
   };
@@ -1012,7 +1013,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
       de.ltrim();
 
-      serde::object_visit_flat(key, value, [&]<typename V>(V& v) {
+      auto load_member = [&]<typename V>(V& v) {
         v = de.template load<std::remove_cvref_t<V>>();
         if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
         {
@@ -1067,7 +1068,18 @@ REFLEX_EXPORT namespace reflex::serde::json
             }
           }
         }
-      });
+      };
+      if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+      {
+        if(not serde::object_try_visit_flat(key, value, load_member))
+        {
+          std::ignore = de.template load<json::value>();
+        }
+      }
+      else
+      {
+        serde::object_visit_flat(key, value, load_member);
+      }
 
       de.ltrim();
       const char sep = de.advance();
