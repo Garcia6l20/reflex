@@ -172,6 +172,16 @@ TEST_CASE("reflex::serde::bson: sequence and map")
   }
 }
 
+struct bson_short_id_source
+{
+  std::vector<std::byte> id;
+};
+
+struct bson_short_id_target
+{
+  std::array<std::byte, 3> id = {std::byte{9}, std::byte{9}, std::byte{9}};
+};
+
 TEST_CASE("reflex::serde::bson: std::byte ranges are BSON binary")
 {
   SUBCASE("vector round-trips as binary, subtype 0")
@@ -236,6 +246,16 @@ TEST_CASE("reflex::serde::bson: std::byte ranges are BSON binary")
     ser.dump(bin);
     auto value = bson::deserializer{out}.load<std::array<std::byte, 3>>();
     CHECK_EQ(value, (std::array<std::byte, 3>{std::byte{1}, std::byte{2}, std::byte{0}}));
+  }
+
+  SUBCASE("fixed-size member: a shorter payload zeroes the stale tail")
+  {
+    std::vector<std::byte> out;
+    bson::serializer       ser{out};
+    ser.dump(bson_short_id_source{{std::byte{1}, std::byte{2}}});
+
+    auto value = bson::deserializer{out}.load<bson_short_id_target>();
+    CHECK_EQ(value.id, (std::array<std::byte, 3>{std::byte{1}, std::byte{2}, std::byte{0}}));
   }
 
   SUBCASE("truncated binary payload throws")

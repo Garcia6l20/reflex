@@ -270,6 +270,394 @@ Reading is unaffected. Every backend already leaves a field at its default when
 the document does not mention it, so a document whose empty fields were omitted
 round-trips to an equal value.
 
+---
+
+## Options, pretty output and comments
+
+The JSON, YAML, TOML and XML serializers and deserializers take an options
+struct as their last template argument. The defaults write the same bytes as a
+serializer built without options. Pass the options to the constructor as a
+`std::cw` tag and class template argument deduction fills in both template
+arguments:
+
+```cpp
+std::string out;
+json::serializer ser{out, std::cw<json::options{.indent = 2}>};
+ser.dump(cfg);
+
+json::deserializer de{text, std::cw<json::read_options{.comments = true}>};
+auto cfg2 = de.load<settings>();
+
+constexpr yaml::options wide{.indent = 4};
+yaml::serializer{out, std::cw<wide>}.dump(cfg);
+```
+
+The tag goes last, after the string, stream, range or iterator pair the plain
+constructor takes. Spelling the type out works too, and a constructor tag that
+disagrees with the spelled options does not compile:
+
+```cpp
+json::serializer<std::back_insert_iterator<std::string>, json::options{.indent = 2}> ser{out};
+```
+
+Each struct holds `int`, `bool` and enum fields only, so it is usable as a
+template argument.
+
+| backend | `options` | `read_options` |
+|---|---|---|
+| JSON | `indent = 0`, `comments = false` | `comments = false`, `trailing_commas = false`, `unknown_keys = error` |
+| YAML | `indent = 2`, `comments = false` | `comments = false`, `unknown_keys = error` |
+| TOML | `comments = false` | `comments = false`, `unknown_keys = error` |
+| XML | `indent = 0`, `comments = false` | `comments = false`, `unknown_keys = skip` |
+
+BSON and CSV take no options.
+
+### Pretty output
+
+`indent` is the number of spaces per nesting level. JSON and XML write compact
+output at 0 and indented output above it:
+
+```cpp
+settings value{"demo", {"localhost", 8080}};
+json::serializer{out, std::cw<json::options{.indent = 2}>}.dump(value);
+// {
+//   "name": "demo",
+//   "srv": {
+//     "host": "localhost",
+//     "port": 8080
+//   }
+// }
+
+xml::serializer{out, std::cw<xml::options{.indent = 2}>}.dump(value);
+// <settings>
+//   <name>demo</name>
+//   <srv>
+//     <host>localhost</host>
+//     <port>8080</port>
+//   </srv>
+// </settings>
+```
+
+XML indents only between elements. A leaf element, an `xml::text`,
+`xml::raw_content` or `xml::cdata` body and any element with text content are
+written exactly as in compact mode, since whitespace inside them is data. The
+reader ignores whitespace between elements, so indented XML reads back equal.
+
+YAML is always indented, 2 spaces by default. A sequence dash is padded to the
+width, so every key of a sequence element sits on the same column:
+
+```cpp
+constexpr yaml::options wide{.indent = 4};
+yaml::serializer{out, std::cw<wide>}.dump(std::vector<server>{{"a", 1}, {"b", 2}});
+// -   host: a
+//     port: 1
+// -   host: b
+//     port: 2
+```
+
+TOML indents nothing and has no `indent`.
+
+### JSON5 comments and trailing commas
+
+`json::read_options` accepts two JSON5 extensions, each behind its own flag:
+
+```cpp
+constexpr std::string_view text = R"({
+  // where to listen
+  "name": "demo",
+  /* the listener */
+  "srv": {"host": "localhost", "port": 8080,},
+})";
+json::deserializer de{text, std::cw<json::read_options{.comments = true, .trailing_commas = true}>};
+auto s = de.load<settings>();
+```
+
+`comments` accepts `//` and `/* */` comments wherever whitespace may appear,
+`/* */` in the middle of a line included. `trailing_commas` accepts one comma
+after the last element of an array or object. Both apply to every reader,
+`json::value` and `poly::var` included. A plain `load` skips the comments and
+keeps none of them, see below to keep them. The writer never emits a trailing
+comma, and writes comments only from a comment tree.
+
+### Unknown keys
+
+A key in the document that the destination aggregate has no member for is an
+error by default in JSON, YAML and TOML, and skipped by default in XML.
+`read_options::unknown_keys` selects either behaviour on any of the four:
+
+```cpp
+constexpr std::string_view text = R"({"name": "demo", "added_later": [1, 2], "srv": {"port": 1}})";
+
+json::deserializer{text}.load<settings>();   // throws "Key not found in object"
+
+json::deserializer de{text, std::cw<json::read_options{.unknown_keys = serde::unknown_keys::skip}>};
+auto s = de.load<settings>();                // added_later is parsed and dropped
+
+constexpr std::string_view doc = "<settings><name>demo</name><extra/></settings>";
+xml::deserializer x{doc, std::cw<xml::read_options{.unknown_keys = serde::unknown_keys::error}>};
+x.load<settings>();                          // throws "XML: no member matches the element 'extra'"
+```
+
+Under `skip` the value is still parsed, so it must be well-formed, and the
+comments above the key are dropped with it. In TOML a skipped `[header]` drops
+every key and sub-table under it, and the document must still be valid TOML.
+Unknown XML attributes are always ignored. Keys of a `std::map` or a
+`poly::var` destination are never unknown.
+
+### Keeping comments across a read and a write
+
+An application that reads a user's config file, changes a field and writes the
+file back can keep the user's comments, blank lines and indentation. Read with
+`load_commented<T>()` and write with `dump(value, comments)`:
+
+```cpp
+constexpr std::string_view input = R"(# Service settings
+
+name: demo # shown in logs
+
+# the listener
+srv:
+  host: localhost
+  # change with care
+  port: 8080 # behind the proxy
+)";
+
+yaml::deserializer de{input, std::cw<yaml::read_options{.comments = true}>};
+auto [cfg, comments] = de.load_commented<settings>();
+cfg.srv.port         = 9090;
+
+std::string      out;
+yaml::serializer ser{out, std::cw<yaml::options{.comments = true}>};
+ser.dump(cfg, comments);
+// out is the input with "port: 8080" changed to "port: 9090", every other byte equal
+```
+
+`load_commented<T>()` returns `serde::commented<T>`, a struct holding `value`
+and `comments`. `T` must be default-constructible. The same two calls work on
+all four backends and on every input a deserializer accepts.
+
+The tree holds no format, so a config read from one format can be written to
+another with its comments. Dumping the `cfg` and `comments` above:
+
+```cpp
+json::serializer{out, std::cw<json::options{.indent = 2, .comments = true}>}.dump(cfg, comments);
+// // Service settings
+//
+// {
+//   "name": "demo", // shown in logs
+//
+//   // the listener
+//   "srv": {
+//     "host": "localhost",
+//     // change with care
+//     "port": 9090 // behind the proxy
+//   }
+// }
+
+toml::serializer{out, std::cw<toml::options{.comments = true}>}.dump(cfg, comments);
+// # Service settings
+//
+// name = "demo" # shown in logs
+//
+// # the listener
+// [srv]
+// host = "localhost"
+// # change with care
+// port = 9090 # behind the proxy
+```
+
+#### The comment tree
+
+`serde::comments_of<T>` is a struct generated from `T` by reflection. It has
+one member per data member of `T`, with the same C++ name, whatever
+`serde::rename` or a naming annotation says, so `comments.srv.port` mirrors
+`cfg.srv.port`:
+
+| model member | node |
+|---|---|
+| a nested aggregate | `comments_of<Member>` |
+| `std::optional<U>` | the node of `U` |
+| anything else: scalar, string, enum, sequence, map, `poly::var` | `serde::comment_block` |
+
+```cpp
+struct comment_block
+{
+  std::vector<std::string> leading;    // lines above the node, one entry per line
+  std::string              trailing;   // the comment at the end of the node's line
+  std::vector<std::string> footer;     // lines after an aggregate's last member
+};
+```
+
+Entries hold the comment text without its marker and without the one space
+after it. A blank line is an entry equal to `serde::blank_line`, the string
+`"\n"`. No comment can hold a line break, so the two never collide, and a bare
+`#` or `//` reads as the empty string. Every blank line is one entry.
+
+An aggregate node holds its own block in a hidden member. Reach it with
+`serde::comment(node)`, which also accepts a `comment_block` and returns it, so
+it is the one spelling for every node:
+
+```cpp
+serde::comments_of<settings> c;
+serde::comment(c).leading     = {"Service settings", std::string{serde::blank_line}};
+c.name.trailing               = "shown in logs";
+serde::comment(c.srv).leading = {"the listener"};
+c.srv.port.leading            = {"change with care"};
+
+yaml::serializer{out, std::cw<yaml::options{.comments = true}>}.dump(value, c);
+// # Service settings
+//
+// name: demo # shown in logs
+// # the listener
+// srv:
+//   host: localhost
+//   # change with care
+//   port: 8080
+```
+
+On the root, `leading` is the document header and `footer` the document footer.
+In JSON and XML the header is every line before the opening `{` or the root's
+start tag. In YAML and TOML it runs up to and including the last blank line
+before the first key, and with no blank line there every comment above the
+first key is that key's `leading`.
+
+`serde::layout_of(root)` returns the layout measured on read:
+
+```cpp
+struct layout
+{
+  std::uint8_t indent        = 0;     // detected width, 0 when nothing was detected
+  char         indent_char   = ' ';   // ' ' or '\t'
+  bool         final_newline = true;  // whether the input ended with a line break
+};
+```
+
+`dump(value, comments)` indents by `layout.indent` when it is not 0 and by
+`options.indent` otherwise, so a file the user re-indented to 4 spaces stays at
+4 spaces. It ends the output with a line break when `final_newline` is set,
+which a plain `dump(value)` never does. A plain `dump(value)` on the same
+serializer keeps `options.indent`. The XML commented dump indents even on a
+serializer whose `indent` is 0 when the layout says so. TOML has no
+indentation, its layout indent stays 0.
+
+Trees compare with `==` and `!=`, member by member, layouts included:
+
+```cpp
+yaml::deserializer again{out, std::cw<yaml::read_options{.comments = true}>};
+assert(again.load_commented<settings>().comments == comments);
+```
+
+#### Where a comment attaches
+
+| format | `leading` | `trailing` | aggregate `footer` |
+|---|---|---|---|
+| JSON | `//` lines above the key | a comment after the value on the same line, before or after the comma | lines before the closing `}` |
+| YAML | `#` lines above the key | `# x` after the value, or after `key:` for a nested block | lines after the last key, at or deeper than the block's column |
+| TOML | `#` lines above the key or `[header]` | `# x` on the key's or the header's line | written after the table's whole body, see the limits |
+| XML | `<!-- -->` lines above the element | after the close tag on the same line, or after the start tag of an element with children | lines before the close tag |
+
+The JSON header is written before the opening `{` and the root footer before
+the closing `}`.
+
+#### Compile-time errors
+
+Each of these is a `static_assert` naming the problem:
+
+```cpp
+json::serializer s1{out, std::cw<json::options{.comments = true}>};
+// json::options: comments need indent > 0. A // comment runs to the end of its line, and
+// indent 0 writes the whole document on one line
+
+yaml::serializer s2{out, std::cw<yaml::options{.indent = 1}>};
+// yaml::options::indent must be at least 2, the width of a sequence dash and its space
+
+json::deserializer d1{text};
+d1.load_commented<settings>();
+// load_commented needs a deserializer whose read options set .comments = true, a grammar
+// without comments has none to capture
+
+json::serializer s3{out, std::cw<json::options{.indent = 2}>};
+s3.dump(value, comments);
+// dump(value, comments) needs a serializer whose options set .comments = true, a serializer
+// that writes no comments would drop the tree silently
+```
+
+A model member named `_self` is rejected when `comments_of` first names the
+model, since the hidden block uses that name. A model that never meets
+`comments_of` may use it.
+
+At run time, every writer throws on a comment holding a line break. XML also
+throws on `--`, and TOML on a control character other than tab.
+
+#### Known limits
+
+The commented dump reproduces a file byte for byte when the file is written the
+way the serializer writes it. Anything else is normalized on the first save:
+
+- Key order follows the model. TOML also writes plain keys before tables and
+  arrays of tables.
+- A field absent from the file is written with its default value.
+- Value spelling is the writer's: YAML quote and block-scalar style, TOML
+  number bases and string forms, JSON number spelling such as `1.0`, XML
+  self-closing tags and attribute quotes.
+- One space separates a value from its trailing comment.
+- One indent width and one indent character are detected. Mixed indentation is
+  not kept.
+- Sequence and map elements carry no comments yet. The member holding the
+  sequence or map keeps its own comments, every comment inside it is dropped
+  on read. The same holds inside `poly::var`, the `*_value` DOM types and
+  inline values such as a TOML inline table.
+- A member of a type with a user `tag_invoke` override keeps its own leading
+  and trailing comments. Nothing inside it is captured or written.
+- A member that writes no key drops its comments: an empty optional in TOML
+  and XML, an empty sequence in XML.
+- A key skipped under `unknown_keys::skip` loses its comments and disappears
+  on write-back.
+
+JSON:
+
+- `/* */` comments are written back as `//` lines, one per line of the block.
+- Trailing commas are accepted on read and never written.
+- An array is written one element per line, an inline `[1, 2]` is not kept.
+
+YAML:
+
+- Comments inside flow collections and block scalar bodies are not captured.
+- A comment on the root's own line has no place in the tree.
+- A comment between flush sequence entries, at the key's column, becomes the
+  next key's leading comment, or is dropped when a later entry of that
+  sequence has a comment of its own.
+- A comment indented deeper than its neighbours after a scalar value is
+  dropped.
+- The footer of an aggregate written as `{}` reads back as the next key's
+  leading comments.
+- Lines before a `---` marker are dropped.
+- A sequence or scalar root puts every comment, header included, into its
+  footer.
+
+TOML:
+
+- A table's footer is written after its whole body. Read back, it becomes the
+  next header's leading comments, or the root footer after the last table.
+- A blank line inside the first key's leading comments moves into the document
+  header.
+- Arrays of tables carry no comments, neither the member's own nor any
+  element's.
+
+XML:
+
+- No XML declaration is written, a `<?xml ...?>` prolog is dropped.
+- Comments after the root's close tag are written before it, inside the root.
+- Compact XML does not keep comment positions. On one line, a comment before an
+  element reads as the trailing comment of the one before it. Compact output
+  writes no blank lines.
+- A repeated element keeps the leading comments of its first occurrence and the
+  trailing comment of its last.
+- Comments inside a text run are dropped.
+- A scalar root writes no final line break.
+
+---
+
 ## XML attributes
 
 Annotate a member with `xml::attribute` to serialize it as an attribute on the
@@ -383,8 +771,9 @@ ser.dump(s);
 auto back = yaml::deserializer{out}.load<Server>();
 ```
 
-Two-space indent, fixed. Output carries no trailing newline, so a round trip is
-byte-exact. An empty collection is written `[]` or `{}`, which is the only
+Two-space indent by default, `yaml::options::indent` changes it, see
+[Pretty output](#pretty-output). Output carries no trailing newline, so a round
+trip is byte-exact. An empty collection is written `[]` or `{}`, which is the only
 spelling YAML has for one.
 
 ### Quoting
@@ -730,7 +1119,9 @@ is valid and the destination cannot hold it.
 
 **A `[header]` naming a member the destination does not have throws even with
 nothing under it**, because a header materializes its table. That is stricter
-than a TOML parser, which has no destination to be wrong about.
+than a TOML parser, which has no destination to be wrong about. Under
+`unknown_keys::skip` the header and everything under it are skipped instead, see
+[Unknown keys](#unknown-keys).
 
 **Errors carry no line or column.** Every message names TOML and the offending
 key path or header. No backend in this repo reports a position.
@@ -783,22 +1174,33 @@ dispatched via `tag_invoke`.  To add support for a custom type:
 namespace reflex::serde::json
 {
   // Serialize MyType as a JSON string
-  template <typename OutputIt>
-  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, MyType const& v)
+  template <typename OutputIt, auto Opts>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, MyType const& v)
   {
     return tag_invoke(tag_t<serde::serialize>{}, ser, v.to_string());
   }
 
   // Deserialize MyType from a JSON string
-  template <typename It>
-  MyType tag_invoke(tag_t<serde::deserialize>, deserializer<It>& de, std::type_identity<MyType>)
+  template <typename It, auto Opts>
+  MyType tag_invoke(
+      tag_t<serde::deserialize>, deserializer<It, Opts>& de, std::type_identity<MyType>)
   {
-    return MyType::from_string(de.load<std::string>());
+    return MyType::from_string(de.template load<std::string>());
   }
 }
 ```
 
-The same pattern applies to `reflex::serde::bson`.
+The JSON, YAML, TOML and XML serializers and deserializers take an options
+struct as their second template argument, defaulted. Spell an override with
+`auto Opts` as above so it binds every option set. A nested `serialize` or
+`load` call inside it then runs with the same options. `de.template load<T>()`
+needs the `template` keyword, since `de` has a dependent type. An override written as
+`serializer<OutputIt>&` binds the default options only, and under any other
+set the backend's own overload for that type is used instead, silently.
+
+The same pattern applies to `reflex::serde::bson`, whose serializer and
+deserializer have no options argument: there the override takes
+`serializer<OutputIt>&` and `deserializer<It>&`.
 
 ---
 

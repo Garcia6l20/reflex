@@ -499,14 +499,59 @@ REFLEX_EXPORT namespace reflex::serde::xml
   }
 
   // <name><![CDATA[...]]></name>
-  template <typename Ser>
-  void write_cdata_element(Ser& ser, std::string_view name, std::string_view text)
+  template <typename Ser, typename NodePtr = std::nullptr_t>
+  void write_cdata_element(
+      Ser&             ser,
+      std::string_view name,
+      std::string_view text,
+      NodePtr          node = nullptr)
   {
+    constexpr bool commented = not std::same_as<NodePtr, std::nullptr_t>;
+    if constexpr(commented)
+    {
+      if(node != nullptr)
+      {
+        ser.emit_leading(serde::comment(*node).leading);
+      }
+    }
+    ser.begin_child();
     write_tag(ser, name, false);
     ser.write_raw("<![CDATA[");
     write_cdata_content(ser, text);
     ser.write_raw("]]>");
     write_tag(ser, name, true);
+    if constexpr(commented)
+    {
+      if(node != nullptr)
+      {
+        ser.emit_trailing(serde::comment(*node).trailing);
+      }
+    }
+  }
+
+  template <typename F, typename Node> consteval bool hands_node()
+  {
+    if constexpr(serde::detail::comment_tree_c<Node>)
+    {
+      return not has_content_member<F>();
+    }
+    else
+    {
+      return false;
+    }
+  }
+
+  template <std::meta::info Member, typename NodePtr> constexpr auto member_node(NodePtr node)
+  {
+    if constexpr(std::same_as<NodePtr, std::nullptr_t>)
+    {
+      return nullptr;
+    }
+    else
+    {
+      constexpr auto cm = serde::detail::comment_member_of<Member>();
+      return node != nullptr ? &node->[:cm:] : nullptr;
+    }
   }
 
   // A member -> zero (empty optional) or one ` name="value"` pair in the open tag.
@@ -535,31 +580,97 @@ REFLEX_EXPORT namespace reflex::serde::xml
   // A member -> zero (empty optional), one, or many (sequence) child elements.
   // The element name reaches the value's serialize overload through the
   // serializer's pending-name slot.
-  template <typename Ser, typename F>
-  void write_field(Ser& ser, std::string_view name, F const& value)
+  template <typename Ser, typename F, typename NodePtr = std::nullptr_t>
+  void write_field(Ser& ser, std::string_view name, F const& value, NodePtr node = nullptr)
   {
+    constexpr bool commented = not std::same_as<NodePtr, std::nullptr_t>;
     if constexpr(optional_c<F>)
     {
       if(value.has_value())
       {
-        write_field(ser, name, *value);
+        write_field(ser, name, *value, node);
       }
       // an empty optional emits no element
     }
     else if constexpr(seq_c<F> and not array_of_c<F>)
     {
+      if constexpr(commented)
+      {
+        if(node != nullptr and not value.empty())
+        {
+          ser.emit_leading(serde::comment(*node).leading);
+        }
+      }
       for(auto const& elem : value)
       {
+        ser.begin_child();
         ser.set_element_name(name);
         serialize(ser, elem);
       }
       // an empty sequence emits no element
+      if constexpr(commented)
+      {
+        if(node != nullptr and not value.empty())
+        {
+          ser.emit_trailing(serde::comment(*node).trailing);
+        }
+      }
+    }
+    else if constexpr(commented)
+    {
+      if(node == nullptr)
+      {
+        write_field(ser, name, value);
+        return;
+      }
+      ser.emit_leading(serde::comment(*node).leading);
+      ser.begin_child();
+      ser.set_element_name(name);
+      if constexpr(hands_node<F, std::remove_cvref_t<decltype(*node)>>())
+      {
+        ser.hand_node(*node);
+      }
+      serialize(ser, value);
+      if(ser.drop_node() or not hands_node<F, std::remove_cvref_t<decltype(*node)>>())
+      {
+        ser.emit_trailing(serde::comment(*node).trailing);
+      }
     }
     else
     {
+      ser.begin_child();
       ser.set_element_name(name);
       serialize(ser, value);
     }
+  }
+
+  template <typename Agg> bool writes_child(Agg const& value)
+  {
+    bool any = false;
+    template for(constexpr auto member : define_static_array(
+                     nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+    {
+      if constexpr(not is_attribute(member))
+      {
+        using F             = std::remove_cvref_t<decltype(value.[:member:])>;
+        constexpr bool omit = serde::omits_when_empty(member);
+        bool           here = true;
+        if constexpr(omit)
+        {
+          here = not serde::is_empty_value(value.[:member:]);
+        }
+        if constexpr(optional_c<F>)
+        {
+          here = here and value.[:member:].has_value();
+        }
+        else if constexpr(seq_c<F> and not array_of_c<F>)
+        {
+          here = here and not value.[:member:].empty();
+        }
+        any = any or here;
+      }
+    }
+    return any;
   }
 
   // `borrowed` says whether `text` is a run of the deserializer's input rather
@@ -692,15 +803,326 @@ REFLEX_EXPORT namespace reflex::serde::xml
   }
   } // namespace detail
 
-  template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
+  /** @brief Output options of xml::serializer, its second template argument. */
+  struct options
+  {
+    int  indent   = 0;
+    bool comments = false;
+
+    constexpr bool operator==(options const&) const = default;
+  };
+
+  /** @brief Input options of xml::deserializer, its second template argument. */
+  struct read_options
+  {
+    bool                comments     = false;
+    serde::unknown_keys unknown_keys = serde::unknown_keys::skip;
+
+    constexpr bool operator==(read_options const&) const = default;
+  };
+
+  template <typename OutputIt, options Opts = options{}>
+  class serializer : public serde::detail::serializer_base<OutputIt>
   {
     // The element name for the *next* serialize call, set by the enclosing
     // aggregate before it recurses into a member. Consumed at the entry of that
     // call, before any deeper recursion.
     std::string_view pending_name_{};
 
+    struct indent_state
+    {
+      int  depth         = 0;
+      bool child_written = false;
+    };
+
+    struct no_indent
+    {};
+
+    static constexpr bool indents = Opts.indent > 0 or Opts.comments;
+
+    [[no_unique_address]] typename[:indents ? ^^indent_state : ^^no_indent:] indent_{};
+
+    struct emit_state : serde::detail::comment_emit
+    {
+      int  width       = 0;
+      char indent_char = ' ';
+    };
+
+    [[no_unique_address]]
+    typename[:Opts.comments ? ^^emit_state : ^^serde::detail::no_comment_state:] comments_{};
+
+    friend serde::detail::serializer_base<OutputIt>;
+
+    char indent_char() const
+    {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active)
+        {
+          return comments_.indent_char;
+        }
+      }
+      return ' ';
+    }
+
+    void newline(int depth)
+    {
+      static constexpr std::string_view spaces = "                                ";
+      static constexpr std::string_view tabs   = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t";
+      const int                         width  = indent_width();
+      if(width == 0)
+      {
+        return;
+      }
+      const std::string_view run = indent_char() == '\t' ? tabs : spaces;
+      this->write_char('\n');
+      for(int n = depth * width; n > 0; n -= static_cast<int>(run.size()))
+      {
+        this->write_raw(run.substr(0, std::min<std::size_t>(n, run.size())));
+      }
+    }
+
+    void emit_line_break()
+    {
+      if(indent_width() > 0)
+      {
+        this->write_char('\n');
+      }
+    }
+
+    template <typename Node> void begin_dump(Node const& node)
+    {
+      comments_.width       = Opts.indent;
+      comments_.indent_char = ' ';
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        auto const& doc = serde::layout_of(node);
+        if(doc.indent > 0)
+        {
+          comments_.width       = doc.indent;
+          comments_.indent_char = doc.indent_char;
+        }
+      }
+      for(auto const& line : serde::comment(node).leading)
+      {
+        if(line != serde::blank_line)
+        {
+          emit_comment(line);
+        }
+        emit_line_break();
+      }
+    }
+
+    template <typename Node> void end_dump(Node const& node)
+    {
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        if(serde::layout_of(node).final_newline)
+        {
+          this->write_char('\n');
+        }
+      }
+      else
+      {
+        emit_trailing(node.trailing);
+        for(auto const& line : node.footer)
+        {
+          emit_line_break();
+          if(line != serde::blank_line)
+          {
+            emit_comment(line);
+          }
+        }
+      }
+    }
+
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
+
+    static constexpr options opts = Opts;
+
+    static_assert(Opts.indent >= 0, "xml::options::indent cannot be negative");
+
+  private:
+    template <typename Ser, typename F, typename NodePtr>
+    friend void detail::write_field(Ser&, std::string_view, F const&, NodePtr);
+
+    template <typename Ser, typename NodePtr>
+    friend void detail::write_cdata_element(Ser&, std::string_view, std::string_view, NodePtr);
+
+    template <typename O, options P, xml_element_c A>
+    friend O tag_invoke(tag_default_t<serde::serialize>, serializer<O, P>&, A const&);
+
+    /** @brief The child elements of one element, opened after its start tag's `>`.
+     *
+     * Each child is indented one level deeper. close() breaks the line before the close tag when
+     * a child was written, and the destructor restores the parent's state.
+     */
+    class children_scope
+    {
+      serializer& ser_;
+      bool        saved_  = false;
+      bool        closed_ = false;
+
+    public:
+      explicit children_scope(serializer& ser) : ser_(ser)
+      {
+        if constexpr(indents)
+        {
+          saved_ = std::exchange(ser_.indent_.child_written, false);
+          ++ser_.indent_.depth;
+        }
+      }
+
+      children_scope(children_scope const&)            = delete;
+      children_scope& operator=(children_scope const&) = delete;
+
+      void close()
+      {
+        if constexpr(indents)
+        {
+          --ser_.indent_.depth;
+          closed_ = true;
+          if(ser_.indent_.child_written)
+          {
+            ser_.newline(ser_.indent_.depth);
+          }
+          ser_.indent_.child_written = saved_;
+        }
+      }
+
+      ~children_scope()
+      {
+        if constexpr(indents)
+        {
+          if(not closed_)
+          {
+            --ser_.indent_.depth;
+            ser_.indent_.child_written = saved_;
+          }
+        }
+      }
+    };
+
+    /** @brief The indent of one level, in characters, the detected layout's inside a commented
+     * dump. */
+    constexpr int indent_width() const
+    {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active)
+        {
+          return comments_.width;
+        }
+      }
+      return Opts.indent;
+    }
+
+    /** @brief Writes @p text as one XML comment.
+     *
+     * @throws std::runtime_error when @p text holds a line break or `--`
+     */
+    void emit_comment(std::string_view text)
+    {
+      serde::detail::check_comment_line(text, "--", format_name);
+      this->write_raw("<!-- ");
+      this->write_raw(text);
+      this->write_raw(" -->");
+    }
+
+    /** @brief Writes @p lines above the next child element, each on its own line. */
+    void emit_leading(std::vector<std::string> const& lines)
+    {
+      for(auto const& line : lines)
+      {
+        if(line == serde::blank_line)
+        {
+          emit_line_break();
+        }
+        else
+        {
+          newline(indent_.depth);
+          emit_comment(line);
+        }
+      }
+    }
+
+    /** @brief Writes @p lines before the close tag of the current element. */
+    void emit_footer(std::vector<std::string> const& lines)
+    {
+      if(not lines.empty())
+      {
+        emit_leading(lines);
+        indent_.child_written = true;
+      }
+    }
+
+    /** @brief Writes @p text after the element just written, on its line. */
+    void emit_trailing(std::string const& text)
+    {
+      if(not text.empty())
+      {
+        this->write_char(' ');
+        emit_comment(text);
+      }
+    }
+
+    /** @brief Hands @p node to the next aggregate writer. */
+    template <typename Node> void hand_node(Node const& node)
+    {
+      if constexpr(Opts.comments)
+      {
+        comments_.slot.give(node);
+      }
+    }
+
+    /** @brief Clears the handed node, @return whether no writer took it. */
+    bool drop_node()
+    {
+      if constexpr(Opts.comments)
+      {
+        return std::exchange(comments_.slot, {}).node != nullptr;
+      }
+      else
+      {
+        return false;
+      }
+    }
+
+    /** @brief The comment node handed to the writer of @p Agg, null when there is none. */
+    template <typename Agg> auto take_node()
+    {
+      if constexpr(Opts.comments)
+      {
+        return comments_.slot.template take<serde::comments_of<Agg> const>();
+      }
+      else
+      {
+        return nullptr;
+      }
+    }
+
+    /** @brief Opens the child elements of the element whose start tag was just written. */
+    children_scope children()
+    {
+      return children_scope{*this};
+    }
+
+    /** @brief Breaks the line before a child element, a no-op on compact output. */
+    void begin_child()
+    {
+      if constexpr(indents)
+      {
+        newline(indent_.depth);
+        indent_.child_written = true;
+      }
+    }
+
+  public:
+    template <typename T, auto X>
+      requires std::constructible_from<OutputIt, T&> and (std::constant_wrapper<X>::value == Opts)
+    serializer(T& out, std::constant_wrapper<X>) : serde::detail::serializer_base<OutputIt>(out)
+    {}
 
     static constexpr std::string_view format_name = "XML";
     static constexpr std::string_view format_hint =
@@ -727,12 +1149,14 @@ REFLEX_EXPORT namespace reflex::serde::xml
       -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+  REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
 
   // Leaf: a scalar maps to <name>text</name>. Only reached with an explicit
   // element name except at the document root, where a bare scalar falls back to
   // its type spelling (display_string_of, since scalars have no identifier).
-  template <typename OutputIt, xml_text_c T>
-  OutputIt tag_invoke(tag_default_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
+  template <typename OutputIt, options Opts, xml_text_c T>
+  OutputIt tag_invoke(
+      tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, T const& value)
   {
     const std::string_view name = ser.element_name(display_string_of(dealias(decay(^^T))));
     detail::write_tag(ser, name, false);
@@ -743,9 +1167,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
   // Aggregate: <name> + one child element per member + </name>. Members recurse
   // through serialize, so nested user overrides win at any depth.
-  template <typename OutputIt, xml_element_c Agg>
+  template <typename OutputIt, options Opts, xml_element_c Agg>
   OutputIt tag_invoke(
-      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value)
+      tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value)
   {
     consteval
     {
@@ -758,6 +1182,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     constexpr std::string_view type_default =
         detail::qualified(type_prefix, identifier_of(dealias(decay(^^Agg))));
     const std::string_view name = ser.element_name(type_default);
+    [[maybe_unused]] const auto node = ser.template take_node<Agg>();
 
     // open tag, with an xmlns declaration and attribute members folded in
     ser.write_char('<');
@@ -836,6 +1261,19 @@ REFLEX_EXPORT namespace reflex::serde::xml
     else
     {
       ser.write_char('>');
+      [[maybe_unused]] bool inside = false;
+      if constexpr(Opts.comments)
+      {
+        if(node != nullptr)
+        {
+          inside = detail::writes_child(value) or not node->_self.footer.empty();
+          if(inside)
+          {
+            ser.emit_trailing(node->_self.trailing);
+          }
+        }
+      }
+      auto children = ser.children();
       // non-attribute members as child elements
       template for(constexpr auto member : define_static_array(
                        nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
@@ -857,30 +1295,48 @@ REFLEX_EXPORT namespace reflex::serde::xml
             {
               if constexpr(is_cdata(member))
               {
-                detail::write_cdata_element(ser, cqn, std::string_view{value.[:member:]});
+                detail::write_cdata_element(
+                    ser, cqn, std::string_view{value.[:member:]},
+                    detail::member_node<member>(node));
               }
               else
               {
-                detail::write_field(ser, cqn, value.[:member:]);
+                detail::write_field(ser, cqn, value.[:member:], detail::member_node<member>(node));
               }
             }
           }
           else if constexpr(is_cdata(member))
           {
-            detail::write_cdata_element(ser, cqn, std::string_view{value.[:member:]});
+            detail::write_cdata_element(
+                ser, cqn, std::string_view{value.[:member:]}, detail::member_node<member>(node));
           }
           else
           {
-            detail::write_field(ser, cqn, value.[:member:]);
+            detail::write_field(ser, cqn, value.[:member:], detail::member_node<member>(node));
           }
         }
       }
+      if constexpr(Opts.comments)
+      {
+        if(node != nullptr)
+        {
+          ser.emit_footer(node->_self.footer);
+        }
+      }
+      children.close();
       detail::write_tag(ser, name, true);
+      if constexpr(Opts.comments)
+      {
+        if(node != nullptr and not inside)
+        {
+          ser.emit_trailing(node->_self.trailing);
+        }
+      }
     }
     return ser.out();
   }
 
-  template <std::input_iterator InputIt>
+  template <std::input_iterator InputIt, read_options Opts = read_options{}>
   class deserializer : public serde::detail::subrange_deserializer<InputIt>
   {
     using base = serde::detail::subrange_deserializer<InputIt>;
@@ -897,11 +1353,11 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // Tag-name carrier: borrowed from the input when it is in memory, owned
     // otherwise. read_open_tag hands this out, so on the bulk_scan path a tag
     // name is a view that stays valid only while the input buffer lives.
-    using name_t = std::conditional_t<bulk_scan, std::string_view, std::string>;
+    using name_t = typename[:bulk_scan ? ^^std::string_view : ^^std::string:];
 
     // Attribute names and values carry like a tag name: on the bulk_scan path
     // they are views, valid while the input buffer and this deserializer live.
-    using attr_str  = std::conditional_t<bulk_scan, std::string_view, std::string>;
+    using attr_str  = typename[:bulk_scan ? ^^std::string_view : ^^std::string:];
     using attr_list = std::vector<std::pair<attr_str, attr_str>>;
 
   private:
@@ -927,9 +1383,223 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // the next tag reader honors this instead of expecting to consume '<' again.
     bool lt_consumed_{false};
 
+    struct capture_state : serde::detail::comment_capture
+    {
+      std::size_t gap_newlines   = 0;
+      std::size_t column         = 0;
+      bool        in_indent      = false;
+      bool        line_broken    = false;
+      bool        last_newline   = false;
+      char        indent_char    = ' ';
+      bool        tag_line_start = false;
+      std::size_t tag_column     = 0;
+      char        tag_char       = ' ';
+    };
+
+    [[no_unique_address]]
+    typename[:Opts.comments ? ^^capture_state : ^^serde::detail::no_comment_state:] comments_{};
+
+    friend base;
+
+    template <typename Agg> struct children_capture
+    {
+      serde::comments_of<Agg>* node   = nullptr;
+      std::string*             prev   = nullptr;
+      bool                     active = false;
+      bool                     root   = false;
+    };
+
+    struct no_children_capture
+    {};
+
+    void note_char(char c)
+    {
+      auto& s = comments_;
+      if(c == '\n')
+      {
+        ++s.gap_newlines;
+        s.line_broken  = true;
+        s.in_indent    = true;
+        s.column       = 0;
+        s.last_newline = true;
+      }
+      else if(c == ' ' or c == '\t')
+      {
+        if(s.in_indent)
+        {
+          if(s.column == 0)
+          {
+            s.indent_char = c;
+          }
+          ++s.column;
+        }
+        s.last_newline = false;
+      }
+      else if(c != '\r')
+      {
+        s.gap_newlines = 0;
+        s.in_indent    = false;
+        s.last_newline = false;
+      }
+    }
+
+    void note_blank_lines()
+    {
+      auto& s = comments_;
+      for(std::size_t i = 1; i < s.gap_newlines; ++i)
+      {
+        s.pending.push_back({std::string{serde::blank_line}, 0, false});
+      }
+      s.gap_newlines = 0;
+    }
+
+    void note_markup(bool breaks_line)
+    {
+      auto& s        = comments_;
+      s.gap_newlines = 0;
+      s.in_indent    = false;
+      s.last_newline = false;
+      s.line_broken  = breaks_line;
+    }
+
+    void capture_comment()
+    {
+      std::string body;
+      if constexpr(bulk_scan)
+      {
+        const std::string_view sv = rest();
+        const std::size_t      n  = sv.find("-->");
+        body.assign(sv.substr(0, n));
+        skip(n == std::string_view::npos ? sv.size() : n + 3);
+      }
+      else
+      {
+        while(not at_end() and not body.ends_with("-->"))
+        {
+          body.push_back(advance());
+        }
+        if(body.ends_with("-->"))
+        {
+          body.resize(body.size() - 3);
+        }
+      }
+      note_blank_lines();
+      auto&            s         = comments_;
+      bool             same_line = not s.line_broken;
+      std::string_view text{body};
+      while(true)
+      {
+        const std::size_t nl = text.find('\n');
+        s.pending.push_back({std::string{detail::trim(text.substr(0, nl))}, 0, same_line});
+        if(nl == std::string_view::npos)
+        {
+          break;
+        }
+        same_line = false;
+        text.remove_prefix(nl + 1);
+      }
+      note_markup(s.line_broken or body.find('\n') != std::string::npos);
+    }
+
+    void attach_pending(std::string* same_line, std::vector<std::string>* rest_lines)
+    {
+      for(auto& p : comments_.pending)
+      {
+        if(p.same_line)
+        {
+          if(same_line != nullptr)
+          {
+            if(not same_line->empty())
+            {
+              same_line->push_back(' ');
+            }
+            same_line->append(p.text);
+          }
+        }
+        else if(rest_lines != nullptr)
+        {
+          rest_lines->push_back(std::move(p.text));
+        }
+      }
+      comments_.pending.clear();
+    }
+
+    template <typename Agg> void open_children(children_capture<Agg>& cap)
+    {
+      cap.active = comments_.active;
+      if(not cap.active)
+      {
+        return;
+      }
+      cap.node = comments_.slot.template take<serde::comments_of<Agg>>();
+      cap.root = std::exchange(comments_.root, false);
+      if(cap.node == nullptr)
+      {
+        cap.root = false;
+        comments_.pending.clear();
+        return;
+      }
+      if(cap.root)
+      {
+        for(auto& p : comments_.pending)
+        {
+          cap.node->_self.leading.push_back(std::move(p.text));
+        }
+        comments_.pending.clear();
+      }
+      cap.prev = &cap.node->_self.trailing;
+    }
+
+    template <typename Node> void begin_commented(Node&)
+    {
+      auto& s = comments_;
+      s.pending.clear();
+      s.root         = true;
+      s.gap_newlines = 1;
+      s.column       = 0;
+      s.in_indent    = true;
+      s.line_broken  = true;
+      s.last_newline = false;
+    }
+
+    template <typename Node> void end_commented(Node& node)
+    {
+      auto& own = serde::comment(node);
+      for(auto& p : comments_.pending)
+      {
+        own.leading.push_back(std::move(p.text));
+      }
+      comments_.pending.clear();
+      comments_.root = false;
+      while(read_tag_head().kind != tag_kind::end)
+      {
+      }
+      for(auto& p : comments_.pending)
+      {
+        own.footer.push_back(std::move(p.text));
+      }
+      comments_.pending.clear();
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        serde::layout_of(node).final_newline = comments_.last_newline;
+      }
+    }
+
   public:
     using base::at_end;
     using base::base;
+
+    static constexpr read_options read_opts = Opts;
+
+    template <typename T, auto X>
+      requires std::constructible_from<base, T> and (std::constant_wrapper<X>::value == Opts)
+    deserializer(T&& in, std::constant_wrapper<X>) : base(std::forward<T>(in))
+    {}
+
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(InputIt first, InputIt last, std::constant_wrapper<X>) : base(first, last)
+    {}
 
     char peek() const
     {
@@ -1182,52 +1852,157 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // next markup as an open tag, a close tag, or end of input.
     tag_head read_tag_head()
     {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active)
+        {
+          return scan_tag_head(tag_capture{*this});
+        }
+      }
+      return scan_tag_head(no_tag_capture{});
+    }
+
+  private:
+    struct no_tag_capture
+    {
+      void gap(char)
+      {}
+
+      void gap(std::string_view)
+      {}
+
+      void tag_start()
+      {}
+
+      bool comment()
+      {
+        return false;
+      }
+
+      void markup()
+      {}
+
+      void blank_lines()
+      {}
+    };
+
+    struct tag_capture
+    {
+      deserializer& de;
+
+      void gap(char c)
+      {
+        de.note_char(c);
+      }
+
+      void gap(std::string_view text)
+      {
+        for(char c : text)
+        {
+          de.note_char(c);
+        }
+      }
+
+      void tag_start()
+      {
+        auto& s          = de.comments_;
+        s.tag_line_start = s.line_broken and s.in_indent;
+        s.tag_column     = s.column;
+        s.tag_char       = s.indent_char;
+      }
+
+      bool comment()
+      {
+        if(de.at_end() or de.peek() != '-')
+        {
+          return false;
+        }
+        de.advance();
+        if(not de.at_end() and de.peek() == '-')
+        {
+          de.advance();
+        }
+        de.capture_comment();
+        return true;
+      }
+
+      void markup()
+      {
+        de.note_markup(false);
+      }
+
+      void blank_lines()
+      {
+        de.note_blank_lines();
+      }
+    };
+
+    template <typename Capture> tag_head scan_tag_head(Capture capture)
+    {
       while(true)
       {
         if(lt_consumed_)
         {
-          lt_consumed_ = false; // read_text already consumed this tag's '<'
+          lt_consumed_ = false;
         }
         else
         {
           if constexpr(bulk_scan)
           {
-            const std::string_view sv = rest();
-            const std::size_t      n  = sv.find('<');
-            skip(n == std::string_view::npos ? sv.size() : n);
+            const std::string_view sv  = rest();
+            const std::size_t      n   = sv.find('<');
+            const std::string_view gap = sv.substr(0, n == std::string_view::npos ? sv.size() : n);
+            capture.gap(gap);
+            skip(gap.size());
           }
           else
           {
-            while(not at_end() and peek() != '<') advance();
+            while(not at_end() and peek() != '<')
+            {
+              capture.gap(advance());
+            }
           }
-          if(at_end()) return {tag_kind::end, {}, false, {}};
-          advance(); // '<'
+          if(at_end())
+          {
+            return {tag_kind::end, {}, false, {}};
+          }
+          capture.tag_start();
+          advance();
         }
         const char d = peek();
         if(d == '?')
         {
           advance();
           skip_until("?>");
+          capture.markup();
           continue;
         }
         if(d == '!')
         {
           advance();
-          skip_bang();
+          if(not capture.comment())
+          {
+            skip_bang();
+            capture.markup();
+          }
           continue;
         }
+        capture.blank_lines();
         if(d == '/')
         {
           advance();
-          skip_until(">"); // the name is never read for a close tag
+          skip_until(">");
+          capture.markup();
           return {tag_kind::close, {}, false, {}};
         }
         name_t name                = read_name();
         auto [self_closing, attrs] = read_attributes();
+        capture.markup();
         return {tag_kind::open, std::move(name), self_closing, std::move(attrs)};
       }
     }
 
+  public:
     // Reads the next element open tag. If a parent stashed an already-consumed
     // open tag, that is returned first. Returns {name, self_closing}; the open
     // tag's attributes are available via attributes() until the next open tag.
@@ -1592,9 +2367,33 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // Consumes the parent's close tag before returning.
     template <detail::aggregate_element_c Agg> void read_children(Agg & value)
     {
+      [[maybe_unused]]
+      typename[:Opts.comments ? ^^children_capture<Agg> : ^^no_children_capture:] cap{};
+      if constexpr(Opts.comments)
+      {
+        open_children(cap);
+      }
       while(true)
       {
         tag_head head = read_tag_head();
+        if constexpr(Opts.comments)
+        {
+          if(cap.active and head.kind != tag_kind::open)
+          {
+            attach_pending(cap.prev, cap.node ? &cap.node->_self.footer : nullptr);
+          }
+          else if(cap.root)
+          {
+            cap.root = false;
+            if(cap.node != nullptr and comments_.tag_line_start)
+            {
+              auto& doc = serde::layout_of(*cap.node);
+              doc.indent =
+                  static_cast<std::uint8_t>(std::min<std::size_t>(comments_.tag_column, 255));
+              doc.indent_char = comments_.tag_char;
+            }
+          }
+        }
         // a close tag ends this element; end of input tolerates truncation
         if(head.kind != tag_kind::open) return;
 
@@ -1627,6 +2426,37 @@ REFLEX_EXPORT namespace reflex::serde::xml
             {
               matched     = true;
               using F     = std::remove_cvref_t<decltype(value.[:member:])>;
+              if constexpr(Opts.comments)
+              {
+                if(cap.active)
+                {
+                  constexpr auto cm      = serde::detail::comment_member_of<member>();
+                  constexpr bool is_seq  = seq_c<F> and not array_of_c<F>;
+                  constexpr bool is_tree = serde::detail::comment_tree_c<
+                      std::remove_cvref_t<decltype(cap.node->[:cm:])>>;
+                  if(cap.node == nullptr)
+                  {
+                    comments_.pending.clear();
+                  }
+                  else
+                  {
+                    auto& block = serde::comment(cap.node->[:cm:]);
+                    if(is_seq and cap.prev == &block.trailing)
+                    {
+                      comments_.pending.clear();
+                    }
+                    else
+                    {
+                      attach_pending(cap.prev, &block.leading);
+                    }
+                    cap.prev = &block.trailing;
+                    if constexpr(is_tree)
+                    {
+                      comments_.slot.give(cap.node->[:cm:]);
+                    }
+                  }
+                }
+              }
               if constexpr(seq_c<F> and not array_of_c<F>)
               {
                 using E = typename F::value_type;
@@ -1644,13 +2474,40 @@ REFLEX_EXPORT namespace reflex::serde::xml
                 value.[:member:] =
                     read_child<F>(head.name, self_closing, std::move(head.attributes));
               }
+              if constexpr(Opts.comments)
+              {
+                if(cap.active)
+                {
+                  comments_.pending.clear();
+                  comments_.slot = {};
+                }
+              }
             }
           }
         }
 
         if(not matched)
         {
+          if constexpr(Opts.unknown_keys == serde::unknown_keys::error)
+          {
+            throw std::runtime_error(std::format("XML: no member matches the element '{}'", name));
+          }
+          if constexpr(Opts.comments)
+          {
+            if(cap.active)
+            {
+              attach_pending(cap.prev, nullptr);
+              cap.prev = nullptr;
+            }
+          }
           skip_subtree(self_closing);
+          if constexpr(Opts.comments)
+          {
+            if(cap.active)
+            {
+              comments_.pending.clear();
+            }
+          }
         }
       }
     }
@@ -1851,11 +2708,12 @@ REFLEX_EXPORT namespace reflex::serde::xml
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+  REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
   // Leaf: read <name>text</name> (or a self-closing empty element) into a scalar.
-  template <typename InputIt, xml_text_c T>
+  template <typename InputIt, read_options Opts, xml_text_c T>
   T tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<T>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<T>)
   {
     auto [name, self_closing] = de.read_open_tag();
     if(self_closing)
@@ -1865,9 +2723,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
     return de.template read_text_field<T>();
   }
 
-  template <typename InputIt, xml_element_c Agg>
+  template <typename InputIt, read_options Opts, xml_element_c Agg>
   Agg tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Agg>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Agg>)
   {
     auto [name, self_closing] = de.read_open_tag();
     Agg value{};

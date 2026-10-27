@@ -463,7 +463,7 @@ REFLEX_EXPORT namespace reflex::serde::csv
     // One field of a record. On contiguous input a field is almost always a
     // single run of the input buffer, so it is handed out as a view of it. A
     // stream cursor has no buffer to point into and owns its fields instead.
-    using field_str  = std::conditional_t<bulk_scan, std::string_view, std::string>;
+    using field_str  = typename[:bulk_scan ? ^^std::string_view : ^^std::string:];
     using field_list = std::vector<field_str>;
 
     // Read one RFC 4180 record into its fields, or nullopt at end of input.

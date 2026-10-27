@@ -1,0 +1,21 @@
+<!-- Application configuration -->
+
+<xw_config> <!-- edited by hand -->
+    <!-- display name -->
+    <name>demo</name> <!-- shown in the title bar -->
+    <level>3</level>
+
+    <!-- Server settings -->
+
+    <!-- where to listen -->
+    <srv port="8080" tls="true"> <!-- primary -->
+        <host>example.org</host> <!-- or an IP -->
+        <timeout>30</timeout>
+        <!-- end of server -->
+    </srv>
+    <!-- tags in order -->
+    <tag>a</tag>
+    <tag>b</tag> <!-- last tag -->
+
+    <!-- more to come -->
+</xw_config>

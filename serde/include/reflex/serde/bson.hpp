@@ -5,10 +5,13 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <algorithm>
 #include <bit>
 #include <charconv>
 #include <cstring>
+#include <limits>
 #include <span>
+#include <stdexcept>
 
 #include <reflex/serde.hpp>
 #include <reflex/serde/bson_value.hpp>
@@ -271,6 +274,10 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   {
     append(out, detail::bson_type::binary);
     append(out, key);
+    if(value.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+    {
+      throw std::length_error("BSON binary payload exceeds the int32 length field");
+    }
     append(out, static_cast<std::int32_t>(value.size()));
     append(out, std::byte{0x00});
     out.append_range(value);
@@ -396,8 +403,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
       range_type  range;
       std::size_t position = 0;
 
-      [[no_unique_address]] std::
-          conditional_t<contiguous_byte_or_char, no_key_buffer, std::string> key_buf{};
+      [[no_unique_address]]
+      typename[:contiguous_byte_or_char ? ^^no_key_buffer : ^^std::string:] key_buf{};
 
       constexpr bool at_end() const
       {
@@ -942,6 +949,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
             throw std::out_of_range("Array has more elements than target type can hold");
           }
           cursor_.read_bytes_into(value.data(), n);
+          std::ranges::fill(std::span{value}.subspan(n), std::byte{0});
         }
       }
       else if constexpr(seq_c<value_t>)

@@ -1,0 +1,22 @@
+// Example service configuration.
+// Edited by hand.
+
+{ // service
+    // Display name of the service.
+    "name": "demo",
+    "workers": 4, // worker threads
+
+    // Network settings.
+    "srv": { // listener
+        // TCP port to listen on.
+        "port": 9090,
+        "host": "localhost", // bind address
+        "tls": false
+        // TLS needs a certificate.
+    },
+
+    // Feature toggles.
+    "debug": true,
+    "ratio": 0.5 // sampling fraction
+    // End of settings.
+}

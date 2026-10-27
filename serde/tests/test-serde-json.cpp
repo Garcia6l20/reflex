@@ -418,6 +418,61 @@ TEST_CASE("reflex::serde::json::deserializer: custom var")
   }
 }
 
+struct jt_tagged_xy
+{
+  int x;
+  int y = 7;
+};
+
+using jt_tagged_var = poly::var<json::string, json::number, json::boolean, jt_tagged_xy>;
+
+TEST_CASE("reflex::serde::json::deserializer: a tagged object missing a member")
+{
+  const std::string id    = std::to_string(std::hash<std::string_view>{}("jt_tagged_xy"));
+  const std::string doc   = R"({"t":{"__type":)" + id + R"(,"x":1}})";
+  const auto        value = json::deserializer{doc}.load<jt_tagged_var>();
+  REQUIRE(value.at("t")->is<jt_tagged_xy>());
+  CHECK_EQ(value.at("t")->as<jt_tagged_xy>().x, 1);
+  CHECK_EQ(value.at("t")->as<jt_tagged_xy>().y, 7);
+}
+
+struct jt_bytes
+{
+  std::string            name;
+  std::vector<std::byte> data;
+
+  constexpr bool operator==(jt_bytes const&) const = default;
+};
+
+TEST_CASE("reflex::serde::json: std::byte round-trips")
+{
+  const std::vector<std::byte> bytes{std::byte{0}, std::byte{0x7f}, std::byte{0xff}};
+  SUBCASE("a byte vector")
+  {
+    std::string      out;
+    json::serializer ser{out};
+    serialize(ser, bytes);
+    CHECK_EQ(out, "[0,127,255]");
+    CHECK_EQ(json::deserializer{out}.load<std::vector<std::byte>>(), bytes);
+  }
+  SUBCASE("an aggregate holding a byte vector")
+  {
+    const jt_bytes   value{"blob", bytes};
+    std::string      out;
+    json::serializer ser{out};
+    serialize(ser, value);
+    CHECK_EQ(out, R"({"name":"blob","data":[0,127,255]})");
+    CHECK_EQ(json::deserializer{out}.load<jt_bytes>(), value);
+  }
+  SUBCASE("a value past a byte is rejected")
+  {
+    CHECK_THROWS_AS(json::deserializer{"256"sv}.load<std::byte>(), std::out_of_range);
+    CHECK_THROWS_AS(json::deserializer{"-1"sv}.load<std::byte>(), std::out_of_range);
+    CHECK_THROWS_AS(
+        json::deserializer{"[1,256]"sv}.load<std::vector<std::byte>>(), std::out_of_range);
+  }
+}
+
 TEST_CASE("reflex::core::json file roundtrip")
 {
   const std::filesystem::path json_path = "test.json";
@@ -455,19 +510,19 @@ struct test_userdefined_type
   constexpr bool operator==(test_userdefined_type const& other) const = default;
 };
 
-template <typename OutputIt>
+template <typename OutputIt, auto Opts>
 auto tag_invoke(
     tag_t<serde::serialize>,
-    serde::json::serializer<OutputIt>&                         ser,
+    serde::json::serializer<OutputIt, Opts>&      ser,
     [[maybe_unused]] test_userdefined_type const& value) -> OutputIt
 {
   return std::format_to(ser.out(), "user-defined");
 }
 
-template <typename InputIt>
+template <typename InputIt, auto Opts>
 auto tag_invoke(
     tag_t<serde::deserialize>,
-    serde::json::deserializer<InputIt>&,
+    serde::json::deserializer<InputIt, Opts>&,
     std::type_identity<test_userdefined_type>)
 {
   return test_userdefined_type{42, 3.14, "Hello, world!"};
@@ -500,21 +555,19 @@ struct test_userdefined_type2
 template <typename T>
 concept user_defined2 = std::same_as<T, test_userdefined_type2>;
 
-template <typename OutputIt, user_defined2 T>
+template <typename OutputIt, auto Opts, user_defined2 T>
 auto tag_invoke(
     tag_t<serde::serialize>,
-    serde::json::serializer<OutputIt>&                         ser,
-    [[maybe_unused]] T const& value) -> OutputIt
+    serde::json::serializer<OutputIt, Opts>& ser,
+    [[maybe_unused]] T const&                value) -> OutputIt
 {
   return std::format_to(ser.out(), "user-defined2");
 }
 
-  
-
-template <typename InputIt, user_defined2 T>
+template <typename InputIt, auto Opts, user_defined2 T>
 auto tag_invoke(
     tag_t<serde::deserialize>,
-    serde::json::deserializer<InputIt>&,
+    serde::json::deserializer<InputIt, Opts>&,
     std::type_identity<T>)
 {
   return T{42, 3.14, "Hello, world2!"};
@@ -542,19 +595,19 @@ struct nested_custom
   constexpr bool operator==(nested_custom const& other) const = default;
 };
 
-template <typename OutputIt>
+template <typename OutputIt, auto Opts>
 auto tag_invoke(
     tag_t<serde::serialize>,
-    serde::json::serializer<OutputIt>& ser,
-    nested_custom const&               value) -> OutputIt
+    serde::json::serializer<OutputIt, Opts>& ser,
+    nested_custom const&                     value) -> OutputIt
 {
   return std::format_to(ser.out(), "{}", value.v * 2);
 }
 
-template <typename InputIt>
+template <typename InputIt, auto Opts>
 auto tag_invoke(
     tag_t<serde::deserialize>,
-    serde::json::deserializer<InputIt>& de,
+    serde::json::deserializer<InputIt, Opts>& de,
     std::type_identity<nested_custom>)
 {
   return nested_custom{de.template load<int>() / 2};

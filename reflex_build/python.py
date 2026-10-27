@@ -226,7 +226,7 @@ def add_stub(project, env, extension, name: str):
             "-i",
             str(out),
         ],
-        name = f"{name}-stub",
+        name=f"{name}-stub",
     )
     stub.depends(extension)
     project.Alias("py-stubs", stub)

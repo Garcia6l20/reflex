@@ -137,9 +137,9 @@ REFLEX_EXPORT namespace reflex::serde::json
 
   // What may legally follow a number: a structural character, or whitespace
   // before one.
-  constexpr bool ends_number(char c) noexcept
+  template <bool Comments = false> constexpr bool ends_number(char c) noexcept
   {
-    return c == ',' or c == ']' or c == '}' or reflex::is_space(c);
+    return c == ',' or c == ']' or c == '}' or reflex::is_space(c) or (Comments and c == '/');
   }
 
   // `"name":` is a constant, so it is built once at compile time and promoted to
@@ -148,7 +148,7 @@ REFLEX_EXPORT namespace reflex::serde::json
   // The name is checked here rather than escaped. Identifiers cannot need an
   // escape, but a serde::rename can carry an arbitrary string, and a key that
   // silently emitted an unescaped quote would produce invalid JSON.
-  template <std::meta::info Member> consteval std::string_view quoted_key()
+  template <std::meta::info Member, bool Spaced = false> consteval std::string_view quoted_key()
   {
     constexpr std::string_view name = serialized_name(Member);
     static_assert(
@@ -156,32 +156,761 @@ REFLEX_EXPORT namespace reflex::serde::json
         "a JSON object key cannot contain a quote, a backslash or a control "
         "character: check the serde::rename annotation on this member");
     std::string s;
-    s.reserve(name.size() + 3);
+    s.reserve(name.size() + 4);
     s += '"';
     s += name;
-    s += "\":";
+    s += Spaced ? "\": " : "\":";
     return {std::define_static_string(s), s.size()};
+  }
+
+  template <typename De, typename V> void load_object_member(De& de, V& v)
+  {
+    v = de.template load<std::remove_cvref_t<V>>();
+    if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
+    {
+      if(v.is_object())
+      {
+        auto& obj = v.as_object();
+        auto  type_key =
+            std::ranges::find_if(obj, [](auto const& pair) { return pair.first == "__type"; });
+        if(type_key != obj.end())
+        {
+          template for(constexpr auto a : detail::aggregate_types_of_var<V>())
+          {
+            if(type_key->second == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
+            {
+              using Agg = [:a:];
+              Agg agg_value{};
+              template for(constexpr auto member : define_static_array(
+                               nonstatic_data_members_of(a, std::meta::access_context::current())))
+              {
+                constexpr std::string_view name = serialized_name(member);
+                if(name == "__type")
+                {
+                  continue;
+                }
+                [[maybe_unused]] auto object_value_it = std::ranges::find_if(
+                    obj, [name](auto const& pair) { return pair.first == name; });
+                if(object_value_it == obj.end())
+                {
+                  continue;
+                }
+                auto& member_value = agg_value.[:member:];
+                visit(
+                    [&]<typename U>([[maybe_unused]] U&& v) {
+                      if constexpr(requires { member_value = std::forward<U>(v); })
+                      {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wfloat-conversion"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+                        member_value = std::forward<U>(v);
+#pragma GCC diagnostic pop
+                      }
+                      else
+                      {
+                        throw std::runtime_error("Cannot assign value to member");
+                      }
+                    },
+                    std::move(object_value_it->second));
+              }
+              v = std::move(agg_value);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /** @brief The one way into the JSON serializer's and deserializer's private state, for the
+   * namespace-scope readers and writers.
+   */
+  struct json_access
+  {
+    template <typename Ser> using nest = typename Ser::nest;
+
+    template <typename Backend> static bool commenting(Backend const& backend)
+    {
+      return backend.comments_.active;
+    }
+
+    struct no_object_capture
+    {
+      template <typename De> explicit no_object_capture(De&)
+      {}
+
+      void opened()
+      {}
+
+      void before_key()
+      {}
+
+      void after_key()
+      {}
+
+      void after_colon()
+      {}
+
+      template <typename Map, typename V> void enter(Map&, V&)
+      {}
+
+      void skipped()
+      {}
+
+      void leave()
+      {}
+
+      void close()
+      {}
+    };
+
+    template <typename Map, typename De> class object_capture
+    {
+      using node_type = serde::comments_of<Map>;
+
+      De&                      de_;
+      node_type*               node_;
+      bool                     root_;
+      serde::comment_block     discarded_;
+      serde::comment_block*    prev_ = nullptr;
+      std::vector<std::string> leading_;
+
+      void take_trailing()
+      {
+        if(node_ == nullptr)
+        {
+          return;
+        }
+        de_.take_trailing(prev_ != nullptr ? prev_->trailing : serde::comment(*node_).trailing);
+      }
+
+      void measure()
+      {
+        auto& cap = de_.comments_;
+        if(root_ and cap.broke_line and serde::layout_of(*node_).indent == 0)
+        {
+          serde::layout_of(*node_).indent =
+              static_cast<std::uint8_t>(std::min<std::size_t>(cap.line_column, 255));
+          serde::layout_of(*node_).indent_char = cap.indent_char;
+        }
+      }
+
+      template <std::meta::info Member> void attach()
+      {
+        constexpr auto node_member = serde::detail::comment_member_of<Member>();
+        using member_node          = std::remove_cvref_t<typename[:type_of(node_member):]>;
+        if(node_ == nullptr)
+        {
+          return;
+        }
+        auto& block = serde::comment(node_->[:node_member:]);
+        block.leading.insert(
+            block.leading.end(), std::make_move_iterator(leading_.begin()),
+            std::make_move_iterator(leading_.end()));
+        leading_.clear();
+        prev_ = &block;
+        if constexpr(not std::same_as<member_node, serde::comment_block>)
+        {
+          de_.comments_.slot.give(node_->[:node_member:]);
+        }
+      }
+
+    public:
+      explicit object_capture(De& de)
+          : de_{de}, node_{de.comments_.slot.template take<node_type>()},
+            root_{std::exchange(de.comments_.root, false) and node_ != nullptr}
+      {}
+
+      void opened()
+      {
+        take_trailing();
+        measure();
+      }
+
+      void before_key()
+      {
+        measure();
+      }
+
+      void after_key()
+      {
+        take_trailing();
+        if(node_ != nullptr)
+        {
+          de_.take_leading(leading_);
+        }
+        else
+        {
+          de_.drop_pending();
+        }
+      }
+
+      void after_colon()
+      {
+        de_.drop_pending();
+      }
+
+      template <typename V> void enter(Map& value, V& v)
+      {
+        template for(constexpr auto member : define_static_array(
+                         nonstatic_data_members_of(^^Map, std::meta::access_context::current())))
+        {
+          if constexpr(std::same_as<typename[:type_of(member):], V>)
+          {
+            if(std::addressof(value.[:member:]) == std::addressof(v))
+            {
+              attach<member>();
+              return;
+            }
+          }
+        }
+      }
+
+      void skipped()
+      {
+        leading_.clear();
+        prev_ = &discarded_;
+      }
+
+      void leave()
+      {
+        de_.comments_.slot = {};
+        de_.drop_pending();
+      }
+
+      void close()
+      {
+        take_trailing();
+        if(node_ == nullptr)
+        {
+          de_.drop_pending();
+          return;
+        }
+        de_.take_leading(serde::comment(*node_).footer);
+      }
+    };
+
+    template <typename Map, bool Commented, typename De>
+    [[gnu::always_inline]] static inline Map read_object(De& de)
+    {
+      using capture_type  = typename[:Commented ? ^^object_capture<Map, De> : ^^no_object_capture:];
+      constexpr auto opts = De::read_opts;
+      capture_type   cap{de};
+
+      de.skip_to_value();
+      if(de.advance() != '{')
+      {
+        throw std::runtime_error("Expected '{' at start of JSON object");
+      }
+
+      de.ltrim();
+      cap.opened();
+      if(not de.at_end() and de.peek() == '}')
+      {
+        de.advance();
+        cap.close();
+        return Map{};
+      }
+
+      Map value{};
+      while(true)
+      {
+        de.ltrim();
+        cap.before_key();
+        const std::string_view key = de.read_key();
+        cap.after_key();
+        de.ltrim();
+        if(de.advance() != ':')
+        {
+          throw std::runtime_error("Expected ':' after object key");
+        }
+        de.ltrim();
+        cap.after_colon();
+
+        auto load_member = [&de, &cap, &value]<typename V>(V& v) {
+          cap.enter(value, v);
+          load_object_member(de, v);
+          cap.leave();
+        };
+        if constexpr(opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          if(not serde::object_try_visit_flat(key, value, load_member))
+          {
+            cap.skipped();
+            std::ignore = de.template load<json::value>();
+            cap.leave();
+          }
+        }
+        else
+        {
+          serde::object_visit_flat(key, value, load_member);
+        }
+
+        de.ltrim();
+        const char sep = de.advance();
+        if(sep == ',')
+        {
+          if constexpr(opts.trailing_commas)
+          {
+            de.ltrim();
+            if(not de.at_end() and de.peek() == '}')
+            {
+              de.advance();
+              cap.close();
+              break;
+            }
+          }
+          continue;
+        }
+        if(sep == '}')
+        {
+          cap.close();
+          break;
+        }
+        throw std::runtime_error("Expected ',' or '}' in object");
+      }
+      return value;
+    }
+
+    template <typename Ser, typename Agg>
+    static void write_commented_object(Ser& ser, Agg const& value)
+    {
+      using node_type       = serde::comments_of<Agg>;
+      auto&            emit = ser.comments_;
+      node_type const* node = emit.slot.template take<node_type const>();
+      std::string_view deferred;
+
+      typename Ser::nest members;
+
+      auto flush_deferred = [&] {
+        if(not deferred.empty())
+        {
+          ser.write_char(' ');
+          ser.write_comment(deferred);
+          deferred = {};
+        }
+      };
+
+      ser.write_char('{');
+      if(node != nullptr and not serde::comment(*node).trailing.empty())
+      {
+        ser.write_char(' ');
+        ser.write_comment(serde::comment(*node).trailing);
+        members.enter(ser);
+      }
+
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+      {
+        constexpr bool omit        = serde::omits_when_empty(member);
+        constexpr auto node_member = serde::detail::comment_member_of<member>();
+        constexpr bool scalar_node = std::same_as<
+            std::remove_cvref_t<typename[:type_of(node_member):]>, serde::comment_block>;
+        auto const& member_value = value.[:member:];
+        if constexpr(omit)
+        {
+          if(serde::is_empty_value(member_value))
+          {
+            continue;
+          }
+        }
+        members.open(ser);
+        flush_deferred();
+        if(node != nullptr)
+        {
+          ser.write_comment_lines(serde::comment(node->[:node_member:]).leading);
+        }
+        ser.newline();
+        static constexpr std::string_view key_token = quoted_key<member, true>();
+        ser.write_raw(key_token);
+        if constexpr(not scalar_node)
+        {
+          if(node != nullptr)
+          {
+            emit.slot.give(node->[:node_member:]);
+          }
+        }
+        reflex::visit([&ser](auto const& v) { serialize(ser, v); }, member_value);
+        const bool written_inside = emit.slot.node == nullptr;
+        emit.slot                 = {};
+        if(node != nullptr and (scalar_node or not written_inside))
+        {
+          deferred = serde::comment(node->[:node_member:]).trailing;
+        }
+      }
+      flush_deferred();
+      if(node != nullptr and not serde::comment(*node).footer.empty())
+      {
+        members.enter(ser);
+        ser.write_comment_lines(serde::comment(*node).footer);
+      }
+      members.close(ser, '}');
+    }
+  };
+
+  struct indent_state
+  {
+    int depth = 0;
+  };
+
+  /** @brief The indent state of a serializer writing comments: @p width and @p fill come from
+   * the layout read with the tree, 0 when it measured nothing.
+   */
+  struct layout_indent_state : indent_state
+  {
+    int  width = 0;
+    char fill  = ' ';
+  };
+
+  struct no_indent_state
+  {};
+
+  /** @brief The JSON reader's capture state.
+   *
+   * @p fresh_line makes the next skip start on a new line, at document start. @p broke_line tells
+   * whether the last skip that consumed anything crossed a line break, @p indent_char is the
+   * first byte of the indentation it measured. @p newline_last is true when the last byte it
+   * consumed was a line break.
+   */
+  struct comment_capture : serde::detail::comment_capture
+  {
+    bool fresh_line   = false;
+    bool broke_line   = false;
+    bool newline_last = false;
+    char indent_char  = ' ';
+  };
+
+  /** @brief The lines of the block comment body @p raw, one entry per line.
+   *
+   * Continuation lines lose their indentation and, when every non-empty one starts with `*`, that
+   * decoration. An empty first or last line, the opening or closing line of a boxed comment, is
+   * dropped.
+   *
+   * @return the lines, and whether the first one was kept, the one sharing a line with the
+   * preceding token
+   */
+  inline std::pair<std::vector<std::string>, bool> split_block_comment(std::string_view raw)
+  {
+    std::vector<std::string_view> lines;
+    for(auto part : raw | std::views::split('\n'))
+    {
+      lines.emplace_back(part.begin(), part.end());
+    }
+    bool decorated = false;
+    for(std::size_t i = 1; i < lines.size(); ++i)
+    {
+      const auto start = lines[i].find_first_not_of(" \t");
+      lines[i].remove_prefix(start == std::string_view::npos ? lines[i].size() : start);
+    }
+    for(std::size_t i = 1; i < lines.size(); ++i)
+    {
+      if(lines[i].empty())
+      {
+        continue;
+      }
+      decorated = lines[i].starts_with('*');
+      if(not decorated)
+      {
+        break;
+      }
+    }
+    if(decorated)
+    {
+      for(std::size_t i = 1; i < lines.size(); ++i)
+      {
+        if(not lines[i].empty())
+        {
+          lines[i].remove_prefix(1);
+        }
+      }
+    }
+    std::vector<std::string> out;
+    for(auto line : lines)
+    {
+      out.emplace_back(serde::detail::comment_body(line));
+    }
+    bool first_kept = true;
+    if(out.size() > 1 and out.back().empty())
+    {
+      out.pop_back();
+    }
+    if(out.size() > 1 and out.front().empty())
+    {
+      out.erase(out.begin());
+      first_kept = false;
+    }
+    return {std::move(out), first_kept};
   }
   } // namespace detail
 
-  template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
+  /** @brief Output options of json::serializer, its second template argument. */
+  struct options
+  {
+    int  indent   = 0;
+    bool comments = false;
+
+    constexpr bool operator==(options const&) const = default;
+  };
+
+  /** @brief Input options of json::deserializer, its second template argument. */
+  struct read_options
+  {
+    bool                comments        = false;
+    bool                trailing_commas = false;
+    serde::unknown_keys unknown_keys    = serde::unknown_keys::error;
+
+    constexpr bool operator==(read_options const&) const = default;
+  };
+
+  template <typename OutputIt, options Opts = options{}>
+  class serializer : public serde::detail::serializer_base<OutputIt>
   {
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
 
+    static constexpr options opts = Opts;
+
+    static_assert(Opts.indent >= 0, "json::options::indent cannot be negative");
+    static_assert(
+        Opts.indent > 0 or not Opts.comments,
+        "json::options: comments need indent > 0. A // comment runs to the end of its line, and "
+        "indent 0 writes the whole document on one line");
+
+    template <typename T, auto X>
+      requires std::constructible_from<OutputIt, T&> and (std::constant_wrapper<X>::value == Opts)
+    serializer(T& out, std::constant_wrapper<X>) : serde::detail::serializer_base<OutputIt>(out)
+    {}
+
     static constexpr std::string_view format_name = "JSON";
 
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, null_t const&)
+  private:
+    friend serde::detail::serializer_base<OutputIt>;
+    friend struct detail::json_access;
+
+    static constexpr std::string_view key_separator = Opts.indent > 0 ? ": " : ":";
+
+    [[no_unique_address]] typename[:Opts.comments     ? ^^detail::layout_indent_state
+                                    : Opts.indent > 0 ? ^^detail::indent_state
+                                                      : ^^detail::no_indent_state:] indent_{};
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^serde::detail::comment_emit
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    /** @brief The width of one indent level: the layout of the tree being written, when it
+     * measured one, otherwise the options'.
+     */
+    constexpr int indent_width() const
+    {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active and indent_.width > 0)
+        {
+          return indent_.width;
+        }
+      }
+      return Opts.indent;
+    }
+
+    /** @brief Writes a line break and the indent of the current depth. */
+    void newline()
+      requires(Opts.indent > 0)
+    {
+      static constexpr std::string_view spaces = "                                                "
+                                                 "                ";
+      static constexpr std::string_view tabs = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t";
+      std::string_view                  run  = spaces;
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active and indent_.width > 0 and indent_.fill == '\t')
+        {
+          run = tabs;
+        }
+      }
+      this->write_char('\n');
+      auto n = static_cast<std::size_t>(indent_.depth * indent_width());
+      while(n > 0)
+      {
+        const std::size_t len = std::min(n, run.size());
+        this->write_raw(run.substr(0, len));
+        n -= len;
+      }
+    }
+
+    /** @brief Writes `// ` and @p text, or a bare `//` for an empty @p text.
+     * @throws std::runtime_error when @p text holds a line break
+     */
+    void write_comment(std::string_view text)
+      requires(Opts.comments)
+    {
+      serde::detail::check_comment_line(text, "", format_name);
+      if(text.empty())
+      {
+        this->write_raw("//");
+        return;
+      }
+      this->write_raw("// ");
+      this->write_raw(text);
+    }
+
+    /** @brief Writes @p lines, each on its own line at the current depth, a blank line entry as
+     * an empty line.
+     */
+    void write_comment_lines(std::vector<std::string> const& lines)
+      requires(Opts.comments)
+    {
+      for(auto const& line : lines)
+      {
+        if(line == serde::blank_line)
+        {
+          this->write_char('\n');
+        }
+        else
+        {
+          newline();
+          write_comment(line);
+        }
+      }
+    }
+
+    /** @brief Takes the indent from @p node's layout and writes its header, called by
+     * dump(value, comments).
+     */
+    template <typename Node>
+    void begin_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        indent_.width = serde::layout_of(node).indent;
+        indent_.fill  = serde::layout_of(node).indent_char;
+      }
+      for(auto const& line : serde::comment(node).leading)
+      {
+        if(line != serde::blank_line)
+        {
+          write_comment(line);
+        }
+        this->write_char('\n');
+      }
+    }
+
+    /** @brief Writes the footer of a root that is not an aggregate and the final line break,
+     * called by dump(value, comments).
+     */
+    template <typename Node>
+    void end_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      bool final_newline = true;
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        final_newline = serde::layout_of(node).final_newline;
+      }
+      else
+      {
+        for(auto const& line : node.footer)
+        {
+          this->write_char('\n');
+          if(line != serde::blank_line)
+          {
+            write_comment(line);
+          }
+        }
+      }
+      if(final_newline)
+      {
+        this->write_char('\n');
+      }
+      indent_.width = 0;
+    }
+
+    /** @brief One container being written: separators, line breaks and the depth it opened.
+     *
+     * The depth is entered at the first item and left at the closing token, or on unwinding, so
+     * an empty container stays on one line and a throwing value leaves the depth right.
+     */
+    class nest
+    {
+      serializer* ser_   = nullptr;
+      bool        first_ = true;
+
+    public:
+      nest()                       = default;
+      nest(nest const&)            = delete;
+      nest& operator=(nest const&) = delete;
+
+      ~nest()
+      {
+        if constexpr(Opts.indent > 0)
+        {
+          if(ser_ != nullptr)
+          {
+            --ser_->indent_.depth;
+          }
+        }
+      }
+
+      /** @brief Writes what precedes the next item: a comma after the first, then its line. */
+      void item(serializer& ser)
+      {
+        open(ser);
+        if constexpr(Opts.indent > 0)
+        {
+          ser.newline();
+        }
+      }
+
+      /** @brief Writes the comma before the next item, after the first, and enters the depth. */
+      void open(serializer& ser)
+      {
+        if(not first_)
+        {
+          ser.write_char(',');
+        }
+        first_ = false;
+        enter(ser);
+      }
+
+      /** @brief Enters the depth if not yet entered, so the closing token goes on its own line. */
+      void enter(serializer& ser)
+      {
+        if constexpr(Opts.indent > 0)
+        {
+          if(ser_ == nullptr)
+          {
+            ser_ = &ser;
+            ++ser.indent_.depth;
+          }
+        }
+      }
+
+      /** @brief Writes the closing token @p close, on its own line when an item was written. */
+      void close(serializer& ser, char close)
+      {
+        if constexpr(Opts.indent > 0)
+        {
+          if(ser_ != nullptr)
+          {
+            --ser.indent_.depth;
+            ser_ = nullptr;
+            ser.newline();
+          }
+        }
+        ser.write_char(close);
+      }
+    };
+
+  public:
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, null_t const&)
     {
       ser.write_raw("null");
       return ser.out();
     }
 
     template <typename T>
-    friend OutputIt tag_invoke(
-        tag_t<serde::serialize>,
-        serializer<OutputIt>&   ser,
-        std::optional<T> const& value)
+    friend OutputIt
+        tag_invoke(tag_t<serde::serialize>, serializer& ser, std::optional<T> const& value)
     {
       if(value.has_value())
       {
@@ -195,7 +924,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <str_c Str>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Str const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Str const& value)
     {
       if constexpr(meta::is_template_instance_of(^^Str, ^^std::array))
       {
@@ -210,7 +939,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <number_c Num>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Num const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Num const& value)
     {
       // The JSON grammar has no literal for a non-finite number, so emitting one
       // would produce a document no conforming reader accepts. Checked here and
@@ -227,14 +956,14 @@ REFLEX_EXPORT namespace reflex::serde::json
       return ser.out();
     }
 
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, std::byte value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, std::byte value)
     {
       serde::detail::write_digits(ser, std::to_integer<unsigned>(value));
       return ser.out();
     }
 
     template <std::same_as<char> Char>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Char value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Char value)
     {
       ser.write_char('"');
       if(detail::needs_escape(value))
@@ -250,14 +979,14 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <std::same_as<boolean> Boolean>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Boolean value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Boolean value)
     {
       ser.write_raw(value ? "true" : "false");
       return ser.out();
     }
 
     template <derives_c<derive_t<Format>> T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       // The rendered text has to be scanned before it reaches the sink, so it
       // cannot be formatted straight through. Anything a formatter is likely to
@@ -276,12 +1005,24 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <seq_c Seq>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Seq const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Seq const& value)
     {
       ser.write_char('[');
       if(value.empty())
       {
         ser.write_char(']');
+        return ser.out();
+      }
+
+      if constexpr(Opts.indent > 0)
+      {
+        nest items;
+        for(const auto& elem : value)
+        {
+          items.item(ser);
+          serialize(ser, elem);
+        }
+        items.close(ser, ']');
         return ser.out();
       }
 
@@ -299,36 +1040,30 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <pair_c Pair>
-    friend OutputIt
-        tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Pair const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Pair const& value)
     {
       ser.write_char('{');
+      nest entry;
+      entry.item(ser);
       serialize(ser, value.first);
-      ser.write_char(':');
+      ser.write_raw(key_separator);
       reflex::visit([&ser](const auto& v) { serialize(ser, v); }, value.second);
-      ser.write_char('}');
+      entry.close(ser, '}');
       return ser.out();
     }
 
     template <map_c Map>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Map const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Map const& value)
     {
       ser.write_char('{');
 
-      bool first = true;
+      nest entries;
 
       for(const auto& [key, val] : value)
       {
-        if(not first)
-        {
-          ser.write_char(',');
-        }
-        else
-        {
-          first = false;
-        }
+        entries.item(ser);
         serialize(ser, key);
-        ser.write_char(':');
+        ser.write_raw(key_separator);
         reflex::visit(
             [&ser]<typename U>(const U& v) {
               using var_type = typename Map::mapped_type;
@@ -343,12 +1078,12 @@ REFLEX_EXPORT namespace reflex::serde::json
             },
             val);
       }
-      ser.write_char('}');
+      entries.close(ser, '}');
       return ser.out();
     }
 
     template <visitable_c T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
     }
@@ -359,21 +1094,34 @@ REFLEX_EXPORT namespace reflex::serde::json
       -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+  REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
 
-  template <typename OutputIt, aggregate_c Agg, typename TagT = std::false_type>
+  template <typename OutputIt, options Opts, aggregate_c Agg, typename TagT = std::false_type>
     requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char> may be considered as an aggregate
   OutputIt tag_invoke(
-      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
+      tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value,
+      TagT = {})
   {
-    ser.write_char('{');
-
     constexpr bool tag = TagT::value;
 
-    bool first = not tag;
+    if constexpr(Opts.comments and not tag and serde::detail::reflected_aggregate_c<Agg>)
+    {
+      if(detail::json_access::commenting(ser))
+      {
+        detail::json_access::write_commented_object(ser, value);
+        return ser.out();
+      }
+    }
+
+    ser.write_char('{');
+
+    detail::json_access::nest<serializer<OutputIt, Opts>> members;
 
     if constexpr(tag)
     {
-      ser.write_raw("\"__type\":");
+      members.item(ser);
+      ser.write_raw("\"__type\"");
+      ser.write_raw(Opts.indent > 0 ? ": " : ":");
       // Hashing at compile time would change the emitted id, which is a wire format
       // break.
       static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Agg))));
@@ -393,23 +1141,16 @@ REFLEX_EXPORT namespace reflex::serde::json
           continue;
         }
       }
-      if(not first)
-      {
-        ser.write_char(',');
-      }
-      else
-      {
-        first = false;
-      }
-      static constexpr std::string_view key_token = detail::quoted_key<member>();
+      members.item(ser);
+      static constexpr std::string_view key_token = detail::quoted_key<member, (Opts.indent > 0)>();
       ser.write_raw(key_token);
       reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
     }
-    ser.write_char('}');
+    members.close(ser, '}');
     return ser.out();
   }
 
-  template <std::input_iterator InputIt>
+  template <std::input_iterator InputIt, read_options Opts = read_options{}>
   class deserializer : public serde::detail::subrange_deserializer<InputIt>
   {
     using base = serde::detail::subrange_deserializer<InputIt>;
@@ -422,6 +1163,18 @@ REFLEX_EXPORT namespace reflex::serde::json
   public:
     using base::at_end;
     using base::base;
+
+    static constexpr read_options read_opts = Opts;
+
+    template <typename T, auto X>
+      requires std::constructible_from<base, T> and (std::constant_wrapper<X>::value == Opts)
+    deserializer(T&& in, std::constant_wrapper<X>) : base(std::forward<T>(in))
+    {}
+
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(InputIt first, InputIt last, std::constant_wrapper<X>) : base(first, last)
+    {}
 
     InputIt begin() const
     {
@@ -470,12 +1223,291 @@ REFLEX_EXPORT namespace reflex::serde::json
     // Narrowing to " \t\n\r" would change what parses.
     void ltrim()
     {
-      while(not at_end() and reflex::is_space(*cursor_.begin()))
+      if constexpr(Opts.comments)
       {
-        cursor_.advance(1);
+        skip_space_and_comments();
+      }
+      else
+      {
+        while(not at_end() and reflex::is_space(*cursor_.begin()))
+        {
+          cursor_.advance(1);
+        }
       }
     }
 
+  private:
+    friend base;
+    friend struct detail::json_access;
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^detail::comment_capture
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    /** @brief Reads the document header into @p node's leading lines, called by load_commented. */
+    template <typename Node>
+    void begin_commented(Node& node)
+      requires(Opts.comments)
+    {
+      comments_.root       = true;
+      comments_.fresh_line = true;
+      skip_space_and_comments();
+      take_leading(serde::comment(node).leading);
+    }
+
+    /** @brief Reads the document footer into @p node's footer and records the final line break. */
+    template <typename Node>
+    void end_commented(Node& node)
+      requires(Opts.comments)
+    {
+      drop_pending();
+      skip_space_and_comments();
+      take_leading(serde::comment(node).footer);
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        if constexpr(base::bulk_scan)
+        {
+          serde::layout_of(node).final_newline = this->input().ends_with('\n');
+        }
+        else
+        {
+          serde::layout_of(node).final_newline = comments_.newline_last;
+        }
+      }
+    }
+
+    /** @brief Moves the pending comments read on the previous token's line into @p trailing,
+     * joined by one space and after one space when @p trailing is not empty.
+     */
+    void take_trailing(std::string& trailing)
+      requires(Opts.comments)
+    {
+      auto&       pending = comments_.pending;
+      std::size_t n       = 0;
+      for(; n < pending.size() and pending[n].same_line; ++n)
+      {
+        if(not trailing.empty())
+        {
+          trailing += ' ';
+        }
+        trailing += pending[n].text;
+      }
+      pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(n));
+    }
+
+    /** @brief Moves every pending comment and blank line into @p lines. */
+    void take_leading(std::vector<std::string>& lines)
+      requires(Opts.comments)
+    {
+      for(auto& entry : comments_.pending)
+      {
+        lines.push_back(std::move(entry.text));
+      }
+      comments_.pending.clear();
+    }
+
+    /** @brief Drops every pending comment. */
+    void drop_pending()
+      requires(Opts.comments)
+    {
+      comments_.pending.clear();
+    }
+
+    /** @brief Skips what may precede a value: nothing, or whitespace and comments when the
+     * read options accept comments, so a value opening the document may follow a comment.
+     */
+    void skip_to_value()
+    {
+      if constexpr(Opts.comments)
+      {
+        skip_space_and_comments();
+      }
+    }
+
+    /** @brief Skips whitespace, line comments and block comments.
+     *
+     * While load_commented runs, each comment and each blank line is queued as pending, with
+     * whether it sits on the line of the preceding token, and the indentation of the line the
+     * next token starts is measured.
+     */
+    void skip_space_and_comments()
+      requires(Opts.comments)
+    {
+      auto&       cap       = comments_;
+      const bool  capture   = cap.active;
+      bool        crossed   = cap.fresh_line;
+      bool        same_line = not crossed;
+      bool        blank     = crossed;
+      bool        consumed  = false;
+      std::size_t column    = 0;
+      char        fill      = ' ';
+      std::string text;
+      cap.fresh_line   = false;
+      cap.newline_last = false;
+      while(not at_end())
+      {
+        const char c = *cursor_.begin();
+        if(c == '\n')
+        {
+          if(capture and crossed and blank)
+          {
+            cap.pending.push_back({std::string{serde::blank_line}, 0, false});
+          }
+          crossed   = true;
+          same_line = false;
+          blank     = true;
+          column    = 0;
+          cursor_.advance(1);
+          consumed         = true;
+          cap.newline_last = true;
+          continue;
+        }
+        if(reflex::is_space(c))
+        {
+          if(blank)
+          {
+            fill = column == 0 ? c : fill;
+            ++column;
+          }
+          cursor_.advance(1);
+          consumed         = true;
+          cap.newline_last = false;
+          continue;
+        }
+        if(c != '/')
+        {
+          break;
+        }
+        cursor_.advance(1);
+        consumed         = true;
+        cap.newline_last = false;
+        const char kind  = at_end() ? '\0' : *cursor_.begin();
+        if(kind == '/')
+        {
+          cursor_.advance(1);
+          read_line_comment(capture ? &text : nullptr);
+          if(capture)
+          {
+            cap.pending.push_back(
+                {std::string{serde::detail::comment_body(text)}, column, same_line});
+          }
+          blank = false;
+        }
+        else if(kind == '*')
+        {
+          cursor_.advance(1);
+          const bool multi_line = read_block_comment(capture ? &text : nullptr);
+          if(capture)
+          {
+            auto [lines, first_kept] = detail::split_block_comment(text);
+            bool on_line             = same_line and first_kept;
+            for(auto& line : lines)
+            {
+              cap.pending.push_back({std::move(line), column, on_line});
+              on_line = false;
+            }
+          }
+          if(multi_line)
+          {
+            crossed   = true;
+            same_line = false;
+          }
+          blank = false;
+        }
+        else
+        {
+          throw std::runtime_error("Unexpected '/' in JSON");
+        }
+      }
+      if(consumed)
+      {
+        cap.broke_line = crossed;
+        if(crossed and blank)
+        {
+          cap.line_column = column;
+          cap.indent_char = fill;
+        }
+      }
+    }
+
+    void read_line_comment(std::string* text)
+    {
+      if constexpr(base::bulk_scan)
+      {
+        const std::string_view rest = this->rest();
+        const std::size_t      end  = std::min(rest.find('\n'), rest.size());
+        if(text != nullptr)
+        {
+          text->assign(rest.substr(0, end));
+        }
+        this->skip(end);
+      }
+      else
+      {
+        if(text != nullptr)
+        {
+          text->clear();
+        }
+        while(not at_end() and *cursor_.begin() != '\n')
+        {
+          if(text != nullptr)
+          {
+            text->push_back(*cursor_.begin());
+          }
+          cursor_.advance(1);
+        }
+      }
+    }
+
+    bool read_block_comment(std::string* text)
+    {
+      if constexpr(base::bulk_scan)
+      {
+        const std::string_view rest = this->rest();
+        const std::size_t      end  = rest.find("*/");
+        if(end == std::string_view::npos)
+        {
+          throw std::runtime_error("Unterminated JSON comment");
+        }
+        const std::string_view body = rest.substr(0, end);
+        if(text != nullptr)
+        {
+          text->assign(body);
+        }
+        this->skip(end + 2);
+        return body.find('\n') != std::string_view::npos;
+      }
+      else
+      {
+        if(text != nullptr)
+        {
+          text->clear();
+        }
+        bool multi_line = false;
+        bool star       = false;
+        while(not at_end())
+        {
+          const char c = *cursor_.begin();
+          cursor_.advance(1);
+          if(star and c == '/')
+          {
+            if(text != nullptr)
+            {
+              text->pop_back();
+            }
+            return multi_line;
+          }
+          star       = c == '*';
+          multi_line = multi_line or c == '\n';
+          if(text != nullptr)
+          {
+            text->push_back(c);
+          }
+        }
+        throw std::runtime_error("Unterminated JSON comment");
+      }
+    }
+
+  public:
     // Reads an object key and hands back a view of it.
     //
     // The view points into the input buffer, not into anything the parse owns,
@@ -522,16 +1554,15 @@ REFLEX_EXPORT namespace reflex::serde::json
     // makes load() without an explicit type read a json::value
     using default_load_type = json::value;
 
-    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de)
     {
       return deserialize(de, std::type_identity<json::value>{});
     }
 
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<json::null_t>)
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<json::null_t>)
     {
+      de.skip_to_value();
       de.expect("null");
       return null;
     }
@@ -539,9 +1570,10 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <typename T>
     friend std::optional<T> tag_invoke(
         tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
+        deserializer& de,
         std::type_identity<std::optional<T>>)
     {
+      de.skip_to_value();
       if(de.peek() == 'n')
       {
         de.expect("null");
@@ -599,10 +1631,10 @@ REFLEX_EXPORT namespace reflex::serde::json
     // find_terminator bounds the body first, then one scan decides. So there is
     // no partial write to unwind, and the throw leaves the cursor untouched.
     template <str_c Str>
-      requires serde::detail::borrowed_string_sink_c<Str> and deserializer<InputIt>::bulk_scan
-    friend Str
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+      requires serde::detail::borrowed_string_sink_c<Str> and deserializer::bulk_scan
+    friend Str tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
+      de.skip_to_value();
       if(de.advance() != '"')
       {
         throw std::runtime_error("Expected '\"' at start of JSON string");
@@ -635,10 +1667,8 @@ REFLEX_EXPORT namespace reflex::serde::json
     // reason, so the caller does not then report a void conversion on top.
     template <str_c Str>
       requires(not serde::detail::string_sink_c<Str>)
-              and (not(serde::detail::borrowed_string_sink_c<Str>
-                       and deserializer<InputIt>::bulk_scan))
-    friend Str
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+          and (not(serde::detail::borrowed_string_sink_c<Str> and deserializer::bulk_scan))
+    friend Str tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       if constexpr(serde::detail::borrowed_string_sink_c<Str>)
       {
@@ -662,9 +1692,9 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     template <str_c Str>
       requires serde::detail::string_sink_c<Str>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
+      de.skip_to_value();
       if(de.advance() != '"')
       {
         throw std::runtime_error("Expected '\"' at start of JSON string");
@@ -709,7 +1739,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         }
       };
 
-      if constexpr(deserializer<InputIt>::bulk_scan)
+      if constexpr(deserializer::bulk_scan)
       {
         const std::string_view sv = de.rest();
 
@@ -796,11 +1826,11 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <number_c Num>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Num>)
     {
+      de.skip_to_value();
       Num value;
-      if constexpr(deserializer<InputIt>::bulk_scan)
+      if constexpr(deserializer::bulk_scan)
       {
         const auto first = std::to_address(de.begin());
         const auto last  = std::to_address(de.end());
@@ -810,7 +1840,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         // Anything else, `1.2.3` being the case that used to slip through, is
         // trailing garbage and is rejected here rather than left for the next
         // token to fail on with an unrelated message.
-        if(ec != std::errc{} or (ptr != last and not detail::ends_number(*ptr)))
+        if(ec != std::errc{} or (ptr != last and not detail::ends_number<Opts.comments>(*ptr)))
         {
           throw std::runtime_error("Failed to parse number");
         }
@@ -838,8 +1868,12 @@ REFLEX_EXPORT namespace reflex::serde::json
         // permissive than the parser, and what stopped the collector must be a
         // character that may follow a number, which covers `1.5abc`.
         auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
-        if(ec != std::errc{} or ptr != token.data() + token.size()
-           or (not de.at_end() and not detail::ends_number(de.peek())))
+        if(ec
+           != std::errc{}
+           or ptr
+           != token.data()
+           + token.size()
+           or (not de.at_end() and not detail::ends_number<Opts.comments>(de.peek())))
         {
           throw std::runtime_error("Failed to parse number");
         }
@@ -847,11 +1881,20 @@ REFLEX_EXPORT namespace reflex::serde::json
       return value;
     }
 
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<boolean>)
+    friend std::byte
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<std::byte>)
     {
+      const auto value = de.template load<long long>();
+      if(value < 0 or value > 255)
+      {
+        throw std::out_of_range(std::format("JSON number {} is out of range for std::byte", value));
+      }
+      return static_cast<std::byte>(value);
+    }
+
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<boolean>)
+    {
+      de.skip_to_value();
       if(de.peek() == 't')
       {
         de.expect("true");
@@ -866,8 +1909,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <derives_c<derive_t<Parse>> T>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<T>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<T>)
     {
       auto token  = de.template load<heapless::string<64>>();
       auto result = parse<std::remove_cvref_t<T>>(token);
@@ -881,9 +1923,9 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <seq_c Seq>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Seq>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Seq>)
     {
+      de.skip_to_value();
       if(de.advance() != '[')
         throw std::runtime_error("Expected '[' at start of JSON array");
 
@@ -910,6 +1952,14 @@ REFLEX_EXPORT namespace reflex::serde::json
         if(sep == ',')
         {
           de.ltrim();
+          if constexpr(Opts.trailing_commas)
+          {
+            if(not de.at_end() and de.peek() == ']')
+            {
+              de.advance();
+              break;
+            }
+          }
           continue;
         }
         if(sep == ']')
@@ -923,10 +1973,9 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     template <typename var_type>
       requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<var_type>) -> var_type
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<var_type>)
+            -> var_type
     {
       de.ltrim();
       switch(de.peek())
@@ -949,108 +1998,25 @@ REFLEX_EXPORT namespace reflex::serde::json
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+  REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
-  template <typename InputIt, object_visitable_c Map>
+  template <typename InputIt, read_options Opts, object_visitable_c Map>
     requires(
         not(meta::is_template_instance_of(^^Map, ^^poly::var)
             // std::array<char> may be considered as a visitable object
             or str_c<Map>
             or seq_c<Map>))
   auto tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Map>)
   {
-    if(de.advance() != '{')
-      throw std::runtime_error("Expected '{' at start of JSON object");
-
-    de.ltrim();
-    if(!de.at_end() and de.peek() == '}')
+    if constexpr(Opts.comments and serde::detail::reflected_aggregate_c<Map>)
     {
-      de.advance();
-      return Map{};
+      if(detail::json_access::commenting(de))
+      {
+        return detail::json_access::read_object<Map, true>(de);
+      }
     }
-
-    Map value{};
-    while(true)
-    {
-      de.ltrim();
-      const std::string_view key = de.read_key();
-      de.ltrim();
-      if(de.advance() != ':')
-      {
-        throw std::runtime_error("Expected ':' after object key");
-      }
-      de.ltrim();
-
-      serde::object_visit_flat(key, value, [&]<typename V>(V& v) {
-        v = de.template load<std::remove_cvref_t<V>>();
-        if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
-        {
-          if(v.is_object())
-          {
-            auto& obj = v.as_object();
-            auto  type_key =
-                std::ranges::find_if(obj, [](auto const& pair) { return pair.first == "__type"; });
-            if(type_key != obj.end())
-            {
-              template for(constexpr auto a : detail::aggregate_types_of_var<V>())
-              {
-                if(type_key->second
-                   == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
-                {
-                  using Agg = [:a:];
-                  Agg agg_value{};
-                  template for(constexpr auto member :
-                               define_static_array(nonstatic_data_members_of(
-                                   a, std::meta::access_context::current())))
-                  {
-                    constexpr std::string_view name = serialized_name(member);
-                    if(name == "__type")
-                    {
-                      continue;
-                    }
-                    [[maybe_unused]] auto object_value_it = std::ranges::find_if(
-                        obj, [name](auto const& pair) { return pair.first == name; });
-                    auto& member_value = agg_value.[:member:];
-                    visit(
-                        [&]<typename U>([[maybe_unused]] U&& v) {
-                          if constexpr(requires { member_value = std::forward<U>(v); })
-                          {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wfloat-conversion"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-                            member_value = std::forward<U>(v);
-#pragma GCC diagnostic pop
-                          }
-                          else
-                          {
-                            throw std::runtime_error("Cannot assign value to member");
-                          }
-                        },
-                        std::move(object_value_it->second));
-                  }
-                  v = std::move(agg_value);
-                  break;
-                }
-              }
-            }
-          }
-        }
-      });
-
-      de.ltrim();
-      const char sep = de.advance();
-      if(sep == ',')
-      {
-        continue;
-      }
-      if(sep == '}')
-      {
-        break;
-      }
-      throw std::runtime_error("Expected ',' or '}' in object");
-    }
-    return value;
+    return detail::json_access::read_object<Map, false>(de);
   }
 
 } // namespace reflex::serde::json

@@ -254,21 +254,94 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     std::string text;
     bool        quoted = false;
   };
+
+  /** @brief One comment line or blank line read but not yet attached to a node.
+   *
+   * @p scan numbers the next_content_line() call that read it, which tells the lines a value
+   * read inside itself from the lines after its end.
+   */
+  struct pending_line
+  {
+    std::string text;
+    std::size_t column    = 0;
+    std::size_t scan      = 0;
+    bool        same_line = false;
+    bool        blank     = false;
+  };
+
+  /** @brief The YAML deserializer's capture state, held when its read options accept comments.
+   *
+   * @p held_blanks counts blank lines a scalar reader crossed while looking for a continuation,
+   * pushed by the next scan. @p indent is the first nesting step measured.
+   */
+  struct capture_state : serde::detail::comment_capture
+  {
+    std::vector<pending_line> lines;
+    std::size_t               scan          = 0;
+    std::size_t               held_blanks   = 0;
+    std::uint8_t              indent        = 0;
+    bool                      final_newline = true;
+  };
+
+  /** @brief The YAML serializer's emit state, held when its options write comments.
+   *
+   * @p indent is the detected width the commented dump writes with, 0 for the options' own.
+   * @p line_open is set while the cursor is at the start of a line whose indent is not written.
+   */
+  struct emit_state : serde::detail::comment_emit
+  {
+    int  indent    = 0;
+    bool line_open = false;
+  };
+
+  struct read_access;
+  struct write_access;
   } // namespace detail
 
-  template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
+  /** @brief Output options of yaml::serializer, its second template argument. */
+  struct options
+  {
+    int  indent   = 2;
+    bool comments = false;
+
+    constexpr bool operator==(options const&) const = default;
+  };
+
+  /** @brief Input options of yaml::deserializer, its second template argument. */
+  struct read_options
+  {
+    bool                comments     = false;
+    serde::unknown_keys unknown_keys = serde::unknown_keys::error;
+
+    constexpr bool operator==(read_options const&) const = default;
+  };
+
+  template <typename OutputIt, options Opts = options{}>
+  class serializer : public serde::detail::serializer_base<OutputIt>
   {
     int depth_ = 0;
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^detail::emit_state
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    friend serde::detail::serializer_base<OutputIt>;
+    friend detail::write_access;
 
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
 
-    static constexpr std::string_view format_name = "YAML";
+    static constexpr options opts = Opts;
 
-    // Fixed, not an option. A configurable width would have to be threaded
-    // through every tag_invoke, and no serde backend carries an options object.
-    // If it is ever wanted it becomes a template parameter on this class.
-    static constexpr int indent_width = 2;
+    static_assert(
+        Opts.indent >= 2,
+        "yaml::options::indent must be at least 2, the width of a sequence dash and its space");
+
+    template <typename T, auto X>
+      requires std::constructible_from<OutputIt, T&> and (std::constant_wrapper<X>::value == Opts)
+    serializer(T& out, std::constant_wrapper<X>) : serde::detail::serializer_base<OutputIt>(out)
+    {}
+
+    static constexpr std::string_view format_name = "YAML";
 
     // THE INVARIANT, which the whole block writer rests on:
     //
@@ -289,7 +362,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     void newline()
     {
       this->write_char('\n');
-      for(int i = 0; i < depth_ * indent_width; ++i)
+      for(int i = 0; i < depth_ * indent_width(); ++i)
       {
         this->write_char(' ');
       }
@@ -343,6 +416,219 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
   private:
+    int indent_width() const
+    {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active and comments_.indent != 0)
+        {
+          return comments_.indent;
+        }
+      }
+      return Opts.indent;
+    }
+
+    void write_indent_()
+    {
+      for(int i = 0; i < depth_ * indent_width(); ++i)
+      {
+        this->write_char(' ');
+      }
+    }
+
+    void begin_line_()
+    {
+      if(comments_.line_open)
+      {
+        write_indent_();
+        comments_.line_open = false;
+      }
+    }
+
+    void emit_comment_(std::string_view text)
+    {
+      serde::detail::check_comment_line(text, "", "YAML");
+      this->write_char('#');
+      if(not text.empty())
+      {
+        this->write_char(' ');
+        this->write_raw(text);
+      }
+    }
+
+    void emit_leading_(std::vector<std::string> const& lines)
+    {
+      for(auto const& line : lines)
+      {
+        if(line == serde::blank_line)
+        {
+          this->write_char('\n');
+          continue;
+        }
+        begin_line_();
+        emit_comment_(line);
+        this->write_char('\n');
+        comments_.line_open = true;
+      }
+    }
+
+    void emit_trailing_(std::string_view text)
+    {
+      if(not text.empty())
+      {
+        this->write_char(' ');
+        emit_comment_(text);
+      }
+    }
+
+    void emit_footer_(std::vector<std::string> const& lines)
+    {
+      for(auto const& line : lines)
+      {
+        this->write_char('\n');
+        if(line != serde::blank_line)
+        {
+          write_indent_();
+          emit_comment_(line);
+        }
+      }
+    }
+
+    template <typename Node> void begin_dump(Node const& node)
+    {
+      comments_.indent = 0;
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        if(serde::layout_of(node).indent >= 2)
+        {
+          comments_.indent = serde::layout_of(node).indent;
+        }
+      }
+      comments_.line_open = true;
+      emit_leading_(serde::comment(node).leading);
+    }
+
+    template <typename Node> void end_dump(Node const& node)
+    {
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        if(serde::layout_of(node).final_newline)
+        {
+          this->write_char('\n');
+        }
+      }
+      else
+      {
+        emit_footer_(serde::comment(node).footer);
+      }
+      comments_.line_open = false;
+      comments_.indent    = 0;
+    }
+
+    template <typename T> void write_value_trailing_(T const& value, std::string_view trailing)
+    {
+      if constexpr(detail::block_node_c<T>)
+      {
+        if(not detail::is_inline_empty(value))
+        {
+          emit_trailing_(trailing);
+          auto guard = this->push();
+          this->newline();
+          serialize(*this, value);
+          return;
+        }
+      }
+      this->write_char(' ');
+      serialize(*this, value);
+      emit_trailing_(trailing);
+    }
+
+    template <typename V, typename Sub> void write_member_commented_(V const& value, Sub const& sub)
+    {
+      std::string_view trailing = serde::comment(sub).trailing;
+      if constexpr(meta::is_template_instance_of(^^V, ^^std::optional))
+      {
+        if(not value.has_value())
+        {
+          this->write_raw(" null");
+          emit_trailing_(trailing);
+          return;
+        }
+        write_member_commented_(*value, sub);
+      }
+      else if constexpr(
+          serde::detail::comment_tree_c<Sub>
+          and not reflex::tag_invocable_c<tag_t<serde::serialize>, serializer&, V const&>)
+      {
+        if(detail::is_inline_empty(value))
+        {
+          this->write_char(' ');
+          serialize(*this, value);
+          emit_trailing_(trailing);
+          auto guard = this->push();
+          emit_footer_(serde::comment(sub).footer);
+          return;
+        }
+        emit_trailing_(trailing);
+        auto guard = this->push();
+        this->write_char('\n');
+        comments_.line_open = true;
+        write_aggregate_commented_(value, sub);
+      }
+      else
+      {
+        reflex::visit(
+            [this, trailing](auto const& v) { this->write_value_trailing_(v, trailing); }, value);
+      }
+    }
+
+    template <typename Agg>
+    void write_aggregate_commented_(Agg const& value, serde::comments_of<Agg> const& node)
+    {
+      bool first = true;
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+      {
+        constexpr bool omit = serde::omits_when_empty(member);
+        if constexpr(omit)
+        {
+          if(serde::is_empty_value(value.[:member:]))
+          {
+            continue;
+          }
+        }
+        if(not first)
+        {
+          this->write_char('\n');
+          comments_.line_open = true;
+        }
+        first = false;
+
+        constexpr auto node_member = serde::detail::comment_member_of<member>();
+        auto const&    sub         = node.[:node_member:];
+        emit_leading_(serde::comment(sub).leading);
+        begin_line_();
+        static constexpr std::string_view key_token = detail::plain_key<member>();
+        this->write_raw(key_token);
+        write_member_commented_(value.[:member:], sub);
+      }
+      if(first)
+      {
+        begin_line_();
+        this->write_raw("{}");
+      }
+      emit_footer_(serde::comment(node).footer);
+    }
+
+    void write_dash()
+    {
+      this->write_char('-');
+      for(int i = 1; i < indent_width(); ++i)
+      {
+        this->write_char(' ');
+      }
+    }
+
     template <bool BreakBefore, typename T> void write_value(T const& value)
     {
       // An engaged optional of an aggregate is a block node, but std::optional
@@ -394,17 +680,15 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
   public:
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, null_t const&)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, null_t const&)
     {
       ser.write_raw("null");
       return ser.out();
     }
 
     template <typename T>
-    friend OutputIt tag_invoke(
-        tag_t<serde::serialize>,
-        serializer<OutputIt>&   ser,
-        std::optional<T> const& value)
+    friend OutputIt
+        tag_invoke(tag_t<serde::serialize>, serializer& ser, std::optional<T> const& value)
     {
       if(value.has_value())
       {
@@ -418,14 +702,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
     template <str_c Str>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Str const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Str const& value)
     {
       detail::write_scalar(ser, detail::string_view_of(value));
       return ser.out();
     }
 
     template <number_c Num>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Num const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Num const& value)
     {
       // Unlike JSON, YAML has a literal for every non-finite value. It has to be
       // written here rather than left to write_digits, which would emit "inf"
@@ -447,21 +731,21 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       return ser.out();
     }
 
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, std::byte value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, std::byte value)
     {
       serde::detail::write_digits(ser, std::to_integer<unsigned>(value));
       return ser.out();
     }
 
     template <std::same_as<char> Char>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Char value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Char value)
     {
       detail::write_scalar(ser, std::string_view{&value, 1});
       return ser.out();
     }
 
     template <std::same_as<boolean> Boolean>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Boolean value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Boolean value)
     {
       ser.write_raw(value ? "true" : "false");
       return ser.out();
@@ -471,12 +755,8 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // same decision as a mapping value, minus the leading space the "- "
     // already supplied and minus the line break: a block child starts right
     // after the dash, which is YAML's compact notation.
-    //
-    // The indent works out with no special case. "- " occupies two columns at
-    // depth*2, so the child's continuation lines belong at depth*2 + 2, which is
-    // exactly (depth+1)*2 - what the guard already produces.
     template <seq_c Seq>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Seq const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Seq const& value)
     {
       if(value.empty())
       {
@@ -492,7 +772,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           ser.newline();
         }
         first = false;
-        ser.write_raw("- ");
+        ser.write_dash();
         ser.write_element(elem);
       }
       return ser.out();
@@ -503,7 +783,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // back to an int, while a std::string key goes through the scalar writer
     // and picks up quotes only when a plain form would change its type.
     template <map_c Map>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Map const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Map const& value)
     {
       static_assert(
           not detail::block_node_c<typename Map::key_type>,
@@ -535,8 +815,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // A standalone pair is a one-entry mapping. block_node_c names pair_c for
     // this reason.
     template <pair_c Pair>
-    friend OutputIt
-        tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Pair const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Pair const& value)
     {
       serialize(ser, value.first);
       ser.write_char(':');
@@ -547,13 +826,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // A poly::var reached directly, rather than as a member. write_member and
     // write_element already visit, so this is the top-level entry point.
     template <visitable_c T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
     }
 
     template <derives_c<derive_t<Format>> T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       // The rendered text has to be scanned by write_scalar before it reaches the
       // sink, so it cannot be formatted straight through. Anything a formatter is
@@ -577,15 +856,47 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+  REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
+
+  namespace detail
+  {
+  /** @brief The private emit members of yaml::serializer, reached from its free writers. */
+  struct write_access
+  {
+    template <typename Agg, typename Ser> static serde::comments_of<Agg> const* take_node(Ser& ser)
+    {
+      if(not ser.comments_.active)
+      {
+        return nullptr;
+      }
+      return ser.comments_.slot.template take<serde::comments_of<Agg> const>();
+    }
+
+    template <typename Agg, typename Ser>
+    static void write_aggregate(Ser& ser, Agg const& value, serde::comments_of<Agg> const& node)
+    {
+      ser.write_aggregate_commented_(value, node);
+    }
+  };
+  }
 
   // A block mapping, one "key: value" per line at this node's depth. No braces,
   // no separators: the extent of the mapping is its indentation.
-  template <typename OutputIt, aggregate_c Agg>
+  template <typename OutputIt, options Opts, aggregate_c Agg>
     requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char, N> is an aggregate
   OutputIt tag_invoke(
-      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value)
+      tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value)
   {
     static constexpr auto type = decay(type_of(^^value));
+
+    if constexpr(Opts.comments and serde::detail::reflected_aggregate_c<Agg>)
+    {
+      if(auto const* node = detail::write_access::take_node<Agg>(ser))
+      {
+        detail::write_access::write_aggregate(ser, value, *node);
+        return ser.out();
+      }
+    }
 
     if constexpr(detail::member_count<Agg>() == 0)
     {
@@ -624,7 +935,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
   }
 
-  template <std::input_iterator InputIt>
+  template <std::input_iterator InputIt, read_options Opts = read_options{}>
   class deserializer : public serde::detail::line_cursor<InputIt>
   {
     using base = serde::detail::line_cursor<InputIt>;
@@ -639,8 +950,26 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // a second document.
     bool doc_started_ = false;
 
+    [[no_unique_address]] typename[:Opts.comments ? ^^detail::capture_state
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    friend serde::detail::subrange_deserializer<InputIt>;
+    friend detail::read_access;
+
   public:
     using base::base;
+
+    static constexpr read_options read_opts = Opts;
+
+    template <typename T, auto X>
+      requires std::constructible_from<base, T> and (std::constant_wrapper<X>::value == Opts)
+    deserializer(T&& in, std::constant_wrapper<X>) : base(std::forward<T>(in))
+    {}
+
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(InputIt first, InputIt last, std::constant_wrapper<X>) : base(first, last)
+    {}
     using base::advance;
     using base::at_end;
     using base::at_line_end;
@@ -686,6 +1015,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       {
         throw std::runtime_error("YAML: a tab cannot be used to indent a node");
       }
+      if constexpr(Opts.comments)
+      {
+        comments_.line_column = column();
+      }
       return column();
     }
 
@@ -704,6 +1037,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       if(peek_at(0) == '#')
       {
+        if constexpr(Opts.comments)
+        {
+          if(comments_.active)
+          {
+            capture_comment_(column() > comments_.line_column);
+            return;
+          }
+        }
         skip_to_line_end();
         return;
       }
@@ -720,6 +1061,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // line. Without it, a key is skipped every time a nested block ends.
     std::size_t next_content_line()
     {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active)
+        {
+          return next_content_line_capturing_();
+        }
+      }
       if(column() == 0)
       {
         // A fresh line, nothing consumed from it yet.
@@ -827,17 +1175,351 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       return after == '\0' or after == ' ' or after == '\t' or is_break(after);
     }
 
+    void capture_comment_(bool same_line)
+    {
+      const std::size_t col = column();
+      advance();
+      std::string raw;
+      while(not at_line_end())
+      {
+        raw.push_back(advance());
+      }
+      comments_.lines.push_back(
+          {.text      = std::string(serde::detail::comment_body(raw)),
+           .column    = col,
+           .scan      = comments_.scan,
+           .same_line = same_line,
+           .blank     = false});
+    }
+
+    void push_blank_()
+    {
+      comments_.lines.push_back(
+          {.text = {}, .column = 0, .scan = comments_.scan, .same_line = false, .blank = true});
+    }
+
+    void hold_blanks_(std::size_t n)
+    {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active)
+        {
+          comments_.held_blanks += n;
+        }
+      }
+    }
+
+    std::size_t next_content_line_capturing_()
+    {
+      auto&      st      = comments_;
+      const char c       = at_line_end() ? '\n' : peek_at(0);
+      const bool on_node = c != '\n' and c != ' ' and c != '\t' and c != '#';
+      if(on_node and st.held_blanks == 0 and not(column() == 0 and marker_here_()))
+      {
+        return column() == 0 ? on_content_() : column();
+      }
+      ++st.scan;
+      for(; st.held_blanks != 0; --st.held_blanks)
+      {
+        push_blank_();
+      }
+      if(column() == 0)
+      {
+        skip_indent();
+        if(at_end())
+        {
+          st.final_newline = column() == 0;
+          return npos;
+        }
+        if(at_line_end())
+        {
+          push_blank_();
+        }
+        else if(peek_at(0) == '#')
+        {
+          capture_comment_(false);
+        }
+        else
+        {
+          const std::size_t indent = on_content_();
+          if(indent != marker_consumed_)
+          {
+            return indent;
+          }
+          st.lines.clear();
+        }
+      }
+      else if(on_node)
+      {
+        return column();
+      }
+      else
+      {
+        finish_line();
+      }
+
+      while(true)
+      {
+        if(not next_line())
+        {
+          st.final_newline = false;
+          return npos;
+        }
+        skip_indent();
+        if(at_end())
+        {
+          st.final_newline = column() == 0;
+          return npos;
+        }
+        if(at_line_end())
+        {
+          push_blank_();
+          continue;
+        }
+        if(peek_at(0) == '#')
+        {
+          capture_comment_(false);
+          continue;
+        }
+        const std::size_t indent = on_content_();
+        if(indent != marker_consumed_)
+        {
+          return indent;
+        }
+        st.lines.clear();
+      }
+    }
+
+    void move_lines_(std::vector<std::string>& to, std::size_t count)
+    {
+      auto& lines = comments_.lines;
+      for(std::size_t i = 0; i < count; ++i)
+      {
+        to.push_back(lines[i].blank ? std::string(serde::blank_line) : std::move(lines[i].text));
+      }
+      lines.erase(lines.begin(), lines.begin() + static_cast<std::ptrdiff_t>(count));
+    }
+
+    void take_trailing_(serde::comment_block* block)
+    {
+      auto& lines = comments_.lines;
+      if(lines.empty() or not lines.front().same_line)
+      {
+        return;
+      }
+      if(block != nullptr)
+      {
+        block->trailing = std::move(lines.front().text);
+      }
+      lines.erase(lines.begin());
+    }
+
+    void take_footer_(std::vector<std::string>& footer, std::size_t base)
+    {
+      auto&       lines = comments_.lines;
+      std::size_t end   = 0;
+      for(std::size_t i = 0; i < lines.size(); ++i)
+      {
+        if(lines[i].blank)
+        {
+          continue;
+        }
+        if(lines[i].same_line or lines[i].column < base)
+        {
+          break;
+        }
+        end = i + 1;
+      }
+      move_lines_(footer, end);
+    }
+
+    void drop_value_lines_(std::size_t scan_before, std::size_t base)
+    {
+      auto& lines = comments_.lines;
+      if(comments_.scan == scan_before)
+      {
+        return;
+      }
+      std::vector<detail::pending_line> kept;
+      std::size_t                       i = 0;
+      if(not lines.empty() and lines.front().same_line and lines.front().scan <= scan_before + 1)
+      {
+        kept.push_back(std::move(lines.front()));
+        i = 1;
+      }
+      while(i < lines.size() and lines[i].scan != comments_.scan)
+      {
+        ++i;
+      }
+      std::size_t tail = i;
+      for(std::size_t j = i; j < lines.size(); ++j)
+      {
+        if(not lines[j].blank and (lines[j].same_line or lines[j].column > base))
+        {
+          tail = j + 1;
+        }
+      }
+      for(std::size_t j = tail; j < lines.size(); ++j)
+      {
+        kept.push_back(std::move(lines[j]));
+      }
+      lines = std::move(kept);
+    }
+
+    template <typename Node> void begin_commented(Node&)
+    {
+      auto& st = comments_;
+      st.lines.clear();
+      st.scan          = 0;
+      st.held_blanks   = 0;
+      st.indent        = 0;
+      st.final_newline = true;
+      st.root          = true;
+    }
+
+    template <typename Node> void end_commented(Node& node)
+    {
+      std::ignore  = next_content_line();
+      auto& footer = serde::comment(node).footer;
+      move_lines_(footer, comments_.lines.size());
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        serde::layout_of(node) = {
+            .indent        = comments_.indent,
+            .indent_char   = ' ',
+            .final_newline = comments_.final_newline};
+      }
+    }
+
+    void skip_unknown_value_(std::size_t base)
+    {
+      const std::size_t at = next_content_line();
+      if(at == base and at_sequence_entry())
+      {
+        std::ignore = this->template load<std::vector<yaml::value>>();
+      }
+      else
+      {
+        std::ignore = this->template load<yaml::value>();
+      }
+    }
+
+    template <typename Agg>
+    serde::comment_block*
+        load_member_commented_(std::string_view key, serde::comments_of<Agg>& node, Agg& value)
+    {
+      template for(constexpr auto& member : serde::object_visitor<Agg>::__members())
+      {
+        constexpr std::string_view name = serialized_name(member);
+        if(key == name)
+        {
+          constexpr auto node_member = serde::detail::comment_member_of<member>();
+          using sub_type             = std::remove_cvref_t<decltype(node.[:node_member:])>;
+          constexpr bool tree        = serde::detail::comment_tree_c<sub_type>;
+          auto&          sub         = node.[:node_member:];
+          auto*          block       = &serde::comment(sub);
+          move_lines_(block->leading, comments_.lines.size());
+          if constexpr(tree)
+          {
+            comments_.slot.give(sub);
+          }
+          const std::size_t scan_before = comments_.scan;
+          value.[:member:] = this->template load<std::remove_cvref_t<decltype(value.[:member:])>>();
+          const bool captured = tree and comments_.slot.node == nullptr;
+          comments_.slot      = {};
+          if(not captured)
+          {
+            drop_value_lines_(scan_before, block_indent_);
+          }
+          return block;
+        }
+      }
+      return nullptr;
+    }
+
+    template <typename Agg>
+    Agg read_mapping_commented_(std::size_t base, serde::comments_of<Agg>& node)
+    {
+      auto& st   = comments_;
+      auto& self = serde::comment(node);
+      if(st.indent == 0 and block_indent_ != no_block and base > block_indent_)
+      {
+        st.indent = static_cast<std::uint8_t>(std::min<std::size_t>(base - block_indent_, 255));
+      }
+      take_trailing_(&self);
+      if(std::exchange(st.root, false))
+      {
+        std::size_t header = 0;
+        for(std::size_t i = 0; i < st.lines.size(); ++i)
+        {
+          if(st.lines[i].blank)
+          {
+            header = i + 1;
+          }
+        }
+        move_lines_(self.leading, header);
+      }
+
+      Agg  value{};
+      auto scope = enter_block(base);
+
+      while(true)
+      {
+        const std::string_view key = read_key();
+        if(at_line_end() or peek_at(0) != ':')
+        {
+          throw std::runtime_error(std::format("YAML: expected ':' after the key '{}'", key));
+        }
+        advance();
+        skip_separation();
+
+        serde::comment_block* block = this->template load_member_commented_<Agg>(key, node, value);
+        if(block == nullptr)
+        {
+          if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+          {
+            st.lines.clear();
+            const std::size_t scan_before = st.scan;
+            skip_unknown_value_(base);
+            drop_value_lines_(scan_before, base);
+          }
+          else
+          {
+            throw std::runtime_error("Key not found in object");
+          }
+        }
+
+        const std::size_t next = next_content_line();
+        take_trailing_(block);
+        if(next == npos or next < base)
+        {
+          take_footer_(self.footer, base);
+          break;
+        }
+        if(next > base)
+        {
+          throw std::runtime_error(
+              "YAML: a line inside this mapping is indented deeper than its key. A plain"
+              " value continues onto deeper lines, so this line is one of the forms that"
+              " cannot. Either it is misaligned, and belongs at the same indent as the other"
+              " keys; or it looks like a mapping of its own, which real YAML rejects here"
+              " too; or it continues a quoted scalar, which this backend reads on one line"
+              " only. Use a '|' or '>' block scalar for a value that will not fold");
+        }
+      }
+      return value;
+    }
+
   public:
     // deserialize(de) with no destination type. default_load_type covers
     // load(), but a caller reaching the CPO directly - reflex-serde-convert
     // does - needs this too.
-    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de)
     {
       return deserialize(de, std::type_identity<yaml::value>{});
     }
 
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<null_t>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<null_t>)
     {
       const auto s = de.read_scalar();
       if(s.quoted or not detail::is_null_text(s.text))
@@ -850,7 +1532,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     template <typename T>
     friend std::optional<T> tag_invoke(
         tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
+        deserializer& de,
         std::type_identity<std::optional<T>>)
     {
       // Nothing after the colon does not mean null on its own: the value may be
@@ -860,7 +1542,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       if(de.at_line_end())
       {
         const std::size_t next = de.next_content_line();
-        if(next == deserializer<InputIt>::npos or not de.deeper_than_block(next))
+        if(next == deserializer::npos or not de.deeper_than_block(next))
         {
           return std::nullopt;
         }
@@ -874,10 +1556,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       return de.template load<T>();
     }
 
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<boolean>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<boolean>)
     {
       const auto s = de.read_scalar();
       if(s.text == "true" or s.text == "True" or s.text == "TRUE")
@@ -902,15 +1581,25 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
     template <number_c Num>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Num>)
     {
       return detail::parse_number<detail::yaml_numbers, Num>(de.read_scalar().text, "YAML");
     }
 
+    friend std::byte
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<std::byte>)
+    {
+      const auto n = de.template load<std::int64_t>();
+      if(n < 0 or n > 255)
+      {
+        throw std::runtime_error(
+            std::format("YAML: a byte holds an integer from 0 to 255, got {}", n));
+      }
+      return static_cast<std::byte>(n);
+    }
+
     template <std::same_as<char> Char>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Char>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Char>)
     {
       const auto s = de.read_scalar();
       if(s.text.size() != 1)
@@ -932,8 +1621,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // original error still follows it.
     template <str_c Str>
       requires(not serde::detail::string_sink_c<Str>)
-    friend Str
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    friend Str tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       if constexpr(serde::detail::borrowed_string_sink_c<Str>)
       {
@@ -956,8 +1644,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
     template <str_c Str>
       requires serde::detail::string_sink_c<Str>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       const auto s = de.read_scalar();
 
@@ -999,13 +1686,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // else is read as a scalar and classified afterwards.
     template <typename var_type>
       requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<var_type>) -> var_type
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<var_type>)
+            -> var_type
     {
       const std::size_t indent = de.next_content_line();
-      if(indent == deserializer<InputIt>::npos or not de.deeper_than_block(indent))
+      if(indent == deserializer::npos or not de.deeper_than_block(indent))
       {
         return var_type{}; // an absent value; the cursor stays parked
       }
@@ -1031,8 +1717,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
     template <derives_c<derive_t<Parse>> T>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<T>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<T>)
     {
       const auto s      = de.read_scalar();
       auto       result = parse<std::remove_cvref_t<T>>(s.text);
@@ -1132,6 +1817,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // allows for.
     void skip_flow_space()
     {
+      [[maybe_unused]] bool crossed = false;
       while(not at_end())
       {
         const char c = peek_at(0);
@@ -1143,6 +1829,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         if(is_break(c))
         {
           next_line();
+          crossed = true;
           continue;
         }
         if(c == '#')
@@ -1151,6 +1838,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           continue;
         }
         break;
+      }
+      if constexpr(Opts.comments)
+      {
+        if(crossed)
+        {
+          comments_.line_column = column();
+        }
       }
     }
 
@@ -1240,9 +1934,20 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         advance();
         skip_flow_space();
 
-        serde::object_visit_flat(key, value, [&]<typename V>(V& v) {
+        auto load_member = [&]<typename V>(V& v) {
           v = this->template load<std::remove_cvref_t<V>>();
-        });
+        };
+        if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          if(not serde::object_try_visit_flat(key, value, load_member))
+          {
+            std::ignore = this->template load<yaml::value>();
+          }
+        }
+        else
+        {
+          serde::object_visit_flat(key, value, load_member);
+        }
 
         skip_flow_space();
         if(at_end())
@@ -1345,6 +2050,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         if(c == '#' and i > 0 and (peek_at(i - 1) == ' ' or peek_at(i - 1) == '\t'))
         {
           return false; // the rest of the line is a comment
+        }
+        if(ctx_ == detail::scan_context::flow and detail::is_flow_indicator(c))
+        {
+          return false;
         }
         if(c == ':')
         {
@@ -1557,6 +2266,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           break;
         }
       }
+      hold_blanks_(blanks);
       return lines.empty() ? std::move(first) : fold_lines_(lines);
     }
 
@@ -1775,6 +2485,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           advance();
           ++indent;
         }
+        if constexpr(Opts.comments)
+        {
+          comments_.line_column = indent;
+        }
         if(at_line_end())
         {
           lines.emplace_back(); // a blank line is body content until proven otherwise
@@ -1826,6 +2540,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         {
           out.push_back('\n');
         }
+      }
+      if(chomp != '+')
+      {
+        hold_blanks_(trailing);
       }
       out.append(trailing, '\n');
 
@@ -2031,6 +2749,34 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+  REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+
+  namespace detail
+  {
+  /** @brief The private capture members of yaml::deserializer, reached from its free readers. */
+  struct read_access
+  {
+    template <typename Agg, typename De> static serde::comments_of<Agg>* take_node(De& de)
+    {
+      if(not de.comments_.active)
+      {
+        return nullptr;
+      }
+      return de.comments_.slot.template take<serde::comments_of<Agg>>();
+    }
+
+    template <typename Agg, typename De>
+    static Agg read_mapping(De& de, std::size_t base, serde::comments_of<Agg>& node)
+    {
+      return de.template read_mapping_commented_<Agg>(base, node);
+    }
+
+    template <typename De> static void skip_unknown_value(De& de, std::size_t base)
+    {
+      de.skip_unknown_value_(base);
+    }
+  };
+  }
 
   // A block sequence, one "- " per entry.
   //
@@ -2050,9 +2796,9 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   // The same collapse means the sequence cannot tell its own end from the
   // parent's next key by indent alone. A line at the sequence's indent that is
   // not an entry ends the sequence, rather than being an error.
-  template <typename InputIt, seq_c Seq>
+  template <typename InputIt, read_options Opts, seq_c Seq>
   auto tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Seq>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Seq>)
   {
     const std::size_t base = de.next_content_line();
     if(base == de.npos)
@@ -2137,14 +2883,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   // indented less, and a line indented more is an error rather than a
   // continuation.
   //
-  template <typename InputIt, object_visitable_c Map>
+  template <typename InputIt, read_options Opts, object_visitable_c Map>
     requires(
         not(meta::is_template_instance_of(^^Map, ^^poly::var)
             // std::array<char, N> may be considered a visitable object
             or str_c<Map>
             or seq_c<Map>))
   auto tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Map>)
   {
     const std::size_t base = de.next_content_line();
 
@@ -2161,6 +2907,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       return de.template read_flow_mapping<Map>();
     }
 
+    if constexpr(Opts.comments and serde::detail::reflected_aggregate_c<Map>)
+    {
+      if(auto* node = detail::read_access::take_node<Map>(de))
+      {
+        return detail::read_access::read_mapping<Map>(de, base, *node);
+      }
+    }
+
     Map  value{};
     auto scope = de.enter_block(base);
 
@@ -2174,9 +2928,18 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       de.advance(); // ':'
       de.skip_separation();
 
-      serde::object_visit_flat(key, value, [&]<typename V>(V& v) {
-        v = de.template load<std::remove_cvref_t<V>>();
-      });
+      auto load_member = [&]<typename V>(V& v) { v = de.template load<std::remove_cvref_t<V>>(); };
+      if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+      {
+        if(not serde::object_try_visit_flat(key, value, load_member))
+        {
+          detail::read_access::skip_unknown_value(de, base);
+        }
+      }
+      else
+      {
+        serde::object_visit_flat(key, value, load_member);
+      }
 
       // The value reader stopped at the end of its line, or - for a nested
       // block - on the first line it did not own. next_content_line() is
