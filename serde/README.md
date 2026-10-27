@@ -783,22 +783,31 @@ dispatched via `tag_invoke`.  To add support for a custom type:
 namespace reflex::serde::json
 {
   // Serialize MyType as a JSON string
-  template <typename OutputIt>
-  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, MyType const& v)
+  template <typename OutputIt, auto Opts>
+  OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, MyType const& v)
   {
     return tag_invoke(tag_t<serde::serialize>{}, ser, v.to_string());
   }
 
   // Deserialize MyType from a JSON string
-  template <typename It>
-  MyType tag_invoke(tag_t<serde::deserialize>, deserializer<It>& de, std::type_identity<MyType>)
+  template <typename It, auto Opts>
+  MyType tag_invoke(
+      tag_t<serde::deserialize>, deserializer<It, Opts>& de, std::type_identity<MyType>)
   {
     return MyType::from_string(de.load<std::string>());
   }
 }
 ```
 
-The same pattern applies to `reflex::serde::bson`.
+The JSON, YAML, TOML and XML serializers and deserializers take an options
+struct as their second template argument, defaulted. Spell an override with
+`auto Opts` as above so it binds every option set. An override written as
+`serializer<OutputIt>&` binds the default options only, and under any other
+set the backend's own overload for that type is used instead, silently.
+
+The same pattern applies to `reflex::serde::bson`, whose serializer and
+deserializer have no options argument: there the override takes
+`serializer<OutputIt>&` and `deserializer<It>&`.
 
 ---
 

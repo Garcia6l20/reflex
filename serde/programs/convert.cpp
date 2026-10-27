@@ -12,15 +12,18 @@ using namespace reflex;
 // JSON <-> BSON interop overloads for types not in json.hpp
 namespace reflex::serde::json
 {
-template <typename OutputIt>
-OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, bson::datetime const& dt)
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
 {
   return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
 }
 
-template <typename It>
-bson::datetime
-    tag_invoke(tag_t<serde::deserialize>, deserializer<It>& de, std::type_identity<bson::datetime>)
+template <typename It, auto Opts>
+bson::datetime tag_invoke(
+    tag_t<serde::deserialize>,
+    deserializer<It, Opts>& de,
+    std::type_identity<bson::datetime>)
 {
   const auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
   return reflex::parse_or_throw<bson::datetime>(s);
@@ -32,15 +35,18 @@ bson::datetime
 // output format here, so without these bson -> yaml does not compile at all.
 namespace reflex::serde::yaml
 {
-template <typename OutputIt>
-OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, bson::datetime const& dt)
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
 {
   return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
 }
 
-template <typename It>
-bson::datetime
-    tag_invoke(tag_t<serde::deserialize>, deserializer<It>& de, std::type_identity<bson::datetime>)
+template <typename It, auto Opts>
+bson::datetime tag_invoke(
+    tag_t<serde::deserialize>,
+    deserializer<It, Opts>& de,
+    std::type_identity<bson::datetime>)
 {
   const auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
   return reflex::parse_or_throw<bson::datetime>(s);
@@ -50,8 +56,9 @@ bson::datetime
 // And again for TOML <-> BSON, same reason.
 namespace reflex::serde::toml
 {
-template <typename OutputIt>
-OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, bson::datetime const& dt)
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
 {
   return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
 }

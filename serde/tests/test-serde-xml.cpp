@@ -283,20 +283,20 @@ struct user_type
   constexpr bool operator==(user_type const& other) const = default;
 };
 
-template <typename OutputIt>
+template <typename OutputIt, auto Opts>
 auto tag_invoke(
     tag_t<serde::serialize>,
-    serde::xml::serializer<OutputIt>& ser,
-    [[maybe_unused]] user_type const& value) -> OutputIt
+    serde::xml::serializer<OutputIt, Opts>& ser,
+    [[maybe_unused]] user_type const&       value) -> OutputIt
 {
   // Name-aware: honor the pending member name so it roundtrips at any depth.
   return std::format_to(ser.out(), "<{}/>", ser.element_name("user"));
 }
 
-template <typename InputIt>
+template <typename InputIt, auto Opts>
 auto tag_invoke(
     tag_t<serde::deserialize>,
-    serde::xml::deserializer<InputIt>& de,
+    serde::xml::deserializer<InputIt, Opts>& de,
     std::type_identity<user_type>)
 {
   de.read_open_tag();
@@ -337,6 +337,19 @@ TEST_CASE("reflex::serde::xml: user-defined override honored below root")
   CHECK_EQ(value, Wrapper{{42, "Hello, world!"}});
 }
 
+TEST_CASE("reflex::serde::xml: user-defined override honored under non-default options")
+{
+  std::string out;
+  {
+    xml::serializer ser{out, std::cw<xml::options{.indent = 2}>};
+    ser.dump(Wrapper{{1, "x"}});
+  }
+  CHECK_EQ(out, "<Wrapper><u/></Wrapper>");
+  const auto value =
+      xml::deserializer{out, std::cw<xml::read_options{.comments = true}>}.load<Wrapper>();
+  CHECK_EQ(value, Wrapper{{42, "Hello, world!"}});
+}
+
 // A user override that names its element via ser.element_name stays correct
 // under a member name too, and roundtrips through the stashed open tag.
 struct Named
@@ -346,18 +359,20 @@ struct Named
   constexpr bool operator==(Named const& other) const = default;
 };
 
-template <typename OutputIt>
-auto tag_invoke(tag_t<serde::serialize>, serde::xml::serializer<OutputIt>& ser, Named const& value)
-    -> OutputIt
+template <typename OutputIt, auto Opts>
+auto tag_invoke(
+    tag_t<serde::serialize>,
+    serde::xml::serializer<OutputIt, Opts>& ser,
+    Named const&                            value) -> OutputIt
 {
   const auto name = ser.element_name("Named");
   return std::format_to(ser.out(), "<{0}>{1}</{0}>", name, value.v);
 }
 
-template <typename InputIt>
+template <typename InputIt, auto Opts>
 auto tag_invoke(
     tag_t<serde::deserialize>,
-    serde::xml::deserializer<InputIt>& de,
+    serde::xml::deserializer<InputIt, Opts>& de,
     std::type_identity<Named>)
 {
   de.read_open_tag();
@@ -946,22 +961,24 @@ struct Borrows
   constexpr bool operator==(Borrows const& other) const = default;
 };
 
-template <typename OutputIt>
-auto tag_invoke(tag_t<serde::serialize>, serde::xml::serializer<OutputIt>& ser, Borrows const& value)
-    -> OutputIt
+template <typename OutputIt, auto Opts>
+auto tag_invoke(
+    tag_t<serde::serialize>,
+    serde::xml::serializer<OutputIt, Opts>& ser,
+    Borrows const&                          value) -> OutputIt
 {
   const auto name = ser.element_name("Borrows");
   return std::format_to(ser.out(), "<{0}>{1}</{0}>", name, value.v);
 }
 
-template <typename InputIt>
+template <typename InputIt, auto Opts>
 auto tag_invoke(
     tag_t<serde::deserialize>,
-    serde::xml::deserializer<InputIt>& de,
+    serde::xml::deserializer<InputIt, Opts>& de,
     std::type_identity<Borrows>)
 {
   auto [name, self_closing] = de.read_open_tag();
-  if constexpr(serde::xml::deserializer<InputIt>::bulk_scan)
+  if constexpr(serde::xml::deserializer<InputIt, Opts>::bulk_scan)
   {
     borrowed_tag = name; // a view into the caller's buffer, not a copy
   }
