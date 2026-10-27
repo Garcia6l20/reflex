@@ -344,7 +344,7 @@ TEST_CASE("reflex::serde::xml: user-defined override honored under non-default o
     xml::serializer ser{out, std::cw<xml::options{.indent = 2}>};
     ser.dump(Wrapper{{1, "x"}});
   }
-  CHECK_EQ(out, "<Wrapper><u/></Wrapper>");
+  CHECK_EQ(out, "<Wrapper>\n  <u/>\n</Wrapper>");
   const auto value =
       xml::deserializer{out, std::cw<xml::read_options{.comments = true}>}.load<Wrapper>();
   CHECK_EQ(value, Wrapper{{42, "Hello, world!"}});

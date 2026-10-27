@@ -502,6 +502,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
   template <typename Ser>
   void write_cdata_element(Ser& ser, std::string_view name, std::string_view text)
   {
+    ser.begin_child();
     write_tag(ser, name, false);
     ser.write_raw("<![CDATA[");
     write_cdata_content(ser, text);
@@ -550,6 +551,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     {
       for(auto const& elem : value)
       {
+        ser.begin_child();
         ser.set_element_name(name);
         serialize(ser, elem);
       }
@@ -557,6 +559,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     }
     else
     {
+      ser.begin_child();
       ser.set_element_name(name);
       serialize(ser, value);
     }
@@ -718,12 +721,108 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // call, before any deeper recursion.
     std::string_view pending_name_{};
 
+    struct indent_state
+    {
+      int  depth         = 0;
+      bool child_written = false;
+    };
+
+    struct no_indent
+    {};
+
+    static constexpr bool indents = Opts.indent > 0;
+
+    [[no_unique_address]] std::conditional_t<indents, indent_state, no_indent> indent_{};
+
+    void newline(int depth)
+    {
+      static constexpr std::string_view spaces = "                                ";
+      this->write_char('\n');
+      for(int n = depth * indent_width(); n > 0; n -= static_cast<int>(spaces.size()))
+      {
+        this->write_raw(spaces.substr(0, std::min<std::size_t>(n, spaces.size())));
+      }
+    }
+
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
 
     static constexpr options opts = Opts;
 
     static_assert(Opts.indent >= 0, "xml::options::indent cannot be negative");
+
+    /** @brief The child elements of one element, opened after its start tag's `>`.
+     *
+     * Each child is indented one level deeper. close() breaks the line before the close tag when
+     * a child was written, and the destructor restores the parent's state.
+     */
+    class children_scope
+    {
+      serializer& ser_;
+      bool        saved_  = false;
+      bool        closed_ = false;
+
+    public:
+      explicit children_scope(serializer& ser) : ser_(ser)
+      {
+        if constexpr(indents)
+        {
+          saved_ = std::exchange(ser_.indent_.child_written, false);
+          ++ser_.indent_.depth;
+        }
+      }
+
+      children_scope(children_scope const&)            = delete;
+      children_scope& operator=(children_scope const&) = delete;
+
+      void close()
+      {
+        if constexpr(indents)
+        {
+          --ser_.indent_.depth;
+          closed_ = true;
+          if(ser_.indent_.child_written)
+          {
+            ser_.newline(ser_.indent_.depth);
+          }
+          ser_.indent_.child_written = saved_;
+        }
+      }
+
+      ~children_scope()
+      {
+        if constexpr(indents)
+        {
+          if(not closed_)
+          {
+            --ser_.indent_.depth;
+            ser_.indent_.child_written = saved_;
+          }
+        }
+      }
+    };
+
+    /** @brief The indent of one level, in characters. */
+    constexpr int indent_width() const
+    {
+      return Opts.indent;
+    }
+
+    /** @brief Opens the child elements of the element whose start tag was just written. */
+    children_scope children()
+    {
+      return children_scope{*this};
+    }
+
+    /** @brief Breaks the line before a child element, a no-op on compact output. */
+    void begin_child()
+    {
+      if constexpr(indents)
+      {
+        newline(indent_.depth);
+        indent_.child_written = true;
+      }
+    }
 
     template <typename T, auto X>
       requires std::constructible_from<OutputIt, T&> and (std::constant_wrapper<X>::value == Opts)
@@ -866,6 +965,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     else
     {
       ser.write_char('>');
+      auto children = ser.children();
       // non-attribute members as child elements
       template for(constexpr auto member : define_static_array(
                        nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
@@ -905,6 +1005,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
           }
         }
       }
+      children.close();
       detail::write_tag(ser, name, true);
     }
     return ser.out();

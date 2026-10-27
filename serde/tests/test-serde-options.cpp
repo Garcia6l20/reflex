@@ -206,7 +206,7 @@ TEST_CASE("reflex::serde options: non-default options write and read today's byt
     std::string tagged;
     xml::serializer{plain}.dump(sample);
     xml::serializer{tagged, std::cw<xml_pretty>}.dump(sample);
-    CHECK_EQ(tagged, plain);
+    CHECK_EQ(tagged, "<opt_point>\n  <x>7</x>\n  <name>a\"b</name>\n</opt_point>");
     CHECK(xml::deserializer{tagged, std::cw<xml_keep>}.load<opt_point>() == sample);
   }
   SUBCASE("a stream sink")
