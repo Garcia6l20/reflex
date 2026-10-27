@@ -52,15 +52,18 @@ struct yi_servers
   bool operator==(yi_servers const&) const = default;
 };
 
-static const yi_doc yi_sample{
-    .nested    = {1, "x"},
-    .nums      = {1, 2},
-    .items     = {{1, "x"}, {2, "z"}},
-    .grid      = {{1, 2}, {3}},
-    .groups    = {{"g", {1, 2}}},
-    .none      = {},
-    .empty_map = {},
-};
+static yi_doc yi_sample()
+{
+  return {
+      .nested    = {1, "x"},
+      .nums      = {1, 2},
+      .items     = {{1, "x"}, {2, "z"}},
+      .grid      = {{1, 2}, {3}},
+      .groups    = {{"g", {1, 2}}},
+      .none      = {},
+      .empty_map = {},
+  };
+}
 
 template <int Width> static std::string yi_dump(auto const& value)
 {
@@ -98,11 +101,11 @@ TEST_CASE("reflex::serde::yaml indent: width 2 is today's output")
                         "      - 2\n"
                         "none: []\n"
                         "empty_map: {}"s;
-  CHECK_EQ(yi_dump<2>(yi_sample), expected);
+  CHECK_EQ(yi_dump<2>(yi_sample()), expected);
   std::string plain;
-  yaml::serializer{plain}.dump(yi_sample);
+  yaml::serializer{plain}.dump(yi_sample());
   CHECK_EQ(plain, expected);
-  CHECK(yi_load<yi_doc>(expected) == yi_sample);
+  CHECK(yi_load<yi_doc>(expected) == yi_sample());
 }
 
 TEST_CASE("reflex::serde::yaml indent: width 4 pads the dash")
@@ -129,8 +132,8 @@ TEST_CASE("reflex::serde::yaml indent: width 4 pads the dash")
                         "            -   2\n"
                         "none: []\n"
                         "empty_map: {}"s;
-  CHECK_EQ(yi_dump<4>(yi_sample), expected);
-  CHECK(yi_load<yi_doc>(expected) == yi_sample);
+  CHECK_EQ(yi_dump<4>(yi_sample()), expected);
+  CHECK(yi_load<yi_doc>(expected) == yi_sample());
 }
 
 TEST_CASE("reflex::serde::yaml indent: width 3 pads the dash")
@@ -157,8 +160,8 @@ TEST_CASE("reflex::serde::yaml indent: width 3 pads the dash")
                         "         -  2\n"
                         "none: []\n"
                         "empty_map: {}"s;
-  CHECK_EQ(yi_dump<3>(yi_sample), expected);
-  CHECK(yi_load<yi_doc>(expected) == yi_sample);
+  CHECK_EQ(yi_dump<3>(yi_sample()), expected);
+  CHECK(yi_load<yi_doc>(expected) == yi_sample());
 }
 
 TEST_CASE("reflex::serde::yaml indent: empty collections stay inline at every width")

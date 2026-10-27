@@ -36,13 +36,14 @@ struct jr_url
 constexpr json::read_options jr_comments{.comments = true};
 constexpr json::read_options jr_trailing{.trailing_commas = true};
 
-static const jr_cfg jr_expected{
-    .value  = 1,
-    .srv    = {8080, "a"},
-    .backup = std::nullopt,
-    .list   = {1,    2  },
-    .on     = true
-};
+static jr_cfg jr_expected()
+{
+  return {
+      .value = 1, .srv = {8080, "a"},
+           .backup = std::nullopt, .list = {1,    2  },
+           .on = true
+  };
+}
 
 template <typename T> static T jr_load_comments(std::string const& text)
 {
@@ -90,8 +91,8 @@ static const std::string jr_commented = R"(// header
 
 TEST_CASE("reflex::serde::json5 read: comments before, between and after every token")
 {
-  CHECK(jr_load_comments<jr_cfg>(jr_commented) == jr_expected);
-  CHECK(jr_load_comments_stream<jr_cfg>(jr_commented) == jr_expected);
+  CHECK(jr_load_comments<jr_cfg>(jr_commented) == jr_expected());
+  CHECK(jr_load_comments_stream<jr_cfg>(jr_commented) == jr_expected());
 }
 
 TEST_CASE("reflex::serde::json5 read: a comment at document start before a scalar")

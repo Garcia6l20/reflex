@@ -125,17 +125,19 @@ static const auto ya_document = "# header\n"
                                 "name: n\n"
                                 "# root footer\n"sv;
 
-static const ya_cfg ya_expected{
-    1,
-    {8080, "h"},
-    {1,    2  },
-    "n"
-};
+static ya_cfg ya_expected()
+{
+  return {
+      1, {8080, "h"},
+       {1,    2  },
+       "n"
+  };
+}
 
 TEST_CASE("reflex::serde::yaml capture: every anchoring row")
 {
   const auto [v, c] = ya_load<ya_cfg>(ya_document);
-  CHECK(v == ya_expected);
+  CHECK(v == ya_expected());
 
   CHECK_EQ(comment(c).leading, lines_t{"header", "\n"});
   CHECK_EQ(comment(c).trailing, "");
@@ -167,7 +169,7 @@ TEST_CASE("reflex::serde::yaml capture: the stream cursor reads the same tree")
   yaml::deserializer de{in, std::cw<ya_keep>};
   const auto [v, c]   = de.load_commented<ya_cfg>();
   const auto expected = ya_load<ya_cfg>(ya_document);
-  CHECK(v == ya_expected);
+  CHECK(v == ya_expected());
   CHECK(c == expected.comments);
 }
 
@@ -372,7 +374,7 @@ TEST_CASE("reflex::serde::yaml capture: a plain load under comments reads the sa
   yaml::deserializer plain{ya_document};
   const auto         kept = keep.load<ya_cfg>();
   CHECK(kept == plain.load<ya_cfg>());
-  CHECK(kept == ya_expected);
+  CHECK(kept == ya_expected());
 }
 
 TEST_CASE("reflex::serde::yaml capture: comments before a document marker are dropped")

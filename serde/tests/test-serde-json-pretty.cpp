@@ -68,18 +68,21 @@ template <typename T> static T jp_load(std::string const& text)
   return json::deserializer{text}.template load<T>();
 }
 
-static const jp_doc jp_sample{
-    .value   = 1,
-    .srv     = {8080, "a"},
-    .list    = {1, 2},
-    .items   = {{1, "x"}, {2, "y"}},
-    .ports   = {{"http", 80}, {"https", 443}},
-    .none    = {},
-    .empty   = {},
-    .backup  = jp_inner{22, "b"},
-    .missing = std::nullopt,
-    .skipped = std::nullopt,
-};
+static jp_doc jp_sample()
+{
+  return {
+      .value   = 1,
+      .srv     = {8080, "a"},
+      .list    = {1, 2},
+      .items   = {{1, "x"}, {2, "y"}},
+      .ports   = {{"http", 80}, {"https", 443}},
+      .none    = {},
+      .empty   = {},
+      .backup  = jp_inner{22, "b"},
+      .missing = std::nullopt,
+      .skipped = std::nullopt,
+  };
+}
 
 TEST_CASE("reflex::serde::json pretty: indent 2")
 {
@@ -115,9 +118,9 @@ TEST_CASE("reflex::serde::json pretty: indent 2")
   },
   "missing": null
 })";
-  const std::string out      = jp_dump<2>(jp_sample);
+  const std::string out      = jp_dump<2>(jp_sample());
   CHECK_EQ(out, expected);
-  CHECK(jp_load<jp_doc>(out) == jp_sample);
+  CHECK(jp_load<jp_doc>(out) == jp_sample());
 }
 
 TEST_CASE("reflex::serde::json pretty: indent 4")
@@ -129,9 +132,9 @@ TEST_CASE("reflex::serde::json pretty: indent 4")
   CHECK_EQ(jp_dump<4>(jp_inner{8080, "a"}), expected);
   CHECK_EQ(jp_dump<4>(std::vector<int>{1, 2}), "[\n    1,\n    2\n]");
 
-  const std::string nested = jp_dump<4>(jp_sample);
+  const std::string nested = jp_dump<4>(jp_sample());
   CHECK(nested.find("\n    \"srv\": {\n        \"port\": 8080,\n") != std::string::npos);
-  CHECK(jp_load<jp_doc>(nested) == jp_sample);
+  CHECK(jp_load<jp_doc>(nested) == jp_sample());
 }
 
 TEST_CASE("reflex::serde::json pretty: empty containers and omitted members")

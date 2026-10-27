@@ -34,7 +34,10 @@ constexpr toml::read_options toml_read_keep{.comments = true};
 constexpr xml::options       xml_pretty{.indent = 2};
 constexpr xml::read_options  xml_keep{.comments = true};
 
-const opt_point sample{7, "a\"b"};
+opt_point sample()
+{
+  return {7, "a\"b"};
+}
 } // namespace
 
 TEST_CASE("reflex::serde options: an untagged serializer deduces default options")
@@ -160,13 +163,13 @@ TEST_CASE("reflex::serde options: mmap_input_stream deduces through the contiguo
   const std::filesystem::path path = "test-serde-options-mmap.json";
   {
     std::ofstream out{path, std::ios::binary};
-    json::serializer{out}.dump(sample);
+    json::serializer{out}.dump(sample());
   }
   {
     mmap_input_stream  in{path};
     json::deserializer de{in, std::cw<json_lenient>};
     static_assert(std::same_as<decltype(de), json::deserializer<char const*, json_lenient>>);
-    CHECK(de.load<opt_point>() == sample);
+    CHECK(de.load<opt_point>() == sample());
   }
   std::filesystem::remove(path);
 }
@@ -177,46 +180,46 @@ TEST_CASE("reflex::serde options: non-default options write and read today's byt
   {
     std::string plain;
     std::string tagged;
-    json::serializer{plain}.dump(sample);
-    json::serializer{tagged, std::cw<json_pretty>}.dump(sample);
+    json::serializer{plain}.dump(sample());
+    json::serializer{tagged, std::cw<json_pretty>}.dump(sample());
     CHECK_EQ(tagged, "{\n  \"x\": 7,\n  \"name\": \"a\\\"b\"\n}");
-    CHECK(json::deserializer{tagged, std::cw<json_lenient>}.load<opt_point>() == sample);
+    CHECK(json::deserializer{tagged, std::cw<json_lenient>}.load<opt_point>() == sample());
   }
   SUBCASE("yaml")
   {
     std::string plain;
     std::string tagged;
-    yaml::serializer{plain}.dump(sample);
-    yaml::serializer{tagged, std::cw<yaml_wide>}.dump(sample);
+    yaml::serializer{plain}.dump(sample());
+    yaml::serializer{tagged, std::cw<yaml_wide>}.dump(sample());
     CHECK_EQ(tagged, plain);
-    CHECK(yaml::deserializer{tagged, std::cw<yaml_keep>}.load<opt_point>() == sample);
+    CHECK(yaml::deserializer{tagged, std::cw<yaml_keep>}.load<opt_point>() == sample());
   }
   SUBCASE("toml")
   {
     std::string plain;
     std::string tagged;
-    toml::serializer{plain}.dump(sample);
-    toml::serializer{tagged, std::cw<toml_keep>}.dump(sample);
+    toml::serializer{plain}.dump(sample());
+    toml::serializer{tagged, std::cw<toml_keep>}.dump(sample());
     CHECK_EQ(tagged, plain);
-    CHECK(toml::deserializer{tagged, std::cw<toml_read_keep>}.load<opt_point>() == sample);
+    CHECK(toml::deserializer{tagged, std::cw<toml_read_keep>}.load<opt_point>() == sample());
   }
   SUBCASE("xml")
   {
     std::string plain;
     std::string tagged;
-    xml::serializer{plain}.dump(sample);
-    xml::serializer{tagged, std::cw<xml_pretty>}.dump(sample);
+    xml::serializer{plain}.dump(sample());
+    xml::serializer{tagged, std::cw<xml_pretty>}.dump(sample());
     CHECK_EQ(tagged, "<opt_point>\n  <x>7</x>\n  <name>a\"b</name>\n</opt_point>");
-    CHECK(xml::deserializer{tagged, std::cw<xml_keep>}.load<opt_point>() == sample);
+    CHECK(xml::deserializer{tagged, std::cw<xml_keep>}.load<opt_point>() == sample());
   }
   SUBCASE("a stream sink")
   {
     std::ostringstream plain;
     std::ostringstream tagged;
-    json::serializer{plain}.dump(sample);
-    json::serializer{tagged, std::cw<json_pretty>}.dump(sample);
+    json::serializer{plain}.dump(sample());
+    json::serializer{tagged, std::cw<json_pretty>}.dump(sample());
     CHECK_EQ(tagged.str(), "{\n  \"x\": 7,\n  \"name\": \"a\\\"b\"\n}");
     std::istringstream in{tagged.str()};
-    CHECK(json::deserializer{in, std::cw<json_lenient>}.load<opt_point>() == sample);
+    CHECK(json::deserializer{in, std::cw<json_lenient>}.load<opt_point>() == sample());
   }
 }

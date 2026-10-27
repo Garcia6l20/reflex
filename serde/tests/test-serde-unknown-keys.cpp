@@ -50,11 +50,13 @@ struct uk_entries
   constexpr bool operator==(uk_entries const&) const = default;
 };
 
-const uk_config uk_expected{
-    1,
-    {8080, "h"},
-    "z"
-};
+static uk_config uk_expected()
+{
+  return {
+      1, {8080, "h"},
+       "z"
+  };
+}
 
 constexpr json::read_options json_skip{.unknown_keys = unknown_keys::skip};
 
@@ -170,28 +172,28 @@ TEST_CASE("reflex::serde::json: unknown_keys::skip")
     CHECK_EQ(
         json_skip_load<uk_config>(
             R"({"first":1,"extra":"x","srv":{"port":8080,"host":"h"},"last":"z"})"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown nested object")
   {
     CHECK_EQ(
         json_skip_load<uk_config>(
             R"({"first":1,"extra":{"a":[1,{"b":null}],"c":{}},"srv":{"port":8080,"host":"h"},"last":"z"})"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown key first and last")
   {
     CHECK_EQ(
         json_skip_load<uk_config>(
             R"({"head":[true,false],"first":1,"srv":{"port":8080,"host":"h"},"last":"z","tail":2.5})"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown key inside a nested known object")
   {
     CHECK_EQ(
         json_skip_load<uk_config>(
             R"({"first":1,"srv":{"port":8080,"tls":{"on":true},"host":"h"},"last":"z"})"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("the default still throws the same message")
   {
@@ -210,7 +212,7 @@ TEST_CASE("reflex::serde::xml: unknown_keys::error")
 
   SUBCASE("the default skips the unknown element")
   {
-    CHECK_EQ(xml::deserializer{doc}.template load<uk_config>(), uk_expected);
+    CHECK_EQ(xml::deserializer{doc}.template load<uk_config>(), uk_expected());
   }
   SUBCASE("error throws and names XML and the element")
   {
@@ -232,7 +234,7 @@ TEST_CASE("reflex::serde::xml: unknown_keys::error")
         "<uk_config><first>1</first><srv><port>8080</port><host>h</host></srv>"
         "<last>z</last></uk_config>";
     xml::deserializer de{clean, std::cw<xml_error>};
-    CHECK_EQ(de.template load<uk_config>(), uk_expected);
+    CHECK_EQ(de.template load<uk_config>(), uk_expected());
   }
 }
 
@@ -242,57 +244,57 @@ TEST_CASE("reflex::serde::yaml: unknown_keys::skip")
   {
     CHECK_EQ(
         yaml_skip_load<uk_config>("first: 1\nextra: x\nsrv:\n  port: 8080\n  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown nested mapping")
   {
     CHECK_EQ(
         yaml_skip_load<uk_config>("first: 1\nextra:\n  a: 1\n  b:\n    c: [1, 2]\n    d: e\n"
                                   "srv:\n  port: 8080\n  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown key first and last")
   {
     CHECK_EQ(
         yaml_skip_load<uk_config>(
             "head: 0\nfirst: 1\nsrv:\n  port: 8080\n  host: h\nlast: z\ntail:\n  x: 1\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown key inside a nested known mapping")
   {
     CHECK_EQ(
         yaml_skip_load<uk_config>(
             "first: 1\nsrv:\n  port: 8080\n  tls:\n    on: true\n  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown block scalar")
   {
     CHECK_EQ(
         yaml_skip_load<uk_config>("first: 1\nextra: |\n  line one\n  line: two\n\n  three\n"
                                   "srv:\n  port: 8080\n  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
     CHECK_EQ(
         yaml_skip_load<uk_config>("first: 1\nsrv:\n  port: 8080\n  note: >-\n    folded\n"
                                   "    text\n  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown flow collection")
   {
     CHECK_EQ(
         yaml_skip_load<uk_config>("first: 1\nextra: {a: [{b: 2}, 1], c: 'x'}\nsrv:\n  port: 8080\n"
                                   "  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
     CHECK_EQ(
         yaml_skip_load<uk_config>("first: 1\nextra: [{d: 4}, 1, [2, 3]]\nsrv: {port: 8080, tls: "
                                   "[1], host: h}\nlast: z\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown flow collection holding a mapping after a scalar")
   {
     CHECK_EQ(
         yaml_skip_load<uk_config>("first: 1\nextra: {a: [1, {b: 2}], c: 'x'}\nsrv:\n  port: 8080\n"
                                   "  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
     const std::string  flow = "[1, {b: 2}, c]";
     yaml::deserializer de{flow};
     const auto         v = de.template load<yaml::value>();
@@ -305,11 +307,11 @@ TEST_CASE("reflex::serde::yaml: unknown_keys::skip")
     CHECK_EQ(
         yaml_skip_load<uk_config>("first: 1\nextra:\n  - 1\n  - a: 2\n    b: 3\n  - - 4\n"
                                   "srv:\n  port: 8080\n  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
     CHECK_EQ(
         yaml_skip_load<uk_config>(
             "first: 1\nextra:\n- 1\n- 2\nsrv:\n  port: 8080\n  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
     CHECK_EQ(
         yaml_skip_load<uk_config>(
             "first: 1\nsrv:\n  port: 8080\n  tags:\n  - a: 1\n    b: 2\n  - c\n"
@@ -351,7 +353,7 @@ TEST_CASE("reflex::serde::yaml: unknown_keys::skip")
     CHECK_EQ(
         yaml_skip_load<uk_config>("first: 1 # one\n# above\nextra: x # trailing\n# below\n"
                                   "srv:\n  port: 8080\n  host: h\nlast: z\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("the default still throws the same message")
   {
@@ -372,7 +374,7 @@ TEST_CASE("reflex::serde::toml: unknown_keys::skip")
   SUBCASE("an unknown scalar between two known keys")
   {
     CHECK_EQ(
-        toml_skip_load<uk_config>("first = 1\nextra = \"x\"\nlast = \"z\"\n" + srv), uk_expected);
+        toml_skip_load<uk_config>("first = 1\nextra = \"x\"\nlast = \"z\"\n" + srv), uk_expected());
   }
   SUBCASE("an unknown inline table and a multi-line array")
   {
@@ -381,27 +383,27 @@ TEST_CASE("reflex::serde::toml: unknown_keys::skip")
             "first = 1\nextra = {a = [1, {b = 2}], c = \"x\"}\n"
             "more = [\n  1, # one\n  [2, 3],\n]\nlast = \"z\"\n"
             + srv),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown key first and last")
   {
     CHECK_EQ(
         toml_skip_load<uk_config>("head = 0\nfirst = 1\nlast = \"z\"\n" + srv + "tail = [1, 2]\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown dotted key, at the root and inside a known table")
   {
     CHECK_EQ(
         toml_skip_load<uk_config>("first = 1\nextra.a.b = 1\nextra.a.c = 2\nlast = \"z\"\n"
                                   "[srv]\nport = 8080\ntls.on = true\nhost = \"h\"\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown key inside a known inline table")
   {
     CHECK_EQ(
         toml_skip_load<uk_config>(
             "first = 1\nsrv = {port = 8080, tls = {on = true}, host = \"h\"}\nlast = \"z\"\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown table with a sub-table, followed by a known table")
   {
@@ -410,13 +412,13 @@ TEST_CASE("reflex::serde::toml: unknown_keys::skip")
             "first = 1\nlast = \"z\"\n[gone]\na = 1\n[gone.child]\n"
             "b = [1, 2]\n[gone.child.deeper]\nc = {d = 1}\n"
             + srv),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown sub-table of a known table")
   {
     CHECK_EQ(
         toml_skip_load<uk_config>("first = 1\nlast = \"z\"\n" + srv + "[srv.tls]\non = true\n"),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown array of tables with a sub-table, followed by a known table")
   {
@@ -425,7 +427,7 @@ TEST_CASE("reflex::serde::toml: unknown_keys::skip")
             "first = 1\nlast = \"z\"\n[[items]]\nname = \"a\"\n"
             "[[items]]\nname = \"b\"\n[items.sub]\nx = 1\n"
             + srv),
-        uk_expected);
+        uk_expected());
   }
   SUBCASE("an unknown key inside a known array of tables")
   {

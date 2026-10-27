@@ -127,13 +127,16 @@ template <typename T> T read_back(std::string const& in)
   return xml::deserializer{in}.load<T>();
 }
 
-const xp_config sample_config{
-    1, {8080, "a"},
-     {1, 2},
-     {"USD", 42.5},
-     {},
-     std::nullopt
-};
+xp_config sample_config()
+{
+  return {
+      1, {8080, "a"},
+       {1, 2},
+       {"USD", 42.5},
+       {},
+       std::nullopt
+  };
+}
 } // namespace
 
 static_assert(
@@ -143,7 +146,7 @@ static_assert(
 
 TEST_CASE("reflex::serde::xml pretty: nested aggregates at indent 2")
 {
-  const std::string out = pretty<2>(sample_config);
+  const std::string out = pretty<2>(sample_config());
   CHECK_EQ(
       out, "<xp_config>\n"
            "  <value>1</value>\n"
@@ -155,12 +158,12 @@ TEST_CASE("reflex::serde::xml pretty: nested aggregates at indent 2")
            "  <price currency=\"USD\">42.5</price>\n"
            "  <empty></empty>\n"
            "</xp_config>"sv);
-  CHECK_EQ(read_back<xp_config>(out), sample_config);
+  CHECK_EQ(read_back<xp_config>(out), sample_config());
 }
 
 TEST_CASE("reflex::serde::xml pretty: nested aggregates at indent 4")
 {
-  const std::string out = pretty<4>(sample_config);
+  const std::string out = pretty<4>(sample_config());
   CHECK_EQ(
       out, "<xp_config>\n"
            "    <value>1</value>\n"
@@ -172,13 +175,13 @@ TEST_CASE("reflex::serde::xml pretty: nested aggregates at indent 4")
            "    <price currency=\"USD\">42.5</price>\n"
            "    <empty></empty>\n"
            "</xp_config>"sv);
-  CHECK_EQ(read_back<xp_config>(out), sample_config);
+  CHECK_EQ(read_back<xp_config>(out), sample_config());
 }
 
 TEST_CASE("reflex::serde::xml pretty: compact output is unchanged")
 {
   std::string out;
-  xml::serializer{out}.dump(sample_config);
+  xml::serializer{out}.dump(sample_config());
   CHECK_EQ(
       out, "<xp_config><value>1</value><srv port=\"8080\"><host>a</host></srv><list>1</list>"
            "<list>2</list><price currency=\"USD\">42.5</price><empty></empty></xp_config>"sv);
