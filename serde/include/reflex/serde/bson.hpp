@@ -396,8 +396,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
       range_type  range;
       std::size_t position = 0;
 
-      [[no_unique_address]] std::
-          conditional_t<contiguous_byte_or_char, no_key_buffer, std::string> key_buf{};
+      [[no_unique_address]]
+      typename[:contiguous_byte_or_char ? ^^no_key_buffer : ^^std::string:] key_buf{};
 
       constexpr bool at_end() const
       {

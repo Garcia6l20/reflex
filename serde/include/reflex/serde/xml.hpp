@@ -1353,11 +1353,11 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // Tag-name carrier: borrowed from the input when it is in memory, owned
     // otherwise. read_open_tag hands this out, so on the bulk_scan path a tag
     // name is a view that stays valid only while the input buffer lives.
-    using name_t = std::conditional_t<bulk_scan, std::string_view, std::string>;
+    using name_t = typename[:bulk_scan ? ^^std::string_view : ^^std::string:];
 
     // Attribute names and values carry like a tag name: on the bulk_scan path
     // they are views, valid while the input buffer and this deserializer live.
-    using attr_str  = std::conditional_t<bulk_scan, std::string_view, std::string>;
+    using attr_str  = typename[:bulk_scan ? ^^std::string_view : ^^std::string:];
     using attr_list = std::vector<std::pair<attr_str, attr_str>>;
 
   private:
