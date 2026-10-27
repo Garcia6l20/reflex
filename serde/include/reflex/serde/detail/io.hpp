@@ -18,6 +18,9 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+
+#include <reflex/scope_guard.hpp>
+#include <reflex/serde/comments.hpp>
 #endif
 
 REFLEX_EXPORT namespace reflex::serde::detail
@@ -230,6 +233,37 @@ REFLEX_EXPORT namespace reflex::serde::detail
             false,
             std::string(display_string_of(^^T)) + " is not serializable to "
                 + std::string(backend::format_name));
+      }
+    }
+
+    /** @brief Writes @p value with the comments of @p comments.
+     *
+     * Needs a serializer whose options write comments. The backend supplies `begin_dump(node)`
+     * and `end_dump(node)` for its document prologue and epilogue, and a `comments_` member of
+     * type serde::detail::comment_emit, all reachable from this base. The root node travels to
+     * the backend's aggregate writer through `comments_.slot`.
+     */
+    template <typename Self, typename T>
+    constexpr void dump(this Self&& self, T const& value, serde::comments_of<T> const& comments)
+    {
+      using backend = std::remove_cvref_t<Self>;
+      if constexpr(not requires { requires backend::opts.comments; })
+      {
+        static_assert(
+            false, "dump(value, comments) needs a serializer whose options set .comments = true, a "
+                   "serializer that writes no comments would drop the tree silently");
+      }
+      else
+      {
+        self.comments_.active = true;
+        scope_guard reset{[&self] {
+          self.comments_.active = false;
+          self.comments_.slot   = {};
+        }};
+        self.begin_dump(comments);
+        self.comments_.slot.give(comments);
+        self.dump(value);
+        self.end_dump(comments);
       }
     }
   };
@@ -474,6 +508,40 @@ REFLEX_EXPORT namespace reflex::serde::detail
     loaded_type_t<std::remove_cvref_t<Self>, T> load(this Self&& self)
     {
       return deserialize(self, std::type_identity<loaded_type_t<std::remove_cvref_t<Self>, T>>{});
+    }
+
+    /** @brief Reads a @p T and the comments around and inside it.
+     *
+     * Needs a deserializer whose read options accept comments. The backend supplies
+     * `begin_commented(node)` and `end_commented(node)` for its document prologue and epilogue,
+     * and a `comments_` member of type serde::detail::comment_capture, all reachable from this
+     * base. The root node travels to the backend's aggregate reader through `comments_.slot`.
+     *
+     * @return the value and its comment tree, serde::comments_of<T>
+     */
+    template <typename T, typename Self> serde::commented<T> load_commented(this Self&& self)
+    {
+      using backend = std::remove_cvref_t<Self>;
+      if constexpr(not requires { requires backend::read_opts.comments; })
+      {
+        static_assert(
+            false, "load_commented needs a deserializer whose read options set .comments = true, a "
+                   "grammar without comments has none to capture");
+      }
+      else
+      {
+        serde::commented<T> out{};
+        self.comments_.active = true;
+        scope_guard reset{[&self] {
+          self.comments_.active = false;
+          self.comments_.slot   = {};
+        }};
+        self.begin_commented(out.comments);
+        self.comments_.slot.give(out.comments);
+        out.value = self.template load<T>();
+        self.end_commented(out.comments);
+        return out;
+      }
     }
   };
 }

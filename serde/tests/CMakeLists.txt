@@ -20,6 +20,11 @@ doctest_add_test(reflex-serde-json-value-test
 )
 target_link_libraries(reflex-serde-json-value-test PRIVATE reflex::serde::json)
 
+doctest_add_test(reflex-serde-comments-tree-test
+  test-serde-comments-tree.cpp
+)
+target_link_libraries(reflex-serde-comments-tree-test PRIVATE reflex::serde::json)
+
 doctest_add_test(reflex-serde-json-test
   test-serde-json.cpp
 )

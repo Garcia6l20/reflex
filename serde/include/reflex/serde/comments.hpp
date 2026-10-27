@@ -230,6 +230,75 @@ REFLEX_EXPORT namespace reflex::serde
 
   namespace detail
   {
+  template <typename N> inline constexpr char comment_node_tag = 0;
+
+  /** @brief One node handed from a parent reader or writer to the next value's, tagged with
+   * its type.
+   *
+   * A take of the wrong type yields null, and every take clears the slot, so a value read
+   * through a user override never leaves a node for an unrelated nested reader.
+   */
+  template <typename Ptr> struct basic_comment_slot
+  {
+    Ptr         node = nullptr;
+    void const* tag  = nullptr;
+
+    template <typename N> constexpr void give(N& n)
+    {
+      node = &n;
+      tag  = &comment_node_tag<std::remove_const_t<N>>;
+    }
+
+    template <typename N> constexpr N* take()
+    {
+      const bool match = tag == &comment_node_tag<std::remove_const_t<N>>;
+      Ptr        p     = node;
+      node             = nullptr;
+      tag              = nullptr;
+      if(not match)
+      {
+        return nullptr;
+      }
+      return static_cast<N*>(p);
+    }
+  };
+
+  using comment_slot       = basic_comment_slot<void*>;
+  using const_comment_slot = basic_comment_slot<void const*>;
+
+  /** @brief A comment read but not yet attached to a node. */
+  struct pending_comment
+  {
+    std::string text;
+    std::size_t column    = 0;
+    bool        same_line = false;
+  };
+
+  /** @brief A deserializer's capture state, held when its read options accept comments.
+   *
+   * @p active is set by load_commented only, so a plain load never stores a comment. @p root
+   * stays true until the first aggregate reader takes the slot. @p line_column is the column
+   * of the first non-space byte after the last line break crossed.
+   */
+  struct comment_capture
+  {
+    comment_slot                 slot;
+    std::vector<pending_comment> pending;
+    std::size_t                  line_column = 0;
+    bool                         active      = false;
+    bool                         root        = false;
+  };
+
+  /** @brief A serializer's emit state, held when its options write comments. */
+  struct comment_emit
+  {
+    const_comment_slot slot;
+    bool               active = false;
+  };
+
+  struct no_comment_state
+  {};
+
   /** @brief @p raw without one leading space and without trailing spaces, tabs and `\r`. */
   constexpr std::string_view comment_body(std::string_view raw)
   {
