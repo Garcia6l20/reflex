@@ -295,8 +295,6 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
     static constexpr std::string_view format_name = "YAML";
 
-    static constexpr int indent_width = 2;
-
     // THE INVARIANT, which the whole block writer rests on:
     //
     //   A block-node writer never emits the indent for its own first line, and
@@ -316,7 +314,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     void newline()
     {
       this->write_char('\n');
-      for(int i = 0; i < depth_ * indent_width; ++i)
+      for(int i = 0; i < depth_ * indent_width(); ++i)
       {
         this->write_char(' ');
       }
@@ -370,6 +368,20 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
   private:
+    int indent_width() const
+    {
+      return Opts.indent;
+    }
+
+    void write_dash()
+    {
+      this->write_char('-');
+      for(int i = 1; i < indent_width(); ++i)
+      {
+        this->write_char(' ');
+      }
+    }
+
     template <bool BreakBefore, typename T> void write_value(T const& value)
     {
       // An engaged optional of an aggregate is a block node, but std::optional
@@ -496,10 +508,6 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // same decision as a mapping value, minus the leading space the "- "
     // already supplied and minus the line break: a block child starts right
     // after the dash, which is YAML's compact notation.
-    //
-    // The indent works out with no special case. "- " occupies two columns at
-    // depth*2, so the child's continuation lines belong at depth*2 + 2, which is
-    // exactly (depth+1)*2 - what the guard already produces.
     template <seq_c Seq>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Seq const& value)
     {
@@ -517,7 +525,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           ser.newline();
         }
         first = false;
-        ser.write_raw("- ");
+        ser.write_dash();
         ser.write_element(elem);
       }
       return ser.out();
