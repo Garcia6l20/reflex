@@ -1881,6 +1881,17 @@ REFLEX_EXPORT namespace reflex::serde::json
       return value;
     }
 
+    friend std::byte
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<std::byte>)
+    {
+      const auto value = de.template load<long long>();
+      if(value < 0 or value > 255)
+      {
+        throw std::out_of_range(std::format("JSON number {} is out of range for std::byte", value));
+      }
+      return static_cast<std::byte>(value);
+    }
+
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<boolean>)
     {
       de.skip_to_value();
