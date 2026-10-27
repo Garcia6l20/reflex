@@ -101,24 +101,6 @@ template <std::size_t N> static std::string tw_text(char const (&bytes)[N])
   return std::string{bytes, N};
 }
 
-template <typename N> static bool tw_same(N const& a, N const& b)
-{
-  if constexpr(requires { a == b; })
-  {
-    return a == b;
-  }
-  else
-  {
-    bool same = true;
-    template for(constexpr auto m : std::define_static_array(
-                     nonstatic_data_members_of(^^N, std::meta::access_context::unchecked())))
-    {
-      same = same and tw_same(a.[:m:], b.[:m:]);
-    }
-    return same;
-  }
-}
-
 static constexpr toml::read_options tw_read{.comments = true};
 static constexpr toml::options      tw_write{.comments = true};
 
@@ -188,7 +170,7 @@ TEST_CASE("reflex::serde::toml write: an unchanged round trip is byte-identical"
   CHECK_EQ(out, input);
   const auto [cfg_back, back] = tw_load<tw_config>(out);
   CHECK(cfg_back == cfg);
-  CHECK(tw_same(back, comments));
+  CHECK(back == comments);
 }
 
 TEST_CASE("reflex::serde::toml write: a hand-built tree gives the documented shape")
@@ -215,7 +197,7 @@ port = 8080
 )");
   const auto [back, back_comments] = tw_load<tw_shape>(out);
   CHECK(back == value);
-  CHECK(tw_same(back_comments, c));
+  CHECK(back_comments == c);
 }
 
 TEST_CASE("reflex::serde::toml write: a table footer reads back on the next header")
