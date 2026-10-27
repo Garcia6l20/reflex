@@ -1856,57 +1856,88 @@ REFLEX_EXPORT namespace reflex::serde::xml
       {
         if(comments_.active)
         {
-          return read_tag_head_capturing();
+          return scan_tag_head(tag_capture{*this});
         }
       }
-      while(true)
-      {
-        if(lt_consumed_)
-        {
-          lt_consumed_ = false; // read_text already consumed this tag's '<'
-        }
-        else
-        {
-          if constexpr(bulk_scan)
-          {
-            const std::string_view sv = rest();
-            const std::size_t      n  = sv.find('<');
-            skip(n == std::string_view::npos ? sv.size() : n);
-          }
-          else
-          {
-            while(not at_end() and peek() != '<') advance();
-          }
-          if(at_end()) return {tag_kind::end, {}, false, {}};
-          advance(); // '<'
-        }
-        const char d = peek();
-        if(d == '?')
-        {
-          advance();
-          skip_until("?>");
-          continue;
-        }
-        if(d == '!')
-        {
-          advance();
-          skip_bang();
-          continue;
-        }
-        if(d == '/')
-        {
-          advance();
-          skip_until(">"); // the name is never read for a close tag
-          return {tag_kind::close, {}, false, {}};
-        }
-        name_t name                = read_name();
-        auto [self_closing, attrs] = read_attributes();
-        return {tag_kind::open, std::move(name), self_closing, std::move(attrs)};
-      }
+      return scan_tag_head(no_tag_capture{});
     }
 
   private:
-    tag_head read_tag_head_capturing()
+    struct no_tag_capture
+    {
+      void gap(char)
+      {}
+
+      void gap(std::string_view)
+      {}
+
+      void tag_start()
+      {}
+
+      bool comment()
+      {
+        return false;
+      }
+
+      void markup()
+      {}
+
+      void blank_lines()
+      {}
+    };
+
+    struct tag_capture
+    {
+      deserializer& de;
+
+      void gap(char c)
+      {
+        de.note_char(c);
+      }
+
+      void gap(std::string_view text)
+      {
+        for(char c : text)
+        {
+          de.note_char(c);
+        }
+      }
+
+      void tag_start()
+      {
+        auto& s          = de.comments_;
+        s.tag_line_start = s.line_broken and s.in_indent;
+        s.tag_column     = s.column;
+        s.tag_char       = s.indent_char;
+      }
+
+      bool comment()
+      {
+        if(de.at_end() or de.peek() != '-')
+        {
+          return false;
+        }
+        de.advance();
+        if(not de.at_end() and de.peek() == '-')
+        {
+          de.advance();
+        }
+        de.capture_comment();
+        return true;
+      }
+
+      void markup()
+      {
+        de.note_markup(false);
+      }
+
+      void blank_lines()
+      {
+        de.note_blank_lines();
+      }
+    };
+
+    template <typename Capture> tag_head scan_tag_head(Capture capture)
     {
       while(true)
       {
@@ -1921,26 +1952,21 @@ REFLEX_EXPORT namespace reflex::serde::xml
             const std::string_view sv  = rest();
             const std::size_t      n   = sv.find('<');
             const std::string_view gap = sv.substr(0, n == std::string_view::npos ? sv.size() : n);
-            for(char c : gap)
-            {
-              note_char(c);
-            }
+            capture.gap(gap);
             skip(gap.size());
           }
           else
           {
             while(not at_end() and peek() != '<')
             {
-              note_char(advance());
+              capture.gap(advance());
             }
           }
           if(at_end())
           {
             return {tag_kind::end, {}, false, {}};
           }
-          comments_.tag_line_start = comments_.line_broken and comments_.in_indent;
-          comments_.tag_column     = comments_.column;
-          comments_.tag_char       = comments_.indent_char;
+          capture.tag_start();
           advance();
         }
         const char d = peek();
@@ -1948,39 +1974,30 @@ REFLEX_EXPORT namespace reflex::serde::xml
         {
           advance();
           skip_until("?>");
-          note_markup(false);
+          capture.markup();
           continue;
         }
         if(d == '!')
         {
           advance();
-          if(not at_end() and peek() == '-')
-          {
-            advance();
-            if(not at_end() and peek() == '-')
-            {
-              advance();
-            }
-            capture_comment();
-          }
-          else
+          if(not capture.comment())
           {
             skip_bang();
-            note_markup(false);
+            capture.markup();
           }
           continue;
         }
-        note_blank_lines();
+        capture.blank_lines();
         if(d == '/')
         {
           advance();
           skip_until(">");
-          note_markup(false);
+          capture.markup();
           return {tag_kind::close, {}, false, {}};
         }
         name_t name                = read_name();
         auto [self_closing, attrs] = read_attributes();
-        note_markup(false);
+        capture.markup();
         return {tag_kind::open, std::move(name), self_closing, std::move(attrs)};
       }
     }
