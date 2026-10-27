@@ -575,15 +575,12 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     static constexpr std::string_view key_separator = Opts.indent > 0 ? ": " : ":";
 
-    [[no_unique_address]] std::conditional_t<
-        Opts.comments,
-        detail::layout_indent_state,
-        std::conditional_t<(Opts.indent > 0), detail::indent_state, detail::no_indent_state>>
-        indent_;
+    [[no_unique_address]] typename[:Opts.comments     ? ^^detail::layout_indent_state
+                                    : Opts.indent > 0 ? ^^detail::indent_state
+                                                      : ^^detail::no_indent_state:] indent_{};
 
-    [[no_unique_address]] std::
-        conditional_t<Opts.comments, serde::detail::comment_emit, serde::detail::no_comment_state>
-            comments_;
+    [[no_unique_address]] typename[:Opts.comments ? ^^serde::detail::comment_emit
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
 
     /** @brief The width of one indent level: the layout of the tree being written, when it
      * measured one, otherwise the options'.
@@ -1053,9 +1050,8 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     static constexpr read_options read_opts = Opts;
 
-    [[no_unique_address]] std::
-        conditional_t<Opts.comments, detail::comment_capture, serde::detail::no_comment_state>
-            comments_;
+    [[no_unique_address]] typename[:Opts.comments ? ^^detail::comment_capture
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
 
     template <typename T, auto X>
       requires std::constructible_from<base, T> and (std::constant_wrapper<X>::value == Opts)
