@@ -692,7 +692,25 @@ REFLEX_EXPORT namespace reflex::serde::xml
   }
   } // namespace detail
 
-  template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
+  /** @brief Output options of xml::serializer, its second template argument. */
+  struct options
+  {
+    int  indent   = 0;
+    bool comments = false;
+
+    constexpr bool operator==(options const&) const = default;
+  };
+
+  /** @brief Input options of xml::deserializer, its second template argument. */
+  struct read_options
+  {
+    bool comments = false;
+
+    constexpr bool operator==(read_options const&) const = default;
+  };
+
+  template <typename OutputIt, options Opts = options{}>
+  class serializer : public serde::detail::serializer_base<OutputIt>
   {
     // The element name for the *next* serialize call, set by the enclosing
     // aggregate before it recurses into a member. Consumed at the entry of that
@@ -701,6 +719,15 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
+
+    static constexpr options opts = Opts;
+
+    static_assert(Opts.indent >= 0, "xml::options::indent cannot be negative");
+
+    template <typename T, auto X>
+      requires std::constructible_from<OutputIt, T&> and (std::constant_wrapper<X>::value == Opts)
+    serializer(T& out, std::constant_wrapper<X>) : serde::detail::serializer_base<OutputIt>(out)
+    {}
 
     static constexpr std::string_view format_name = "XML";
     static constexpr std::string_view format_hint =
@@ -727,12 +754,14 @@ REFLEX_EXPORT namespace reflex::serde::xml
       -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+  REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
 
   // Leaf: a scalar maps to <name>text</name>. Only reached with an explicit
   // element name except at the document root, where a bare scalar falls back to
   // its type spelling (display_string_of, since scalars have no identifier).
-  template <typename OutputIt, xml_text_c T>
-  OutputIt tag_invoke(tag_default_t<serde::serialize>, serializer<OutputIt> & ser, T const& value)
+  template <typename OutputIt, options Opts, xml_text_c T>
+  OutputIt tag_invoke(
+      tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, T const& value)
   {
     const std::string_view name = ser.element_name(display_string_of(dealias(decay(^^T))));
     detail::write_tag(ser, name, false);
@@ -743,9 +772,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
   // Aggregate: <name> + one child element per member + </name>. Members recurse
   // through serialize, so nested user overrides win at any depth.
-  template <typename OutputIt, xml_element_c Agg>
+  template <typename OutputIt, options Opts, xml_element_c Agg>
   OutputIt tag_invoke(
-      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value)
+      tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value)
   {
     consteval
     {
@@ -880,7 +909,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
     return ser.out();
   }
 
-  template <std::input_iterator InputIt>
+  template <std::input_iterator InputIt, read_options Opts = read_options{}>
   class deserializer : public serde::detail::subrange_deserializer<InputIt>
   {
     using base = serde::detail::subrange_deserializer<InputIt>;
@@ -930,6 +959,18 @@ REFLEX_EXPORT namespace reflex::serde::xml
   public:
     using base::at_end;
     using base::base;
+
+    static constexpr read_options read_opts = Opts;
+
+    template <typename T, auto X>
+      requires std::constructible_from<base, T> and (std::constant_wrapper<X>::value == Opts)
+    deserializer(T&& in, std::constant_wrapper<X>) : base(std::forward<T>(in))
+    {}
+
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(InputIt first, InputIt last, std::constant_wrapper<X>) : base(first, last)
+    {}
 
     char peek() const
     {
@@ -1851,11 +1892,12 @@ REFLEX_EXPORT namespace reflex::serde::xml
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+  REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
   // Leaf: read <name>text</name> (or a self-closing empty element) into a scalar.
-  template <typename InputIt, xml_text_c T>
+  template <typename InputIt, read_options Opts, xml_text_c T>
   T tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<T>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<T>)
   {
     auto [name, self_closing] = de.read_open_tag();
     if(self_closing)
@@ -1865,9 +1907,9 @@ REFLEX_EXPORT namespace reflex::serde::xml
     return de.template read_text_field<T>();
   }
 
-  template <typename InputIt, xml_element_c Agg>
+  template <typename InputIt, read_options Opts, xml_element_c Agg>
   Agg tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Agg>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Agg>)
   {
     auto [name, self_closing] = de.read_open_tag();
     Agg value{};

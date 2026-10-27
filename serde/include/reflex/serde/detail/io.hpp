@@ -502,3 +502,34 @@ REFLEX_EXPORT namespace reflex::serde::detail
   template <typename CharT, typename CharTrait = std::char_traits<CharT>>         \
   deserializer(std::basic_istream<CharT, CharTrait>)                              \
       ->deserializer<std::istreambuf_iterator<CharT>>
+
+#define REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer)                   \
+  template <typename... TArgs, auto X>                                                    \
+  deserializer(std::basic_string<TArgs...> const& in, std::constant_wrapper<X>)           \
+      -> deserializer<typename std::basic_string<TArgs...>::const_iterator,               \
+                      std::constant_wrapper<X>::value>;                                   \
+  template <typename... TArgs, auto X>                                                    \
+  deserializer(std::basic_string_view<TArgs...> const& in, std::constant_wrapper<X>)      \
+      -> deserializer<typename std::basic_string_view<TArgs...>::const_iterator,          \
+                      std::constant_wrapper<X>::value>;                                   \
+  template <std::ranges::contiguous_range R, auto X>                                      \
+  deserializer(R const& in, std::constant_wrapper<X>)                                     \
+      -> deserializer<std::ranges::const_iterator_t<R>, std::constant_wrapper<X>::value>; \
+  template <std::input_iterator It, auto X>                                               \
+  deserializer(It, It, std::constant_wrapper<X>)                                          \
+      -> deserializer<It, std::constant_wrapper<X>::value>;                               \
+  template <typename CharT, typename CharTrait, auto X>                                   \
+  deserializer(std::basic_istream<CharT, CharTrait>&, std::constant_wrapper<X>)           \
+      -> deserializer<std::istreambuf_iterator<CharT>, std::constant_wrapper<X>::value>
+
+#define REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer)                                \
+  template <typename... TArgs, auto X>                                                             \
+  serializer(std::basic_string<TArgs...>& out, std::constant_wrapper<X>)                           \
+      -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>,                        \
+                    std::constant_wrapper<X>::value>;                                              \
+  template <auto X>                                                                                \
+  serializer(std::ofstream& out, std::constant_wrapper<X>)                                         \
+      -> serializer<std::ostreambuf_iterator<char>, std::constant_wrapper<X>::value>;              \
+  template <auto X>                                                                                \
+  serializer(std::ostringstream& out, std::constant_wrapper<X>)                                    \
+      -> serializer<std::ostreambuf_iterator<char>, std::constant_wrapper<X>::value>

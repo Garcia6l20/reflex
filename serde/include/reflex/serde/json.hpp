@@ -164,24 +164,54 @@ REFLEX_EXPORT namespace reflex::serde::json
   }
   } // namespace detail
 
-  template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
+  /** @brief Output options of json::serializer, its second template argument. */
+  struct options
+  {
+    int  indent   = 0;
+    bool comments = false;
+
+    constexpr bool operator==(options const&) const = default;
+  };
+
+  /** @brief Input options of json::deserializer, its second template argument. */
+  struct read_options
+  {
+    bool comments        = false;
+    bool trailing_commas = false;
+
+    constexpr bool operator==(read_options const&) const = default;
+  };
+
+  template <typename OutputIt, options Opts = options{}>
+  class serializer : public serde::detail::serializer_base<OutputIt>
   {
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
 
+    static constexpr options opts = Opts;
+
+    static_assert(Opts.indent >= 0, "json::options::indent cannot be negative");
+    static_assert(
+        Opts.indent > 0 or not Opts.comments,
+        "json::options: comments need indent > 0. A // comment runs to the end of its line, and "
+        "indent 0 writes the whole document on one line");
+
+    template <typename T, auto X>
+      requires std::constructible_from<OutputIt, T&> and (std::constant_wrapper<X>::value == Opts)
+    serializer(T& out, std::constant_wrapper<X>) : serde::detail::serializer_base<OutputIt>(out)
+    {}
+
     static constexpr std::string_view format_name = "JSON";
 
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, null_t const&)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, null_t const&)
     {
       ser.write_raw("null");
       return ser.out();
     }
 
     template <typename T>
-    friend OutputIt tag_invoke(
-        tag_t<serde::serialize>,
-        serializer<OutputIt>&   ser,
-        std::optional<T> const& value)
+    friend OutputIt
+        tag_invoke(tag_t<serde::serialize>, serializer& ser, std::optional<T> const& value)
     {
       if(value.has_value())
       {
@@ -195,7 +225,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <str_c Str>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Str const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Str const& value)
     {
       if constexpr(meta::is_template_instance_of(^^Str, ^^std::array))
       {
@@ -210,7 +240,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <number_c Num>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Num const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Num const& value)
     {
       // The JSON grammar has no literal for a non-finite number, so emitting one
       // would produce a document no conforming reader accepts. Checked here and
@@ -227,14 +257,14 @@ REFLEX_EXPORT namespace reflex::serde::json
       return ser.out();
     }
 
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, std::byte value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, std::byte value)
     {
       serde::detail::write_digits(ser, std::to_integer<unsigned>(value));
       return ser.out();
     }
 
     template <std::same_as<char> Char>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Char value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Char value)
     {
       ser.write_char('"');
       if(detail::needs_escape(value))
@@ -250,14 +280,14 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <std::same_as<boolean> Boolean>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Boolean value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Boolean value)
     {
       ser.write_raw(value ? "true" : "false");
       return ser.out();
     }
 
     template <derives_c<derive_t<Format>> T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       // The rendered text has to be scanned before it reaches the sink, so it
       // cannot be formatted straight through. Anything a formatter is likely to
@@ -276,7 +306,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <seq_c Seq>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Seq const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Seq const& value)
     {
       ser.write_char('[');
       if(value.empty())
@@ -299,8 +329,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <pair_c Pair>
-    friend OutputIt
-        tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Pair const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Pair const& value)
     {
       ser.write_char('{');
       serialize(ser, value.first);
@@ -311,7 +340,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <map_c Map>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Map const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Map const& value)
     {
       ser.write_char('{');
 
@@ -348,7 +377,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <visitable_c T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
     }
@@ -359,11 +388,13 @@ REFLEX_EXPORT namespace reflex::serde::json
       -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+  REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
 
-  template <typename OutputIt, aggregate_c Agg, typename TagT = std::false_type>
+  template <typename OutputIt, options Opts, aggregate_c Agg, typename TagT = std::false_type>
     requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char> may be considered as an aggregate
   OutputIt tag_invoke(
-      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value, TagT = {})
+      tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value,
+      TagT = {})
   {
     ser.write_char('{');
 
@@ -409,7 +440,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     return ser.out();
   }
 
-  template <std::input_iterator InputIt>
+  template <std::input_iterator InputIt, read_options Opts = read_options{}>
   class deserializer : public serde::detail::subrange_deserializer<InputIt>
   {
     using base = serde::detail::subrange_deserializer<InputIt>;
@@ -422,6 +453,18 @@ REFLEX_EXPORT namespace reflex::serde::json
   public:
     using base::at_end;
     using base::base;
+
+    static constexpr read_options read_opts = Opts;
+
+    template <typename T, auto X>
+      requires std::constructible_from<base, T> and (std::constant_wrapper<X>::value == Opts)
+    deserializer(T&& in, std::constant_wrapper<X>) : base(std::forward<T>(in))
+    {}
+
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(InputIt first, InputIt last, std::constant_wrapper<X>) : base(first, last)
+    {}
 
     InputIt begin() const
     {
@@ -522,15 +565,13 @@ REFLEX_EXPORT namespace reflex::serde::json
     // makes load() without an explicit type read a json::value
     using default_load_type = json::value;
 
-    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de)
     {
       return deserialize(de, std::type_identity<json::value>{});
     }
 
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<json::null_t>)
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<json::null_t>)
     {
       de.expect("null");
       return null;
@@ -539,7 +580,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <typename T>
     friend std::optional<T> tag_invoke(
         tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
+        deserializer& de,
         std::type_identity<std::optional<T>>)
     {
       if(de.peek() == 'n')
@@ -599,9 +640,8 @@ REFLEX_EXPORT namespace reflex::serde::json
     // find_terminator bounds the body first, then one scan decides. So there is
     // no partial write to unwind, and the throw leaves the cursor untouched.
     template <str_c Str>
-      requires serde::detail::borrowed_string_sink_c<Str> and deserializer<InputIt>::bulk_scan
-    friend Str
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+      requires serde::detail::borrowed_string_sink_c<Str> and deserializer::bulk_scan
+    friend Str tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       if(de.advance() != '"')
       {
@@ -635,10 +675,8 @@ REFLEX_EXPORT namespace reflex::serde::json
     // reason, so the caller does not then report a void conversion on top.
     template <str_c Str>
       requires(not serde::detail::string_sink_c<Str>)
-              and (not(serde::detail::borrowed_string_sink_c<Str>
-                       and deserializer<InputIt>::bulk_scan))
-    friend Str
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+          and (not(serde::detail::borrowed_string_sink_c<Str> and deserializer::bulk_scan))
+    friend Str tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       if constexpr(serde::detail::borrowed_string_sink_c<Str>)
       {
@@ -662,8 +700,7 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     template <str_c Str>
       requires serde::detail::string_sink_c<Str>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       if(de.advance() != '"')
       {
@@ -709,7 +746,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         }
       };
 
-      if constexpr(deserializer<InputIt>::bulk_scan)
+      if constexpr(deserializer::bulk_scan)
       {
         const std::string_view sv = de.rest();
 
@@ -796,11 +833,10 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <number_c Num>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Num>)
     {
       Num value;
-      if constexpr(deserializer<InputIt>::bulk_scan)
+      if constexpr(deserializer::bulk_scan)
       {
         const auto first = std::to_address(de.begin());
         const auto last  = std::to_address(de.end());
@@ -847,10 +883,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       return value;
     }
 
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<boolean>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<boolean>)
     {
       if(de.peek() == 't')
       {
@@ -866,8 +899,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <derives_c<derive_t<Parse>> T>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<T>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<T>)
     {
       auto token  = de.template load<heapless::string<64>>();
       auto result = parse<std::remove_cvref_t<T>>(token);
@@ -881,8 +913,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     }
 
     template <seq_c Seq>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Seq>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Seq>)
     {
       if(de.advance() != '[')
         throw std::runtime_error("Expected '[' at start of JSON array");
@@ -923,10 +954,9 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     template <typename var_type>
       requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<var_type>) -> var_type
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<var_type>)
+            -> var_type
     {
       de.ltrim();
       switch(de.peek())
@@ -949,15 +979,16 @@ REFLEX_EXPORT namespace reflex::serde::json
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+  REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
-  template <typename InputIt, object_visitable_c Map>
+  template <typename InputIt, read_options Opts, object_visitable_c Map>
     requires(
         not(meta::is_template_instance_of(^^Map, ^^poly::var)
             // std::array<char> may be considered as a visitable object
             or str_c<Map>
             or seq_c<Map>))
   auto tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Map>)
   {
     if(de.advance() != '{')
       throw std::runtime_error("Expected '{' at start of JSON object");

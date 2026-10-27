@@ -450,7 +450,24 @@ REFLEX_EXPORT namespace reflex::serde::toml
   }
   } // namespace detail
 
-  template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
+  /** @brief Output options of toml::serializer, its second template argument. */
+  struct options
+  {
+    bool comments = false;
+
+    constexpr bool operator==(options const&) const = default;
+  };
+
+  /** @brief Input options of toml::deserializer, its second template argument. */
+  struct read_options
+  {
+    bool comments = false;
+
+    constexpr bool operator==(read_options const&) const = default;
+  };
+
+  template <typename OutputIt, options Opts = options{}>
+  class serializer : public serde::detail::serializer_base<OutputIt>
   {
     // The dotted path of the table being written, without brackets: "server.tls".
     // Grown through a scope guard so a throwing member cannot leave it stale.
@@ -465,6 +482,13 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
+
+    static constexpr options opts = Opts;
+
+    template <typename T, auto X>
+      requires std::constructible_from<OutputIt, T&> and (std::constant_wrapper<X>::value == Opts)
+    serializer(T& out, std::constant_wrapper<X>) : serde::detail::serializer_base<OutputIt>(out)
+    {}
 
     static constexpr std::string_view format_name = "TOML";
 
@@ -640,7 +664,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
       }
     }
 
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, null_t const&)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, null_t const&)
     {
       throw std::runtime_error(
           "TOML has no null: a null value can only be omitted along with its key, and an array "
@@ -649,10 +673,8 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     template <typename T>
-    friend OutputIt tag_invoke(
-        tag_t<serde::serialize>,
-        serializer<OutputIt>&   ser,
-        std::optional<T> const& value)
+    friend OutputIt
+        tag_invoke(tag_t<serde::serialize>, serializer& ser, std::optional<T> const& value)
     {
       if(not value.has_value())
       {
@@ -665,14 +687,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     template <str_c Str>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Str const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Str const& value)
     {
       detail::write_string(ser, detail::string_view_of(value));
       return ser.out();
     }
 
     template <number_c Num>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Num const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Num const& value)
     {
       if constexpr(std::floating_point<Num>)
       {
@@ -685,21 +707,21 @@ REFLEX_EXPORT namespace reflex::serde::toml
       return ser.out();
     }
 
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, std::byte value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, std::byte value)
     {
       serde::detail::write_digits(ser, std::to_integer<unsigned>(value));
       return ser.out();
     }
 
     template <std::same_as<char> Char>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Char value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Char value)
     {
       detail::write_string(ser, std::string_view{&value, 1});
       return ser.out();
     }
 
     template <std::same_as<boolean> Boolean>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Boolean value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Boolean value)
     {
       ser.write_raw(value ? "true" : "false");
       return ser.out();
@@ -708,7 +730,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // A sequence of tables never gets here: the table writer's third pass emits
     // [[headers]] for it directly.
     template <seq_c Seq>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Seq const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Seq const& value)
     {
       const inline_guard guard{ser};
       ser.write_char('[');
@@ -729,7 +751,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // Every entry of a map has the same shape, so the three passes collapse to one
     // loop and a compile-time question about mapped_type.
     template <map_c Map>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Map const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Map const& value)
     {
       using shape = detail::shape_t<typename Map::mapped_type>;
 
@@ -812,8 +834,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     template <pair_c Pair>
-    friend OutputIt
-        tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Pair const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Pair const& value)
     {
       std::string            scratch;
       const std::string_view key = detail::key_view(value.first, scratch);
@@ -831,13 +852,13 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     template <visitable_c T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
     }
 
     template <derives_c<derive_t<Format>> T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       // Scanned by write_string before it reaches the sink, so it cannot be
       // formatted straight through.
@@ -860,6 +881,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
       -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+  REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
 
   // Three passes over the members, and pass 1 must never emit a header: a key
   // written after a [subtable] header belongs to that subtable, so a `port` line
@@ -869,10 +891,10 @@ REFLEX_EXPORT namespace reflex::serde::toml
   //
   // Inside an array or an inline table there is no line for a header to sit on,
   // so the same aggregate goes out inline. That is what inline_depth_ answers.
-  template <typename OutputIt, aggregate_c Agg>
+  template <typename OutputIt, options Opts, aggregate_c Agg>
     requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char, N> is an aggregate
   OutputIt tag_invoke(
-      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value)
+      tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value)
   {
     static constexpr auto type    = decay(type_of(^^value));
     static constexpr auto members = define_static_array(
@@ -965,7 +987,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
   }
 
-  template <std::input_iterator InputIt>
+  template <std::input_iterator InputIt, read_options Opts = read_options{}>
   class deserializer : public serde::detail::line_cursor<InputIt>
   {
     using base = serde::detail::line_cursor<InputIt>;
@@ -991,6 +1013,18 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
   public:
     using base::base;
+
+    static constexpr read_options read_opts = Opts;
+
+    template <typename T, auto X>
+      requires std::constructible_from<base, T> and (std::constant_wrapper<X>::value == Opts)
+    deserializer(T&& in, std::constant_wrapper<X>) : base(std::forward<T>(in))
+    {}
+
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(InputIt first, InputIt last, std::constant_wrapper<X>) : base(first, last)
+    {}
     using base::advance;
     using base::at_end;
     using base::at_line_end;
@@ -1892,14 +1926,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
   public:
     // default_load_type covers load(), but a caller reaching the CPO directly -
     // reflex-serde-convert does - needs this too.
-    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de)
     {
       return deserialize(de, std::type_identity<toml::value>{});
     }
 
     friend null_t tag_invoke(
         tag_t<serde::deserialize>,
-        [[maybe_unused]] deserializer<InputIt>& de,
+        [[maybe_unused]] deserializer& de,
         std::type_identity<null_t>)
     {
       throw std::runtime_error("TOML has no null: there is no literal to read one from");
@@ -1908,16 +1942,13 @@ REFLEX_EXPORT namespace reflex::serde::toml
     template <typename T>
     friend std::optional<T> tag_invoke(
         tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
+        deserializer& de,
         std::type_identity<std::optional<T>>)
     {
       return de.template load<T>();
     }
 
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<boolean>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<boolean>)
     {
       const std::string_view token = de.read_token();
       if(token == "true")
@@ -1933,8 +1964,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     template <number_c Num>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Num>)
     {
       if(de.at_date_time())
       {
@@ -1954,8 +1984,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     template <std::same_as<char> Char>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Char>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Char>)
     {
       const std::string text = de.read_text();
       if(text.size() != 1)
@@ -1970,8 +1999,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // assert alone does not stop the body instantiating.
     template <str_c Str>
       requires(not serde::detail::string_sink_c<Str>)
-    friend Str
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    friend Str tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       if constexpr(serde::detail::borrowed_string_sink_c<Str>)
       {
@@ -1995,8 +2023,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
     template <str_c Str>
       requires serde::detail::string_sink_c<Str>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       const std::string text = de.read_text();
 
@@ -2031,10 +2058,9 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // never a bare scalar, unlike json and yaml. Below it, resolve_value() decides.
     template <typename var_type>
       requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<var_type>) -> var_type
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<var_type>)
+            -> var_type
     {
       if(de.at_document_level())
       {
@@ -2044,8 +2070,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
     template <derives_c<derive_t<Parse>> T>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<T>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<T>)
     {
       const std::string text   = de.read_text();
       auto              result = parse<std::remove_cvref_t<T>>(text);
@@ -2060,12 +2085,13 @@ REFLEX_EXPORT namespace reflex::serde::toml
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+  REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
   // An array of inline tables is valid TOML from anyone else and reads through
   // the element type like any other, and so does a mixed-element array.
-  template <typename InputIt, seq_c Seq>
+  template <typename InputIt, read_options Opts, seq_c Seq>
   auto tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Seq>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Seq>)
   {
     if(de.at_end() or de.peek_at(0) != '[')
     {
@@ -2088,14 +2114,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
   // elsewhere, so a braceless table is a document and only depth 0 begins one. A
   // top-level "{ ... }" is accepted because load<T>() is also how a caller reads
   // a bare value.
-  template <typename InputIt, object_visitable_c Map>
+  template <typename InputIt, read_options Opts, object_visitable_c Map>
     requires(
         not(meta::is_template_instance_of(^^Map, ^^poly::var)
             // std::array<char, N> may be considered a visitable object
             or str_c<Map>
             or seq_c<Map>))
   auto tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Map>)
   {
     Map value{};
     if(not de.at_end() and de.peek_at(0) == '{')

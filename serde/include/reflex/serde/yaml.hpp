@@ -256,12 +256,41 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   };
   } // namespace detail
 
-  template <typename OutputIt> class serializer : public serde::detail::serializer_base<OutputIt>
+  /** @brief Output options of yaml::serializer, its second template argument. */
+  struct options
+  {
+    int  indent   = 2;
+    bool comments = false;
+
+    constexpr bool operator==(options const&) const = default;
+  };
+
+  /** @brief Input options of yaml::deserializer, its second template argument. */
+  struct read_options
+  {
+    bool comments = false;
+
+    constexpr bool operator==(read_options const&) const = default;
+  };
+
+  template <typename OutputIt, options Opts = options{}>
+  class serializer : public serde::detail::serializer_base<OutputIt>
   {
     int depth_ = 0;
 
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
+
+    static constexpr options opts = Opts;
+
+    static_assert(
+        Opts.indent >= 2,
+        "yaml::options::indent must be at least 2, the width of a sequence dash and its space");
+
+    template <typename T, auto X>
+      requires std::constructible_from<OutputIt, T&> and (std::constant_wrapper<X>::value == Opts)
+    serializer(T& out, std::constant_wrapper<X>) : serde::detail::serializer_base<OutputIt>(out)
+    {}
 
     static constexpr std::string_view format_name = "YAML";
 
@@ -394,17 +423,15 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
   public:
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, null_t const&)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, null_t const&)
     {
       ser.write_raw("null");
       return ser.out();
     }
 
     template <typename T>
-    friend OutputIt tag_invoke(
-        tag_t<serde::serialize>,
-        serializer<OutputIt>&   ser,
-        std::optional<T> const& value)
+    friend OutputIt
+        tag_invoke(tag_t<serde::serialize>, serializer& ser, std::optional<T> const& value)
     {
       if(value.has_value())
       {
@@ -418,14 +445,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
     template <str_c Str>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Str const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Str const& value)
     {
       detail::write_scalar(ser, detail::string_view_of(value));
       return ser.out();
     }
 
     template <number_c Num>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Num const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Num const& value)
     {
       // Unlike JSON, YAML has a literal for every non-finite value. It has to be
       // written here rather than left to write_digits, which would emit "inf"
@@ -447,21 +474,21 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       return ser.out();
     }
 
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, std::byte value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, std::byte value)
     {
       serde::detail::write_digits(ser, std::to_integer<unsigned>(value));
       return ser.out();
     }
 
     template <std::same_as<char> Char>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Char value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Char value)
     {
       detail::write_scalar(ser, std::string_view{&value, 1});
       return ser.out();
     }
 
     template <std::same_as<boolean> Boolean>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Boolean value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Boolean value)
     {
       ser.write_raw(value ? "true" : "false");
       return ser.out();
@@ -476,7 +503,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // depth*2, so the child's continuation lines belong at depth*2 + 2, which is
     // exactly (depth+1)*2 - what the guard already produces.
     template <seq_c Seq>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Seq const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Seq const& value)
     {
       if(value.empty())
       {
@@ -503,7 +530,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // back to an int, while a std::string key goes through the scalar writer
     // and picks up quotes only when a plain form would change its type.
     template <map_c Map>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Map const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Map const& value)
     {
       static_assert(
           not detail::block_node_c<typename Map::key_type>,
@@ -535,8 +562,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // A standalone pair is a one-entry mapping. block_node_c names pair_c for
     // this reason.
     template <pair_c Pair>
-    friend OutputIt
-        tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Pair const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Pair const& value)
     {
       serialize(ser, value.first);
       ser.write_char(':');
@@ -547,13 +573,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // A poly::var reached directly, rather than as a member. write_member and
     // write_element already visit, so this is the top-level entry point.
     template <visitable_c T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
     }
 
     template <derives_c<derive_t<Format>> T>
-    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, T const& value)
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
       // The rendered text has to be scanned by write_scalar before it reaches the
       // sink, so it cannot be formatted straight through. Anything a formatter is
@@ -577,13 +603,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       -> serializer<std::back_insert_iterator<std::basic_string<TArgs...>>>;
   serializer(std::ofstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
+  REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
 
   // A block mapping, one "key: value" per line at this node's depth. No braces,
   // no separators: the extent of the mapping is its indentation.
-  template <typename OutputIt, aggregate_c Agg>
+  template <typename OutputIt, options Opts, aggregate_c Agg>
     requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char, N> is an aggregate
   OutputIt tag_invoke(
-      tag_default_t<serde::serialize>, serializer<OutputIt> & ser, Agg const& value)
+      tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value)
   {
     static constexpr auto type = decay(type_of(^^value));
 
@@ -624,7 +651,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
   }
 
-  template <std::input_iterator InputIt>
+  template <std::input_iterator InputIt, read_options Opts = read_options{}>
   class deserializer : public serde::detail::line_cursor<InputIt>
   {
     using base = serde::detail::line_cursor<InputIt>;
@@ -641,6 +668,18 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
   public:
     using base::base;
+
+    static constexpr read_options read_opts = Opts;
+
+    template <typename T, auto X>
+      requires std::constructible_from<base, T> and (std::constant_wrapper<X>::value == Opts)
+    deserializer(T&& in, std::constant_wrapper<X>) : base(std::forward<T>(in))
+    {}
+
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(InputIt first, InputIt last, std::constant_wrapper<X>) : base(first, last)
+    {}
     using base::advance;
     using base::at_end;
     using base::at_line_end;
@@ -831,13 +870,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // deserialize(de) with no destination type. default_load_type covers
     // load(), but a caller reaching the CPO directly - reflex-serde-convert
     // does - needs this too.
-    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de)
     {
       return deserialize(de, std::type_identity<yaml::value>{});
     }
 
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<null_t>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<null_t>)
     {
       const auto s = de.read_scalar();
       if(s.quoted or not detail::is_null_text(s.text))
@@ -850,7 +888,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     template <typename T>
     friend std::optional<T> tag_invoke(
         tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
+        deserializer& de,
         std::type_identity<std::optional<T>>)
     {
       // Nothing after the colon does not mean null on its own: the value may be
@@ -860,7 +898,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       if(de.at_line_end())
       {
         const std::size_t next = de.next_content_line();
-        if(next == deserializer<InputIt>::npos or not de.deeper_than_block(next))
+        if(next == deserializer::npos or not de.deeper_than_block(next))
         {
           return std::nullopt;
         }
@@ -874,10 +912,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       return de.template load<T>();
     }
 
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<boolean>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<boolean>)
     {
       const auto s = de.read_scalar();
       if(s.text == "true" or s.text == "True" or s.text == "TRUE")
@@ -902,15 +937,13 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
     template <number_c Num>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Num>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Num>)
     {
       return detail::parse_number<detail::yaml_numbers, Num>(de.read_scalar().text, "YAML");
     }
 
     template <std::same_as<char> Char>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Char>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Char>)
     {
       const auto s = de.read_scalar();
       if(s.text.size() != 1)
@@ -932,8 +965,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // original error still follows it.
     template <str_c Str>
       requires(not serde::detail::string_sink_c<Str>)
-    friend Str
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    friend Str tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       if constexpr(serde::detail::borrowed_string_sink_c<Str>)
       {
@@ -956,8 +988,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
     template <str_c Str>
       requires serde::detail::string_sink_c<Str>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<Str>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
       const auto s = de.read_scalar();
 
@@ -999,13 +1030,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // else is read as a scalar and classified afterwards.
     template <typename var_type>
       requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
-    friend auto tag_invoke(
-        tag_t<serde::deserialize>,
-        deserializer<InputIt>& de,
-        std::type_identity<var_type>) -> var_type
+    friend auto
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<var_type>)
+            -> var_type
     {
       const std::size_t indent = de.next_content_line();
-      if(indent == deserializer<InputIt>::npos or not de.deeper_than_block(indent))
+      if(indent == deserializer::npos or not de.deeper_than_block(indent))
       {
         return var_type{}; // an absent value; the cursor stays parked
       }
@@ -1031,8 +1061,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
     template <derives_c<derive_t<Parse>> T>
-    friend auto
-        tag_invoke(tag_t<serde::deserialize>, deserializer<InputIt>& de, std::type_identity<T>)
+    friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<T>)
     {
       const auto s      = de.read_scalar();
       auto       result = parse<std::remove_cvref_t<T>>(s.text);
@@ -2031,6 +2060,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   };
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+  REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
 
   // A block sequence, one "- " per entry.
   //
@@ -2050,9 +2080,9 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   // The same collapse means the sequence cannot tell its own end from the
   // parent's next key by indent alone. A line at the sequence's indent that is
   // not an entry ends the sequence, rather than being an error.
-  template <typename InputIt, seq_c Seq>
+  template <typename InputIt, read_options Opts, seq_c Seq>
   auto tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Seq>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Seq>)
   {
     const std::size_t base = de.next_content_line();
     if(base == de.npos)
@@ -2137,14 +2167,14 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   // indented less, and a line indented more is an error rather than a
   // continuation.
   //
-  template <typename InputIt, object_visitable_c Map>
+  template <typename InputIt, read_options Opts, object_visitable_c Map>
     requires(
         not(meta::is_template_instance_of(^^Map, ^^poly::var)
             // std::array<char, N> may be considered a visitable object
             or str_c<Map>
             or seq_c<Map>))
   auto tag_invoke(
-      tag_default_t<serde::deserialize>, deserializer<InputIt> & de, std::type_identity<Map>)
+      tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Map>)
   {
     const std::size_t base = de.next_content_line();
 
