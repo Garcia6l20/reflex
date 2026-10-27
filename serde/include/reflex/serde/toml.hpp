@@ -465,6 +465,8 @@ REFLEX_EXPORT namespace reflex::serde::toml
     {}
   };
 
+  struct toml_access;
+
   /** @brief The block of the comment node @p path names below @p node, the tree of @p Model.
    *
    * @return null when the path leaves the reflected aggregates, through an array of tables, a
@@ -534,6 +536,163 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // The break goes before a line rather than after, so a document has neither a
     // leading nor a trailing newline.
     bool wrote_line_ = false;
+
+    friend serde::detail::serializer_base<OutputIt>;
+    friend struct detail::toml_access;
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^serde::detail::comment_emit
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    /** @brief Writes `# ` and @p text, `#` alone for an empty one.
+     *
+     * @throws std::runtime_error when @p text holds a line break or a control character other
+     * than tab, which the reader rejects
+     */
+    void write_comment(std::string_view text)
+      requires(Opts.comments)
+    {
+      serde::detail::check_comment_line(text, "", format_name);
+      if(std::ranges::any_of(
+             text, [](char c) { return c != '\t' and serde::detail::is_control(c); }))
+      {
+        throw std::runtime_error(
+            "TOML: a comment cannot hold a control character other than tab: '"
+            + std::string(text)
+            + "'");
+      }
+      if(text.empty())
+      {
+        this->write_char('#');
+        return;
+      }
+      this->write_raw("# ");
+      this->write_raw(text);
+    }
+
+    /** @brief Writes @p lines, each on its own line, a blank line entry as an empty line. */
+    void write_comment_lines(std::vector<std::string> const& lines)
+      requires(Opts.comments)
+    {
+      for(auto const& line : lines)
+      {
+        begin_line();
+        if(line != serde::blank_line)
+        {
+          write_comment(line);
+        }
+      }
+    }
+
+    void write_trailing(std::string const& text)
+      requires(Opts.comments)
+    {
+      if(not text.empty())
+      {
+        this->write_char(' ');
+        write_comment(text);
+      }
+    }
+
+    /** @brief write_pair, with the lines of @p block above the line and its trailing after the
+     * value. Nothing is written for a key that is omitted, its comments included.
+     */
+    template <typename T>
+    void write_commented_pair(
+        std::string_view            key_token,
+        T const&                    value,
+        serde::comment_block const* block)
+      requires(Opts.comments)
+    {
+      if constexpr(optional_c<std::remove_cvref_t<T>>)
+      {
+        if(value.has_value())
+        {
+          write_commented_pair(key_token, *value, block);
+        }
+      }
+      else if(block == nullptr)
+      {
+        write_pair(key_token, value);
+      }
+      else if(not detail::holds_null(value))
+      {
+        write_comment_lines(block->leading);
+        begin_line();
+        this->write_raw(key_token);
+        write_inline(value);
+        write_trailing(block->trailing);
+      }
+    }
+
+    /** @brief write_table, with the leading of @p node above the header, its trailing after the
+     * header, and its footer after the table's body.
+     *
+     * The footer has no position of its own in TOML: read back, it is the leading of the next
+     * header, or the root footer after the last table.
+     */
+    template <typename T, typename Node>
+    void write_commented_table(std::string_view key, T const& value, Node const* node)
+      requires(Opts.comments)
+    {
+      if constexpr(optional_c<std::remove_cvref_t<T>>)
+      {
+        if(value.has_value())
+        {
+          write_commented_table(key, *value, node);
+        }
+      }
+      else if(node == nullptr)
+      {
+        write_table(key, value);
+      }
+      else
+      {
+        serde::comment_block const& block = serde::comment(*node);
+        write_comment_lines(block.leading);
+        {
+          const path_guard guard{*this, key};
+          begin_line();
+          this->write_char('[');
+          this->write_raw(path_);
+          this->write_char(']');
+          write_trailing(block.trailing);
+          if constexpr(serde::detail::comment_tree_c<Node>)
+          {
+            comments_.slot.give(*node);
+          }
+          serialize(*this, value);
+          comments_.slot = {};
+        }
+        write_comment_lines(block.footer);
+      }
+    }
+
+    /** @brief Writes the root's leading lines, called by dump(value, comments). */
+    template <typename Node>
+    void begin_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      write_comment_lines(serde::comment(node).leading);
+    }
+
+    /** @brief Writes the root's footer and, when the layout asks for it, a final line break.
+     * A root trailing has no line in TOML and is not written.
+     */
+    template <typename Node>
+    void end_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      write_comment_lines(serde::comment(node).footer);
+      bool final_newline = true;
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        final_newline = serde::layout_of(node).final_newline;
+      }
+      if(final_newline and wrote_line_)
+      {
+        this->write_char('\n');
+      }
+    }
 
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
@@ -938,107 +1097,155 @@ REFLEX_EXPORT namespace reflex::serde::toml
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
 
-  // Three passes over the members, and pass 1 must never emit a header: a key
-  // written after a [subtable] header belongs to that subtable, so a `port` line
-  // trailing a [server.tls] header becomes server.tls.port, not server.port - a
-  // valid document that means something else. Passes 2 and 3 split only so plain
-  // subtables precede arrays of tables; either order of those is correct.
-  //
-  // Inside an array or an inline table there is no line for a header to sit on,
-  // so the same aggregate goes out inline. That is what inline_depth_ answers.
+  namespace detail
+  {
+  /** @brief The one way into the TOML serializer's private comment state, for the namespace-scope
+   * aggregate writer.
+   */
+  struct toml_access
+  {
+    template <typename Agg, typename Ser> static auto take_node(Ser& ser)
+    {
+      return ser.comments_.slot.template take<serde::comments_of<Agg> const>();
+    }
+
+    // Three passes over the members, and pass 1 must never emit a header: a key
+    // written after a [subtable] header belongs to that subtable, so a `port` line
+    // trailing a [server.tls] header becomes server.tls.port, not server.port - a
+    // valid document that means something else. Passes 2 and 3 split only so plain
+    // subtables precede arrays of tables; either order of those is correct.
+    //
+    // Inside an array or an inline table there is no line for a header to sit on,
+    // so the same aggregate goes out inline. That is what inline_depth_ answers.
+    template <typename OutputIt, options Opts, typename Agg, typename NodePtr>
+    static OutputIt write_aggregate(serializer<OutputIt, Opts>& ser, Agg const& value, NodePtr node)
+    {
+      static constexpr auto type    = decay(type_of(^^value));
+      static constexpr auto members = define_static_array(
+          nonstatic_data_members_of(type, std::meta::access_context::current()));
+
+      if constexpr(members.size() == 0)
+      {
+        if(ser.inline_mode())
+        {
+          ser.write_raw("{}");
+        }
+        return ser.out();
+      }
+      else
+      {
+        if(ser.inline_mode())
+        {
+          ser.write_raw("{ ");
+          bool first = true;
+          template for(constexpr auto member : members)
+          {
+            constexpr bool omit = serde::omits_when_empty(member);
+            if constexpr(omit)
+            {
+              if(serde::is_empty_value(value.[:member:]))
+              {
+                continue;
+              }
+            }
+            first = ser.write_inline_pair(first, detail::assign_key<member>(), value.[:member:]);
+          }
+          ser.write_raw(" }");
+          return ser.out();
+        }
+
+        // Pass 1 - every leaf and every array of leaves, as "key = value".
+        template for(constexpr auto member : members)
+        {
+          using shape = detail::shape_t<typename[:type_of(member):]>;
+          if constexpr(not(detail::header_table_c<shape> or detail::table_array_c<shape>))
+          {
+            constexpr bool omit = serde::omits_when_empty(member);
+            if constexpr(omit)
+            {
+              if(serde::is_empty_value(value.[:member:]))
+              {
+                continue;
+              }
+            }
+            if constexpr(std::is_null_pointer_v<NodePtr>)
+            {
+              ser.write_pair(detail::assign_key<member>(), value.[:member:]);
+            }
+            else
+            {
+              constexpr auto nm = serde::detail::comment_member_of<member>();
+              ser.write_commented_pair(
+                  detail::assign_key<member>(),
+                  value.[:member:], node == nullptr ? nullptr : &serde::comment(node->[:nm:]));
+            }
+          }
+        }
+
+        // Pass 2 - every table, as "[path.key]" and then its own body.
+        template for(constexpr auto member : members)
+        {
+          using shape = detail::shape_t<typename[:type_of(member):]>;
+          if constexpr(detail::header_table_c<shape>)
+          {
+            constexpr bool omit = serde::omits_when_empty(member);
+            if constexpr(omit)
+            {
+              if(serde::is_empty_value(value.[:member:]))
+              {
+                continue;
+              }
+            }
+            if constexpr(std::is_null_pointer_v<NodePtr>)
+            {
+              ser.write_table(detail::key_name<member>(), value.[:member:]);
+            }
+            else
+            {
+              constexpr auto nm = serde::detail::comment_member_of<member>();
+              ser.write_commented_table(
+                  detail::key_name<member>(), value.[:member:], node == nullptr ? nullptr : &node->
+                                                    [:nm:]);
+            }
+          }
+        }
+
+        // Pass 3 - every array of tables, as repeated "[[path.key]]".
+        template for(constexpr auto member : members)
+        {
+          using shape = detail::shape_t<typename[:type_of(member):]>;
+          if constexpr(detail::table_array_c<shape>)
+          {
+            constexpr bool omit = serde::omits_when_empty(member);
+            if constexpr(omit)
+            {
+              if(serde::is_empty_value(value.[:member:]))
+              {
+                continue;
+              }
+            }
+            ser.write_table_array(detail::key_name<member>(), value.[:member:]);
+          }
+        }
+        return ser.out();
+      }
+    }
+  };
+  } // namespace detail
+
   template <typename OutputIt, options Opts, aggregate_c Agg>
     requires(not(str_c<Agg> or seq_c<Agg>)) // std::array<char, N> is an aggregate
   OutputIt tag_invoke(
       tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value)
   {
-    static constexpr auto type    = decay(type_of(^^value));
-    static constexpr auto members = define_static_array(
-        nonstatic_data_members_of(type, std::meta::access_context::current()));
-
-    if constexpr(members.size() == 0)
+    if constexpr(Opts.comments)
     {
-      if(ser.inline_mode())
-      {
-        ser.write_raw("{}");
-      }
-      return ser.out();
+      return detail::toml_access::write_aggregate(
+          ser, value, detail::toml_access::take_node<Agg>(ser));
     }
     else
     {
-      if(ser.inline_mode())
-      {
-        ser.write_raw("{ ");
-        bool first = true;
-        template for(constexpr auto member : members)
-        {
-          constexpr bool omit = serde::omits_when_empty(member);
-          if constexpr(omit)
-          {
-            if(serde::is_empty_value(value.[:member:]))
-            {
-              continue;
-            }
-          }
-          first = ser.write_inline_pair(first, detail::assign_key<member>(), value.[:member:]);
-        }
-        ser.write_raw(" }");
-        return ser.out();
-      }
-
-      // Pass 1 - every leaf and every array of leaves, as "key = value".
-      template for(constexpr auto member : members)
-      {
-        using shape = detail::shape_t<typename[:type_of(member):]>;
-        if constexpr(not(detail::header_table_c<shape> or detail::table_array_c<shape>))
-        {
-          constexpr bool omit = serde::omits_when_empty(member);
-          if constexpr(omit)
-          {
-            if(serde::is_empty_value(value.[:member:]))
-            {
-              continue;
-            }
-          }
-          ser.write_pair(detail::assign_key<member>(), value.[:member:]);
-        }
-      }
-
-      // Pass 2 - every table, as "[path.key]" and then its own body.
-      template for(constexpr auto member : members)
-      {
-        using shape = detail::shape_t<typename[:type_of(member):]>;
-        if constexpr(detail::header_table_c<shape>)
-        {
-          constexpr bool omit = serde::omits_when_empty(member);
-          if constexpr(omit)
-          {
-            if(serde::is_empty_value(value.[:member:]))
-            {
-              continue;
-            }
-          }
-          ser.write_table(detail::key_name<member>(), value.[:member:]);
-        }
-      }
-
-      // Pass 3 - every array of tables, as repeated "[[path.key]]".
-      template for(constexpr auto member : members)
-      {
-        using shape = detail::shape_t<typename[:type_of(member):]>;
-        if constexpr(detail::table_array_c<shape>)
-        {
-          constexpr bool omit = serde::omits_when_empty(member);
-          if constexpr(omit)
-          {
-            if(serde::is_empty_value(value.[:member:]))
-            {
-              continue;
-            }
-          }
-          ser.write_table_array(detail::key_name<member>(), value.[:member:]);
-        }
-      }
-      return ser.out();
+      return detail::toml_access::write_aggregate(ser, value, nullptr);
     }
   }
 
