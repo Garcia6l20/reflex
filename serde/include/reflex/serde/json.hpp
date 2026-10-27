@@ -137,9 +137,9 @@ REFLEX_EXPORT namespace reflex::serde::json
 
   // What may legally follow a number: a structural character, or whitespace
   // before one.
-  constexpr bool ends_number(char c) noexcept
+  template <bool Comments = false> constexpr bool ends_number(char c) noexcept
   {
-    return c == ',' or c == ']' or c == '}' or reflex::is_space(c);
+    return c == ',' or c == ']' or c == '}' or reflex::is_space(c) or (Comments and c == '/');
   }
 
   // `"name":` is a constant, so it is built once at compile time and promoted to
@@ -148,7 +148,7 @@ REFLEX_EXPORT namespace reflex::serde::json
   // The name is checked here rather than escaped. Identifiers cannot need an
   // escape, but a serde::rename can carry an arbitrary string, and a key that
   // silently emitted an unescaped quote would produce invalid JSON.
-  template <std::meta::info Member> consteval std::string_view quoted_key()
+  template <std::meta::info Member, bool Spaced = false> consteval std::string_view quoted_key()
   {
     constexpr std::string_view name = serialized_name(Member);
     static_assert(
@@ -156,11 +156,399 @@ REFLEX_EXPORT namespace reflex::serde::json
         "a JSON object key cannot contain a quote, a backslash or a control "
         "character: check the serde::rename annotation on this member");
     std::string s;
-    s.reserve(name.size() + 3);
+    s.reserve(name.size() + 4);
     s += '"';
     s += name;
-    s += "\":";
+    s += Spaced ? "\": " : "\":";
     return {std::define_static_string(s), s.size()};
+  }
+
+  template <typename De, typename V> void load_object_member(De& de, V& v)
+  {
+    v = de.template load<std::remove_cvref_t<V>>();
+    if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
+    {
+      if(v.is_object())
+      {
+        auto& obj = v.as_object();
+        auto  type_key =
+            std::ranges::find_if(obj, [](auto const& pair) { return pair.first == "__type"; });
+        if(type_key != obj.end())
+        {
+          template for(constexpr auto a : detail::aggregate_types_of_var<V>())
+          {
+            if(type_key->second == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
+            {
+              using Agg = [:a:];
+              Agg agg_value{};
+              template for(constexpr auto member : define_static_array(
+                               nonstatic_data_members_of(a, std::meta::access_context::current())))
+              {
+                constexpr std::string_view name = serialized_name(member);
+                if(name == "__type")
+                {
+                  continue;
+                }
+                [[maybe_unused]] auto object_value_it = std::ranges::find_if(
+                    obj, [name](auto const& pair) { return pair.first == name; });
+                auto& member_value = agg_value.[:member:];
+                visit(
+                    [&]<typename U>([[maybe_unused]] U&& v) {
+                      if constexpr(requires { member_value = std::forward<U>(v); })
+                      {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wfloat-conversion"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+                        member_value = std::forward<U>(v);
+#pragma GCC diagnostic pop
+                      }
+                      else
+                      {
+                        throw std::runtime_error("Cannot assign value to member");
+                      }
+                    },
+                    std::move(object_value_it->second));
+              }
+              v = std::move(agg_value);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /** @brief The one way into the JSON serializer's and deserializer's private state, for the
+   * namespace-scope readers and writers.
+   */
+  struct json_access
+  {
+    template <typename Ser> using nest = typename Ser::nest;
+
+    template <typename Backend> static bool commenting(Backend const& backend)
+    {
+      return backend.comments_.active;
+    }
+
+    template <typename De> static void skip_to_value(De& de)
+    {
+      de.skip_to_value();
+    }
+
+    template <typename Map, typename De> static Map read_commented_object(De& de)
+    {
+      using node_type      = serde::comments_of<Map>;
+      constexpr auto opts  = De::read_opts;
+      auto&          cap   = de.comments_;
+      node_type*     node  = cap.slot.template take<node_type>();
+      const bool     root  = std::exchange(cap.root, false) and node != nullptr;
+      bool           found = false;
+
+      serde::comment_block  discarded;
+      serde::comment_block* prev = nullptr;
+
+      auto take_trailing = [&] {
+        if(node == nullptr)
+        {
+          return;
+        }
+        de.take_trailing(prev != nullptr ? prev->trailing : serde::comment(*node).trailing);
+      };
+      auto close = [&] {
+        take_trailing();
+        if(node == nullptr)
+        {
+          de.drop_pending();
+          return;
+        }
+        de.take_leading(serde::comment(*node).footer);
+      };
+      auto measure = [&] {
+        if(root and cap.broke_line and serde::layout_of(*node).indent == 0)
+        {
+          serde::layout_of(*node).indent =
+              static_cast<std::uint8_t>(std::min<std::size_t>(cap.line_column, 255));
+          serde::layout_of(*node).indent_char = cap.indent_char;
+        }
+      };
+      auto colon = [&] {
+        de.ltrim();
+        if(de.advance() != ':')
+        {
+          throw std::runtime_error("Expected ':' after object key");
+        }
+        de.ltrim();
+        de.drop_pending();
+      };
+
+      de.skip_to_value();
+      if(de.advance() != '{')
+      {
+        throw std::runtime_error("Expected '{' at start of JSON object");
+      }
+      de.ltrim();
+      take_trailing();
+      measure();
+
+      Map value{};
+      if(not de.at_end() and de.peek() == '}')
+      {
+        de.advance();
+        close();
+        return value;
+      }
+
+      while(true)
+      {
+        de.ltrim();
+        measure();
+        [[maybe_unused]] const std::string_view key = de.read_key();
+        found                                       = false;
+        template for(constexpr auto member : define_static_array(
+                         nonstatic_data_members_of(^^Map, std::meta::access_context::current())))
+        {
+          constexpr std::string_view name        = serialized_name(member);
+          constexpr auto             node_member = serde::detail::comment_member_of<member>();
+          using member_node = std::remove_cvref_t<typename[:type_of(node_member):]>;
+          if(not found and key == name)
+          {
+            found = true;
+            take_trailing();
+            if(node != nullptr)
+            {
+              auto& block = serde::comment(node->[:node_member:]);
+              de.take_leading(block.leading);
+              prev = &block;
+            }
+            else
+            {
+              de.drop_pending();
+            }
+            colon();
+            if constexpr(not std::same_as<member_node, serde::comment_block>)
+            {
+              if(node != nullptr)
+              {
+                cap.slot.give(node->[:node_member:]);
+              }
+            }
+            load_object_member(de, value.[:member:]);
+            cap.slot = {};
+            de.drop_pending();
+          }
+        }
+        if(not found)
+        {
+          if constexpr(opts.unknown_keys == serde::unknown_keys::skip)
+          {
+            take_trailing();
+            de.drop_pending();
+            prev = &discarded;
+            colon();
+            std::ignore = de.template load<json::value>();
+            de.drop_pending();
+          }
+          else
+          {
+            throw std::runtime_error("Key not found in object");
+          }
+        }
+
+        de.ltrim();
+        const char sep = de.advance();
+        if(sep == ',')
+        {
+          if constexpr(opts.trailing_commas)
+          {
+            de.ltrim();
+            if(not de.at_end() and de.peek() == '}')
+            {
+              de.advance();
+              close();
+              break;
+            }
+          }
+          continue;
+        }
+        if(sep == '}')
+        {
+          close();
+          break;
+        }
+        throw std::runtime_error("Expected ',' or '}' in object");
+      }
+      return value;
+    }
+
+    template <typename Ser, typename Agg>
+    static void write_commented_object(Ser& ser, Agg const& value)
+    {
+      using node_type       = serde::comments_of<Agg>;
+      auto&            emit = ser.comments_;
+      node_type const* node = emit.slot.template take<node_type const>();
+      std::string_view deferred;
+
+      typename Ser::nest members;
+
+      auto flush_deferred = [&] {
+        if(not deferred.empty())
+        {
+          ser.write_char(' ');
+          ser.write_comment(deferred);
+          deferred = {};
+        }
+      };
+
+      ser.write_char('{');
+      if(node != nullptr and not serde::comment(*node).trailing.empty())
+      {
+        ser.write_char(' ');
+        ser.write_comment(serde::comment(*node).trailing);
+        members.enter(ser);
+      }
+
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+      {
+        constexpr bool omit        = serde::omits_when_empty(member);
+        constexpr auto node_member = serde::detail::comment_member_of<member>();
+        constexpr bool scalar_node = std::same_as<
+            std::remove_cvref_t<typename[:type_of(node_member):]>, serde::comment_block>;
+        auto const& member_value = value.[:member:];
+        if constexpr(omit)
+        {
+          if(serde::is_empty_value(member_value))
+          {
+            continue;
+          }
+        }
+        members.open(ser);
+        flush_deferred();
+        if(node != nullptr)
+        {
+          ser.write_comment_lines(serde::comment(node->[:node_member:]).leading);
+        }
+        ser.newline();
+        static constexpr std::string_view key_token = quoted_key<member, true>();
+        ser.write_raw(key_token);
+        if constexpr(not scalar_node)
+        {
+          if(node != nullptr)
+          {
+            emit.slot.give(node->[:node_member:]);
+          }
+        }
+        reflex::visit([&ser](auto const& v) { serialize(ser, v); }, member_value);
+        const bool written_inside = emit.slot.node == nullptr;
+        emit.slot                 = {};
+        if(node != nullptr and (scalar_node or not written_inside))
+        {
+          deferred = serde::comment(node->[:node_member:]).trailing;
+        }
+      }
+      flush_deferred();
+      if(node != nullptr and not serde::comment(*node).footer.empty())
+      {
+        members.enter(ser);
+        ser.write_comment_lines(serde::comment(*node).footer);
+      }
+      members.close(ser, '}');
+    }
+  };
+
+  struct indent_state
+  {
+    int depth = 0;
+  };
+
+  /** @brief The indent state of a serializer writing comments: @p width and @p fill come from
+   * the layout read with the tree, 0 when it measured nothing.
+   */
+  struct layout_indent_state : indent_state
+  {
+    int  width = 0;
+    char fill  = ' ';
+  };
+
+  struct no_indent_state
+  {};
+
+  /** @brief The JSON reader's capture state.
+   *
+   * @p fresh_line makes the next skip start on a new line, at document start. @p broke_line tells
+   * whether the last skip that consumed anything crossed a line break, @p indent_char is the
+   * first byte of the indentation it measured. @p newline_last is true when the last byte it
+   * consumed was a line break.
+   */
+  struct comment_capture : serde::detail::comment_capture
+  {
+    bool fresh_line   = false;
+    bool broke_line   = false;
+    bool newline_last = false;
+    char indent_char  = ' ';
+  };
+
+  /** @brief The lines of the block comment body @p raw, one entry per line.
+   *
+   * Continuation lines lose their indentation and, when every non-empty one starts with `*`, that
+   * decoration. An empty first or last line, the opening or closing line of a boxed comment, is
+   * dropped.
+   *
+   * @return the lines, and whether the first one was kept, the one sharing a line with the
+   * preceding token
+   */
+  inline std::pair<std::vector<std::string>, bool> split_block_comment(std::string_view raw)
+  {
+    std::vector<std::string_view> lines;
+    for(auto part : raw | std::views::split('\n'))
+    {
+      lines.emplace_back(part.begin(), part.end());
+    }
+    bool decorated = false;
+    for(std::size_t i = 1; i < lines.size(); ++i)
+    {
+      const auto start = lines[i].find_first_not_of(" \t");
+      lines[i].remove_prefix(start == std::string_view::npos ? lines[i].size() : start);
+    }
+    for(std::size_t i = 1; i < lines.size(); ++i)
+    {
+      if(lines[i].empty())
+      {
+        continue;
+      }
+      decorated = lines[i].starts_with('*');
+      if(not decorated)
+      {
+        break;
+      }
+    }
+    if(decorated)
+    {
+      for(std::size_t i = 1; i < lines.size(); ++i)
+      {
+        if(not lines[i].empty())
+        {
+          lines[i].remove_prefix(1);
+        }
+      }
+    }
+    std::vector<std::string> out;
+    for(auto line : lines)
+    {
+      out.emplace_back(serde::detail::comment_body(line));
+    }
+    bool first_kept = true;
+    if(out.size() > 1 and out.back().empty())
+    {
+      out.pop_back();
+    }
+    if(out.size() > 1 and out.front().empty())
+    {
+      out.erase(out.begin());
+      first_kept = false;
+    }
+    return {std::move(out), first_kept};
   }
   } // namespace detail
 
@@ -204,6 +592,224 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     static constexpr std::string_view format_name = "JSON";
 
+  private:
+    friend serde::detail::serializer_base<OutputIt>;
+    friend struct detail::json_access;
+
+    static constexpr std::string_view key_separator = Opts.indent > 0 ? ": " : ":";
+
+    [[no_unique_address]] typename[:Opts.comments     ? ^^detail::layout_indent_state
+                                    : Opts.indent > 0 ? ^^detail::indent_state
+                                                      : ^^detail::no_indent_state:] indent_{};
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^serde::detail::comment_emit
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    /** @brief The width of one indent level: the layout of the tree being written, when it
+     * measured one, otherwise the options'.
+     */
+    constexpr int indent_width() const
+    {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active and indent_.width > 0)
+        {
+          return indent_.width;
+        }
+      }
+      return Opts.indent;
+    }
+
+    /** @brief Writes a line break and the indent of the current depth. */
+    void newline()
+      requires(Opts.indent > 0)
+    {
+      static constexpr std::string_view spaces = "                                                "
+                                                 "                ";
+      static constexpr std::string_view tabs = "\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t";
+      std::string_view                  run  = spaces;
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active and indent_.width > 0 and indent_.fill == '\t')
+        {
+          run = tabs;
+        }
+      }
+      this->write_char('\n');
+      auto n = static_cast<std::size_t>(indent_.depth * indent_width());
+      while(n > 0)
+      {
+        const std::size_t len = std::min(n, run.size());
+        this->write_raw(run.substr(0, len));
+        n -= len;
+      }
+    }
+
+    /** @brief Writes `// ` and @p text, or a bare `//` for an empty @p text.
+     * @throws std::runtime_error when @p text holds a line break
+     */
+    void write_comment(std::string_view text)
+      requires(Opts.comments)
+    {
+      serde::detail::check_comment_line(text, "", format_name);
+      if(text.empty())
+      {
+        this->write_raw("//");
+        return;
+      }
+      this->write_raw("// ");
+      this->write_raw(text);
+    }
+
+    /** @brief Writes @p lines, each on its own line at the current depth, a blank line entry as
+     * an empty line.
+     */
+    void write_comment_lines(std::vector<std::string> const& lines)
+      requires(Opts.comments)
+    {
+      for(auto const& line : lines)
+      {
+        if(line == serde::blank_line)
+        {
+          this->write_char('\n');
+        }
+        else
+        {
+          newline();
+          write_comment(line);
+        }
+      }
+    }
+
+    /** @brief Takes the indent from @p node's layout and writes its header, called by
+     * dump(value, comments).
+     */
+    template <typename Node>
+    void begin_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        indent_.width = serde::layout_of(node).indent;
+        indent_.fill  = serde::layout_of(node).indent_char;
+      }
+      for(auto const& line : serde::comment(node).leading)
+      {
+        if(line != serde::blank_line)
+        {
+          write_comment(line);
+        }
+        this->write_char('\n');
+      }
+    }
+
+    /** @brief Writes the footer of a root that is not an aggregate and the final line break,
+     * called by dump(value, comments).
+     */
+    template <typename Node>
+    void end_dump(Node const& node)
+      requires(Opts.comments)
+    {
+      bool final_newline = true;
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        final_newline = serde::layout_of(node).final_newline;
+      }
+      else
+      {
+        for(auto const& line : node.footer)
+        {
+          this->write_char('\n');
+          if(line != serde::blank_line)
+          {
+            write_comment(line);
+          }
+        }
+      }
+      if(final_newline)
+      {
+        this->write_char('\n');
+      }
+      indent_.width = 0;
+    }
+
+    /** @brief One container being written: separators, line breaks and the depth it opened.
+     *
+     * The depth is entered at the first item and left at the closing token, or on unwinding, so
+     * an empty container stays on one line and a throwing value leaves the depth right.
+     */
+    class nest
+    {
+      serializer* ser_   = nullptr;
+      bool        first_ = true;
+
+    public:
+      nest()                       = default;
+      nest(nest const&)            = delete;
+      nest& operator=(nest const&) = delete;
+
+      ~nest()
+      {
+        if constexpr(Opts.indent > 0)
+        {
+          if(ser_ != nullptr)
+          {
+            --ser_->indent_.depth;
+          }
+        }
+      }
+
+      /** @brief Writes what precedes the next item: a comma after the first, then its line. */
+      void item(serializer& ser)
+      {
+        open(ser);
+        if constexpr(Opts.indent > 0)
+        {
+          ser.newline();
+        }
+      }
+
+      /** @brief Writes the comma before the next item, after the first, and enters the depth. */
+      void open(serializer& ser)
+      {
+        if(not first_)
+        {
+          ser.write_char(',');
+        }
+        first_ = false;
+        enter(ser);
+      }
+
+      /** @brief Enters the depth if not yet entered, so the closing token goes on its own line. */
+      void enter(serializer& ser)
+      {
+        if constexpr(Opts.indent > 0)
+        {
+          if(ser_ == nullptr)
+          {
+            ser_ = &ser;
+            ++ser.indent_.depth;
+          }
+        }
+      }
+
+      /** @brief Writes the closing token @p close, on its own line when an item was written. */
+      void close(serializer& ser, char close)
+      {
+        if constexpr(Opts.indent > 0)
+        {
+          if(ser_ != nullptr)
+          {
+            --ser.indent_.depth;
+            ser_ = nullptr;
+            ser.newline();
+          }
+        }
+        ser.write_char(close);
+      }
+    };
+
+  public:
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, null_t const&)
     {
       ser.write_raw("null");
@@ -316,6 +922,18 @@ REFLEX_EXPORT namespace reflex::serde::json
         return ser.out();
       }
 
+      if constexpr(Opts.indent > 0)
+      {
+        nest items;
+        for(const auto& elem : value)
+        {
+          items.item(ser);
+          serialize(ser, elem);
+        }
+        items.close(ser, ']');
+        return ser.out();
+      }
+
       auto view = std::views::all(value);
 
       for(const auto& elem : view | std::views::take(value.size() - 1))
@@ -333,10 +951,12 @@ REFLEX_EXPORT namespace reflex::serde::json
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Pair const& value)
     {
       ser.write_char('{');
+      nest entry;
+      entry.item(ser);
       serialize(ser, value.first);
-      ser.write_char(':');
+      ser.write_raw(key_separator);
       reflex::visit([&ser](const auto& v) { serialize(ser, v); }, value.second);
-      ser.write_char('}');
+      entry.close(ser, '}');
       return ser.out();
     }
 
@@ -345,20 +965,13 @@ REFLEX_EXPORT namespace reflex::serde::json
     {
       ser.write_char('{');
 
-      bool first = true;
+      nest entries;
 
       for(const auto& [key, val] : value)
       {
-        if(not first)
-        {
-          ser.write_char(',');
-        }
-        else
-        {
-          first = false;
-        }
+        entries.item(ser);
         serialize(ser, key);
-        ser.write_char(':');
+        ser.write_raw(key_separator);
         reflex::visit(
             [&ser]<typename U>(const U& v) {
               using var_type = typename Map::mapped_type;
@@ -373,7 +986,7 @@ REFLEX_EXPORT namespace reflex::serde::json
             },
             val);
       }
-      ser.write_char('}');
+      entries.close(ser, '}');
       return ser.out();
     }
 
@@ -397,15 +1010,26 @@ REFLEX_EXPORT namespace reflex::serde::json
       tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value,
       TagT = {})
   {
-    ser.write_char('{');
-
     constexpr bool tag = TagT::value;
 
-    bool first = not tag;
+    if constexpr(Opts.comments and not tag and serde::detail::reflected_aggregate_c<Agg>)
+    {
+      if(detail::json_access::commenting(ser))
+      {
+        detail::json_access::write_commented_object(ser, value);
+        return ser.out();
+      }
+    }
+
+    ser.write_char('{');
+
+    detail::json_access::nest<serializer<OutputIt, Opts>> members;
 
     if constexpr(tag)
     {
-      ser.write_raw("\"__type\":");
+      members.item(ser);
+      ser.write_raw("\"__type\"");
+      ser.write_raw(Opts.indent > 0 ? ": " : ":");
       // Hashing at compile time would change the emitted id, which is a wire format
       // break.
       static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Agg))));
@@ -425,19 +1049,12 @@ REFLEX_EXPORT namespace reflex::serde::json
           continue;
         }
       }
-      if(not first)
-      {
-        ser.write_char(',');
-      }
-      else
-      {
-        first = false;
-      }
-      static constexpr std::string_view key_token = detail::quoted_key<member>();
+      members.item(ser);
+      static constexpr std::string_view key_token = detail::quoted_key<member, (Opts.indent > 0)>();
       ser.write_raw(key_token);
       reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
     }
-    ser.write_char('}');
+    members.close(ser, '}');
     return ser.out();
   }
 
@@ -514,12 +1131,291 @@ REFLEX_EXPORT namespace reflex::serde::json
     // Narrowing to " \t\n\r" would change what parses.
     void ltrim()
     {
-      while(not at_end() and reflex::is_space(*cursor_.begin()))
+      if constexpr(Opts.comments)
       {
-        cursor_.advance(1);
+        skip_space_and_comments();
+      }
+      else
+      {
+        while(not at_end() and reflex::is_space(*cursor_.begin()))
+        {
+          cursor_.advance(1);
+        }
       }
     }
 
+  private:
+    friend base;
+    friend struct detail::json_access;
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^detail::comment_capture
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    /** @brief Reads the document header into @p node's leading lines, called by load_commented. */
+    template <typename Node>
+    void begin_commented(Node& node)
+      requires(Opts.comments)
+    {
+      comments_.root       = true;
+      comments_.fresh_line = true;
+      skip_space_and_comments();
+      take_leading(serde::comment(node).leading);
+    }
+
+    /** @brief Reads the document footer into @p node's footer and records the final line break. */
+    template <typename Node>
+    void end_commented(Node& node)
+      requires(Opts.comments)
+    {
+      drop_pending();
+      skip_space_and_comments();
+      take_leading(serde::comment(node).footer);
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        if constexpr(base::bulk_scan)
+        {
+          serde::layout_of(node).final_newline = this->input().ends_with('\n');
+        }
+        else
+        {
+          serde::layout_of(node).final_newline = comments_.newline_last;
+        }
+      }
+    }
+
+    /** @brief Moves the pending comments read on the previous token's line into @p trailing,
+     * joined by one space and after one space when @p trailing is not empty.
+     */
+    void take_trailing(std::string& trailing)
+      requires(Opts.comments)
+    {
+      auto&       pending = comments_.pending;
+      std::size_t n       = 0;
+      for(; n < pending.size() and pending[n].same_line; ++n)
+      {
+        if(not trailing.empty())
+        {
+          trailing += ' ';
+        }
+        trailing += pending[n].text;
+      }
+      pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(n));
+    }
+
+    /** @brief Moves every pending comment and blank line into @p lines. */
+    void take_leading(std::vector<std::string>& lines)
+      requires(Opts.comments)
+    {
+      for(auto& entry : comments_.pending)
+      {
+        lines.push_back(std::move(entry.text));
+      }
+      comments_.pending.clear();
+    }
+
+    /** @brief Drops every pending comment. */
+    void drop_pending()
+      requires(Opts.comments)
+    {
+      comments_.pending.clear();
+    }
+
+    /** @brief Skips what may precede a value: nothing, or whitespace and comments when the
+     * read options accept comments, so a value opening the document may follow a comment.
+     */
+    void skip_to_value()
+    {
+      if constexpr(Opts.comments)
+      {
+        skip_space_and_comments();
+      }
+    }
+
+    /** @brief Skips whitespace, line comments and block comments.
+     *
+     * While load_commented runs, each comment and each blank line is queued as pending, with
+     * whether it sits on the line of the preceding token, and the indentation of the line the
+     * next token starts is measured.
+     */
+    void skip_space_and_comments()
+      requires(Opts.comments)
+    {
+      auto&       cap       = comments_;
+      const bool  capture   = cap.active;
+      bool        crossed   = cap.fresh_line;
+      bool        same_line = not crossed;
+      bool        blank     = crossed;
+      bool        consumed  = false;
+      std::size_t column    = 0;
+      char        fill      = ' ';
+      std::string text;
+      cap.fresh_line   = false;
+      cap.newline_last = false;
+      while(not at_end())
+      {
+        const char c = *cursor_.begin();
+        if(c == '\n')
+        {
+          if(capture and crossed and blank)
+          {
+            cap.pending.push_back({std::string{serde::blank_line}, 0, false});
+          }
+          crossed   = true;
+          same_line = false;
+          blank     = true;
+          column    = 0;
+          cursor_.advance(1);
+          consumed         = true;
+          cap.newline_last = true;
+          continue;
+        }
+        if(reflex::is_space(c))
+        {
+          if(blank)
+          {
+            fill = column == 0 ? c : fill;
+            ++column;
+          }
+          cursor_.advance(1);
+          consumed         = true;
+          cap.newline_last = false;
+          continue;
+        }
+        if(c != '/')
+        {
+          break;
+        }
+        cursor_.advance(1);
+        consumed         = true;
+        cap.newline_last = false;
+        const char kind  = at_end() ? '\0' : *cursor_.begin();
+        if(kind == '/')
+        {
+          cursor_.advance(1);
+          read_line_comment(capture ? &text : nullptr);
+          if(capture)
+          {
+            cap.pending.push_back(
+                {std::string{serde::detail::comment_body(text)}, column, same_line});
+          }
+          blank = false;
+        }
+        else if(kind == '*')
+        {
+          cursor_.advance(1);
+          const bool multi_line = read_block_comment(capture ? &text : nullptr);
+          if(capture)
+          {
+            auto [lines, first_kept] = detail::split_block_comment(text);
+            bool on_line             = same_line and first_kept;
+            for(auto& line : lines)
+            {
+              cap.pending.push_back({std::move(line), column, on_line});
+              on_line = false;
+            }
+          }
+          if(multi_line)
+          {
+            crossed   = true;
+            same_line = false;
+          }
+          blank = false;
+        }
+        else
+        {
+          throw std::runtime_error("Unexpected '/' in JSON");
+        }
+      }
+      if(consumed)
+      {
+        cap.broke_line = crossed;
+        if(crossed and blank)
+        {
+          cap.line_column = column;
+          cap.indent_char = fill;
+        }
+      }
+    }
+
+    void read_line_comment(std::string* text)
+    {
+      if constexpr(base::bulk_scan)
+      {
+        const std::string_view rest = this->rest();
+        const std::size_t      end  = std::min(rest.find('\n'), rest.size());
+        if(text != nullptr)
+        {
+          text->assign(rest.substr(0, end));
+        }
+        this->skip(end);
+      }
+      else
+      {
+        if(text != nullptr)
+        {
+          text->clear();
+        }
+        while(not at_end() and *cursor_.begin() != '\n')
+        {
+          if(text != nullptr)
+          {
+            text->push_back(*cursor_.begin());
+          }
+          cursor_.advance(1);
+        }
+      }
+    }
+
+    bool read_block_comment(std::string* text)
+    {
+      if constexpr(base::bulk_scan)
+      {
+        const std::string_view rest = this->rest();
+        const std::size_t      end  = rest.find("*/");
+        if(end == std::string_view::npos)
+        {
+          throw std::runtime_error("Unterminated JSON comment");
+        }
+        const std::string_view body = rest.substr(0, end);
+        if(text != nullptr)
+        {
+          text->assign(body);
+        }
+        this->skip(end + 2);
+        return body.find('\n') != std::string_view::npos;
+      }
+      else
+      {
+        if(text != nullptr)
+        {
+          text->clear();
+        }
+        bool multi_line = false;
+        bool star       = false;
+        while(not at_end())
+        {
+          const char c = *cursor_.begin();
+          cursor_.advance(1);
+          if(star and c == '/')
+          {
+            if(text != nullptr)
+            {
+              text->pop_back();
+            }
+            return multi_line;
+          }
+          star       = c == '*';
+          multi_line = multi_line or c == '\n';
+          if(text != nullptr)
+          {
+            text->push_back(c);
+          }
+        }
+        throw std::runtime_error("Unterminated JSON comment");
+      }
+    }
+
+  public:
     // Reads an object key and hands back a view of it.
     //
     // The view points into the input buffer, not into anything the parse owns,
@@ -574,6 +1470,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     friend auto
         tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<json::null_t>)
     {
+      de.skip_to_value();
       de.expect("null");
       return null;
     }
@@ -584,6 +1481,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         deserializer& de,
         std::type_identity<std::optional<T>>)
     {
+      de.skip_to_value();
       if(de.peek() == 'n')
       {
         de.expect("null");
@@ -644,6 +1542,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       requires serde::detail::borrowed_string_sink_c<Str> and deserializer::bulk_scan
     friend Str tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
+      de.skip_to_value();
       if(de.advance() != '"')
       {
         throw std::runtime_error("Expected '\"' at start of JSON string");
@@ -703,6 +1602,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       requires serde::detail::string_sink_c<Str>
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Str>)
     {
+      de.skip_to_value();
       if(de.advance() != '"')
       {
         throw std::runtime_error("Expected '\"' at start of JSON string");
@@ -836,6 +1736,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <number_c Num>
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Num>)
     {
+      de.skip_to_value();
       Num value;
       if constexpr(deserializer::bulk_scan)
       {
@@ -847,7 +1748,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         // Anything else, `1.2.3` being the case that used to slip through, is
         // trailing garbage and is rejected here rather than left for the next
         // token to fail on with an unrelated message.
-        if(ec != std::errc{} or (ptr != last and not detail::ends_number(*ptr)))
+        if(ec != std::errc{} or (ptr != last and not detail::ends_number<Opts.comments>(*ptr)))
         {
           throw std::runtime_error("Failed to parse number");
         }
@@ -875,8 +1776,12 @@ REFLEX_EXPORT namespace reflex::serde::json
         // permissive than the parser, and what stopped the collector must be a
         // character that may follow a number, which covers `1.5abc`.
         auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
-        if(ec != std::errc{} or ptr != token.data() + token.size()
-           or (not de.at_end() and not detail::ends_number(de.peek())))
+        if(ec
+           != std::errc{}
+           or ptr
+           != token.data()
+           + token.size()
+           or (not de.at_end() and not detail::ends_number<Opts.comments>(de.peek())))
         {
           throw std::runtime_error("Failed to parse number");
         }
@@ -886,6 +1791,7 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<boolean>)
     {
+      de.skip_to_value();
       if(de.peek() == 't')
       {
         de.expect("true");
@@ -916,6 +1822,7 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <seq_c Seq>
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Seq>)
     {
+      de.skip_to_value();
       if(de.advance() != '[')
         throw std::runtime_error("Expected '[' at start of JSON array");
 
@@ -942,6 +1849,14 @@ REFLEX_EXPORT namespace reflex::serde::json
         if(sep == ',')
         {
           de.ltrim();
+          if constexpr(Opts.trailing_commas)
+          {
+            if(not de.at_end() and de.peek() == ']')
+            {
+              de.advance();
+              break;
+            }
+          }
           continue;
         }
         if(sep == ']')
@@ -991,6 +1906,14 @@ REFLEX_EXPORT namespace reflex::serde::json
   auto tag_invoke(
       tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Map>)
   {
+    if constexpr(Opts.comments and serde::detail::reflected_aggregate_c<Map>)
+    {
+      if(detail::json_access::commenting(de))
+      {
+        return detail::json_access::read_commented_object<Map>(de);
+      }
+    }
+    detail::json_access::skip_to_value(de);
     if(de.advance() != '{')
       throw std::runtime_error("Expected '{' at start of JSON object");
 
@@ -1013,62 +1936,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
       de.ltrim();
 
-      auto load_member = [&]<typename V>(V& v) {
-        v = de.template load<std::remove_cvref_t<V>>();
-        if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
-        {
-          if(v.is_object())
-          {
-            auto& obj = v.as_object();
-            auto  type_key =
-                std::ranges::find_if(obj, [](auto const& pair) { return pair.first == "__type"; });
-            if(type_key != obj.end())
-            {
-              template for(constexpr auto a : detail::aggregate_types_of_var<V>())
-              {
-                if(type_key->second
-                   == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
-                {
-                  using Agg = [:a:];
-                  Agg agg_value{};
-                  template for(constexpr auto member :
-                               define_static_array(nonstatic_data_members_of(
-                                   a, std::meta::access_context::current())))
-                  {
-                    constexpr std::string_view name = serialized_name(member);
-                    if(name == "__type")
-                    {
-                      continue;
-                    }
-                    [[maybe_unused]] auto object_value_it = std::ranges::find_if(
-                        obj, [name](auto const& pair) { return pair.first == name; });
-                    auto& member_value = agg_value.[:member:];
-                    visit(
-                        [&]<typename U>([[maybe_unused]] U&& v) {
-                          if constexpr(requires { member_value = std::forward<U>(v); })
-                          {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wfloat-conversion"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-                            member_value = std::forward<U>(v);
-#pragma GCC diagnostic pop
-                          }
-                          else
-                          {
-                            throw std::runtime_error("Cannot assign value to member");
-                          }
-                        },
-                        std::move(object_value_it->second));
-                  }
-                  v = std::move(agg_value);
-                  break;
-                }
-              }
-            }
-          }
-        }
-      };
+      auto load_member = [&de]<typename V>(V& v) { detail::load_object_member(de, v); };
       if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
       {
         if(not serde::object_try_visit_flat(key, value, load_member))
@@ -1085,6 +1953,15 @@ REFLEX_EXPORT namespace reflex::serde::json
       const char sep = de.advance();
       if(sep == ',')
       {
+        if constexpr(Opts.trailing_commas)
+        {
+          de.ltrim();
+          if(not de.at_end() and de.peek() == '}')
+          {
+            de.advance();
+            break;
+          }
+        }
         continue;
       }
       if(sep == '}')
