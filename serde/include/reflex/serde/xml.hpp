@@ -840,7 +840,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
     static constexpr bool indents = Opts.indent > 0 or Opts.comments;
 
-    [[no_unique_address]] std::conditional_t<indents, indent_state, no_indent> indent_{};
+    [[no_unique_address]] typename[:indents ? ^^indent_state : ^^no_indent:] indent_{};
 
     struct emit_state : serde::detail::comment_emit
     {
@@ -848,8 +848,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
       char indent_char = ' ';
     };
 
-    [[no_unique_address]] std::
-        conditional_t<Opts.comments, emit_state, serde::detail::no_comment_state> comments_{};
+    [[no_unique_address]]
+    typename[:Opts.comments ? ^^emit_state : ^^serde::detail::no_comment_state:] comments_{};
 
     friend serde::detail::serializer_base<OutputIt>;
 
@@ -1385,8 +1385,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
       char        tag_char       = ' ';
     };
 
-    [[no_unique_address]] std::
-        conditional_t<Opts.comments, capture_state, serde::detail::no_comment_state> comments_{};
+    [[no_unique_address]]
+    typename[:Opts.comments ? ^^capture_state : ^^serde::detail::no_comment_state:] comments_{};
 
     friend base;
 
@@ -2339,8 +2339,8 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // Consumes the parent's close tag before returning.
     template <detail::aggregate_element_c Agg> void read_children(Agg & value)
     {
-      [[maybe_unused]] std::conditional_t<Opts.comments, children_capture<Agg>, no_children_capture>
-          cap{};
+      [[maybe_unused]]
+      typename[:Opts.comments ? ^^children_capture<Agg> : ^^no_children_capture:] cap{};
       if constexpr(Opts.comments)
       {
         open_children(cap);
