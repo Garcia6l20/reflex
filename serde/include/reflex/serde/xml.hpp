@@ -943,6 +943,16 @@ REFLEX_EXPORT namespace reflex::serde::xml
 
     static_assert(Opts.indent >= 0, "xml::options::indent cannot be negative");
 
+  private:
+    template <typename Ser, typename F, typename NodePtr>
+    friend void detail::write_field(Ser&, std::string_view, F const&, NodePtr);
+
+    template <typename Ser, typename NodePtr>
+    friend void detail::write_cdata_element(Ser&, std::string_view, std::string_view, NodePtr);
+
+    template <typename O, options P, xml_element_c A>
+    friend O tag_invoke(tag_default_t<serde::serialize>, serializer<O, P>&, A const&);
+
     /** @brief The child elements of one element, opened after its start tag's `>`.
      *
      * Each child is indented one level deeper. close() breaks the line before the close tag when
@@ -1108,6 +1118,7 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     }
 
+  public:
     template <typename T, auto X>
       requires std::constructible_from<OutputIt, T&> and (std::constant_wrapper<X>::value == Opts)
     serializer(T& out, std::constant_wrapper<X>) : serde::detail::serializer_base<OutputIt>(out)
