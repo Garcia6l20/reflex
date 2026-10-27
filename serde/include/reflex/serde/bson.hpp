@@ -5,6 +5,7 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <algorithm>
 #include <bit>
 #include <charconv>
 #include <cstring>
@@ -948,6 +949,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
             throw std::out_of_range("Array has more elements than target type can hold");
           }
           cursor_.read_bytes_into(value.data(), n);
+          std::ranges::fill(std::span{value}.subspan(n), std::byte{0});
         }
       }
       else if constexpr(seq_c<value_t>)
