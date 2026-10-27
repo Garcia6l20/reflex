@@ -13,15 +13,18 @@ using namespace std::string_view_literals;
 
 namespace reflex::serde::json
 {
-template <typename OutputIt>
-OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, bson::datetime const& dt)
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
 {
   return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
 }
 
-template <typename It>
-bson::datetime
-    tag_invoke(tag_t<serde::deserialize>, deserializer<It>& de, std::type_identity<bson::datetime>)
+template <typename It, auto Opts>
+bson::datetime tag_invoke(
+    tag_t<serde::deserialize>,
+    deserializer<It, Opts>& de,
+    std::type_identity<bson::datetime>)
 {
   auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
   return reflex::parse_or_throw<bson::datetime>(s);

@@ -294,9 +294,6 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
     static constexpr std::string_view format_name = "YAML";
 
-    // Fixed, not an option. A configurable width would have to be threaded
-    // through every tag_invoke, and no serde backend carries an options object.
-    // If it is ever wanted it becomes a template parameter on this class.
     static constexpr int indent_width = 2;
 
     // THE INVARIANT, which the whole block writer rests on:
