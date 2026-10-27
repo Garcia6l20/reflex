@@ -1,0 +1,22 @@
+# Application configuration
+# Edited by hand
+
+# instance name
+title: demo # shown in the title bar
+
+# Server settings
+
+# port to listen on
+port: 8080
+debug: false # never in production
+
+srv: # the upstream server
+    # host name or address
+    host: localhost
+    port: 9100 # upstream port
+    timeout: 30
+    # end of srv
+
+# retries before giving up
+retries: 3
+# end of file

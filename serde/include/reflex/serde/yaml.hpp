@@ -283,7 +283,19 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     bool                      final_newline = true;
   };
 
+  /** @brief The YAML serializer's emit state, held when its options write comments.
+   *
+   * @p indent is the detected width the commented dump writes with, 0 for the options' own.
+   * @p line_open is set while the cursor is at the start of a line whose indent is not written.
+   */
+  struct emit_state : serde::detail::comment_emit
+  {
+    int  indent    = 0;
+    bool line_open = false;
+  };
+
   struct read_access;
+  struct write_access;
   } // namespace detail
 
   /** @brief Output options of yaml::serializer, its second template argument. */
@@ -308,6 +320,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   class serializer : public serde::detail::serializer_base<OutputIt>
   {
     int depth_ = 0;
+
+    [[no_unique_address]] typename[:Opts.comments ? ^^detail::emit_state
+                                                  : ^^serde::detail::no_comment_state:] comments_{};
+
+    friend serde::detail::serializer_base<OutputIt>;
+    friend detail::write_access;
 
   public:
     using serde::detail::serializer_base<OutputIt>::serializer_base;
@@ -400,7 +418,206 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   private:
     int indent_width() const
     {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active and comments_.indent != 0)
+        {
+          return comments_.indent;
+        }
+      }
       return Opts.indent;
+    }
+
+    void write_indent_()
+    {
+      for(int i = 0; i < depth_ * indent_width(); ++i)
+      {
+        this->write_char(' ');
+      }
+    }
+
+    void begin_line_()
+    {
+      if(comments_.line_open)
+      {
+        write_indent_();
+        comments_.line_open = false;
+      }
+    }
+
+    void emit_comment_(std::string_view text)
+    {
+      serde::detail::check_comment_line(text, "", "YAML");
+      this->write_char('#');
+      if(not text.empty())
+      {
+        this->write_char(' ');
+        this->write_raw(text);
+      }
+    }
+
+    void emit_leading_(std::vector<std::string> const& lines)
+    {
+      for(auto const& line : lines)
+      {
+        if(line == serde::blank_line)
+        {
+          this->write_char('\n');
+          continue;
+        }
+        begin_line_();
+        emit_comment_(line);
+        this->write_char('\n');
+        comments_.line_open = true;
+      }
+    }
+
+    void emit_trailing_(std::string_view text)
+    {
+      if(not text.empty())
+      {
+        this->write_char(' ');
+        emit_comment_(text);
+      }
+    }
+
+    void emit_footer_(std::vector<std::string> const& lines)
+    {
+      for(auto const& line : lines)
+      {
+        this->write_char('\n');
+        if(line != serde::blank_line)
+        {
+          write_indent_();
+          emit_comment_(line);
+        }
+      }
+    }
+
+    template <typename Node> void begin_dump(Node const& node)
+    {
+      comments_.indent = 0;
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        if(serde::layout_of(node).indent >= 2)
+        {
+          comments_.indent = serde::layout_of(node).indent;
+        }
+      }
+      comments_.line_open = true;
+      emit_leading_(serde::comment(node).leading);
+    }
+
+    template <typename Node> void end_dump(Node const& node)
+    {
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        if(serde::layout_of(node).final_newline)
+        {
+          this->write_char('\n');
+        }
+      }
+      else
+      {
+        emit_footer_(serde::comment(node).footer);
+      }
+      comments_.line_open = false;
+      comments_.indent    = 0;
+    }
+
+    template <typename T> void write_value_trailing_(T const& value, std::string_view trailing)
+    {
+      if constexpr(detail::block_node_c<T>)
+      {
+        if(not detail::is_inline_empty(value))
+        {
+          emit_trailing_(trailing);
+          auto guard = this->push();
+          this->newline();
+          serialize(*this, value);
+          return;
+        }
+      }
+      this->write_char(' ');
+      serialize(*this, value);
+      emit_trailing_(trailing);
+    }
+
+    template <typename V, typename Sub> void write_member_commented_(V const& value, Sub const& sub)
+    {
+      std::string_view trailing = serde::comment(sub).trailing;
+      if constexpr(meta::is_template_instance_of(^^V, ^^std::optional))
+      {
+        if(not value.has_value())
+        {
+          this->write_raw(" null");
+          emit_trailing_(trailing);
+          return;
+        }
+        write_member_commented_(*value, sub);
+      }
+      else if constexpr(
+          serde::detail::comment_tree_c<Sub>
+          and not reflex::tag_invocable_c<tag_t<serde::serialize>, serializer&, V const&>)
+      {
+        if(detail::is_inline_empty(value))
+        {
+          this->write_char(' ');
+          serialize(*this, value);
+          emit_trailing_(trailing);
+          auto guard = this->push();
+          emit_footer_(serde::comment(sub).footer);
+          return;
+        }
+        emit_trailing_(trailing);
+        auto guard = this->push();
+        this->write_char('\n');
+        comments_.line_open = true;
+        write_aggregate_commented_(value, sub);
+      }
+      else
+      {
+        reflex::visit(
+            [this, trailing](auto const& v) { this->write_value_trailing_(v, trailing); }, value);
+      }
+    }
+
+    template <typename Agg>
+    void write_aggregate_commented_(Agg const& value, serde::comments_of<Agg> const& node)
+    {
+      bool first = true;
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(^^Agg, std::meta::access_context::current())))
+      {
+        constexpr bool omit = serde::omits_when_empty(member);
+        if constexpr(omit)
+        {
+          if(serde::is_empty_value(value.[:member:]))
+          {
+            continue;
+          }
+        }
+        if(not first)
+        {
+          this->write_char('\n');
+          comments_.line_open = true;
+        }
+        first = false;
+
+        constexpr auto node_member = serde::detail::comment_member_of<member>();
+        auto const&    sub         = node.[:node_member:];
+        emit_leading_(serde::comment(sub).leading);
+        begin_line_();
+        static constexpr std::string_view key_token = detail::plain_key<member>();
+        this->write_raw(key_token);
+        write_member_commented_(value.[:member:], sub);
+      }
+      if(first)
+      {
+        begin_line_();
+        this->write_raw("{}");
+      }
+      emit_footer_(serde::comment(node).footer);
     }
 
     void write_dash()
@@ -641,6 +858,28 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   serializer(std::ostringstream & out) -> serializer<std::ostreambuf_iterator<char>>;
   REFLEX_SERDE_TAGGED_SERIALIZER_DEDUCTION_GUIDES(serializer);
 
+  namespace detail
+  {
+  /** @brief The private emit members of yaml::serializer, reached from its free writers. */
+  struct write_access
+  {
+    template <typename Agg, typename Ser> static serde::comments_of<Agg> const* take_node(Ser& ser)
+    {
+      if(not ser.comments_.active)
+      {
+        return nullptr;
+      }
+      return ser.comments_.slot.template take<serde::comments_of<Agg> const>();
+    }
+
+    template <typename Agg, typename Ser>
+    static void write_aggregate(Ser& ser, Agg const& value, serde::comments_of<Agg> const& node)
+    {
+      ser.write_aggregate_commented_(value, node);
+    }
+  };
+  }
+
   // A block mapping, one "key: value" per line at this node's depth. No braces,
   // no separators: the extent of the mapping is its indentation.
   template <typename OutputIt, options Opts, aggregate_c Agg>
@@ -649,6 +888,15 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       tag_default_t<serde::serialize>, serializer<OutputIt, Opts> & ser, Agg const& value)
   {
     static constexpr auto type = decay(type_of(^^value));
+
+    if constexpr(Opts.comments and serde::detail::reflected_aggregate_c<Agg>)
+    {
+      if(auto const* node = detail::write_access::take_node<Agg>(ser))
+      {
+        detail::write_access::write_aggregate(ser, value, *node);
+        return ser.out();
+      }
+    }
 
     if constexpr(detail::member_count<Agg>() == 0)
     {
