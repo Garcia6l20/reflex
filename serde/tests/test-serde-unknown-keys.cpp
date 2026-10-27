@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 import reflex.serde.json;
+import reflex.serde.toml;
 import reflex.serde.xml;
 import reflex.serde.yaml;
 
@@ -24,6 +25,14 @@ struct uk_config
   std::string last;
 
   constexpr bool operator==(uk_config const&) const = default;
+};
+
+struct uk_pooled
+{
+  int                   first = 0;
+  std::vector<uk_inner> pool;
+
+  constexpr bool operator==(uk_pooled const&) const = default;
 };
 
 const uk_config uk_expected{
@@ -53,6 +62,27 @@ template <typename T> std::string yaml_default_message(std::string const& text)
   try
   {
     (void)yaml::deserializer{text}.template load<T>();
+  }
+  catch(std::exception const& e)
+  {
+    return e.what();
+  }
+  return {};
+}
+
+constexpr toml::read_options toml_skip{.unknown_keys = unknown_keys::skip};
+
+template <typename T> T toml_skip_load(std::string const& text)
+{
+  toml::deserializer de{text, std::cw<toml_skip>};
+  return de.template load<T>();
+}
+
+template <typename T> std::string toml_default_message(std::string const& text)
+{
+  try
+  {
+    (void)toml::deserializer{text}.template load<T>();
   }
   catch(std::exception const& e)
   {
@@ -95,6 +125,7 @@ TEST_CASE("reflex::serde::unknown_keys: defaults keep each format's behaviour")
   static_assert(json::read_options{}.unknown_keys == unknown_keys::error);
   static_assert(xml::read_options{}.unknown_keys == unknown_keys::skip);
   static_assert(yaml::read_options{}.unknown_keys == unknown_keys::error);
+  static_assert(toml::read_options{}.unknown_keys == unknown_keys::error);
 }
 
 TEST_CASE("reflex::serde::object_try_visit_flat: reports a miss instead of throwing")
@@ -289,5 +320,97 @@ TEST_CASE("reflex::serde::yaml: unknown_keys::skip")
     CHECK_EQ(
         yaml_default_message<uk_config>("first: 1\nsrv: {port: 8080, tls: 1, host: h}\nlast: z\n"),
         "Key not found in object");
+  }
+}
+
+TEST_CASE("reflex::serde::toml: unknown_keys::skip")
+{
+  const std::string srv = "[srv]\nport = 8080\nhost = \"h\"\n";
+
+  SUBCASE("an unknown scalar between two known keys")
+  {
+    CHECK_EQ(
+        toml_skip_load<uk_config>("first = 1\nextra = \"x\"\nlast = \"z\"\n" + srv), uk_expected);
+  }
+  SUBCASE("an unknown inline table and a multi-line array")
+  {
+    CHECK_EQ(
+        toml_skip_load<uk_config>(
+            "first = 1\nextra = {a = [1, {b = 2}], c = \"x\"}\n"
+            "more = [\n  1, # one\n  [2, 3],\n]\nlast = \"z\"\n"
+            + srv),
+        uk_expected);
+  }
+  SUBCASE("an unknown key first and last")
+  {
+    CHECK_EQ(
+        toml_skip_load<uk_config>("head = 0\nfirst = 1\nlast = \"z\"\n" + srv + "tail = [1, 2]\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown dotted key, at the root and inside a known table")
+  {
+    CHECK_EQ(
+        toml_skip_load<uk_config>("first = 1\nextra.a.b = 1\nextra.a.c = 2\nlast = \"z\"\n"
+                                  "[srv]\nport = 8080\ntls.on = true\nhost = \"h\"\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown key inside a known inline table")
+  {
+    CHECK_EQ(
+        toml_skip_load<uk_config>(
+            "first = 1\nsrv = {port = 8080, tls = {on = true}, host = \"h\"}\nlast = \"z\"\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown table with a sub-table, followed by a known table")
+  {
+    CHECK_EQ(
+        toml_skip_load<uk_config>(
+            "first = 1\nlast = \"z\"\n[gone]\na = 1\n[gone.child]\n"
+            "b = [1, 2]\n[gone.child.deeper]\nc = {d = 1}\n"
+            + srv),
+        uk_expected);
+  }
+  SUBCASE("an unknown sub-table of a known table")
+  {
+    CHECK_EQ(
+        toml_skip_load<uk_config>("first = 1\nlast = \"z\"\n" + srv + "[srv.tls]\non = true\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown array of tables with a sub-table, followed by a known table")
+  {
+    CHECK_EQ(
+        toml_skip_load<uk_config>(
+            "first = 1\nlast = \"z\"\n[[items]]\nname = \"a\"\n"
+            "[[items]]\nname = \"b\"\n[items.sub]\nx = 1\n"
+            + srv),
+        uk_expected);
+  }
+  SUBCASE("an unknown key inside a known array of tables")
+  {
+    CHECK_EQ(
+        toml_skip_load<uk_pooled>("first = 1\n[[pool]]\nport = 1\nextra = 0\nhost = \"a\"\n"
+                                  "[pool.gone]\nx = 1\n[[pool]]\nport = 2\nhost = \"b\"\n"),
+        uk_pooled{
+            1, {{1, "a"}, {2, "b"}}
+    });
+  }
+  SUBCASE("a shape conflict is still an error")
+  {
+    toml::deserializer de{std::string_view{"first.x = 1\n"}, std::cw<toml_skip>};
+    CHECK_THROWS_WITH_AS(
+        (void)de.template load<uk_config>(), doctest::Contains("is not a table"),
+        std::runtime_error);
+  }
+  SUBCASE("the default still throws the same message")
+  {
+    CHECK_EQ(
+        toml_default_message<uk_config>("first = 1\nextra = \"x\"\nlast = \"z\"\n" + srv),
+        "TOML: key 'extra': Key not found in object");
+    CHECK_EQ(
+        toml_default_message<uk_config>("first = 1\nlast = \"z\"\n[gone]\na = 1\n" + srv),
+        "TOML: key 'gone': Key not found in object");
+    CHECK_EQ(
+        toml_default_message<uk_config>("first = 1\nlast = \"z\"\n" + srv + "tls.on = true\n"),
+        "TOML: key 'srv.tls.on': Key not found in object");
   }
 }

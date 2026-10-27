@@ -313,7 +313,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
   // recursion walks the type graph and not the document, so it is finite; a walk
   // is bounded at run time by serde::max_key_depth. `full` is the whole path, so
   // a failure four segments in still says where it happened.
-  template <typename Root, typename Fn>
+  template <bool Skip = false, typename Root, typename Fn>
   void table_visit(std::span<segment const> path, Root& root, Fn& fn, std::string_view full);
 
   // A growable sequence grows to reach the element, which is what "[[x]] appends
@@ -360,7 +360,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
   }
 
-  template <typename Node, typename Fn>
+  template <bool Skip, typename Node, typename Fn>
   void table_descend(
       std::span<segment const> rest,
       Node&                    node,
@@ -376,7 +376,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     make_table(node);
     if constexpr(object_visitable_c<std::remove_cvref_t<Node>>)
     {
-      table_visit(rest, node, fn, full);
+      table_visit<Skip>(rest, node, fn, full);
     }
     else
     {
@@ -389,7 +389,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
   // A free function rather than the body of the lambda below, because GCC 16
   // miscompiles the reflections the `if constexpr` chain forms inside one.
-  template <typename Node, typename Fn>
+  template <bool Skip, typename Node, typename Fn>
   void table_step(
       segment                  seg,
       std::span<segment const> rest,
@@ -413,7 +413,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
               "something else here",
               full, seg.name));
         }
-        table_descend(rest, element_at(node.as_array(), seg, full), fn, full, seg.name);
+        table_descend<Skip>(rest, element_at(node.as_array(), seg, full), fn, full, seg.name);
         return;
       }
     }
@@ -422,7 +422,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     {
       if(seg.index != no_index)
       {
-        table_descend(rest, element_at(node, seg, full), fn, full, seg.name);
+        table_descend<Skip>(rest, element_at(node, seg, full), fn, full, seg.name);
         return;
       }
     }
@@ -436,17 +436,27 @@ REFLEX_EXPORT namespace reflex::serde::toml
             full, seg.name));
       }
     }
-    table_descend(rest, node, fn, full, seg.name);
+    table_descend<Skip>(rest, node, fn, full, seg.name);
   }
 
-  template <typename Root, typename Fn>
+  template <bool Skip, typename Root, typename Fn>
   void table_visit(std::span<segment const> path, Root& root, Fn& fn, std::string_view full)
   {
     const segment seg  = path.front();
     const auto    rest = path.subspan(1);
 
-    object_visitor<std::remove_cvref_t<Root>>{}(
-        [&]<typename N>(N&& nested) { table_step(seg, rest, nested, fn, full); }, seg.name, root);
+    if constexpr(Skip)
+    {
+      serde::object_try_visit_flat(seg.name, root, [&]<typename N>(N&& nested) {
+        table_step<true>(seg, rest, nested, fn, full);
+      });
+    }
+    else
+    {
+      object_visitor<std::remove_cvref_t<Root>>{}(
+          [&]<typename N>(N&& nested) { table_step<false>(seg, rest, nested, fn, full); }, seg.name,
+          root);
+    }
   }
   } // namespace detail
 
@@ -461,7 +471,8 @@ REFLEX_EXPORT namespace reflex::serde::toml
   /** @brief Input options of toml::deserializer, its second template argument. */
   struct read_options
   {
-    bool comments = false;
+    bool                comments     = false;
+    serde::unknown_keys unknown_keys = serde::unknown_keys::error;
 
     constexpr bool operator==(read_options const&) const = default;
   };
@@ -1500,7 +1511,23 @@ REFLEX_EXPORT namespace reflex::serde::toml
       const std::string where = detail::join_path(full);
 
       auto assign = [this]<typename V>(V& v) { v = this->template load<std::remove_cvref_t<V>>(); };
-      detail::table_visit(full, value, assign, where);
+      if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+      {
+        bool reached        = false;
+        auto assign_reached = [&]<typename V>(V& v) {
+          reached = true;
+          assign(v);
+        };
+        detail::table_visit<true>(full, value, assign_reached, where);
+        if(not reached)
+        {
+          std::ignore = this->template load<toml::value>();
+        }
+      }
+      else
+      {
+        detail::table_visit(full, value, assign, where);
+      }
     }
 
     // A document is flat. A [a.b.c] header re-targets every following assignment
@@ -1648,7 +1675,14 @@ REFLEX_EXPORT namespace reflex::serde::toml
       auto              create = []<typename V>(V& v) { detail::make_table(v); };
       try
       {
-        detail::table_visit(path, root, create, where);
+        if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          detail::table_visit<true>(path, root, create, where);
+        }
+        else
+        {
+          detail::table_visit(path, root, create, where);
+        }
       }
       catch(std::exception const& e)
       {
@@ -1717,7 +1751,24 @@ REFLEX_EXPORT namespace reflex::serde::toml
       };
       try
       {
-        detail::table_visit(path, root, assign, where);
+        if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          bool reached        = false;
+          auto assign_reached = [&]<typename V>(V& v) {
+            reached = true;
+            assign(v);
+          };
+          detail::table_visit<true>(path, root, assign_reached, where);
+          if(not reached)
+          {
+            const value_scope guard{*this};
+            std::ignore = this->template load<toml::value>();
+          }
+        }
+        else
+        {
+          detail::table_visit(path, root, assign, where);
+        }
       }
       catch(std::exception const& e)
       {
