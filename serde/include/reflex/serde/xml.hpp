@@ -1058,6 +1058,208 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // the next tag reader honors this instead of expecting to consume '<' again.
     bool lt_consumed_{false};
 
+    struct capture_state : serde::detail::comment_capture
+    {
+      std::size_t gap_newlines   = 0;
+      std::size_t column         = 0;
+      bool        in_indent      = false;
+      bool        line_broken    = false;
+      bool        last_newline   = false;
+      char        indent_char    = ' ';
+      bool        tag_line_start = false;
+      std::size_t tag_column     = 0;
+      char        tag_char       = ' ';
+    };
+
+    [[no_unique_address]] std::
+        conditional_t<Opts.comments, capture_state, serde::detail::no_comment_state> comments_{};
+
+    friend base;
+
+    template <typename Agg> struct children_capture
+    {
+      serde::comments_of<Agg>* node   = nullptr;
+      std::string*             prev   = nullptr;
+      bool                     active = false;
+      bool                     root   = false;
+    };
+
+    struct no_children_capture
+    {};
+
+    void note_char(char c)
+    {
+      auto& s = comments_;
+      if(c == '\n')
+      {
+        ++s.gap_newlines;
+        s.line_broken  = true;
+        s.in_indent    = true;
+        s.column       = 0;
+        s.last_newline = true;
+      }
+      else if(c == ' ' or c == '\t')
+      {
+        if(s.in_indent)
+        {
+          if(s.column == 0)
+          {
+            s.indent_char = c;
+          }
+          ++s.column;
+        }
+        s.last_newline = false;
+      }
+      else if(c != '\r')
+      {
+        s.gap_newlines = 0;
+        s.in_indent    = false;
+        s.last_newline = false;
+      }
+    }
+
+    void note_blank_lines()
+    {
+      auto& s = comments_;
+      for(std::size_t i = 1; i < s.gap_newlines; ++i)
+      {
+        s.pending.push_back({std::string{serde::blank_line}, 0, false});
+      }
+      s.gap_newlines = 0;
+    }
+
+    void note_markup(bool breaks_line)
+    {
+      auto& s        = comments_;
+      s.gap_newlines = 0;
+      s.in_indent    = false;
+      s.last_newline = false;
+      s.line_broken  = breaks_line;
+    }
+
+    void capture_comment()
+    {
+      std::string body;
+      if constexpr(bulk_scan)
+      {
+        const std::string_view sv = rest();
+        const std::size_t      n  = sv.find("-->");
+        body.assign(sv.substr(0, n));
+        skip(n == std::string_view::npos ? sv.size() : n + 3);
+      }
+      else
+      {
+        while(not at_end() and not body.ends_with("-->"))
+        {
+          body.push_back(advance());
+        }
+        if(body.ends_with("-->"))
+        {
+          body.resize(body.size() - 3);
+        }
+      }
+      note_blank_lines();
+      auto&            s         = comments_;
+      bool             same_line = not s.line_broken;
+      std::string_view text{body};
+      while(true)
+      {
+        const std::size_t nl = text.find('\n');
+        s.pending.push_back({std::string{detail::trim(text.substr(0, nl))}, 0, same_line});
+        if(nl == std::string_view::npos)
+        {
+          break;
+        }
+        same_line = false;
+        text.remove_prefix(nl + 1);
+      }
+      note_markup(s.line_broken or body.find('\n') != std::string::npos);
+    }
+
+    void attach_pending(std::string* same_line, std::vector<std::string>* rest_lines)
+    {
+      for(auto& p : comments_.pending)
+      {
+        if(p.same_line)
+        {
+          if(same_line != nullptr)
+          {
+            if(not same_line->empty())
+            {
+              same_line->push_back(' ');
+            }
+            same_line->append(p.text);
+          }
+        }
+        else if(rest_lines != nullptr)
+        {
+          rest_lines->push_back(std::move(p.text));
+        }
+      }
+      comments_.pending.clear();
+    }
+
+    template <typename Agg> void open_children(children_capture<Agg>& cap)
+    {
+      cap.active = comments_.active;
+      if(not cap.active)
+      {
+        return;
+      }
+      cap.node = comments_.slot.template take<serde::comments_of<Agg>>();
+      cap.root = std::exchange(comments_.root, false);
+      if(cap.node == nullptr)
+      {
+        cap.root = false;
+        comments_.pending.clear();
+        return;
+      }
+      if(cap.root)
+      {
+        for(auto& p : comments_.pending)
+        {
+          cap.node->_self.leading.push_back(std::move(p.text));
+        }
+        comments_.pending.clear();
+      }
+      cap.prev = &cap.node->_self.trailing;
+    }
+
+    template <typename Node> void begin_commented(Node&)
+    {
+      auto& s = comments_;
+      s.pending.clear();
+      s.root         = true;
+      s.gap_newlines = 1;
+      s.column       = 0;
+      s.in_indent    = true;
+      s.line_broken  = true;
+      s.last_newline = false;
+    }
+
+    template <typename Node> void end_commented(Node& node)
+    {
+      auto& own = serde::comment(node);
+      for(auto& p : comments_.pending)
+      {
+        own.leading.push_back(std::move(p.text));
+      }
+      comments_.pending.clear();
+      comments_.root = false;
+      while(read_tag_head().kind != tag_kind::end)
+      {
+      }
+      for(auto& p : comments_.pending)
+      {
+        own.footer.push_back(std::move(p.text));
+      }
+      comments_.pending.clear();
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        serde::layout_of(node).final_newline = comments_.last_newline;
+      }
+    }
+
   public:
     using base::at_end;
     using base::base;
@@ -1325,6 +1527,13 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // next markup as an open tag, a close tag, or end of input.
     tag_head read_tag_head()
     {
+      if constexpr(Opts.comments)
+      {
+        if(comments_.active)
+        {
+          return read_tag_head_capturing();
+        }
+      }
       while(true)
       {
         if(lt_consumed_)
@@ -1371,6 +1580,87 @@ REFLEX_EXPORT namespace reflex::serde::xml
       }
     }
 
+  private:
+    tag_head read_tag_head_capturing()
+    {
+      while(true)
+      {
+        if(lt_consumed_)
+        {
+          lt_consumed_ = false;
+        }
+        else
+        {
+          if constexpr(bulk_scan)
+          {
+            const std::string_view sv  = rest();
+            const std::size_t      n   = sv.find('<');
+            const std::string_view gap = sv.substr(0, n == std::string_view::npos ? sv.size() : n);
+            for(char c : gap)
+            {
+              note_char(c);
+            }
+            skip(gap.size());
+          }
+          else
+          {
+            while(not at_end() and peek() != '<')
+            {
+              note_char(advance());
+            }
+          }
+          if(at_end())
+          {
+            return {tag_kind::end, {}, false, {}};
+          }
+          comments_.tag_line_start = comments_.line_broken and comments_.in_indent;
+          comments_.tag_column     = comments_.column;
+          comments_.tag_char       = comments_.indent_char;
+          advance();
+        }
+        const char d = peek();
+        if(d == '?')
+        {
+          advance();
+          skip_until("?>");
+          note_markup(false);
+          continue;
+        }
+        if(d == '!')
+        {
+          advance();
+          if(not at_end() and peek() == '-')
+          {
+            advance();
+            if(not at_end() and peek() == '-')
+            {
+              advance();
+            }
+            capture_comment();
+          }
+          else
+          {
+            skip_bang();
+            note_markup(false);
+          }
+          continue;
+        }
+        note_blank_lines();
+        if(d == '/')
+        {
+          advance();
+          skip_until(">");
+          note_markup(false);
+          return {tag_kind::close, {}, false, {}};
+        }
+        name_t name                = read_name();
+        auto [self_closing, attrs] = read_attributes();
+        note_markup(false);
+        return {tag_kind::open, std::move(name), self_closing, std::move(attrs)};
+      }
+    }
+
+  public:
     // Reads the next element open tag. If a parent stashed an already-consumed
     // open tag, that is returned first. Returns {name, self_closing}; the open
     // tag's attributes are available via attributes() until the next open tag.
@@ -1735,9 +2025,33 @@ REFLEX_EXPORT namespace reflex::serde::xml
     // Consumes the parent's close tag before returning.
     template <detail::aggregate_element_c Agg> void read_children(Agg & value)
     {
+      [[maybe_unused]] std::conditional_t<Opts.comments, children_capture<Agg>, no_children_capture>
+          cap{};
+      if constexpr(Opts.comments)
+      {
+        open_children(cap);
+      }
       while(true)
       {
         tag_head head = read_tag_head();
+        if constexpr(Opts.comments)
+        {
+          if(cap.active and head.kind != tag_kind::open)
+          {
+            attach_pending(cap.prev, cap.node ? &cap.node->_self.footer : nullptr);
+          }
+          else if(cap.root)
+          {
+            cap.root = false;
+            if(cap.node != nullptr and comments_.tag_line_start)
+            {
+              auto& doc = serde::layout_of(*cap.node);
+              doc.indent =
+                  static_cast<std::uint8_t>(std::min<std::size_t>(comments_.tag_column, 255));
+              doc.indent_char = comments_.tag_char;
+            }
+          }
+        }
         // a close tag ends this element; end of input tolerates truncation
         if(head.kind != tag_kind::open) return;
 
@@ -1770,6 +2084,37 @@ REFLEX_EXPORT namespace reflex::serde::xml
             {
               matched     = true;
               using F     = std::remove_cvref_t<decltype(value.[:member:])>;
+              if constexpr(Opts.comments)
+              {
+                if(cap.active)
+                {
+                  constexpr auto cm      = serde::detail::comment_member_of<member>();
+                  constexpr bool is_seq  = seq_c<F> and not array_of_c<F>;
+                  constexpr bool is_tree = serde::detail::comment_tree_c<
+                      std::remove_cvref_t<decltype(cap.node->[:cm:])>>;
+                  if(cap.node == nullptr)
+                  {
+                    comments_.pending.clear();
+                  }
+                  else
+                  {
+                    auto& block = serde::comment(cap.node->[:cm:]);
+                    if(is_seq and cap.prev == &block.trailing)
+                    {
+                      comments_.pending.clear();
+                    }
+                    else
+                    {
+                      attach_pending(cap.prev, &block.leading);
+                    }
+                    cap.prev = &block.trailing;
+                    if constexpr(is_tree)
+                    {
+                      comments_.slot.give(cap.node->[:cm:]);
+                    }
+                  }
+                }
+              }
               if constexpr(seq_c<F> and not array_of_c<F>)
               {
                 using E = typename F::value_type;
@@ -1787,6 +2132,14 @@ REFLEX_EXPORT namespace reflex::serde::xml
                 value.[:member:] =
                     read_child<F>(head.name, self_closing, std::move(head.attributes));
               }
+              if constexpr(Opts.comments)
+              {
+                if(cap.active)
+                {
+                  comments_.pending.clear();
+                  comments_.slot = {};
+                }
+              }
             }
           }
         }
@@ -1797,7 +2150,22 @@ REFLEX_EXPORT namespace reflex::serde::xml
           {
             throw std::runtime_error(std::format("XML: no member matches the element '{}'", name));
           }
+          if constexpr(Opts.comments)
+          {
+            if(cap.active)
+            {
+              attach_pending(cap.prev, nullptr);
+              cap.prev = nullptr;
+            }
+          }
           skip_subtree(self_closing);
+          if constexpr(Opts.comments)
+          {
+            if(cap.active)
+            {
+              comments_.pending.clear();
+            }
+          }
         }
       }
     }
