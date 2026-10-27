@@ -262,8 +262,6 @@ TEST_CASE("reflex::serde::json5 capture: a plain load reads the same value and c
   json::deserializer de{text, std::cw<ja_opts>};
   const auto         plain = de.load<ja_cfg>();
   CHECK(plain == ja_load(text).value);
-  CHECK(de.comments_.pending.empty());
-  CHECK_FALSE(de.comments_.active);
 }
 
 TEST_CASE("reflex::serde::json5 capture: a scalar root")

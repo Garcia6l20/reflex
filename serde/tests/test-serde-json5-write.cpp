@@ -252,13 +252,15 @@ TEST_CASE("reflex::serde::json5 write: a scalar root")
 TEST_CASE("reflex::serde::json5 write: the serializer is reusable after a throw")
 {
   comments_of<jw_shape> bad;
-  bad.value.leading = {"a\nb"};
+  bad.srv.port.leading  = {"a\nb"};
+  layout_of(bad).indent = 4;
   std::string      out;
   json::serializer ser{out, std::cw<jw_write>};
   CHECK_THROWS(ser.dump(jw_shape{}, bad));
-  CHECK_FALSE(ser.comments_.active);
-  CHECK_EQ(ser.indent_.depth, 0);
   out.clear();
   ser.dump(jw_port{5});
   CHECK_EQ(out, "{\n  \"port\": 5\n}");
+  out.clear();
+  ser.dump(jw_port{5}, comments_of<jw_port>{});
+  CHECK_EQ(out, "{\n  \"port\": 5\n}\n");
 }
