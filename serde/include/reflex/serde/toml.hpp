@@ -1296,6 +1296,12 @@ REFLEX_EXPORT namespace reflex::serde::toml
     [[no_unique_address]] typename[:Opts.comments ? ^^serde::detail::comment_capture
                                                   : ^^serde::detail::no_comment_state:] comments_{};
 
+    struct line_capture
+    {
+      std::vector<std::string> lines;
+      bool                     fresh = true;
+    };
+
   public:
     using base::base;
 
@@ -1358,9 +1364,13 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
     // "non-eol = %x09 / %x20-7E / non-ascii": a stray control byte is reported
     // here rather than skipped over.
-    void skip_comment()
+    void skip_comment(std::string* text = nullptr)
     {
       advance(); // '#'
+      if(text != nullptr)
+      {
+        text->clear();
+      }
       while(not at_line_end())
       {
         const char c = peek_at(0);
@@ -1369,12 +1379,23 @@ REFLEX_EXPORT namespace reflex::serde::toml
           throw std::runtime_error(
               "TOML: a control character other than tab cannot appear in a comment");
         }
-        advance();
+        if(text != nullptr)
+        {
+          *text += advance();
+        }
+        else
+        {
+          advance();
+        }
+      }
+      if(text != nullptr)
+      {
+        *text = std::string{serde::detail::comment_body(*text)};
       }
     }
 
     // Caught here rather than left to desynchronise the next line.
-    void finish_line()
+    void finish_line(std::string* trailing = nullptr)
     {
       skip_ws();
       if(at_line_end())
@@ -1383,7 +1404,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
       }
       if(peek_at(0) == '#')
       {
-        skip_comment();
+        skip_comment(trailing);
         return;
       }
       throw std::runtime_error("TOML: unexpected content after a value");
@@ -1391,7 +1412,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
     // Idempotent when the cursor already sits on content: read_document()'s loop
     // asks this about a line a value reader has already stopped on.
-    bool next_content_line()
+    bool next_content_line(line_capture* capture = nullptr)
     {
       while(true)
       {
@@ -1406,11 +1427,23 @@ REFLEX_EXPORT namespace reflex::serde::toml
           {
             return true;
           }
-          skip_comment();
+          skip_comment(capture != nullptr ? &capture->lines.emplace_back() : nullptr);
+        }
+        else if(capture != nullptr and capture->fresh)
+        {
+          capture->lines.emplace_back(serde::blank_line);
         }
         if(not next_line())
         {
+          if(capture != nullptr)
+          {
+            capture->fresh = false;
+          }
           return false;
+        }
+        if(capture != nullptr)
+        {
+          capture->fresh = true;
         }
       }
     }
@@ -1785,23 +1818,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
       const std::string where = detail::join_path(full);
 
       auto assign = [this]<typename V>(V& v) { v = this->template load<std::remove_cvref_t<V>>(); };
-      if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
-      {
-        bool reached        = false;
-        auto assign_reached = [&]<typename V>(V& v) {
-          reached = true;
-          assign(v);
-        };
-        detail::table_visit<true>(full, value, assign_reached, where);
-        if(not reached)
-        {
-          std::ignore = this->template load<toml::value>();
-        }
-      }
-      else
-      {
-        detail::table_visit(full, value, assign, where);
-      }
+      assign_or_skip_(full, value, assign, where);
     }
 
     // A document is flat. A [a.b.c] header re-targets every following assignment
@@ -1843,6 +1860,33 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
 
   private:
+    template <typename Target, typename Assign>
+    void assign_or_skip_(
+        std::span<detail::segment const> path,
+        Target&                          target,
+        Assign&                          assign,
+        std::string_view                 where)
+    {
+      if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+      {
+        bool reached        = false;
+        auto assign_reached = [&]<typename V>(V& v) {
+          reached = true;
+          assign(v);
+        };
+        detail::table_visit<true>(path, target, assign_reached, where);
+        if(not reached)
+        {
+          const value_scope guard{*this};
+          std::ignore = this->template load<toml::value>();
+        }
+      }
+      else
+      {
+        detail::table_visit(path, target, assign, where);
+      }
+    }
+
     template <typename Node>
     void begin_commented(Node&)
       requires(Opts.comments)
@@ -1866,11 +1910,11 @@ REFLEX_EXPORT namespace reflex::serde::toml
       header_buf_.clear();
       paths_.clear();
 
-      std::vector<std::string> pending;
-      serde::comment_block     discarded;
-      bool                     fresh  = true;
-      bool                     header = true;
-      while(capture_content_line_(pending, fresh))
+      line_capture         capture;
+      auto&                pending = capture.lines;
+      serde::comment_block discarded;
+      bool                 header = true;
+      while(next_content_line(&capture))
       {
         serde::comment_block* target = nullptr;
         if(peek_at(0) == '[')
@@ -1900,83 +1944,15 @@ REFLEX_EXPORT namespace reflex::serde::toml
             block.leading.end(), std::make_move_iterator(pending.begin()),
             std::make_move_iterator(pending.end()));
         pending.clear();
-        capture_trailing_(block.trailing);
-        fresh     = false;
-        discarded = {};
+        finish_line(&block.trailing);
+        capture.fresh = false;
+        discarded     = {};
       }
       auto& footer = serde::comment(node).footer;
       footer.insert(
           footer.end(), std::make_move_iterator(pending.begin()),
           std::make_move_iterator(pending.end()));
-      serde::layout_of(node).final_newline = fresh;
-    }
-
-    /** @brief next_content_line, keeping each comment line and each blank line in @p pending.
-     *
-     * @p fresh is true when the cursor sits at the start of a line, which is what tells an empty
-     * line from the rest of the line a value ended on. At end of input it says whether the input
-     * ended with a line break.
-     */
-    bool capture_content_line_(std::vector<std::string>& pending, bool& fresh)
-    {
-      while(true)
-      {
-        skip_ws();
-        if(at_end())
-        {
-          return false;
-        }
-        if(not at_line_end())
-        {
-          if(peek_at(0) != '#')
-          {
-            return true;
-          }
-          pending.push_back(read_comment_text_());
-        }
-        else if(fresh)
-        {
-          pending.emplace_back(serde::blank_line);
-        }
-        if(not next_line())
-        {
-          fresh = false;
-          return false;
-        }
-        fresh = true;
-      }
-    }
-
-    void capture_trailing_(std::string& out)
-    {
-      skip_ws();
-      if(at_line_end())
-      {
-        return;
-      }
-      if(peek_at(0) == '#')
-      {
-        out = read_comment_text_();
-        return;
-      }
-      throw std::runtime_error("TOML: unexpected content after a value");
-    }
-
-    std::string read_comment_text_()
-    {
-      advance();
-      std::string raw;
-      while(not at_line_end())
-      {
-        const char c = peek_at(0);
-        if(c != '\t' and serde::detail::is_control(c))
-        {
-          throw std::runtime_error(
-              "TOML: a control character other than tab cannot appear in a comment");
-        }
-        raw += advance();
-      }
-      return std::string{serde::detail::comment_body(raw)};
+      serde::layout_of(node).final_newline = capture.fresh;
     }
 
     // The table every following assignment belongs to, until the next header.
@@ -2174,24 +2150,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
       };
       try
       {
-        if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
-        {
-          bool reached        = false;
-          auto assign_reached = [&]<typename V>(V& v) {
-            reached = true;
-            assign(v);
-          };
-          detail::table_visit<true>(path, root, assign_reached, where);
-          if(not reached)
-          {
-            const value_scope guard{*this};
-            std::ignore = this->template load<toml::value>();
-          }
-        }
-        else
-        {
-          detail::table_visit(path, root, assign, where);
-        }
+        assign_or_skip_(path, root, assign, where);
       }
       catch(std::exception const& e)
       {
