@@ -163,6 +163,207 @@ REFLEX_EXPORT namespace reflex::serde::json
     return {std::define_static_string(s), s.size()};
   }
 
+  template <typename De, typename V> void load_object_member(De& de, V& v)
+  {
+    v = de.template load<std::remove_cvref_t<V>>();
+    if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
+    {
+      if(v.is_object())
+      {
+        auto& obj = v.as_object();
+        auto  type_key =
+            std::ranges::find_if(obj, [](auto const& pair) { return pair.first == "__type"; });
+        if(type_key != obj.end())
+        {
+          template for(constexpr auto a : detail::aggregate_types_of_var<V>())
+          {
+            if(type_key->second == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
+            {
+              using Agg = [:a:];
+              Agg agg_value{};
+              template for(constexpr auto member : define_static_array(
+                               nonstatic_data_members_of(a, std::meta::access_context::current())))
+              {
+                constexpr std::string_view name = serialized_name(member);
+                if(name == "__type")
+                {
+                  continue;
+                }
+                [[maybe_unused]] auto object_value_it = std::ranges::find_if(
+                    obj, [name](auto const& pair) { return pair.first == name; });
+                auto& member_value = agg_value.[:member:];
+                visit(
+                    [&]<typename U>([[maybe_unused]] U&& v) {
+                      if constexpr(requires { member_value = std::forward<U>(v); })
+                      {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wfloat-conversion"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+                        member_value = std::forward<U>(v);
+#pragma GCC diagnostic pop
+                      }
+                      else
+                      {
+                        throw std::runtime_error("Cannot assign value to member");
+                      }
+                    },
+                    std::move(object_value_it->second));
+              }
+              v = std::move(agg_value);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  template <typename Map, typename De> Map read_commented_object(De& de)
+  {
+    using node_type      = serde::comments_of<Map>;
+    constexpr auto opts  = De::read_opts;
+    auto&          cap   = de.comments_;
+    node_type*     node  = cap.slot.template take<node_type>();
+    const bool     root  = std::exchange(cap.root, false) and node != nullptr;
+    bool           found = false;
+
+    serde::comment_block  discarded;
+    serde::comment_block* prev = nullptr;
+
+    auto take_trailing = [&] {
+      if(node == nullptr)
+      {
+        return;
+      }
+      de.take_trailing(prev != nullptr ? prev->trailing : serde::comment(*node).trailing);
+    };
+    auto close = [&] {
+      take_trailing();
+      if(node == nullptr)
+      {
+        de.drop_pending();
+        return;
+      }
+      de.take_leading(serde::comment(*node).footer);
+    };
+    auto measure = [&] {
+      if(root and cap.broke_line and serde::layout_of(*node).indent == 0)
+      {
+        serde::layout_of(*node).indent =
+            static_cast<std::uint8_t>(std::min<std::size_t>(cap.line_column, 255));
+        serde::layout_of(*node).indent_char = cap.indent_char;
+      }
+    };
+    auto colon = [&] {
+      de.ltrim();
+      if(de.advance() != ':')
+      {
+        throw std::runtime_error("Expected ':' after object key");
+      }
+      de.ltrim();
+      de.drop_pending();
+    };
+
+    de.skip_to_value();
+    if(de.advance() != '{')
+    {
+      throw std::runtime_error("Expected '{' at start of JSON object");
+    }
+    de.ltrim();
+    take_trailing();
+    measure();
+
+    Map value{};
+    if(not de.at_end() and de.peek() == '}')
+    {
+      de.advance();
+      close();
+      return value;
+    }
+
+    while(true)
+    {
+      de.ltrim();
+      measure();
+      const std::string_view key = de.read_key();
+      found                      = false;
+      template for(constexpr auto member : define_static_array(
+                       nonstatic_data_members_of(^^Map, std::meta::access_context::current())))
+      {
+        constexpr std::string_view name        = serialized_name(member);
+        constexpr auto             node_member = serde::detail::comment_member_of<member>();
+        using member_node = std::remove_cvref_t<typename[:type_of(node_member):]>;
+        if(not found and key == name)
+        {
+          found = true;
+          take_trailing();
+          if(node != nullptr)
+          {
+            auto& block = serde::comment(node->[:node_member:]);
+            de.take_leading(block.leading);
+            prev = &block;
+          }
+          else
+          {
+            de.drop_pending();
+          }
+          colon();
+          if constexpr(not std::same_as<member_node, serde::comment_block>)
+          {
+            if(node != nullptr)
+            {
+              cap.slot.give(node->[:node_member:]);
+            }
+          }
+          load_object_member(de, value.[:member:]);
+          cap.slot = {};
+          de.drop_pending();
+        }
+      }
+      if(not found)
+      {
+        if constexpr(opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          take_trailing();
+          de.drop_pending();
+          prev = &discarded;
+          colon();
+          std::ignore = de.template load<json::value>();
+          de.drop_pending();
+        }
+        else
+        {
+          throw std::runtime_error("Key not found in object");
+        }
+      }
+
+      de.ltrim();
+      const char sep = de.advance();
+      if(sep == ',')
+      {
+        if constexpr(opts.trailing_commas)
+        {
+          de.ltrim();
+          if(not de.at_end() and de.peek() == '}')
+          {
+            de.advance();
+            close();
+            break;
+          }
+        }
+        continue;
+      }
+      if(sep == '}')
+      {
+        close();
+        break;
+      }
+      throw std::runtime_error("Expected ',' or '}' in object");
+    }
+    return value;
+  }
+
   struct indent_state
   {
     int depth = 0;
@@ -170,6 +371,83 @@ REFLEX_EXPORT namespace reflex::serde::json
 
   struct no_indent_state
   {};
+
+  /** @brief The JSON reader's capture state.
+   *
+   * @p fresh_line makes the next skip start on a new line, at document start. @p broke_line tells
+   * whether the last skip that consumed anything crossed a line break, @p indent_char is the
+   * first byte of the indentation it measured. @p newline_last is true when the last byte it
+   * consumed was a line break.
+   */
+  struct comment_capture : serde::detail::comment_capture
+  {
+    bool fresh_line   = false;
+    bool broke_line   = false;
+    bool newline_last = false;
+    char indent_char  = ' ';
+  };
+
+  /** @brief The lines of the block comment body @p raw, one entry per line.
+   *
+   * Continuation lines lose their indentation and, when every non-empty one starts with `*`, that
+   * decoration. An empty first or last line, the opening or closing line of a boxed comment, is
+   * dropped.
+   *
+   * @return the lines, and whether the first one was kept, the one sharing a line with the
+   * preceding token
+   */
+  inline std::pair<std::vector<std::string>, bool> split_block_comment(std::string_view raw)
+  {
+    std::vector<std::string_view> lines;
+    for(auto part : raw | std::views::split('\n'))
+    {
+      lines.emplace_back(part.begin(), part.end());
+    }
+    bool decorated = false;
+    for(std::size_t i = 1; i < lines.size(); ++i)
+    {
+      const auto start = lines[i].find_first_not_of(" \t");
+      lines[i].remove_prefix(start == std::string_view::npos ? lines[i].size() : start);
+    }
+    for(std::size_t i = 1; i < lines.size(); ++i)
+    {
+      if(lines[i].empty())
+      {
+        continue;
+      }
+      decorated = lines[i].starts_with('*');
+      if(not decorated)
+      {
+        break;
+      }
+    }
+    if(decorated)
+    {
+      for(std::size_t i = 1; i < lines.size(); ++i)
+      {
+        if(not lines[i].empty())
+        {
+          lines[i].remove_prefix(1);
+        }
+      }
+    }
+    std::vector<std::string> out;
+    for(auto line : lines)
+    {
+      out.emplace_back(serde::detail::comment_body(line));
+    }
+    bool first_kept = true;
+    if(out.size() > 1 and out.back().empty())
+    {
+      out.pop_back();
+    }
+    if(out.size() > 1 and out.front().empty())
+    {
+      out.erase(out.begin());
+      first_kept = false;
+    }
+    return {std::move(out), first_kept};
+  }
   } // namespace detail
 
   /** @brief Output options of json::serializer, its second template argument. */
@@ -555,10 +833,83 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     static constexpr read_options read_opts = Opts;
 
+    [[no_unique_address]] std::
+        conditional_t<Opts.comments, detail::comment_capture, serde::detail::no_comment_state>
+            comments_;
+
     template <typename T, auto X>
       requires std::constructible_from<base, T> and (std::constant_wrapper<X>::value == Opts)
     deserializer(T&& in, std::constant_wrapper<X>) : base(std::forward<T>(in))
     {}
+
+    /** @brief Reads the document header into @p node's leading lines, called by load_commented. */
+    template <typename Node>
+    void begin_commented(Node& node)
+      requires(Opts.comments)
+    {
+      comments_.root       = true;
+      comments_.fresh_line = true;
+      skip_space_and_comments();
+      take_leading(serde::comment(node).leading);
+    }
+
+    /** @brief Reads the document footer into @p node's footer and records the final line break. */
+    template <typename Node>
+    void end_commented(Node& node)
+      requires(Opts.comments)
+    {
+      drop_pending();
+      skip_space_and_comments();
+      take_leading(serde::comment(node).footer);
+      if constexpr(serde::detail::comment_tree_c<Node>)
+      {
+        if constexpr(base::bulk_scan)
+        {
+          serde::layout_of(node).final_newline = this->input().ends_with('\n');
+        }
+        else
+        {
+          serde::layout_of(node).final_newline = comments_.newline_last;
+        }
+      }
+    }
+
+    /** @brief Moves the pending comments read on the previous token's line into @p trailing,
+     * joined by one space and after one space when @p trailing is not empty.
+     */
+    void take_trailing(std::string& trailing)
+      requires(Opts.comments)
+    {
+      auto&       pending = comments_.pending;
+      std::size_t n       = 0;
+      for(; n < pending.size() and pending[n].same_line; ++n)
+      {
+        if(not trailing.empty())
+        {
+          trailing += ' ';
+        }
+        trailing += pending[n].text;
+      }
+      pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(n));
+    }
+
+    /** @brief Moves every pending comment and blank line into @p lines. */
+    void take_leading(std::vector<std::string>& lines)
+      requires(Opts.comments)
+    {
+      for(auto& entry : comments_.pending)
+      {
+        lines.push_back(std::move(entry.text));
+      }
+      comments_.pending.clear();
+    }
+
+    /** @brief Drops every pending comment. */
+    void drop_pending()
+      requires(Opts.comments)
+    {
+      comments_.pending.clear();
+    }
 
     template <auto X>
       requires(std::constant_wrapper<X>::value == Opts)
@@ -636,60 +987,143 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
     }
 
-    /** @brief Skips whitespace, line comments and block comments. */
+    /** @brief Skips whitespace, line comments and block comments.
+     *
+     * While load_commented runs, each comment and each blank line is queued as pending, with
+     * whether it sits on the line of the preceding token, and the indentation of the line the
+     * next token starts is measured.
+     */
     void skip_space_and_comments()
       requires(Opts.comments)
     {
+      auto&       cap       = comments_;
+      const bool  capture   = cap.active;
+      bool        crossed   = cap.fresh_line;
+      bool        same_line = not crossed;
+      bool        blank     = crossed;
+      bool        consumed  = false;
+      std::size_t column    = 0;
+      char        fill      = ' ';
+      std::string text;
+      cap.fresh_line   = false;
+      cap.newline_last = false;
       while(not at_end())
       {
         const char c = *cursor_.begin();
+        if(c == '\n')
+        {
+          if(capture and crossed and blank)
+          {
+            cap.pending.push_back({std::string{serde::blank_line}, 0, false});
+          }
+          crossed   = true;
+          same_line = false;
+          blank     = true;
+          column    = 0;
+          cursor_.advance(1);
+          consumed         = true;
+          cap.newline_last = true;
+          continue;
+        }
         if(reflex::is_space(c))
         {
+          if(blank)
+          {
+            fill = column == 0 ? c : fill;
+            ++column;
+          }
           cursor_.advance(1);
+          consumed         = true;
+          cap.newline_last = false;
           continue;
         }
         if(c != '/')
         {
-          return;
+          break;
         }
         cursor_.advance(1);
-        const char kind = at_end() ? '\0' : *cursor_.begin();
+        consumed         = true;
+        cap.newline_last = false;
+        const char kind  = at_end() ? '\0' : *cursor_.begin();
         if(kind == '/')
         {
           cursor_.advance(1);
-          skip_line_comment();
+          read_line_comment(capture ? &text : nullptr);
+          if(capture)
+          {
+            cap.pending.push_back(
+                {std::string{serde::detail::comment_body(text)}, column, same_line});
+          }
+          blank = false;
         }
         else if(kind == '*')
         {
           cursor_.advance(1);
-          skip_block_comment();
+          const bool multi_line = read_block_comment(capture ? &text : nullptr);
+          if(capture)
+          {
+            auto [lines, first_kept] = detail::split_block_comment(text);
+            bool on_line             = same_line and first_kept;
+            for(auto& line : lines)
+            {
+              cap.pending.push_back({std::move(line), column, on_line});
+              on_line = false;
+            }
+          }
+          if(multi_line)
+          {
+            crossed   = true;
+            same_line = false;
+          }
+          blank = false;
         }
         else
         {
           throw std::runtime_error("Unexpected '/' in JSON");
         }
       }
+      if(consumed)
+      {
+        cap.broke_line = crossed;
+        if(crossed and blank)
+        {
+          cap.line_column = column;
+          cap.indent_char = fill;
+        }
+      }
     }
 
   private:
-    void skip_line_comment()
+    void read_line_comment(std::string* text)
     {
       if constexpr(base::bulk_scan)
       {
         const std::string_view rest = this->rest();
-        const std::size_t      end  = rest.find('\n');
-        this->skip(end == std::string_view::npos ? rest.size() : end);
+        const std::size_t      end  = std::min(rest.find('\n'), rest.size());
+        if(text != nullptr)
+        {
+          text->assign(rest.substr(0, end));
+        }
+        this->skip(end);
       }
       else
       {
+        if(text != nullptr)
+        {
+          text->clear();
+        }
         while(not at_end() and *cursor_.begin() != '\n')
         {
+          if(text != nullptr)
+          {
+            text->push_back(*cursor_.begin());
+          }
           cursor_.advance(1);
         }
       }
     }
 
-    void skip_block_comment()
+    bool read_block_comment(std::string* text)
     {
       if constexpr(base::bulk_scan)
       {
@@ -699,20 +1133,40 @@ REFLEX_EXPORT namespace reflex::serde::json
         {
           throw std::runtime_error("Unterminated JSON comment");
         }
+        const std::string_view body = rest.substr(0, end);
+        if(text != nullptr)
+        {
+          text->assign(body);
+        }
         this->skip(end + 2);
+        return body.find('\n') != std::string_view::npos;
       }
       else
       {
-        bool star = false;
+        if(text != nullptr)
+        {
+          text->clear();
+        }
+        bool multi_line = false;
+        bool star       = false;
         while(not at_end())
         {
           const char c = *cursor_.begin();
           cursor_.advance(1);
           if(star and c == '/')
           {
-            return;
+            if(text != nullptr)
+            {
+              text->pop_back();
+            }
+            return multi_line;
           }
-          star = c == '*';
+          star       = c == '*';
+          multi_line = multi_line or c == '\n';
+          if(text != nullptr)
+          {
+            text->push_back(c);
+          }
         }
         throw std::runtime_error("Unterminated JSON comment");
       }
@@ -1209,6 +1663,13 @@ REFLEX_EXPORT namespace reflex::serde::json
   auto tag_invoke(
       tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Map>)
   {
+    if constexpr(Opts.comments and serde::detail::reflected_aggregate_c<Map>)
+    {
+      if(de.comments_.active)
+      {
+        return detail::read_commented_object<Map>(de);
+      }
+    }
     de.skip_to_value();
     if(de.advance() != '{')
       throw std::runtime_error("Expected '{' at start of JSON object");
@@ -1232,62 +1693,7 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
       de.ltrim();
 
-      auto load_member = [&]<typename V>(V& v) {
-        v = de.template load<std::remove_cvref_t<V>>();
-        if constexpr(meta::is_template_instance_of(^^V, ^^poly::var))
-        {
-          if(v.is_object())
-          {
-            auto& obj = v.as_object();
-            auto  type_key =
-                std::ranges::find_if(obj, [](auto const& pair) { return pair.first == "__type"; });
-            if(type_key != obj.end())
-            {
-              template for(constexpr auto a : detail::aggregate_types_of_var<V>())
-              {
-                if(type_key->second
-                   == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
-                {
-                  using Agg = [:a:];
-                  Agg agg_value{};
-                  template for(constexpr auto member :
-                               define_static_array(nonstatic_data_members_of(
-                                   a, std::meta::access_context::current())))
-                  {
-                    constexpr std::string_view name = serialized_name(member);
-                    if(name == "__type")
-                    {
-                      continue;
-                    }
-                    [[maybe_unused]] auto object_value_it = std::ranges::find_if(
-                        obj, [name](auto const& pair) { return pair.first == name; });
-                    auto& member_value = agg_value.[:member:];
-                    visit(
-                        [&]<typename U>([[maybe_unused]] U&& v) {
-                          if constexpr(requires { member_value = std::forward<U>(v); })
-                          {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wfloat-conversion"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-                            member_value = std::forward<U>(v);
-#pragma GCC diagnostic pop
-                          }
-                          else
-                          {
-                            throw std::runtime_error("Cannot assign value to member");
-                          }
-                        },
-                        std::move(object_value_it->second));
-                  }
-                  v = std::move(agg_value);
-                  break;
-                }
-              }
-            }
-          }
-        }
-      };
+      auto load_member = [&de]<typename V>(V& v) { detail::load_object_member(de, v); };
       if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
       {
         if(not serde::object_try_visit_flat(key, value, load_member))
