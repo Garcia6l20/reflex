@@ -2,6 +2,7 @@
 
 import reflex.serde.json;
 import reflex.serde.xml;
+import reflex.serde.yaml;
 
 import std;
 
@@ -25,7 +26,11 @@ struct uk_config
   constexpr bool operator==(uk_config const&) const = default;
 };
 
-const uk_config uk_expected{1, {8080, "h"}, "z"};
+const uk_config uk_expected{
+    1,
+    {8080, "h"},
+    "z"
+};
 
 constexpr json::read_options json_skip{.unknown_keys = unknown_keys::skip};
 
@@ -33,6 +38,27 @@ template <typename T> T json_skip_load(std::string const& text)
 {
   json::deserializer de{text, std::cw<json_skip>};
   return de.template load<T>();
+}
+
+constexpr yaml::read_options yaml_skip{.unknown_keys = unknown_keys::skip};
+
+template <typename T> T yaml_skip_load(std::string const& text)
+{
+  yaml::deserializer de{text, std::cw<yaml_skip>};
+  return de.template load<T>();
+}
+
+template <typename T> std::string yaml_default_message(std::string const& text)
+{
+  try
+  {
+    (void)yaml::deserializer{text}.template load<T>();
+  }
+  catch(std::exception const& e)
+  {
+    return e.what();
+  }
+  return {};
 }
 
 template <typename T> std::string json_default_message(std::string const& text)
@@ -68,6 +94,7 @@ TEST_CASE("reflex::serde::unknown_keys: defaults keep each format's behaviour")
 {
   static_assert(json::read_options{}.unknown_keys == unknown_keys::error);
   static_assert(xml::read_options{}.unknown_keys == unknown_keys::skip);
+  static_assert(yaml::read_options{}.unknown_keys == unknown_keys::error);
 }
 
 TEST_CASE("reflex::serde::object_try_visit_flat: reports a miss instead of throwing")
@@ -160,5 +187,107 @@ TEST_CASE("reflex::serde::xml: unknown_keys::error")
         "<last>z</last></uk_config>";
     xml::deserializer de{clean, std::cw<xml_error>};
     CHECK_EQ(de.template load<uk_config>(), uk_expected);
+  }
+}
+
+TEST_CASE("reflex::serde::yaml: unknown_keys::skip")
+{
+  SUBCASE("an unknown scalar between two known keys")
+  {
+    CHECK_EQ(
+        yaml_skip_load<uk_config>("first: 1\nextra: x\nsrv:\n  port: 8080\n  host: h\nlast: z\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown nested mapping")
+  {
+    CHECK_EQ(
+        yaml_skip_load<uk_config>("first: 1\nextra:\n  a: 1\n  b:\n    c: [1, 2]\n    d: e\n"
+                                  "srv:\n  port: 8080\n  host: h\nlast: z\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown key first and last")
+  {
+    CHECK_EQ(
+        yaml_skip_load<uk_config>(
+            "head: 0\nfirst: 1\nsrv:\n  port: 8080\n  host: h\nlast: z\ntail:\n  x: 1\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown key inside a nested known mapping")
+  {
+    CHECK_EQ(
+        yaml_skip_load<uk_config>(
+            "first: 1\nsrv:\n  port: 8080\n  tls:\n    on: true\n  host: h\nlast: z\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown block scalar")
+  {
+    CHECK_EQ(
+        yaml_skip_load<uk_config>("first: 1\nextra: |\n  line one\n  line: two\n\n  three\n"
+                                  "srv:\n  port: 8080\n  host: h\nlast: z\n"),
+        uk_expected);
+    CHECK_EQ(
+        yaml_skip_load<uk_config>("first: 1\nsrv:\n  port: 8080\n  note: >-\n    folded\n"
+                                  "    text\n  host: h\nlast: z\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown flow collection")
+  {
+    CHECK_EQ(
+        yaml_skip_load<uk_config>("first: 1\nextra: {a: [{b: 2}, 1], c: 'x'}\nsrv:\n  port: 8080\n"
+                                  "  host: h\nlast: z\n"),
+        uk_expected);
+    CHECK_EQ(
+        yaml_skip_load<uk_config>("first: 1\nextra: [{d: 4}, 1, [2, 3]]\nsrv: {port: 8080, tls: "
+                                  "[1], host: h}\nlast: z\n"),
+        uk_expected);
+  }
+  SUBCASE("an unknown flow collection holding a mapping after a scalar")
+  {
+    CHECK_EQ(
+        yaml_skip_load<uk_config>("first: 1\nextra: {a: [1, {b: 2}], c: 'x'}\nsrv:\n  port: 8080\n"
+                                  "  host: h\nlast: z\n"),
+        uk_expected);
+    const std::string  flow = "[1, {b: 2}, c]";
+    yaml::deserializer de{flow};
+    const auto         v = de.template load<yaml::value>();
+    REQUIRE(v.is_array());
+    CHECK_EQ(v.as_array().size(), 3);
+    CHECK(v.as_array()[1].is_object());
+  }
+  SUBCASE("an unknown block sequence, indented and flush")
+  {
+    CHECK_EQ(
+        yaml_skip_load<uk_config>("first: 1\nextra:\n  - 1\n  - a: 2\n    b: 3\n  - - 4\n"
+                                  "srv:\n  port: 8080\n  host: h\nlast: z\n"),
+        uk_expected);
+    CHECK_EQ(
+        yaml_skip_load<uk_config>(
+            "first: 1\nextra:\n- 1\n- 2\nsrv:\n  port: 8080\n  host: h\nlast: z\n"),
+        uk_expected);
+    CHECK_EQ(
+        yaml_skip_load<uk_config>(
+            "first: 1\nsrv:\n  port: 8080\n  tags:\n  - a: 1\n    b: 2\n  - c\n"
+            "  host: h\nextra:\n- 1\n"),
+        uk_config{
+            1, {8080, "h"},
+             ""
+    });
+  }
+  SUBCASE("comments around a skipped key")
+  {
+    CHECK_EQ(
+        yaml_skip_load<uk_config>("first: 1 # one\n# above\nextra: x # trailing\n# below\n"
+                                  "srv:\n  port: 8080\n  host: h\nlast: z\n"),
+        uk_expected);
+  }
+  SUBCASE("the default still throws the same message")
+  {
+    CHECK_EQ(
+        yaml_default_message<uk_config>(
+            "first: 1\nextra: x\nsrv:\n  port: 8080\n  host: h\nlast: z\n"),
+        "Key not found in object");
+    CHECK_EQ(
+        yaml_default_message<uk_config>("first: 1\nsrv: {port: 8080, tls: 1, host: h}\nlast: z\n"),
+        "Key not found in object");
   }
 }

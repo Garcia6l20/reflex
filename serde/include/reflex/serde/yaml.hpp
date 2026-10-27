@@ -268,7 +268,8 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   /** @brief Input options of yaml::deserializer, its second template argument. */
   struct read_options
   {
-    bool comments = false;
+    bool                comments     = false;
+    serde::unknown_keys unknown_keys = serde::unknown_keys::error;
 
     constexpr bool operator==(read_options const&) const = default;
   };
@@ -1266,9 +1267,20 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         advance();
         skip_flow_space();
 
-        serde::object_visit_flat(key, value, [&]<typename V>(V& v) {
+        auto load_member = [&]<typename V>(V& v) {
           v = this->template load<std::remove_cvref_t<V>>();
-        });
+        };
+        if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          if(not serde::object_try_visit_flat(key, value, load_member))
+          {
+            std::ignore = this->template load<yaml::value>();
+          }
+        }
+        else
+        {
+          serde::object_visit_flat(key, value, load_member);
+        }
 
         skip_flow_space();
         if(at_end())
@@ -1371,6 +1383,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         if(c == '#' and i > 0 and (peek_at(i - 1) == ' ' or peek_at(i - 1) == '\t'))
         {
           return false; // the rest of the line is a comment
+        }
+        if(ctx_ == detail::scan_context::flow and detail::is_flow_indicator(c))
+        {
+          return false;
         }
         if(c == ':')
         {
@@ -2201,9 +2217,26 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       de.advance(); // ':'
       de.skip_separation();
 
-      serde::object_visit_flat(key, value, [&]<typename V>(V& v) {
-        v = de.template load<std::remove_cvref_t<V>>();
-      });
+      auto load_member = [&]<typename V>(V& v) { v = de.template load<std::remove_cvref_t<V>>(); };
+      if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+      {
+        if(not serde::object_try_visit_flat(key, value, load_member))
+        {
+          const std::size_t at = de.next_content_line();
+          if(at != de.npos and not de.deeper_than_block(at) and de.at_sequence_entry())
+          {
+            std::ignore = de.template load<std::vector<yaml::value>>();
+          }
+          else
+          {
+            std::ignore = de.template load<yaml::value>();
+          }
+        }
+      }
+      else
+      {
+        serde::object_visit_flat(key, value, load_member);
+      }
 
       // The value reader stopped at the end of its line, or - for a nested
       // block - on the first line it did not own. next_content_line() is
