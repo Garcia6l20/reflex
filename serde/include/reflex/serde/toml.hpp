@@ -685,6 +685,12 @@ REFLEX_EXPORT namespace reflex::serde::toml
       return ser.out();
     }
 
+    friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, std::byte value)
+    {
+      serde::detail::write_digits(ser, std::to_integer<unsigned>(value));
+      return ser.out();
+    }
+
     template <std::same_as<char> Char>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer<OutputIt>& ser, Char value)
     {
