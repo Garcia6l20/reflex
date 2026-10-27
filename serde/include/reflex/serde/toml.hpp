@@ -2416,6 +2416,18 @@ REFLEX_EXPORT namespace reflex::serde::toml
       return detail::parse_number<detail::toml_numbers, Num>(token, "TOML");
     }
 
+    friend std::byte
+        tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<std::byte>)
+    {
+      const auto n = de.template load<std::int64_t>();
+      if(n < 0 or n > 255)
+      {
+        throw std::runtime_error(
+            std::format("TOML: a byte holds an integer from 0 to 255, got {}", n));
+      }
+      return static_cast<std::byte>(n);
+    }
+
     template <std::same_as<char> Char>
     friend auto tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<Char>)
     {
