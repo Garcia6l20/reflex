@@ -148,7 +148,7 @@ REFLEX_EXPORT namespace reflex::serde::json
   // The name is checked here rather than escaped. Identifiers cannot need an
   // escape, but a serde::rename can carry an arbitrary string, and a key that
   // silently emitted an unescaped quote would produce invalid JSON.
-  template <std::meta::info Member> consteval std::string_view quoted_key()
+  template <std::meta::info Member, bool Spaced = false> consteval std::string_view quoted_key()
   {
     constexpr std::string_view name = serialized_name(Member);
     static_assert(
@@ -156,12 +156,20 @@ REFLEX_EXPORT namespace reflex::serde::json
         "a JSON object key cannot contain a quote, a backslash or a control "
         "character: check the serde::rename annotation on this member");
     std::string s;
-    s.reserve(name.size() + 3);
+    s.reserve(name.size() + 4);
     s += '"';
     s += name;
-    s += "\":";
+    s += Spaced ? "\": " : "\":";
     return {std::define_static_string(s), s.size()};
   }
+
+  struct indent_state
+  {
+    int depth = 0;
+  };
+
+  struct no_indent_state
+  {};
   } // namespace detail
 
   /** @brief Output options of json::serializer, its second template argument. */
@@ -203,6 +211,94 @@ REFLEX_EXPORT namespace reflex::serde::json
     {}
 
     static constexpr std::string_view format_name = "JSON";
+
+    static constexpr std::string_view key_separator = Opts.indent > 0 ? ": " : ":";
+
+    [[no_unique_address]] std::
+        conditional_t<(Opts.indent > 0), detail::indent_state, detail::no_indent_state> indent_;
+
+    /** @brief The width of one indent level. */
+    constexpr int indent_width() const
+    {
+      return Opts.indent;
+    }
+
+    /** @brief Writes a line break and the indent of the current depth. */
+    void newline()
+      requires(Opts.indent > 0)
+    {
+      static constexpr std::string_view spaces = "                                                "
+                                                 "                ";
+      this->write_char('\n');
+      auto n = static_cast<std::size_t>(indent_.depth * indent_width());
+      while(n > 0)
+      {
+        const std::size_t run = std::min(n, spaces.size());
+        this->write_raw(spaces.substr(0, run));
+        n -= run;
+      }
+    }
+
+    /** @brief One container being written: separators, line breaks and the depth it opened.
+     *
+     * The depth is entered at the first item and left at the closing token, or on unwinding, so
+     * an empty container stays on one line and a throwing value leaves the depth right.
+     */
+    class nest
+    {
+      serializer* ser_   = nullptr;
+      bool        first_ = true;
+
+    public:
+      nest()                       = default;
+      nest(nest const&)            = delete;
+      nest& operator=(nest const&) = delete;
+
+      ~nest()
+      {
+        if constexpr(Opts.indent > 0)
+        {
+          if(ser_ != nullptr)
+          {
+            --ser_->indent_.depth;
+          }
+        }
+      }
+
+      /** @brief Writes what precedes the next item: a comma after the first, then its line. */
+      void item(serializer& ser)
+      {
+        if(not first_)
+        {
+          ser.write_char(',');
+        }
+        first_ = false;
+        if constexpr(Opts.indent > 0)
+        {
+          if(ser_ == nullptr)
+          {
+            ser_ = &ser;
+            ++ser.indent_.depth;
+          }
+          ser.newline();
+        }
+      }
+
+      /** @brief Writes the closing token @p close, on its own line when an item was written. */
+      void close(serializer& ser, char close)
+      {
+        if constexpr(Opts.indent > 0)
+        {
+          if(ser_ != nullptr)
+          {
+            --ser.indent_.depth;
+            ser_ = nullptr;
+            ser.newline();
+          }
+        }
+        ser.write_char(close);
+      }
+    };
 
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, null_t const&)
     {
@@ -316,6 +412,18 @@ REFLEX_EXPORT namespace reflex::serde::json
         return ser.out();
       }
 
+      if constexpr(Opts.indent > 0)
+      {
+        nest items;
+        for(const auto& elem : value)
+        {
+          items.item(ser);
+          serialize(ser, elem);
+        }
+        items.close(ser, ']');
+        return ser.out();
+      }
+
       auto view = std::views::all(value);
 
       for(const auto& elem : view | std::views::take(value.size() - 1))
@@ -333,10 +441,12 @@ REFLEX_EXPORT namespace reflex::serde::json
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Pair const& value)
     {
       ser.write_char('{');
+      nest entry;
+      entry.item(ser);
       serialize(ser, value.first);
-      ser.write_char(':');
+      ser.write_raw(key_separator);
       reflex::visit([&ser](const auto& v) { serialize(ser, v); }, value.second);
-      ser.write_char('}');
+      entry.close(ser, '}');
       return ser.out();
     }
 
@@ -345,20 +455,13 @@ REFLEX_EXPORT namespace reflex::serde::json
     {
       ser.write_char('{');
 
-      bool first = true;
+      nest entries;
 
       for(const auto& [key, val] : value)
       {
-        if(not first)
-        {
-          ser.write_char(',');
-        }
-        else
-        {
-          first = false;
-        }
+        entries.item(ser);
         serialize(ser, key);
-        ser.write_char(':');
+        ser.write_raw(key_separator);
         reflex::visit(
             [&ser]<typename U>(const U& v) {
               using var_type = typename Map::mapped_type;
@@ -373,7 +476,7 @@ REFLEX_EXPORT namespace reflex::serde::json
             },
             val);
       }
-      ser.write_char('}');
+      entries.close(ser, '}');
       return ser.out();
     }
 
@@ -401,11 +504,13 @@ REFLEX_EXPORT namespace reflex::serde::json
 
     constexpr bool tag = TagT::value;
 
-    bool first = not tag;
+    typename serializer<OutputIt, Opts>::nest members;
 
     if constexpr(tag)
     {
-      ser.write_raw("\"__type\":");
+      members.item(ser);
+      ser.write_raw("\"__type\"");
+      ser.write_raw(ser.key_separator);
       // Hashing at compile time would change the emitted id, which is a wire format
       // break.
       static auto expected_id = std::hash<std::string_view>{}(identifier_of(dealias(decay(^^Agg))));
@@ -425,19 +530,12 @@ REFLEX_EXPORT namespace reflex::serde::json
           continue;
         }
       }
-      if(not first)
-      {
-        ser.write_char(',');
-      }
-      else
-      {
-        first = false;
-      }
-      static constexpr std::string_view key_token = detail::quoted_key<member>();
+      members.item(ser);
+      static constexpr std::string_view key_token = detail::quoted_key<member, (Opts.indent > 0)>();
       ser.write_raw(key_token);
       reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
     }
-    ser.write_char('}');
+    members.close(ser, '}');
     return ser.out();
   }
 

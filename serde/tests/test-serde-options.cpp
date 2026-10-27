@@ -179,7 +179,7 @@ TEST_CASE("reflex::serde options: non-default options write and read today's byt
     std::string tagged;
     json::serializer{plain}.dump(sample);
     json::serializer{tagged, std::cw<json_pretty>}.dump(sample);
-    CHECK_EQ(tagged, plain);
+    CHECK_EQ(tagged, "{\n  \"x\": 7,\n  \"name\": \"a\\\"b\"\n}");
     CHECK(json::deserializer{tagged, std::cw<json_lenient>}.load<opt_point>() == sample);
   }
   SUBCASE("yaml")
@@ -215,7 +215,7 @@ TEST_CASE("reflex::serde options: non-default options write and read today's byt
     std::ostringstream tagged;
     json::serializer{plain}.dump(sample);
     json::serializer{tagged, std::cw<json_pretty>}.dump(sample);
-    CHECK_EQ(tagged.str(), plain.str());
+    CHECK_EQ(tagged.str(), "{\n  \"x\": 7,\n  \"name\": \"a\\\"b\"\n}");
     std::istringstream in{tagged.str()};
     CHECK(json::deserializer{in, std::cw<json_lenient>}.load<opt_point>() == sample);
   }
