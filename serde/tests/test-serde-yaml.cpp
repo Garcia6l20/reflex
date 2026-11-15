@@ -1569,3 +1569,277 @@ TEST_CASE("reflex::serde::yaml: an override aggregate with every member omitted 
       "a:\n  k: 1");
   CHECK_EQ(dump(all_omitted{}), "k: 1");
 }
+
+namespace yaml_scalar_path_override
+{
+struct mapping_body
+{
+  int k = 1;
+  int j = 2;
+};
+
+struct writes_mapping
+{
+  writes_mapping()
+  {}
+};
+
+struct writes_sequence
+{
+  writes_sequence()
+  {}
+};
+
+struct writes_scalar
+{
+  writes_scalar()
+  {}
+};
+
+struct writes_wrapped
+{
+  writes_wrapped()
+  {}
+};
+
+struct omitted_body
+{
+  [[= omit_if_empty{}]] std::vector<int> v;
+};
+
+struct writes_map
+{
+  writes_map()
+  {}
+};
+
+struct writes_pair
+{
+  writes_pair()
+  {}
+};
+
+struct writes_empty
+{
+  writes_empty()
+  {}
+};
+
+struct writes_omitted
+{
+  writes_omitted()
+  {}
+};
+
+struct writes_own_indent
+{
+  writes_own_indent()
+  {}
+};
+
+struct more_holder
+{
+  writes_map        m;
+  writes_pair       p;
+  writes_empty      e;
+  writes_omitted    o;
+  writes_own_indent w;
+  int               after = 9;
+};
+
+struct nested_body
+{
+  writes_mapping inner;
+  int            z = 3;
+};
+
+struct holder
+{
+  writes_mapping                m;
+  writes_sequence               q;
+  writes_scalar                 s;
+  std::optional<writes_mapping> o = writes_mapping{};
+  std::optional<writes_mapping> none;
+  int                           after = 9;
+};
+
+struct nested_holder
+{
+  nested_body    nest;
+  writes_wrapped w;
+  int            after = 9;
+};
+
+template <typename OutputIt, auto Opts>
+OutputIt tag_invoke(
+    tag_t<serde::serialize>,
+    yaml::serializer<OutputIt, Opts>& ser,
+    writes_mapping const&)
+{
+  return serde::serialize(ser, mapping_body{});
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt tag_invoke(
+    tag_t<serde::serialize>,
+    yaml::serializer<OutputIt, Opts>& ser,
+    writes_sequence const&)
+{
+  return serde::serialize(ser, std::vector<int>{1, 2});
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, yaml::serializer<OutputIt, Opts>& ser, writes_scalar const&)
+{
+  return serde::serialize(ser, "x"s);
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt tag_invoke(
+    tag_t<serde::serialize>,
+    yaml::serializer<OutputIt, Opts>& ser,
+    writes_wrapped const&)
+{
+  return serde::serialize(ser, writes_mapping{});
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, yaml::serializer<OutputIt, Opts>& ser, writes_map const&)
+{
+  return serde::serialize(ser, std::map<std::string, int>{{"a", 1}, {"b", 2}});
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, yaml::serializer<OutputIt, Opts>& ser, writes_pair const&)
+{
+  return serde::serialize(ser, std::pair<std::string, std::vector<int>>{"a", {1, 2}});
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, yaml::serializer<OutputIt, Opts>& ser, writes_empty const&)
+{
+  return serde::serialize(ser, std::vector<int>{});
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt tag_invoke(
+    tag_t<serde::serialize>,
+    yaml::serializer<OutputIt, Opts>& ser,
+    writes_omitted const&)
+{
+  return serde::serialize(ser, omitted_body{});
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt tag_invoke(
+    tag_t<serde::serialize>,
+    yaml::serializer<OutputIt, Opts>& ser,
+    writes_own_indent const&)
+{
+  auto const guard = ser.push();
+  ser.newline();
+  return serde::serialize(ser, mapping_body{});
+}
+} // namespace yaml_scalar_path_override
+
+TEST_CASE("reflex::serde::yaml: a non-aggregate override writing a block node breaks the line and indents it")
+{
+  using namespace yaml_scalar_path_override;
+
+  CHECK_EQ(
+      dump(holder{}),
+      "m: \n  k: 1\n  j: 2\nq: \n  - 1\n  - 2\ns: x\no: \n  k: 1\n  j: 2\nnone: null\nafter: 9");
+  CHECK_EQ(
+      dump(nested_holder{}),
+      "nest:\n  inner: \n    k: 1\n    j: 2\n  z: 3\nw: \n  k: 1\n  j: 2\nafter: 9");
+  CHECK_EQ(
+      dump(
+          std::map<std::string, writes_mapping>{
+              {"a", {}},
+              {"b", {}}
+  }),
+      "a: \n  k: 1\n  j: 2\nb: \n  k: 1\n  j: 2");
+  CHECK_EQ(
+      dump(
+          std::map<std::string, writes_sequence>{
+              {"a", {}}
+  }),
+      "a: \n  - 1\n  - 2");
+  CHECK_EQ(dump(std::vector<writes_mapping>{{}, {}}), "- k: 1\n  j: 2\n- k: 1\n  j: 2");
+  CHECK_EQ(dump(std::vector<writes_sequence>{{}, {}}), "- - 1\n  - 2\n- - 1\n  - 2");
+  CHECK_EQ(dump(std::vector<writes_wrapped>{{}}), "- k: 1\n  j: 2");
+  CHECK_EQ(dump(std::vector<writes_scalar>{{}, {}}), "- x\n- x");
+  CHECK_EQ(dump(writes_mapping{}), "k: 1\nj: 2");
+  CHECK_EQ(dump(writes_sequence{}), "- 1\n- 2");
+  CHECK_EQ(dump(writes_wrapped{}), "k: 1\nj: 2");
+
+  auto const text = dump(holder{});
+  auto       v    = yaml::deserializer{text}.load<yaml::value>();
+  CHECK(v["m.j"] == 2);
+  CHECK(v["q"].as_array().size() == 2);
+  CHECK(v["o.k"] == 1);
+  CHECK(v["after"] == 9);
+}
+
+TEST_CASE("reflex::serde::yaml: a non-aggregate override writing a block node, with comments")
+{
+  using namespace yaml_scalar_path_override;
+
+  constexpr yaml::options commented{.comments = true};
+
+  std::string plain;
+  yaml::serializer{plain, std::cw<commented>}.dump(holder{}, comments_of<holder>{});
+  CHECK_EQ(
+      plain,
+      "m: \n  k: 1\n  j: 2\nq: \n  - 1\n  - 2\ns: x\no: \n  k: 1\n  j: 2\nnone: null\nafter: 9\n");
+
+  comments_of<holder> c;
+  comment(c.m).leading  = {"lead"};
+  comment(c.m).trailing = "trail-m";
+  comment(c.q).trailing = "trail-q";
+  comment(c.s).trailing = "trail-s";
+  comment(c.o).trailing = "trail-o";
+  std::string out;
+  yaml::serializer{out, std::cw<commented>}.dump(holder{}, c);
+  CHECK_EQ(
+      out, "# lead\nm:  # trail-m\n  k: 1\n  j: 2\nq:  # trail-q\n  - 1\n  - 2\ns: x # trail-s\n"
+           "o:  # trail-o\n  k: 1\n  j: 2\nnone: null\nafter: 9\n");
+}
+
+TEST_CASE("reflex::serde::yaml: an override writing a map or a pair is a block node at every position")
+{
+  using namespace yaml_scalar_path_override;
+
+  CHECK_EQ(
+      dump(more_holder{}),
+      "m: \n  a: 1\n  b: 2\np: \n  a:\n    - 1\n    - 2\ne: []\no: {}\nw: \n  k: 1\n  j: 2\nafter: 9");
+  CHECK_EQ(
+      dump(
+          std::map<std::string, writes_map>{
+              {"x", {}}
+  }),
+      "x: \n  a: 1\n  b: 2");
+  CHECK_EQ(
+      dump(
+          std::map<std::string, writes_pair>{
+              {"x", {}}
+  }),
+      "x: \n  a:\n    - 1\n    - 2");
+  CHECK_EQ(dump(std::vector<writes_map>{{}, {}}), "- a: 1\n  b: 2\n- a: 1\n  b: 2");
+  CHECK_EQ(dump(std::vector<writes_pair>{{}, {}}), "- a:\n    - 1\n    - 2\n- a:\n    - 1\n    - 2");
+}
+
+TEST_CASE("reflex::serde::yaml: an override writing a sequence of two as an element reads back whole")
+{
+  using namespace yaml_scalar_path_override;
+
+  auto const text = dump(std::vector<writes_sequence>{{}, {}});
+  CHECK_EQ(text, "- - 1\n  - 2\n- - 1\n  - 2");
+  auto v = yaml::deserializer{text}.load<yaml::value>();
+  CHECK(v.as_array().size() == 2);
+  CHECK(v.as_array()[0].as_array().size() == 2);
+}
