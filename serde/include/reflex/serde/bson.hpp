@@ -554,11 +554,10 @@ REFLEX_EXPORT namespace reflex::serde::bson
       struct no_key_buffer
       {};
 
+      using key_buffer = typename[:contiguous_byte_or_char ? ^^no_key_buffer : ^^std::string:];
+
       range_type  range;
       std::size_t position = 0;
-
-      [[no_unique_address]]
-      typename[:contiguous_byte_or_char ? ^^no_key_buffer : ^^std::string:] key_buf{};
 
       constexpr bool at_end() const
       {
@@ -621,13 +620,15 @@ REFLEX_EXPORT namespace reflex::serde::bson
       // A null-terminated key, borrowed from the input when it is contiguous. The
       // view is a run of the input, so it stays valid as long as the input does,
       // not merely until the next cursor operation. On a non-contiguous input it
-      // is a view of key_buf, which the next key overwrites.
+      // is a view of the caller's key_buf, which read_document owns per document:
+      // a nested document reads its keys into its own buffer, so this key stays
+      // valid across the value's read, until the next key of the same document.
       //
       // A key is a BSON cstring: terminated, no length prefix, and no embedded
       // null. A value is a BSON string: length-prefixed, and an embedded null is
       // allowed. read_view below is the value spelling and the two do not share
       // an implementation, because they do not share a shape.
-      constexpr std::string_view read_key()
+      constexpr std::string_view read_key([[maybe_unused]] key_buffer& key_buf)
       {
         if constexpr(contiguous_byte_or_char)
         {
@@ -807,7 +808,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
         else if constexpr(contiguous_byte_or_char)
         {
           // The owning spelling of read_key(), for callers that want to keep the result.
-          out = read_key();
+          key_buffer none;
+          out = read_key(none);
         }
         else
         {
@@ -941,6 +943,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
       const std::size_t end_pos = start + static_cast<std::size_t>(size);
 
+      typename cursor_t::key_buffer key_buf;
       while(cursor_.position < end_pos)
       {
         const auto type = static_cast<detail::bson_type>(cursor_.read_byte());
@@ -955,7 +958,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
         // Borrowed from the input buffer when it is contiguous, valid for the duration
         // of the call. Copy it to keep it.
-        const std::string_view key = cursor_.read_key();
+        const std::string_view key = cursor_.read_key(key_buf);
         std::forward<Fn>(fn)(type, key);
         if(cursor_.position > end_pos)
         {

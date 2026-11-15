@@ -1091,6 +1091,31 @@ TEST_CASE("reflex::serde::bson: a mismatched option tag is rejected")
 
 namespace
 {
+constexpr std::string_view long_outer = "an_outer_key_well_past_any_small_string_buffer";
+constexpr std::string_view long_inner = "an_inner_key_also_well_past_any_small_string_buffer";
+
+using int_map = std::map<std::string, int>;
+
+struct nested_keys_t
+{
+  std::map<std::string, int_map>              groups;
+  std::map<std::string, std::vector<int_map>> lists;
+  int                                         tail = 0;
+
+  bool operator==(nested_keys_t const&) const = default;
+};
+
+nested_keys_t nested_keys()
+{
+  return {
+      .groups = {{std::string{long_outer}, {{std::string{long_inner}, 1}, {"b", 2}}},
+                 {"z", {{"q", 3}}}},
+      .lists  = {{std::string{long_outer}, {{{std::string{long_inner}, 4}}, {{"r", 5}}}},
+                 {"y", {{{"s", 6}}}}},
+      .tail   = 7,
+  };
+}
+
 std::vector<std::byte> dump_bytes(auto const& value)
 {
   std::vector<std::byte> out;
@@ -1108,6 +1133,54 @@ template <typename T> T load_from_stream(std::vector<std::byte> const& data)
   return bson::deserializer{in}.template load<T>();
 }
 } // namespace
+
+TEST_CASE("reflex::serde::bson: keys survive nested reads from a stream")
+{
+  const auto expected = nested_keys();
+  const auto data     = dump_bytes(expected);
+
+  SUBCASE("a root map of maps")
+  {
+    const auto groups = dump_bytes(expected.groups);
+    CHECK_EQ(load_from_stream<std::map<std::string, int_map>>(groups), expected.groups);
+  }
+
+  SUBCASE("a root map of arrays of documents")
+  {
+    const auto lists = dump_bytes(expected.lists);
+    CHECK_EQ(load_from_stream<std::map<std::string, std::vector<int_map>>>(lists), expected.lists);
+  }
+
+  SUBCASE("an aggregate with map members")
+  {
+    CHECK_EQ(load_from_stream<nested_keys_t>(data), expected);
+  }
+
+  SUBCASE("bson::value")
+  {
+    const auto value = load_from_stream<bson::value>(data);
+    CHECK(value == bson::deserializer{data}.load());
+
+    auto const& root = value.as<bson::object>();
+    CHECK_EQ(root.size(), 3);
+    CHECK_EQ(root.at("tail"), 7);
+
+    auto const& groups = root.at("groups").as<bson::object>();
+    CHECK_EQ(groups.size(), 2);
+    auto const& outer = groups.at(std::string{long_outer}).as<bson::object>();
+    CHECK_EQ(outer.at(std::string{long_inner}), 1);
+    CHECK_EQ(outer.at("b"), 2);
+    CHECK_EQ(groups.at("z").as<bson::object>().at("q"), 3);
+
+    auto const& lists = root.at("lists").as<bson::object>();
+    CHECK_EQ(lists.size(), 2);
+    auto const& rows = lists.at(std::string{long_outer}).as<bson::array>();
+    CHECK_EQ(rows.size(), 2);
+    CHECK_EQ(rows[0].as<bson::object>().at(std::string{long_inner}), 4);
+    CHECK_EQ(rows[1].as<bson::object>().at("r"), 5);
+    CHECK_EQ(lists.at("y").as<bson::array>()[0].as<bson::object>().at("s"), 6);
+  }
+}
 
 namespace
 {
