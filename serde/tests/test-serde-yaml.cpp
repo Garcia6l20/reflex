@@ -1492,3 +1492,80 @@ TEST_CASE("reflex::serde::yaml::deserializer: a std::byte reads back as an integ
       "YAML: a byte holds an integer from 0 to 255, got -1");
   check_load_throws<std::vector<std::byte>>("- 1\n- 256");
 }
+
+namespace yaml_empty_override
+{
+struct mapping_body
+{
+  int k = 1;
+};
+
+struct writes_mapping
+{};
+
+struct writes_scalar
+{};
+
+struct all_omitted
+{
+  [[= omit_if_empty{}]] std::vector<int> v;
+};
+
+struct holder
+{
+  writes_mapping m;
+  writes_scalar  s;
+  int            after = 1;
+};
+
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, yaml::serializer<OutputIt, Opts>& ser, writes_mapping const&)
+{
+  return serde::serialize(ser, mapping_body{});
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, yaml::serializer<OutputIt, Opts>& ser, writes_scalar const&)
+{
+  return serde::serialize(ser, "x"s);
+}
+
+template <typename OutputIt, auto Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, yaml::serializer<OutputIt, Opts>& ser, all_omitted const&)
+{
+  return serde::serialize(ser, mapping_body{});
+}
+}
+
+TEST_CASE("reflex::serde::yaml: an empty aggregate with its own serialize override is a block node")
+{
+  using namespace yaml_empty_override;
+
+  CHECK_EQ(dump(holder{}), "m:\n  k: 1\ns:\n  x\nafter: 1");
+  CHECK_EQ(
+      dump(std::map<std::string, writes_mapping>{{"a", {}}, {"b", {}}}),
+      "a:\n  k: 1\nb:\n  k: 1");
+  CHECK_EQ(dump(std::vector<writes_mapping>{{}, {}}), "- k: 1\n- k: 1");
+  CHECK_EQ(dump(writes_mapping{}), "k: 1");
+
+  constexpr yaml::options commented{.comments = true};
+  std::string             out;
+  yaml::serializer{out, std::cw<commented>}.dump(holder{}, comments_of<holder>{});
+  CHECK_EQ(out, "m:\n  k: 1\ns:\n  x\nafter: 1\n");
+}
+
+TEST_CASE("reflex::serde::yaml: an override aggregate with every member omitted is a block node")
+{
+  using namespace yaml_empty_override;
+
+  CHECK_EQ(
+      dump(
+          std::map<std::string, all_omitted>{
+              {"a", {}}
+  }),
+      "a:\n  k: 1");
+  CHECK_EQ(dump(all_omitted{}), "k: 1");
+}

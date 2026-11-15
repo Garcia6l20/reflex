@@ -525,11 +525,25 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       comments_.indent    = 0;
     }
 
+    template <typename T> bool inline_empty_(T const& value) const
+    {
+      if constexpr(
+          aggregate_c<T> and not seq_c<T> and not map_c<T>
+          and reflex::tag_invocable_c<tag_t<serde::serialize>, serializer&, T const&>)
+      {
+        return false;
+      }
+      else
+      {
+        return detail::is_inline_empty(value);
+      }
+    }
+
     template <typename T> void write_value_trailing_(T const& value, std::string_view trailing)
     {
       if constexpr(detail::block_node_c<T>)
       {
-        if(not detail::is_inline_empty(value))
+        if(not inline_empty_(value))
         {
           emit_trailing_(trailing);
           auto guard = this->push();
@@ -651,7 +665,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       else if constexpr(detail::block_node_c<T>)
       {
-        if(not detail::is_inline_empty(value))
+        if(not inline_empty_(value))
         {
           auto guard = this->push();
           if constexpr(BreakBefore)
