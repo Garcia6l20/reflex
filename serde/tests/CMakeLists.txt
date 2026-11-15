@@ -66,6 +66,11 @@ doctest_add_test(reflex-serde-bson-types-test
 )
 target_link_libraries(reflex-serde-bson-types-test PRIVATE reflex::serde::bson)
 
+doctest_add_test(reflex-serde-bson-binary-test
+  test-serde-bson-binary.cpp
+)
+target_link_libraries(reflex-serde-bson-binary-test PRIVATE reflex::serde::bson)
+
 doctest_add_test(reflex-serde-xml-test
   test-serde-xml.cpp
 )

@@ -76,6 +76,14 @@ REFLEX_EXPORT namespace reflex::serde
     throw runtime_error("No deserializer found for file format '{}'", file_format);
   }
 
+  namespace detail
+  {
+  template <typename S> inline constexpr bool ext_json_serializer_v = false;
+
+  template <typename S>
+  concept ext_json_serializer_c = ext_json_serializer_v<std::remove_cvref_t<S>>;
+  }
+
   inline constexpr struct serialize_cpo : customization_point_object
   {
   } serialize;

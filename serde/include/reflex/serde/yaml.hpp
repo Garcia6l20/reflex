@@ -2971,6 +2971,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
 } // namespace reflex::serde::yaml
 
+namespace reflex::serde::detail
+{
+template <typename OutputIt, yaml::options Opts>
+inline constexpr bool ext_json_serializer_v<yaml::serializer<OutputIt, Opts>> = true;
+}
+
 REFLEX_EXPORT namespace reflex::serde::ser
 {
   constexpr auto yaml = ^^reflex::serde::yaml::serializer;

@@ -2021,6 +2021,12 @@ REFLEX_EXPORT namespace reflex::serde::json
 
 } // namespace reflex::serde::json
 
+namespace reflex::serde::detail
+{
+template <typename OutputIt, json::options Opts>
+inline constexpr bool ext_json_serializer_v<json::serializer<OutputIt, Opts>> = true;
+}
+
 REFLEX_EXPORT namespace reflex::serde::ser
 {
   constexpr auto json = ^^reflex::serde::json::serializer;

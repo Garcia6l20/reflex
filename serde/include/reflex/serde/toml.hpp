@@ -2586,6 +2586,12 @@ REFLEX_EXPORT namespace reflex::serde::toml
 
 } // namespace reflex::serde::toml
 
+namespace reflex::serde::detail
+{
+template <typename OutputIt, toml::options Opts>
+inline constexpr bool ext_json_serializer_v<toml::serializer<OutputIt, Opts>> = true;
+}
+
 REFLEX_EXPORT namespace reflex::serde::ser
 {
   constexpr auto toml = ^^reflex::serde::toml::serializer;

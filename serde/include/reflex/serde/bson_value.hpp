@@ -29,7 +29,20 @@ REFLEX_EXPORT namespace reflex::serde::bson
   using number     = double;
   using boolean    = bool;
   using decimal128 = std::float128_t;
-  using binary     = std::vector<std::byte>;
+
+  /** @brief BSON binary data, element type 0x05, with its subtype.
+   *
+   * Any subtype reads and writes. For the deprecated subtype 0x02 `data` holds the payload alone:
+   * reading checks the inner int32 length equals the payload size and drops it, writing puts it
+   * back. JSON, YAML and TOML write it as the Extended JSON v2 `$binary` document.
+   */
+  struct binary
+  {
+    std::byte              subtype{0x00};
+    std::vector<std::byte> data;
+
+    constexpr bool operator==(binary const&) const = default;
+  };
 
   struct datetime
   {

@@ -357,13 +357,15 @@ struct Blob
 
 TEST_CASE("reflex::serde::bson: bson::value holds binary")
 {
-  const bson::binary bin = {std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+  const bson::binary bin = {
+      .data = {std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}}
+  };
 
   SUBCASE("generic decode of a typed-written struct")
   {
     std::vector<std::byte> out;
     bson::serializer       ser{out};
-    ser.dump(Blob{"blob", bin});
+    ser.dump(Blob{"blob", bin.data});
 
     auto value = bson::deserializer{out}.load<bson::value>();
 

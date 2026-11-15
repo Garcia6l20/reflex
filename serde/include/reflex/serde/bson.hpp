@@ -17,6 +17,7 @@
 #include <reflex/serde/bson_value.hpp>
 #endif
 
+#include <reflex/serde/detail/encode.hpp>
 #include <reflex/serde/detail/io.hpp>
 
 namespace reflex::serde::bson::detail
@@ -36,8 +37,12 @@ concept bson_extended_c = decays_to_c<T, bson::object_id>
                        or decays_to_c<T, bson::code_w_scope>;
 
 template <typename T>
-concept bson_scalar_c =
-    decays_to_c<T, bson::decimal128> or decays_to_c<T, bson::datetime> or bson_extended_c<T>;
+concept bson_scalar_c = decays_to_c<T, bson::decimal128>
+                     or decays_to_c<T, bson::datetime>
+                     or decays_to_c<T, bson::binary>
+                     or bson_extended_c<T>;
+
+static_assert(bson_scalar_c<bson::binary> and not seq_c<bson::binary>);
 
 static_assert(bson_scalar_c<bson::object_id> and not seq_c<bson::object_id>);
 static_assert(bson_scalar_c<bson::timestamp> and not seq_c<bson::timestamp>);
@@ -78,6 +83,19 @@ enum class bson_type : std::uint8_t
   decimal128   = 0x13,
   max_key      = 0x7F,
   min_key      = 0xFF
+};
+
+inline constexpr std::byte binary_old_subtype{0x02};
+
+struct ext_json_binary_body
+{
+  std::string                                base64;
+  [[= serde::rename{"subType"}]] std::string sub_type;
+};
+
+struct ext_json_binary
+{
+  [[= serde::rename{"$binary"}]] ext_json_binary_body binary;
 };
 
 constexpr void append(bytes& out, std::byte byte)
@@ -343,6 +361,25 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
     append(out, detail::bson_type::datetime);
     append(out, key);
     append(out, value.millis_since_epoch);
+  }
+  else if constexpr(std::same_as<value_t, bson::binary>)
+  {
+    append(out, detail::bson_type::binary);
+    append(out, key);
+    const auto old    = value.subtype == binary_old_subtype;
+    const auto prefix = old ? sizeof(std::int32_t) : 0;
+    const auto limit  = static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+    if(value.data.size() > limit - prefix)
+    {
+      throw std::length_error("BSON binary payload exceeds the int32 length field");
+    }
+    append(out, static_cast<std::int32_t>(value.data.size() + prefix));
+    append(out, value.subtype);
+    if(old)
+    {
+      append(out, static_cast<std::int32_t>(value.data.size()));
+    }
+    out.append_range(value.data);
   }
   else if constexpr(std::same_as<value_t, bson::object_id>)
   {
@@ -1095,6 +1132,10 @@ REFLEX_EXPORT namespace reflex::serde::bson
         }
         value.millis_since_epoch = cursor_.template read<std::int64_t>();
       }
+      else if constexpr(std::same_as<value_t, bson::binary>)
+      {
+        read_binary(type, value);
+      }
       else if constexpr(detail::bson_extended_c<value_t>)
       {
         read_extended(type, value);
@@ -1118,18 +1159,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
       }
       else if constexpr(detail::byte_seq_c<value_t>)
       {
-        if(type != detail::bson_type::binary)
-        {
-          throw std::runtime_error("Expected BSON binary type");
-        }
-        const auto length = cursor_.template read<std::int32_t>();
-        if(length < 0)
-        {
-          throw std::runtime_error("Invalid BSON binary length");
-        }
-        const auto n = static_cast<std::size_t>(length);
-        cursor_.require(n);
-        const auto subtype = cursor_.read_byte();
+        const auto [n, subtype] = binary_header(type);
         if(subtype != std::byte{0x00})
         {
           throw std::runtime_error(std::format(
@@ -1456,6 +1486,46 @@ REFLEX_EXPORT namespace reflex::serde::bson
       }
     }
 
+    std::pair<std::size_t, std::byte> binary_header(detail::bson_type type)
+    {
+      if(type != detail::bson_type::binary)
+      {
+        throw std::runtime_error("Expected BSON binary type");
+      }
+      const auto length = cursor_.template read<std::int32_t>();
+      if(length < 0)
+      {
+        throw std::runtime_error("Invalid BSON binary length");
+      }
+      const auto n = static_cast<std::size_t>(length);
+      cursor_.require(n);
+      return {n, cursor_.read_byte()};
+    }
+
+    void read_binary(detail::bson_type type, bson::binary& value)
+    {
+      auto [n, subtype] = binary_header(type);
+      if(subtype == detail::binary_old_subtype)
+      {
+        if(n < sizeof(std::int32_t))
+        {
+          throw std::runtime_error("BSON binary subtype 0x02 is too short for its inner length");
+        }
+        n -= sizeof(std::int32_t);
+        const auto inner = cursor_.template read<std::int32_t>();
+        if(inner < 0 or static_cast<std::size_t>(inner) != n)
+        {
+          throw std::runtime_error(
+              std::format(
+                  "BSON binary subtype 0x02 inner length {} does not match its {} payload bytes",
+                  inner, n));
+        }
+      }
+      value.subtype = subtype;
+      value.data.clear();
+      read_payload(value.data, n);
+    }
+
     void read_code_w_scope(bson::code_w_scope& value)
     {
       const auto limit = code_w_scope_limit();
@@ -1623,6 +1693,25 @@ REFLEX_EXPORT namespace reflex::serde::bson
     ser.write_bytes(encoded);
 
     return ser.out();
+  }
+
+  /** @brief Write @p value as the Extended JSON v2 document
+   * `{"$binary": {"base64": ..., "subType": ...}}`, the subtype as two lowercase hex digits.
+   *
+   * Taken by the JSON, YAML and TOML serializers only. XML, CSV and BSON never see it.
+   */
+  template <serde::detail::ext_json_serializer_c S, typename... PolyTag>
+    requires(sizeof...(PolyTag) <= 1)
+  auto tag_invoke(tag_t<serde::serialize>, S & ser, bson::binary const& value, PolyTag...)
+  {
+    const auto subtype = std::array{value.subtype};
+    return serde::serialize(
+        ser, detail::ext_json_binary{
+                 .binary = {
+                            .base64   = serde::detail::base64_encode(value.data),
+                            .sub_type = serde::detail::hex_encode(subtype),
+                            }
+    });
   }
 
   template <typename It, read_options Opts>
