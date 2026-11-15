@@ -375,9 +375,24 @@ REFLEX_EXPORT namespace reflex::serde::bson
   serializer(std::basic_ostream<CharT, CharTrait>&)
       -> serializer<std::ostreambuf_iterator<CharT, CharTrait>>;
 
-  template <std::input_iterator It> class deserializer
+  namespace detail
+  {
+    struct bson_access;
+  }
+
+  /** @brief Input options of bson::deserializer, its second template argument. */
+  struct read_options
+  {
+    serde::unknown_keys unknown_keys = serde::unknown_keys::error;
+
+    constexpr bool operator==(read_options const&) const = default;
+  };
+
+  template <std::input_iterator It, read_options Opts = read_options{}> class deserializer
   {
   public:
+    static constexpr read_options read_opts = Opts;
+
     using range_type = std::ranges::subrange<It, It>;
 
   private:
@@ -683,6 +698,19 @@ REFLEX_EXPORT namespace reflex::serde::bson
     deserializer(It begin, It end) : cursor_({begin, end})
     {}
 
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(It begin, It end, std::constant_wrapper<X>) : cursor_({begin, end})
+    {}
+
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(std::ranges::input_range auto&& range, std::constant_wrapper<X>)
+        : cursor_{
+              {std::ranges::begin(range), std::ranges::end(range)}
+    }
+    {}
+
     deserializer(std::ranges::input_range auto&& range)
         : cursor_{
               {std::ranges::begin(range), std::ranges::end(range)}
@@ -695,6 +723,14 @@ REFLEX_EXPORT namespace reflex::serde::bson
         It{};
       }
     deserializer(T& v) : cursor_{{It{v}, It{}}}
+    {}
+
+    template <typename T, auto X>
+      requires requires(T& v) {
+        It{v};
+        It{};
+      } and (std::constant_wrapper<X>::value == Opts)
+    deserializer(T& v, std::constant_wrapper<X>) : cursor_{{It{v}, It{}}}
     {}
 
     bool at_end() const
@@ -993,8 +1029,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
           throw std::runtime_error("Expected BSON document type");
         }
         read_document([this, &value](detail::bson_type elem_type, std::string_view key) {
-          object_visit_flat(
-              key, value, [this, elem_type](auto& member) { read_element(elem_type, member); });
+          read_member_or_miss(elem_type, key, value);
         });
       }
       else if constexpr(std::same_as<value_t, bson::value>)
@@ -1077,11 +1112,44 @@ REFLEX_EXPORT namespace reflex::serde::bson
     {
       return deserialize(*this, std::type_identity<T>{});
     }
+
+  private:
+    friend struct detail::bson_access;
+
+    template <typename Key, typename Value>
+    void read_member_or_miss(detail::bson_type type, Key const& key, Value& value)
+    {
+      if(not object_try_visit_flat(
+             key, value, [this, type](auto& member) { read_element(type, member); }))
+      {
+        throw std::runtime_error(std::format("BSON: no member matches the key '{}'", key));
+      }
+    }
+  };
+
+  /** @brief The one way into the BSON deserializer's private members, for the namespace-scope
+   * readers.
+   */
+  struct detail::bson_access
+  {
+    template <typename De, typename Key, typename Value>
+    static void read_member_or_miss(De& de, bson_type type, Key const& key, Value& value)
+    {
+      de.read_member_or_miss(type, key, value);
+    }
   };
 
   template <std::input_iterator It> deserializer(It, It) -> deserializer<It>;
   template <std::ranges::input_range R>
   deserializer(R&&) -> deserializer<std::ranges::iterator_t<R>>;
+
+  template <std::input_iterator It, auto X>
+  deserializer(It, It, std::constant_wrapper<X>) -> deserializer<It, X>;
+  template <std::ranges::input_range R, auto X>
+  deserializer(R&&, std::constant_wrapper<X>) -> deserializer<std::ranges::iterator_t<R>, X>;
+  template <typename CharT, typename CharTrait, auto X>
+  deserializer(std::basic_istream<CharT, CharTrait>&, std::constant_wrapper<X>)
+      -> deserializer<std::istreambuf_iterator<CharT>, X>;
 
   template <typename CharT, typename CharTrait = std::char_traits<CharT>>
   deserializer(std::basic_istream<CharT, CharTrait>&)
@@ -1110,13 +1178,15 @@ REFLEX_EXPORT namespace reflex::serde::bson
     return ser.out();
   }
 
-  template <typename It> auto tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de)
+  template <typename It, read_options Opts>
+  auto tag_invoke(tag_default_t<serde::deserialize>, deserializer<It, Opts> & de)
   {
     return deserialize(de, std::type_identity<bson::value>{});
   }
 
-  template <std::input_iterator It, typename T>
-  T tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de, std::type_identity<T>)
+  template <std::input_iterator It, read_options Opts, typename T>
+  T tag_invoke(
+      tag_default_t<serde::deserialize>, deserializer<It, Opts> & de, std::type_identity<T>)
   {
     using U = std::decay_t<T>;
     T value{};
@@ -1156,7 +1226,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         }
         else
         {
-          object_visit_flat(key, value, [&](auto& member) { de.read_element(type, member); });
+          detail::bson_access::read_member_or_miss(de, type, key, value);
         }
       });
     }

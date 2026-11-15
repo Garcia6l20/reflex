@@ -965,3 +965,126 @@ TEST_CASE("reflex::serde::bson: an optional member")
     CHECK(bson::deserializer{bytes}.load<bson::value>().as<bson::object>().at("number").is_null());
   }
 }
+
+struct uk_old_inner
+{
+  int gone;
+  int port;
+};
+
+struct uk_new_inner
+{
+  int port;
+
+  bool operator==(uk_new_inner const&) const = default;
+};
+
+struct uk_old_outer
+{
+  int          gone;
+  uk_old_inner inner;
+};
+
+struct uk_new_outer
+{
+  uk_new_inner inner;
+};
+
+template <typename T> std::vector<std::byte> uk_encode(T const& value)
+{
+  std::vector<std::byte> out;
+  bson::serializer       ser{out};
+  ser.dump(value);
+  return out;
+}
+
+template <typename T> std::string uk_error(std::vector<std::byte> const& bytes)
+{
+  try
+  {
+    (void)bson::deserializer{bytes}.template load<T>();
+  }
+  catch(std::runtime_error const& e)
+  {
+    return e.what();
+  }
+  return {};
+}
+
+TEST_CASE("reflex::serde::bson: an unknown key names itself")
+{
+  SUBCASE("at the root")
+  {
+    CHECK_EQ(
+        uk_error<uk_new_outer>(uk_encode(
+            uk_old_outer{
+                1, {2, 3}
+    })),
+        "BSON: no member matches the key 'gone'");
+  }
+
+  SUBCASE("in a nested aggregate")
+  {
+    CHECK_EQ(
+        uk_error<uk_new_inner>(uk_encode(uk_old_inner{2, 3})),
+        "BSON: no member matches the key 'gone'");
+  }
+
+  SUBCASE("a matching document still loads")
+  {
+    CHECK_EQ(bson::deserializer{uk_encode(uk_new_inner{4})}.load<uk_new_inner>(), uk_new_inner{4});
+  }
+}
+
+TEST_CASE("reflex::serde::bson: read options deduce")
+{
+  static_assert(bson::read_options{}.unknown_keys == unknown_keys::error);
+
+  constexpr bson::read_options defaults{};
+  constexpr bson::read_options skip{.unknown_keys = unknown_keys::skip};
+
+  std::vector<std::byte>     bytes = uk_encode(uk_new_inner{1});
+  std::span<std::byte>       view{bytes};
+  std::span<std::byte const> const_view{bytes};
+  std::istringstream         stream{std::string{"x"}};
+  std::vector<std::byte>     iter_source = bytes;
+
+  using vec_it = std::vector<std::byte>::iterator;
+  static_assert(std::same_as<
+                decltype(bson::deserializer{bytes, std::cw<defaults>}),
+                decltype(bson::deserializer{bytes})>);
+  static_assert(std::same_as<
+                decltype(bson::deserializer{view, std::cw<defaults>}),
+                decltype(bson::deserializer{view})>);
+  static_assert(std::same_as<
+                decltype(bson::deserializer{const_view, std::cw<defaults>}),
+                decltype(bson::deserializer{const_view})>);
+  static_assert(
+      std::same_as<
+          decltype(bson::deserializer{iter_source.begin(), iter_source.end(), std::cw<defaults>}),
+          bson::deserializer<vec_it>>);
+  static_assert(std::same_as<
+                decltype(bson::deserializer{stream, std::cw<defaults>}),
+                decltype(bson::deserializer{stream})>);
+  static_assert(
+      decltype(bson::deserializer{bytes, std::cw<skip>})::read_opts.unknown_keys
+      == unknown_keys::skip);
+
+  CHECK_EQ(bson::deserializer{bytes, std::cw<defaults>}.load<uk_new_inner>(), uk_new_inner{1});
+
+  std::istringstream in{
+      std::string{reinterpret_cast<char const*>(bytes.data()), bytes.size()}
+  };
+  CHECK_EQ(bson::deserializer{in, std::cw<defaults>}.load<uk_new_inner>(), uk_new_inner{1});
+}
+
+TEST_CASE("reflex::serde::bson: a mismatched option tag is rejected")
+{
+  using vec_it = std::vector<std::byte>::iterator;
+  static_assert(not std::constructible_from<
+                bson::deserializer<vec_it, bson::read_options{}>, std::vector<std::byte>&,
+                std::constant_wrapper<bson::read_options{.unknown_keys = unknown_keys::skip}>>);
+  static_assert(std::constructible_from<
+                bson::deserializer<vec_it, bson::read_options{}>, std::vector<std::byte>&,
+                std::constant_wrapper<bson::read_options{}>>);
+}

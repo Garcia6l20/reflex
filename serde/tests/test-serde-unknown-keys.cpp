@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+import reflex.serde.bson;
 import reflex.serde.json;
 import reflex.serde.toml;
 import reflex.serde.xml;
@@ -139,6 +140,7 @@ template <typename T> std::string xml_error_message(std::string const& text)
 
 TEST_CASE("reflex::serde::unknown_keys: defaults keep each format's behaviour")
 {
+  static_assert(bson::read_options{}.unknown_keys == unknown_keys::error);
   static_assert(json::read_options{}.unknown_keys == unknown_keys::error);
   static_assert(xml::read_options{}.unknown_keys == unknown_keys::skip);
   static_assert(yaml::read_options{}.unknown_keys == unknown_keys::error);
