@@ -32,18 +32,28 @@ concept byte_seq_c =
 
 enum class bson_type : std::uint8_t
 {
-  eof        = 0x00,
-  double_    = 0x01,
-  string     = 0x02,
-  document   = 0x03,
-  array      = 0x04,
-  binary     = 0x05,
-  datetime   = 0x09,
-  boolean    = 0x08,
-  null       = 0x0A,
-  int32      = 0x10,
-  int64      = 0x12,
-  decimal128 = 0x13
+  eof          = 0x00,
+  double_      = 0x01,
+  string       = 0x02,
+  document     = 0x03,
+  array        = 0x04,
+  binary       = 0x05,
+  undefined    = 0x06,
+  object_id    = 0x07,
+  boolean      = 0x08,
+  datetime     = 0x09,
+  null         = 0x0A,
+  regex        = 0x0B,
+  db_pointer   = 0x0C,
+  javascript   = 0x0D,
+  symbol       = 0x0E,
+  code_w_scope = 0x0F,
+  int32        = 0x10,
+  timestamp    = 0x11,
+  int64        = 0x12,
+  decimal128   = 0x13,
+  max_key      = 0x7F,
+  min_key      = 0xFF
 };
 
 constexpr void append(bytes& out, std::byte byte)
@@ -380,7 +390,12 @@ REFLEX_EXPORT namespace reflex::serde::bson
     struct bson_access;
   }
 
-  /** @brief Input options of bson::deserializer, its second template argument. */
+  /** @brief Input options of bson::deserializer, its second template argument.
+   *
+   * With `unknown_keys::skip`, an element whose key matches no member is consumed by its type and
+   * length, every BSON element type included. A skipped document or array is checked by its
+   * declared length and trailing 0x00 only, a corrupt subtree under a skipped key is not reported.
+   */
   struct read_options
   {
     serde::unknown_keys unknown_keys = serde::unknown_keys::error;
@@ -456,6 +471,27 @@ REFLEX_EXPORT namespace reflex::serde::bson
         require(n);
         range.advance(n);
         position += n;
+      }
+
+      constexpr void skip(std::size_t n)
+      {
+        if constexpr(sized_input)
+        {
+          advance(n);
+        }
+        else
+        {
+          for(std::size_t i = 0; i < n; ++i)
+          {
+            read_byte();
+          }
+        }
+      }
+
+      constexpr void skip_cstring()
+      {
+        while(read_byte() != std::byte{0x00})
+        {}
       }
 
       // A null-terminated key, borrowed from the input when it is contiguous. The
@@ -1116,13 +1152,141 @@ REFLEX_EXPORT namespace reflex::serde::bson
   private:
     friend struct detail::bson_access;
 
+    void skip_string(std::size_t limit)
+    {
+      const auto size = cursor_.template read<std::int32_t>();
+      if(size < 1)
+      {
+        throw std::runtime_error("Invalid BSON string length");
+      }
+      const auto n = static_cast<std::size_t>(size);
+      if(cursor_.position > limit or n > limit - cursor_.position)
+      {
+        throw std::runtime_error("BSON element exceeds declared size");
+      }
+      cursor_.require(n);
+      cursor_.skip(n - 1);
+      if(cursor_.read_byte() != std::byte{0x00})
+      {
+        throw std::runtime_error("BSON string payload must be null-terminated");
+      }
+    }
+
+    void skip_document(std::size_t limit)
+    {
+      const auto size = cursor_.template read<std::int32_t>();
+      if(size < 5)
+      {
+        throw std::runtime_error("Invalid BSON document length");
+      }
+      const auto n = static_cast<std::size_t>(size) - sizeof(std::int32_t);
+      if(cursor_.position > limit or n > limit - cursor_.position)
+      {
+        throw std::runtime_error("BSON element exceeds declared size");
+      }
+      cursor_.require(n);
+      cursor_.skip(n - 1);
+      if(cursor_.read_byte() != std::byte{0x00})
+      {
+        throw std::runtime_error("BSON document missing terminator");
+      }
+    }
+
+    void skip_element(detail::bson_type type)
+    {
+      constexpr auto unbounded = std::numeric_limits<std::size_t>::max();
+      switch(type)
+      {
+        case detail::bson_type::null:
+        case detail::bson_type::undefined:
+        case detail::bson_type::min_key:
+        case detail::bson_type::max_key:
+          return;
+        case detail::bson_type::boolean:
+          cursor_.skip(1);
+          return;
+        case detail::bson_type::int32:
+          cursor_.skip(4);
+          return;
+        case detail::bson_type::double_:
+        case detail::bson_type::int64:
+        case detail::bson_type::datetime:
+        case detail::bson_type::timestamp:
+          cursor_.skip(8);
+          return;
+        case detail::bson_type::object_id:
+          cursor_.skip(12);
+          return;
+        case detail::bson_type::decimal128:
+          cursor_.skip(16);
+          return;
+        case detail::bson_type::string:
+        case detail::bson_type::javascript:
+        case detail::bson_type::symbol:
+          skip_string(unbounded);
+          return;
+        case detail::bson_type::binary:
+        {
+          const auto size = cursor_.template read<std::int32_t>();
+          if(size < 0)
+          {
+            throw std::runtime_error("Invalid BSON binary length");
+          }
+          const auto n = static_cast<std::size_t>(size) + 1;
+          cursor_.require(n);
+          cursor_.skip(n);
+          return;
+        }
+        case detail::bson_type::document:
+        case detail::bson_type::array:
+          skip_document(unbounded);
+          return;
+        case detail::bson_type::code_w_scope:
+        {
+          const auto size = cursor_.template read<std::int32_t>();
+          if(size < 14)
+          {
+            throw std::runtime_error("Invalid BSON code with scope length");
+          }
+          const auto n     = static_cast<std::size_t>(size) - sizeof(std::int32_t);
+          const auto limit = cursor_.position + n;
+          cursor_.require(n);
+          skip_string(limit);
+          skip_document(limit);
+          if(cursor_.position != limit)
+          {
+            throw std::runtime_error("BSON code with scope length does not match its content");
+          }
+          return;
+        }
+        case detail::bson_type::db_pointer:
+          skip_string(unbounded);
+          cursor_.skip(12);
+          return;
+        case detail::bson_type::regex:
+          cursor_.skip_cstring();
+          cursor_.skip_cstring();
+          return;
+        default:
+          throw std::runtime_error(std::format(
+              "BSON: unknown element type 0x{:02x}", std::to_underlying(type)));
+      }
+    }
+
     template <typename Key, typename Value>
     void read_member_or_miss(detail::bson_type type, Key const& key, Value& value)
     {
       if(not object_try_visit_flat(
              key, value, [this, type](auto& member) { read_element(type, member); }))
       {
-        throw std::runtime_error(std::format("BSON: no member matches the key '{}'", key));
+        if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          skip_element(type);
+        }
+        else
+        {
+          throw std::runtime_error(std::format("BSON: no member matches the key '{}'", key));
+        }
       }
     }
   };
