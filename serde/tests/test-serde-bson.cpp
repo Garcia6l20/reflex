@@ -1088,3 +1088,44 @@ TEST_CASE("reflex::serde::bson: a mismatched option tag is rejected")
                 bson::deserializer<vec_it, bson::read_options{}>, std::vector<std::byte>&,
                 std::constant_wrapper<bson::read_options{}>>);
 }
+
+namespace
+{
+std::vector<std::byte> dump_bytes(auto const& value)
+{
+  std::vector<std::byte> out;
+  bson::serializer       ser{out};
+  ser.dump(value);
+  return out;
+}
+
+template <typename T> T load_from_stream(std::vector<std::byte> const& data)
+{
+  std::istringstream in{
+      std::string{reinterpret_cast<char const*>(data.data()), data.size()},
+      std::ios::binary
+  };
+  return bson::deserializer{in}.template load<T>();
+}
+} // namespace
+
+namespace
+{
+struct prefilled_blob_t
+{
+  std::vector<std::byte> payload{std::byte{0x01}};
+
+  bool operator==(prefilled_blob_t const&) const = default;
+};
+} // namespace
+
+TEST_CASE("reflex::serde::bson: a binary member replaces its default contents")
+{
+  const prefilled_blob_t written{
+      {std::byte{0xAB}, std::byte{0xCD}}
+  };
+  const auto data = dump_bytes(written);
+
+  CHECK_EQ(bson::deserializer{data}.load<prefilled_blob_t>().payload, written.payload);
+  CHECK_EQ(load_from_stream<prefilled_blob_t>(data).payload, written.payload);
+}

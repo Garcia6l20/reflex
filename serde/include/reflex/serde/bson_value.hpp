@@ -8,8 +8,11 @@
 #include <reflex/parse.hpp>
 #include <reflex/serde/poly.hpp>
 
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <stdfloat>
+#include <string>
 #include <vector>
 #endif
 
@@ -63,7 +66,95 @@ REFLEX_EXPORT namespace reflex::serde::bson
     constexpr auto operator<=>(datetime const&) const noexcept = default;
   };
 
-  using value  = poly::var<int32, int64, number, boolean, string, decimal128, datetime, binary>;
+  /** @brief A BSON ObjectId, element type 0x07, its 12 bytes in wire order. */
+  struct object_id
+  {
+    std::array<std::byte, 12> bytes{};
+
+    constexpr bool operator==(object_id const&) const = default;
+  };
+
+  /** @brief A BSON timestamp, element type 0x11, written increment first, both little-endian. */
+  struct timestamp
+  {
+    std::uint32_t increment{};
+    std::uint32_t seconds{};
+
+    constexpr bool operator==(timestamp const&) const = default;
+  };
+
+  /** @brief A BSON regular expression, element type 0x0B. Neither string may hold a null byte. */
+  struct regex
+  {
+    std::string pattern;
+    std::string options;
+
+    constexpr bool operator==(regex const&) const = default;
+  };
+
+  /** @brief BSON JavaScript code, element type 0x0D. */
+  struct javascript
+  {
+    std::string code;
+
+    constexpr bool operator==(javascript const&) const = default;
+  };
+
+  /** @brief A BSON symbol, element type 0x0E, deprecated by the spec. */
+  struct symbol
+  {
+    std::string name;
+
+    constexpr bool operator==(symbol const&) const = default;
+  };
+
+  /** @brief A BSON DBPointer, element type 0x0C, deprecated by the spec. */
+  struct db_pointer
+  {
+    std::string ref;
+    object_id   id;
+
+    constexpr bool operator==(db_pointer const&) const = default;
+  };
+
+  /** @brief The BSON MinKey, element type 0xFF. */
+  struct min_key
+  {
+    constexpr bool operator==(min_key const&) const = default;
+  };
+
+  /** @brief The BSON MaxKey, element type 0x7F. */
+  struct max_key
+  {
+    constexpr bool operator==(max_key const&) const = default;
+  };
+
+  /** @brief The BSON undefined value, element type 0x06, deprecated by the spec. */
+  struct undefined
+  {
+    constexpr bool operator==(undefined const&) const = default;
+  };
+
+  /** @brief BSON JavaScript code with scope, element type 0x0F, deprecated by the spec.
+   *
+   * @p scope holds the encoded scope document, length prefix and terminator included, so it
+   * round-trips byte-exact, and defaults to the empty document. Reading checks its length and
+   * terminator, not its elements. Writing throws std::invalid_argument when @p scope is not at
+   * least an empty document whose length prefix matches its size, an explicitly empty vector
+   * included.
+   */
+  struct code_w_scope
+  {
+    std::string            code;
+    std::vector<std::byte> scope{
+        std::byte{5}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}};
+
+    constexpr bool operator==(code_w_scope const&) const = default;
+  };
+
+  using value = poly::var<
+      int32, int64, number, boolean, string, decimal128, datetime, binary, object_id, timestamp,
+      regex, javascript, symbol, db_pointer, min_key, max_key, undefined, code_w_scope>;
   using object = value::obj_type;
   using array  = value::arr_type;
 
