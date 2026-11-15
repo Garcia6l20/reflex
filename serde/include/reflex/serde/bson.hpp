@@ -103,6 +103,23 @@ struct ext_json_object_id
   [[= serde::rename{"$oid"}]] std::string oid;
 };
 
+constexpr std::string sorted_regex_options(std::string_view options)
+{
+  if(options.contains('\0'))
+  {
+    throw std::invalid_argument("BSON regex options must not contain a null byte");
+  }
+  std::string sorted{options};
+  std::ranges::sort(sorted);
+  const auto [dup, end] = std::ranges::unique(sorted);
+  sorted.erase(dup, end);
+  if(not std::ranges::all_of(sorted, [](char c) { return std::string_view{"ilmsux"}.contains(c); }))
+  {
+    throw std::invalid_argument("BSON regex options may only hold the letters i, l, m, s, u, x");
+  }
+  return sorted;
+}
+
 struct ext_json_timestamp_body
 {
   std::uint32_t t;
@@ -182,7 +199,7 @@ constexpr ext_json_timestamp ext_json_of(bson::timestamp const& value)
 constexpr ext_json_regex ext_json_of(bson::regex const& value)
 {
   return {
-      .regex = {.pattern = value.pattern, .options = value.options}
+      .regex = {.pattern = value.pattern, .options = sorted_regex_options(value.options)}
   };
 }
 
@@ -524,7 +541,7 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
     append(out, detail::bson_type::regex);
     append(out, key);
     append_cstring(out, value.pattern, "regex pattern");
-    append_cstring(out, value.options, "regex options");
+    append_cstring(out, sorted_regex_options(value.options), "regex options");
   }
   else if constexpr(std::same_as<value_t, bson::javascript>)
   {

@@ -463,3 +463,46 @@ TEST_CASE("reflex::serde::bson: a root extended type still serializes to BSON by
         [&](auto const& alternative) { CHECK(bson_root_of(alternative) == expected); }, value);
   }
 }
+
+TEST_CASE("reflex::serde::bson: regex options are written in alphabetical order")
+{
+  const bson::regex unsorted{.pattern = "a", .options = "xmi"};
+
+  CHECK_EQ(
+      bson_root_of(unsorted), text_bytes(
+                                  std::string_view{
+                                      "\x12\0\0\0\x0b"
+                                      "value\0"
+                                      "a\0"
+                                      "imx\0"
+                                      "\0",
+                                      18}));
+  CHECK_EQ(json_of(unsorted), R"({"$regularExpression":{"pattern":"a","options":"imx"}})");
+  CHECK_EQ(yaml_of(unsorted), "$regularExpression:\n  pattern: a\n  options: imx");
+  CHECK_EQ(toml_of(unsorted), "[\"$regularExpression\"]\npattern = \"a\"\noptions = \"imx\"");
+  CHECK_EQ(
+      json_of(bson::regex{"a", "mim"}), R"({"$regularExpression":{"pattern":"a","options":"im"}})");
+  CHECK_EQ(unsorted.options, "xmi");
+}
+
+TEST_CASE("reflex::serde::bson: regex options keep each letter once and reject foreign letters")
+{
+  CHECK_EQ(
+      bson_root_of(bson::regex{"a", "mim"}), text_bytes(
+                                                 std::string_view{
+                                                     "\x11\0\0\0\x0b"
+                                                     "value\0"
+                                                     "a\0"
+                                                     "im\0"
+                                                     "\0",
+                                                     17}));
+  constexpr std::string_view message =
+      "BSON regex options may only hold the letters i, l, m, s, u, x";
+  for(std::string_view options : {"g", "\xc3\xa9m"})
+  {
+    CAPTURE(options);
+    const bson::regex value{.pattern = "a", .options = std::string{options}};
+    CHECK_THROWS_WITH_AS(std::ignore = bson_root_of(value), message.data(), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(std::ignore = json_of(value), message.data(), std::invalid_argument);
+  }
+}

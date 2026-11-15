@@ -355,3 +355,13 @@ TEST_CASE("reflex::serde::bson: code_w_scope is written only with an encoded sco
       dump(bson::code_w_scope{"x", unterminated}),
       "BSON code with scope needs an encoded scope document", std::invalid_argument);
 }
+
+TEST_CASE("reflex::serde::bson: a regex with foreign options still reads")
+{
+  const bytes doc = doc_of(element(0x0B, "v", cat(cstr("a"), cstr("g"))));
+  for(bool from_stream : {false, true})
+  {
+    CAPTURE(from_stream);
+    CHECK(load<holder<bson::regex>>(doc, from_stream).v == bson::regex{"a", "g"});
+  }
+}

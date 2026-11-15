@@ -96,7 +96,14 @@ REFLEX_EXPORT namespace reflex::serde::bson
     constexpr bool operator==(timestamp const&) const = default;
   };
 
-  /** @brief A BSON regular expression, element type 0x0B. Neither string may hold a null byte. */
+  /** @brief A BSON regular expression, element type 0x0B. Neither string may hold a null byte.
+   *
+   * BSON and Extended JSON v2 require the options in alphabetical order, so every writer sorts
+   * them, bytes and text alike, and keeps each letter once: `"mim"` is written `"im"`. A writer
+   * throws `std::invalid_argument` on any character outside `ilmsux`, the options BSON 1.1
+   * defines. The value itself is never modified and the reader accepts any options, so a foreign
+   * document with odd options loads but cannot be written back as is.
+   */
   struct regex
   {
     std::string pattern;
