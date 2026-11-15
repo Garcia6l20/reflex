@@ -147,6 +147,93 @@ BSON is a document format, so scalars are transparently wrapped in a
 `{"value": ...}` envelope.  Maps and aggregates serialize as top-level BSON
 documents.
 
+### Reading with options
+
+`bson::deserializer` takes a `bson::read_options` as its second template
+argument, passed through a `std::cw` tag so deduction sees it:
+
+```cpp
+bson::deserializer de{
+    buf, std::cw<bson::read_options{.unknown_keys = serde::unknown_keys::skip}>};
+auto p = de.load<point>();
+```
+
+`unknown_keys` decides what happens to a key no member of the destination
+aggregate matches:
+
+- `serde::unknown_keys::error`, the default, throws
+  `BSON: no member matches the key 'name'`.
+- `serde::unknown_keys::skip` consumes the element by its type and length and
+  carries on. It covers every element type of the BSON 1.1 spec, deprecated
+  ones included.
+
+A skipped document or array is checked by its declared length and its trailing
+0x00 only. A corrupt subtree under a skipped key is not reported. A map
+destination takes every key and never skips. The `{"value": ...}` envelope of
+a scalar root throws on any other key whatever the option says.
+
+### Value types
+
+`bson::value` is a `poly::var` holding one alternative per BSON type. Each is
+also readable and writable as a typed member or root.
+
+| BSON type | element | C++ type |
+|---|---|---|
+| double | 0x01 | `bson::number` |
+| string | 0x02 | `bson::string` |
+| document | 0x03 | `bson::object` |
+| array | 0x04 | `bson::array` |
+| binary | 0x05 | `bson::binary` |
+| undefined | 0x06 | `bson::undefined` |
+| ObjectId | 0x07 | `bson::object_id` |
+| boolean | 0x08 | `bson::boolean` |
+| datetime | 0x09 | `bson::datetime` |
+| null | 0x0A | `bson::null_t` |
+| regex | 0x0B | `bson::regex` |
+| DBPointer | 0x0C | `bson::db_pointer` |
+| JavaScript | 0x0D | `bson::javascript` |
+| symbol | 0x0E | `bson::symbol` |
+| JavaScript with scope | 0x0F | `bson::code_w_scope` |
+| int32 | 0x10 | `bson::int32` |
+| timestamp | 0x11 | `bson::timestamp` |
+| int64 | 0x12 | `bson::int64` |
+| decimal128 | 0x13 | `bson::decimal128` |
+| MinKey | 0xFF | `bson::min_key` |
+| MaxKey | 0x7F | `bson::max_key` |
+
+`bson::binary` is a struct, `{std::byte subtype; std::vector<std::byte> data;}`,
+and takes any subtype. A `std::vector<std::byte>` or `std::array<std::byte, N>`
+member still accepts subtype 0x00 only. For the deprecated subtype 0x02, `data`
+is the payload: reading checks the inner length equals the payload size and
+drops it, writing puts it back.
+
+`bson::regex` options are written sorted, each letter once, and any character
+outside `ilmsux` throws `std::invalid_argument`. `bson::code_w_scope::scope`
+holds the encoded scope document and defaults to the empty document.
+
+### Text form of the BSON types
+
+JSON, YAML and TOML write `bson::binary` and the types below in the Extended
+JSON v2 shape. The other types keep their plain form: `int32`, `int64`,
+`double`, `datetime` and `decimal128` are not rewritten.
+
+| type | JSON |
+|---|---|
+| `binary` | `{"$binary":{"base64":"3q0=","subType":"04"}}` |
+| `object_id` | `{"$oid":"5061728394a5b6c7d8e9fa0b"}` |
+| `timestamp` | `{"$timestamp":{"t":1700000000,"i":2}}` |
+| `regex` | `{"$regularExpression":{"pattern":"^a","options":"im"}}` |
+| `javascript` | `{"$code":"g()"}` |
+| `code_w_scope` | `{"$code":"f(x)","$scope":{"x":7}}` |
+| `symbol` | `{"$symbol":"s"}` |
+| `db_pointer` | `{"$dbPointer":{"$ref":"db.coll","$id":{"$oid":"5061728394a5b6c7d8e9fa0b"}}}` |
+| `min_key` | `{"$minKey":1}` |
+| `max_key` | `{"$maxKey":1}` |
+| `undefined` | `{"$undefined":true}` |
+
+XML and CSV have no text form for these types. Reading the shapes back from
+text is not supported: JSON cannot read a `bson::binary` in any shape.
+
 ---
 
 ## File round-trip example
