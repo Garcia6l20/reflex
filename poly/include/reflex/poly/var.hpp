@@ -12,6 +12,7 @@
 
 #include <map>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 #endif
@@ -406,7 +407,13 @@ REFLEX_EXPORT namespace reflex::poly
     {
       return reflex::visit(
           [&other](auto const& s) -> bool {
-            if constexpr(eq_comparable_c<std::remove_cvref_t<decltype(s)>, std::decay_t<T>>)
+            using S = std::remove_cvref_t<decltype(s)>;
+            using O = std::decay_t<T>;
+            if constexpr(int_number_c<S> and int_number_c<O>)
+            {
+              return std::cmp_equal(s, other);
+            }
+            else if constexpr(eq_comparable_c<S, O>)
             {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
@@ -438,27 +445,40 @@ REFLEX_EXPORT namespace reflex
     static inline constexpr decltype(auto)
         operator()(Fn&& fn, VarT&& v) noexcept(noexcept(fwd(fn)(std::get<0>(fwd(v)))))
     {
+      using self_ptr = poly::var<Ts...>*;
+      if(auto const* link = std::get_if<self_ptr>(&v))
+      {
+        auto* target = *link;
+        while(auto const* next = std::get_if<self_ptr>(target))
+        {
+          target = *next;
+        }
+        return dispatch(fwd(fn), *target);
+      }
+      return dispatch(fwd(fn), fwd(v));
+    }
+
+  private:
+    template <typename Fn, typename VarT>
+    static constexpr decltype(auto) dispatch(Fn&& fn, VarT&& v)
+    {
       static constexpr auto value_types =
           define_static_array(template_arguments_of(variant_type_of(^^poly::var<Ts...>)));
       template for(constexpr auto ii : std::views::iota(0uz, value_types.size()))
       {
         constexpr auto type = value_types[ii];
-        if(v.index() == ii)
+        if constexpr(not is_pointer_type(type) or decay(remove_pointer(type)) != ^^poly::var<Ts...>)
         {
-          if constexpr(is_pointer_type(type))
+          if(v.index() == ii)
           {
-            if constexpr(decay(remove_pointer(type)) == ^^poly::var<Ts...>)
-            {
-              return visitor<poly::var<Ts...>>{}(std::forward<Fn>(fn), *std::get<ii>(fwd(v)));
-            }
-            else
+            if constexpr(is_pointer_type(type))
             {
               return fwd(fn)(*std::get<ii>(fwd(v)));
             }
-          }
-          else
-          {
-            return fwd(fn)(std::get<ii>(fwd(v)));
+            else
+            {
+              return fwd(fn)(std::get<ii>(fwd(v)));
+            }
           }
         }
       }

@@ -427,3 +427,43 @@ TEST_CASE("reflex::poly::var: can_hold reports every alternative")
   static_assert(value_with_refs::can_hold<aggregate1&>());
   static_assert(not value_with_refs::can_hold<aggregate1>());
 }
+
+using mixed = var<int, long, double, bool>;
+
+TEST_CASE("reflex::poly::var: mixed-sign integers compare by value")
+{
+  CHECK(mixed{-1L} != std::numeric_limits<std::size_t>::max());
+  CHECK(mixed{-1} != std::numeric_limits<unsigned>::max());
+  CHECK(mixed{-1} == -1L);
+  CHECK(mixed{-1L} == -1);
+  CHECK(mixed{3L} == 3u);
+  CHECK(mixed{std::numeric_limits<long>::max()} == std::size_t{std::numeric_limits<long>::max()});
+
+  CHECK(mixed{true} == true);
+  CHECK(mixed{true} == 1);
+  CHECK(mixed{1} == true);
+  CHECK(mixed{0} != true);
+}
+
+TEST_CASE("reflex::poly::var: visit follows a chain of references to the end")
+{
+  value       leaf = 42;
+  value       middle{&leaf};
+  value       head{&middle};
+  value const view{&head};
+
+  CHECK(head.template is<value&>());
+  CHECK(view.template is<value&>());
+  CHECK(head == 42);
+  CHECK(view == 42);
+
+  head.visit([](auto& s) {
+    if constexpr(std::same_as<std::remove_cvref_t<decltype(s)>, double>)
+    {
+      s = 7.0;
+    }
+  });
+  CHECK(leaf.template as<double>() == 7.0);
+  CHECK(view.visit(
+      [](auto const& s) { return std::same_as<std::remove_cvref_t<decltype(s)>, double>; }));
+}
