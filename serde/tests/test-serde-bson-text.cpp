@@ -92,6 +92,129 @@ template <typename T> std::string toml_of(T const& value)
   return out;
 }
 
+bson::object_id oid()
+{
+  bson::object_id id;
+  for(std::size_t i = 0; i < id.bytes.size(); ++i)
+  {
+    id.bytes[i] = static_cast<std::byte>(0x50 + i * 17);
+  }
+  return id;
+}
+
+constexpr std::string_view oid_hex = "5061728394a5b6c7d8e9fa0b";
+
+bytes scope_x7()
+{
+  return {std::byte{0x0C}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
+          std::byte{0x10}, std::byte{'x'},  std::byte{0x00}, std::byte{0x07},
+          std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}};
+}
+
+bson::timestamp ts()
+{
+  return {.increment = 2, .seconds = 1700000000};
+}
+
+bson::regex re()
+{
+  return {.pattern = R"(^a"b\d)", .options = "im"};
+}
+
+bson::code_w_scope cws()
+{
+  return {.code = "f(x)", .scope = scope_x7()};
+}
+
+bson::db_pointer dbp()
+{
+  return {.ref = "db.coll", .id = oid()};
+}
+
+struct extended_holder
+{
+  bson::object_id    oid;
+  bson::timestamp    ts;
+  bson::regex        re;
+  bson::javascript   js;
+  bson::code_w_scope cws;
+  bson::symbol       sym;
+  bson::db_pointer   dbp;
+  bson::min_key      min;
+  bson::max_key      max;
+  bson::undefined    u;
+  int                after = 3;
+};
+
+extended_holder all_extended()
+{
+  return {
+      .oid = oid(),
+      .ts  = ts(),
+      .re  = re(),
+      .js  = {"g()"},
+      .cws = cws(),
+      .sym = {"s"},
+      .dbp = dbp(),
+  };
+}
+
+bson::object all_extended_object()
+{
+  return {
+      {"oid", oid()                  },
+      {"ts",  ts()                   },
+      {"re",  re()                   },
+      {"js",  bson::javascript{"g()"}},
+      {"cws", cws()                  },
+      {"sym", bson::symbol{"s"}      },
+      {"dbp", dbp()                  },
+      {"min", bson::min_key{}        },
+      {"max", bson::max_key{}        },
+      {"u",   bson::undefined{}      },
+  };
+}
+
+std::map<std::string, std::string> extended_json()
+{
+  const auto oid_json = std::format(R"({{"$oid":"{}"}})", oid_hex);
+  return {
+      {"oid", oid_json},
+      {"ts", R"j({"$timestamp":{"t":1700000000,"i":2}})j"},
+      {"re", R"j({"$regularExpression":{"pattern":"^a\"b\\d","options":"im"}})j"},
+      {"js", R"j({"$code":"g()"})j"},
+      {"cws", R"j({"$code":"f(x)","$scope":{"x":7}})j"},
+      {"sym", R"j({"$symbol":"s"})j"},
+      {"dbp", std::format(R"({{"$dbPointer":{{"$ref":"db.coll","$id":{}}}}})", oid_json)},
+      {"min", R"j({"$minKey":1})j"},
+      {"max", R"j({"$maxKey":1})j"},
+      {"u", R"j({"$undefined":true})j"},
+  };
+}
+
+std::string json_members(std::span<std::string const> keys)
+{
+  const auto  values = extended_json();
+  std::string out;
+  for(auto const& key : keys)
+  {
+    if(not out.empty())
+    {
+      out += ',';
+    }
+    out += std::format(R"("{}":{})", key, values.at(key));
+  }
+  return out;
+}
+
+template <typename T> bytes bson_root_of(T const& value)
+{
+  bytes            out;
+  bson::serializer ser{out};
+  serde::serialize(ser, value);
+  return out;
+}
+
 using string_out = std::back_insert_iterator<std::string>;
 using bytes_out  = std::back_insert_iterator<bytes>;
 
@@ -195,4 +318,148 @@ TEST_CASE("reflex::serde::bson: a root binary still serializes to BSON bytes")
                        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x04},
                        std::byte{0xDE}, std::byte{0xAD}, std::byte{0x00}};
   CHECK(out == expected);
+}
+
+TEST_CASE("reflex::serde::bson: each extended type is written as Extended JSON v2 in JSON")
+{
+  const auto values = extended_json();
+  const auto object = all_extended_object();
+  for(auto const& [key, value] : object)
+  {
+    CAPTURE(key);
+    CHECK_EQ(json_of(value), values.at(key));
+    reflex::visit(
+        [&](auto const& alternative) { CHECK_EQ(json_of(alternative), values.at(key)); }, value);
+  }
+}
+
+TEST_CASE("reflex::serde::bson: extended types nested two levels in bson::value")
+{
+  const std::array<std::string, 10> keys{"cws", "dbp", "js",  "max", "min",
+                                         "oid", "re",  "sym", "ts",  "u"};
+  const auto                        members = json_members(keys);
+
+  const bson::value in_objects = bson::object{
+      {"outer", bson::object{{"inner", all_extended_object()}}}
+  };
+  CHECK_EQ(json_of(in_objects), std::format(R"({{"outer":{{"inner":{{{}}}}}}})", members));
+
+  bson::array inner;
+  for(auto const& [key, value] : all_extended_object())
+  {
+    inner.push_back(value);
+  }
+  const bson::value in_arrays = bson::array{bson::value{bson::array{bson::value{inner}}}};
+  std::string       elements;
+  for(auto const& [key, value] : extended_json())
+  {
+    elements += elements.empty() ? "" : ",";
+    elements += value;
+  }
+  CHECK_EQ(json_of(in_arrays), std::format("[[[{}]]]", elements));
+}
+
+TEST_CASE("reflex::serde::bson: extended types as typed aggregate members")
+{
+  const std::array<std::string, 10> keys{"oid", "ts",  "re",  "js",  "cws",
+                                         "sym", "dbp", "min", "max", "u"};
+  CHECK_EQ(json_of(all_extended()), std::format(R"({{{},"after":3}})", json_members(keys)));
+}
+
+TEST_CASE("reflex::serde::bson: extended types are written as Extended JSON v2 in YAML")
+{
+  const bson::value doc = bson::object{
+      {"cws", cws()},
+      {"oid", oid()},
+      {"re",  re() },
+      {"ts",  ts() },
+  };
+  CHECK_EQ(
+      yaml_of(doc), std::format(
+                        "cws:\n  $code: f(x)\n  $scope:\n    x: 7\n"
+                        "oid:\n  $oid: {}\n"
+                        "re:\n  $regularExpression:\n    pattern: ^a\"b\\d\n    options: im\n"
+                        "ts:\n  $timestamp:\n    t: 1700000000\n    i: 2",
+                        oid_hex));
+  CHECK_EQ(yaml_of(oid()), std::format("$oid: {}", oid_hex));
+  CHECK_EQ(yaml_of(ts()), "$timestamp:\n  t: 1700000000\n  i: 2");
+  CHECK_EQ(yaml_of(cws()), "$code: f(x)\n$scope:\n  x: 7");
+
+  const bson::value keys = bson::object{
+      {"max", bson::max_key{}  },
+      {"min", bson::min_key{}  },
+      {"u",   bson::undefined{}},
+  };
+  CHECK_EQ(yaml_of(keys), "max:\n  $maxKey: 1\nmin:\n  $minKey: 1\nu:\n  $undefined: true");
+  CHECK_EQ(
+      yaml_of(bson::array{bson::value{bson::min_key{}}, bson::value{bson::undefined{}}}),
+      "- $minKey: 1\n- $undefined: true");
+}
+
+TEST_CASE("reflex::serde::bson: extended types are written as Extended JSON v2 in TOML")
+{
+  const bson::value doc = bson::object{
+      {"cws", cws()},
+      {"oid", oid()},
+      {"re",  re() },
+      {"ts",  ts() },
+  };
+  CHECK_EQ(
+      toml_of(doc), std::format(
+                        "cws = {{ \"$code\" = \"f(x)\", \"$scope\" = {{ x = 7 }} }}\n"
+                        "oid = {{ \"$oid\" = \"{}\" }}\n"
+                        "re = {{ \"$regularExpression\" = {{ pattern = '^a\"b\\d', "
+                        "options = \"im\" }} }}\n"
+                        "ts = {{ \"$timestamp\" = {{ t = 1700000000, i = 2 }} }}",
+                        oid_hex));
+  CHECK_EQ(toml_of(oid()), std::format("\"$oid\" = \"{}\"", oid_hex));
+  CHECK_EQ(toml_of(ts()), "[\"$timestamp\"]\nt = 1700000000\ni = 2");
+  CHECK_EQ(toml_of(cws()), "\"$code\" = \"f(x)\"\n[\"$scope\"]\nx = 7");
+}
+
+TEST_CASE("reflex::serde::bson: a malformed code_w_scope scope throws before its own text")
+{
+  const std::array<bytes, 3> scopes{
+      bytes{},
+      bytes{std::byte{0x06}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}},
+      bytes{
+            std::byte{0x06}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x42},
+            std::byte{0x00}},
+  };
+  for(auto const& scope : scopes)
+  {
+    CAPTURE(scope.size());
+    const bson::code_w_scope value{.code = "f", .scope = scope};
+    std::string              out;
+    json::serializer         ser{out};
+    CHECK_THROWS(ser.dump(value));
+    CHECK(out.empty());
+
+    std::string      yaml_out;
+    yaml::serializer yaml_ser{yaml_out};
+    CHECK_THROWS(yaml_ser.dump(value));
+    CHECK(yaml_out.empty());
+
+    std::string      toml_out;
+    toml::serializer toml_ser{toml_out};
+    CHECK_THROWS(toml_ser.dump(value));
+    CHECK(toml_out.empty());
+  }
+  CHECK_THROWS_WITH_AS(
+      json_of(bson::code_w_scope{.code = "f", .scope = {}}),
+      "BSON code with scope needs an encoded scope document", std::invalid_argument);
+}
+
+TEST_CASE("reflex::serde::bson: a root extended type still serializes to BSON bytes")
+{
+  for(auto const& [key, value] : all_extended_object())
+  {
+    CAPTURE(key);
+    const bytes expected = bson_root_of(
+        bson::object{
+            {"value", value}
+    });
+    reflex::visit(
+        [&](auto const& alternative) { CHECK(bson_root_of(alternative) == expected); }, value);
+  }
 }

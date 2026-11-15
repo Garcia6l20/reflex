@@ -98,6 +98,126 @@ struct ext_json_binary
   [[= serde::rename{"$binary"}]] ext_json_binary_body binary;
 };
 
+struct ext_json_object_id
+{
+  [[= serde::rename{"$oid"}]] std::string oid;
+};
+
+struct ext_json_timestamp_body
+{
+  std::uint32_t t;
+  std::uint32_t i;
+};
+
+struct ext_json_timestamp
+{
+  [[= serde::rename{"$timestamp"}]] ext_json_timestamp_body timestamp;
+};
+
+struct ext_json_regex_body
+{
+  std::string pattern;
+  std::string options;
+};
+
+struct ext_json_regex
+{
+  [[= serde::rename{"$regularExpression"}]] ext_json_regex_body regex;
+};
+
+struct ext_json_javascript
+{
+  [[= serde::rename{"$code"}]] std::string code;
+};
+
+struct ext_json_code_w_scope
+{
+  [[= serde::rename{"$code"}]] std::string   code;
+  [[= serde::rename{"$scope"}]] bson::object scope;
+};
+
+struct ext_json_symbol
+{
+  [[= serde::rename{"$symbol"}]] std::string symbol;
+};
+
+struct ext_json_db_pointer_body
+{
+  [[= serde::rename{"$ref"}]] std::string       ref;
+  [[= serde::rename{"$id"}]] ext_json_object_id id;
+};
+
+struct ext_json_db_pointer
+{
+  [[= serde::rename{"$dbPointer"}]] ext_json_db_pointer_body db_pointer;
+};
+
+struct ext_json_min_key
+{
+  [[= serde::rename{"$minKey"}]] int min_key = 1;
+};
+
+struct ext_json_max_key
+{
+  [[= serde::rename{"$maxKey"}]] int max_key = 1;
+};
+
+struct ext_json_undefined
+{
+  [[= serde::rename{"$undefined"}]] bool undefined = true;
+};
+
+constexpr ext_json_object_id ext_json_of(bson::object_id const& value)
+{
+  return {.oid = serde::detail::hex_encode(value.bytes)};
+}
+
+constexpr ext_json_timestamp ext_json_of(bson::timestamp const& value)
+{
+  return {
+      .timestamp = {.t = value.seconds, .i = value.increment}
+  };
+}
+
+constexpr ext_json_regex ext_json_of(bson::regex const& value)
+{
+  return {
+      .regex = {.pattern = value.pattern, .options = value.options}
+  };
+}
+
+constexpr ext_json_javascript ext_json_of(bson::javascript const& value)
+{
+  return {.code = value.code};
+}
+
+constexpr ext_json_symbol ext_json_of(bson::symbol const& value)
+{
+  return {.symbol = value.name};
+}
+
+constexpr ext_json_db_pointer ext_json_of(bson::db_pointer const& value)
+{
+  return {
+      .db_pointer = {.ref = value.ref, .id = ext_json_of(value.id)}
+  };
+}
+
+constexpr ext_json_min_key ext_json_of(bson::min_key const&)
+{
+  return {};
+}
+
+constexpr ext_json_max_key ext_json_of(bson::max_key const&)
+{
+  return {};
+}
+
+constexpr ext_json_undefined ext_json_of(bson::undefined const&)
+{
+  return {};
+}
+
 constexpr void append(bytes& out, std::byte byte)
 {
   out.push_back(byte);
@@ -171,9 +291,8 @@ constexpr void append_cstring(bytes& out, std::string_view value, std::string_vi
   append(out, value);
 }
 
-constexpr void append(bytes& out, bson::code_w_scope const& value)
+constexpr void check_scope(std::span<std::byte const> scope)
 {
-  const auto& scope = value.scope;
   if(scope.size() < 5 or scope.back() != std::byte{0x00})
   {
     throw std::invalid_argument("BSON code with scope needs an encoded scope document");
@@ -187,6 +306,12 @@ constexpr void append(bytes& out, bson::code_w_scope const& value)
   {
     throw std::invalid_argument("BSON code with scope length prefix does not match its scope");
   }
+}
+
+constexpr void append(bytes& out, bson::code_w_scope const& value)
+{
+  const auto& scope = value.scope;
+  check_scope(scope);
   const auto total = 2 * sizeof(std::int32_t) + value.code.size() + 1 + scope.size();
   if(total > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
   {
@@ -1711,6 +1836,38 @@ REFLEX_EXPORT namespace reflex::serde::bson
                             .sub_type = serde::detail::hex_encode(subtype),
                             }
     });
+  }
+
+  /** @brief Write @p value as its Extended JSON v2 document.
+   *
+   * `object_id` as `{"$oid": <24 lowercase hex>}`, `timestamp` as
+   * `{"$timestamp": {"t": <seconds>, "i": <increment>}}`, `regex` as
+   * `{"$regularExpression": {"pattern": ..., "options": ...}}`, `javascript` as `{"$code": ...}`,
+   * `code_w_scope` as `{"$code": ..., "$scope": {...}}`, `symbol` as `{"$symbol": ...}`,
+   * `db_pointer` as `{"$dbPointer": {"$ref": ..., "$id": {"$oid": ...}}}`, `min_key` as
+   * `{"$minKey": 1}`, `max_key` as `{"$maxKey": 1}` and `undefined` as `{"$undefined": true}`.
+   *
+   * The scope of a `code_w_scope` is decoded as a BSON document and written with the same rules.
+   * A malformed scope throws before any of this value's own text is written. Text already
+   * written for enclosing values, such as earlier members and the key, stays in the output. Taken
+   * by the JSON, YAML and TOML serializers only. XML, CSV and BSON never see it.
+   */
+  template <serde::detail::ext_json_serializer_c S, detail::bson_extended_c T>
+  auto tag_invoke(tag_t<serde::serialize>, S & ser, T const& value)
+  {
+    if constexpr(std::same_as<T, bson::code_w_scope>)
+    {
+      detail::check_scope(value.scope);
+      return serde::serialize(
+          ser, detail::ext_json_code_w_scope{
+                   .code  = value.code,
+                   .scope = deserializer{value.scope}.template load<bson::object>(),
+               });
+    }
+    else
+    {
+      return serde::serialize(ser, detail::ext_json_of(value));
+    }
   }
 
   template <typename It, read_options Opts>
