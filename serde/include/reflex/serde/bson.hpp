@@ -1700,9 +1700,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
    *
    * Taken by the JSON, YAML and TOML serializers only. XML, CSV and BSON never see it.
    */
-  template <serde::detail::ext_json_serializer_c S, typename... PolyTag>
-    requires(sizeof...(PolyTag) <= 1)
-  auto tag_invoke(tag_t<serde::serialize>, S & ser, bson::binary const& value, PolyTag...)
+  template <serde::detail::ext_json_serializer_c S>
+  auto tag_invoke(tag_t<serde::serialize>, S & ser, bson::binary const& value)
   {
     const auto subtype = std::array{value.subtype};
     return serde::serialize(

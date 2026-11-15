@@ -143,6 +143,17 @@ TEST_CASE("reflex::serde::bson: binary inside bson::value is written as $binary"
                     "list = [{ \"$binary\" = { base64 = \"3q0=\", subType = \"00\" } }]");
 }
 
+TEST_CASE("reflex::serde::bson: binary two objects deep in bson::value is written as $binary")
+{
+  const bson::value doc = bson::object{
+      {"outer", bson::object{{"inner", dead(0x04)}}},
+  };
+  CHECK_EQ(json_of(doc), R"({"outer":{"inner":{"$binary":{"base64":"3q0=","subType":"04"}}}})");
+  CHECK_EQ(yaml_of(doc), "outer:\n  inner:\n    $binary:\n      base64: 3q0=\n      subType: '04'");
+  CHECK_EQ(
+      toml_of(doc), "[outer]\ninner = { \"$binary\" = { base64 = \"3q0=\", subType = \"04\" } }");
+}
+
 TEST_CASE("reflex::serde::bson: binary base64 matches the RFC 4648 test vectors")
 {
   const std::array<std::pair<std::string_view, std::string_view>, 7> vectors{

@@ -48,6 +48,10 @@ REFLEX_EXPORT namespace reflex::serde::json
     return empty;
   }
 
+  template <typename T> struct poly_round_trip;
+  template <typename T, typename Ser> consteval bool  poly_writer_agrees();
+  template <typename Var, typename De> consteval bool poly_reader_agrees();
+
   using escapes = serde::detail::json_escapes;
 
   constexpr bool needs_escape(char c)
@@ -180,6 +184,11 @@ REFLEX_EXPORT namespace reflex::serde::json
             if(type_key->second == std::hash<std::string_view>{}(identifier_of(dealias(decay(a)))))
             {
               using Agg = [:a:];
+              if constexpr(poly_round_trip<Agg>::value)
+              {
+                throw std::runtime_error(
+                    R"(JSON: "__type" must be the first member of a wrapped poly::var alternative)");
+              }
               Agg agg_value{};
               template for(constexpr auto member : define_static_array(
                                nonstatic_data_members_of(a, std::meta::access_context::current())))
@@ -391,12 +400,79 @@ REFLEX_EXPORT namespace reflex::serde::json
       }
     };
 
+    template <typename De, typename Cap>
+    [[gnu::always_inline]] static inline std::string_view read_member_key(De& de, Cap& cap)
+    {
+      de.ltrim();
+      cap.before_key();
+      const std::string_view key = de.read_key();
+      cap.after_key();
+      de.ltrim();
+      if(de.advance() != ':')
+      {
+        throw std::runtime_error("Expected ':' after object key");
+      }
+      de.ltrim();
+      cap.after_colon();
+      return key;
+    }
+
+    template <typename Map, typename De, typename Cap>
+    [[gnu::always_inline]] static inline void
+        read_member_value(De& de, Map& value, Cap& cap, std::string_view key)
+    {
+      auto load_member = [&de, &cap, &value]<typename V>(V& v) {
+        cap.enter(value, v);
+        load_object_member(de, v);
+        cap.leave();
+      };
+      if constexpr(De::read_opts.unknown_keys == serde::unknown_keys::skip)
+      {
+        if(not serde::object_try_visit_flat(key, value, load_member))
+        {
+          cap.skipped();
+          std::ignore = de.template load<json::value>();
+          cap.leave();
+        }
+      }
+      else
+      {
+        serde::object_visit_flat(key, value, load_member);
+      }
+    }
+
+    template <typename De, typename Cap>
+    [[gnu::always_inline]] static inline bool next_member(De& de, Cap& cap)
+    {
+      de.ltrim();
+      const char sep = de.advance();
+      if(sep == ',')
+      {
+        if constexpr(De::read_opts.trailing_commas)
+        {
+          de.ltrim();
+          if(not de.at_end() and de.peek() == '}')
+          {
+            de.advance();
+            cap.close();
+            return false;
+          }
+        }
+        return true;
+      }
+      if(sep == '}')
+      {
+        cap.close();
+        return false;
+      }
+      throw std::runtime_error("Expected ',' or '}' in object");
+    }
+
     template <typename Map, bool Commented, typename De>
     [[gnu::always_inline]] static inline Map read_object(De& de)
     {
-      using capture_type  = typename[:Commented ? ^^object_capture<Map, De> : ^^no_object_capture:];
-      constexpr auto opts = De::read_opts;
-      capture_type   cap{de};
+      using capture_type = typename[:Commented ? ^^object_capture<Map, De> : ^^no_object_capture:];
+      capture_type cap{de};
 
       de.skip_to_value();
       if(de.advance() != '{')
@@ -416,42 +492,13 @@ REFLEX_EXPORT namespace reflex::serde::json
       Map value{};
       while(true)
       {
-        de.ltrim();
-        cap.before_key();
-        const std::string_view key = de.read_key();
-        cap.after_key();
-        de.ltrim();
-        if(de.advance() != ':')
-        {
-          throw std::runtime_error("Expected ':' after object key");
-        }
-        de.ltrim();
-        cap.after_colon();
-
-        auto load_member = [&de, &cap, &value]<typename V>(V& v) {
-          cap.enter(value, v);
-          load_object_member(de, v);
-          cap.leave();
-        };
-        if constexpr(opts.unknown_keys == serde::unknown_keys::skip)
-        {
-          if(not serde::object_try_visit_flat(key, value, load_member))
-          {
-            cap.skipped();
-            std::ignore = de.template load<json::value>();
-            cap.leave();
-          }
-        }
-        else
-        {
-          serde::object_visit_flat(key, value, load_member);
-        }
+        read_member_value(de, value, cap, read_member_key(de, cap));
 
         de.ltrim();
         const char sep = de.advance();
         if(sep == ',')
         {
-          if constexpr(opts.trailing_commas)
+          if constexpr(De::read_opts.trailing_commas)
           {
             de.ltrim();
             if(not de.at_end() and de.peek() == '}')
@@ -469,6 +516,123 @@ REFLEX_EXPORT namespace reflex::serde::json
           break;
         }
         throw std::runtime_error("Expected ',' or '}' in object");
+      }
+      return value;
+    }
+
+    template <typename Var> static consteval bool wraps_an_alternative()
+    {
+      template for(constexpr auto a : aggregate_types_of_var<Var>())
+      {
+        if constexpr(poly_round_trip<typename[:a:]>::value)
+        {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    template <typename Agg, typename De> static Agg read_wrapped_value(De& de)
+    {
+      no_object_capture cap{de};
+      if(not next_member(de, cap) or read_member_key(de, cap) != "value")
+      {
+        throw std::runtime_error(
+            R"(JSON: expected "value" after the "__type" of a wrapped poly::var alternative)");
+      }
+      Agg value = de.template load<Agg>();
+      if(next_member(de, cap))
+      {
+        throw std::runtime_error(
+            R"(JSON: expected '}' after the "value" of a wrapped poly::var alternative)");
+      }
+      return value;
+    }
+
+    template <typename Var> static bool matches_type_id(Var const& id, std::size_t expected)
+    {
+      return visit(
+          [expected]<typename N>(N const& n) {
+            if constexpr(std::floating_point<N>)
+            {
+              return n == static_cast<N>(expected);
+            }
+            else if constexpr(std::integral<N> and not std::same_as<N, bool>)
+            {
+              if constexpr(
+                  std::same_as<N, std::make_signed_t<N>>
+                  or std::same_as<N, std::make_unsigned_t<N>>)
+              {
+                return std::cmp_equal(n, expected);
+              }
+              else
+              {
+                return false;
+              }
+            }
+            else
+            {
+              return false;
+            }
+          },
+          id);
+    }
+
+    template <typename Var, typename De>
+    static std::optional<Var> read_wrapped(De& de, Var const& id)
+    {
+      std::optional<Var> result;
+      template for(constexpr auto a : aggregate_types_of_var<Var>())
+      {
+        if constexpr(poly_round_trip<typename[:a:]>::value)
+        {
+          if(not result
+             and matches_type_id(
+                 id, std::hash<std::string_view>{}(identifier_of(dealias(decay(a))))))
+          {
+            result.emplace(read_wrapped_value<typename[:a:]>(de));
+          }
+        }
+      }
+      return result;
+    }
+
+    template <typename Var, typename De> static Var read_var_object(De& de)
+    {
+      using obj_type = typename Var::obj_type;
+      no_object_capture cap{de};
+
+      de.skip_to_value();
+      if(de.advance() != '{')
+      {
+        throw std::runtime_error("Expected '{' at start of JSON object");
+      }
+
+      de.ltrim();
+      if(not de.at_end() and de.peek() == '}')
+      {
+        de.advance();
+        return obj_type{};
+      }
+
+      obj_type               value{};
+      const std::string_view key = read_member_key(de, cap);
+      if(key == "__type")
+      {
+        Var id = de.template load<Var>();
+        if(auto wrapped = read_wrapped(de, id))
+        {
+          return *std::move(wrapped);
+        }
+        value.insert_or_assign("__type", std::move(id));
+      }
+      else
+      {
+        read_member_value(de, value, cap, key);
+      }
+      while(next_member(de, cap))
+      {
+        read_member_value(de, value, cap, read_member_key(de, cap));
       }
       return value;
     }
@@ -1067,9 +1231,34 @@ REFLEX_EXPORT namespace reflex::serde::json
         reflex::visit(
             [&ser]<typename U>(const U& v) {
               using var_type = typename Map::mapped_type;
-              if constexpr(std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^U))
+              constexpr bool alternative =
+                  std::ranges::contains(detail::aggregate_types_of_var<var_type>(), ^^U);
+              if constexpr(alternative)
+              {
+                static_assert(
+                    detail::poly_writer_agrees<U, serializer>(),
+                    "a poly::var alternative has a JSON deserialize overload, and its JSON "
+                    "serialize overload takes this serializer but not the default "
+                    "json::serializer, or the reverse: write it generic over "
+                    "json::serializer<OutputIt, Opts>");
+              }
+              if constexpr(
+                  alternative
+                  and not reflex::tag_invocable_c<tag_t<serde::serialize>, serializer&, U const&>)
               {
                 serialize(ser, v, std::cw<true>);
+              }
+              else if constexpr(alternative and detail::poly_round_trip<U>::value)
+              {
+                ser.write_char('{');
+                nest members;
+                members.item(ser);
+                ser.write_raw(Opts.indent > 0 ? "\"__type\": " : "\"__type\":");
+                serialize(ser, std::hash<std::string_view>{}(identifier_of(dealias(decay(^^U)))));
+                members.item(ser);
+                ser.write_raw(Opts.indent > 0 ? "\"value\": " : "\"value\":");
+                serialize(ser, v);
+                members.close(ser, '}');
               }
               else
               {
@@ -1977,6 +2166,11 @@ REFLEX_EXPORT namespace reflex::serde::json
         tag_invoke(tag_t<serde::deserialize>, deserializer& de, std::type_identity<var_type>)
             -> var_type
     {
+      static_assert(
+          detail::poly_reader_agrees<var_type, deserializer>(),
+          "a poly::var alternative has a JSON serialize overload, and its JSON deserialize "
+          "overload takes this deserializer but not json::deserializer<std::string::const_iterator>"
+          ", or the reverse: write it generic over json::deserializer<InputIt, Opts>");
       de.ltrim();
       switch(de.peek())
       {
@@ -1986,7 +2180,14 @@ REFLEX_EXPORT namespace reflex::serde::json
         case 'n':
           return de.template load<null_t>();
         case '{':
-          return de.template load<typename var_type::obj_type>();
+          if constexpr(detail::json_access::wraps_an_alternative<var_type>())
+          {
+            return detail::json_access::read_var_object<var_type>(de);
+          }
+          else
+          {
+            return de.template load<typename var_type::obj_type>();
+          }
         case '[':
           return de.template load<typename var_type::arr_type>();
         case '"':
@@ -1999,6 +2200,89 @@ REFLEX_EXPORT namespace reflex::serde::json
 
   REFLEX_SERDE_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
   REFLEX_SERDE_TAGGED_DESERIALIZER_DEDUCTION_GUIDES(deserializer);
+
+  namespace detail
+  {
+  template <typename T> consteval bool canonical_serialize()
+  {
+    return reflex::tag_invocable_c<
+        tag_t<serde::serialize>, serializer<std::back_insert_iterator<std::string>>&, T const&>;
+  }
+
+  template <typename T> consteval bool canonical_deserialize()
+  {
+    return reflex::tag_invocable_c<
+        tag_t<serde::deserialize>, deserializer<std::string::const_iterator>&,
+        std::type_identity<T>>;
+  }
+
+  /** @brief True when @p T writes and reads itself through its own JSON overloads, so a
+   * poly::var object member holding it is written as `{"__type": id, "value": ...}` and read
+   * back through its deserialize overload. A type with a serialize overload alone is written
+   * bare and does not read back as itself.
+   *
+   * Decided on `json::serializer<std::back_insert_iterator<std::string>>` and
+   * `json::deserializer<std::string::const_iterator>` with default options, since the writer and
+   * the reader cannot name each other's backend type. An overload that binds one iterator type or
+   * the default options only, so that the serializer or deserializer actually used disagrees with
+   * that decision, is a compile error at the dump or load call.
+   *
+   * The envelope is a wire structure, not the type's members: `__type` must come first and
+   * `value` must be its only other key, whatever `read_options::unknown_keys` says.
+   */
+  template <typename T> struct poly_round_trip
+  {
+    static consteval bool check()
+    {
+      if constexpr(not aggregate_c<T>)
+      {
+        return false;
+      }
+      else if constexpr(canonical_serialize<T>())
+      {
+        return canonical_deserialize<T>();
+      }
+      else
+      {
+        return false;
+      }
+    }
+
+    static constexpr bool value = check();
+  };
+
+  template <typename T, typename Ser> consteval bool poly_writer_agrees()
+  {
+    if constexpr(
+        reflex::tag_invocable_c<tag_t<serde::serialize>, Ser&, T const&>
+        == canonical_serialize<T>())
+    {
+      return true;
+    }
+    else
+    {
+      return not canonical_deserialize<T>();
+    }
+  }
+
+  template <typename Var, typename De> consteval bool poly_reader_agrees()
+  {
+    template for(constexpr auto a : aggregate_types_of_var<Var>())
+    {
+      using A = typename[:a:];
+      if constexpr(canonical_serialize<A>())
+      {
+        if constexpr(
+            reflex::tag_invocable_c<tag_t<serde::deserialize>, De&, std::type_identity<A>>
+            != canonical_deserialize<A>())
+        {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+  }
 
   template <typename InputIt, read_options Opts, object_visitable_c Map>
     requires(
