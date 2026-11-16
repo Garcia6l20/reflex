@@ -9,10 +9,12 @@
 #include <array>
 #include <charconv>
 #include <concepts>
+#include <cstdint>
 #include <cstring>
 #include <format>
 #include <initializer_list>
 #include <limits>
+#include <optional>
 #include <ranges>
 #include <stdexcept>
 #include <string_view>
@@ -348,6 +350,53 @@ REFLEX_EXPORT namespace reflex::serde::detail
     return std::string_view{buf.data(), static_cast<std::size_t>(out - buf.begin())};
   }
 
+  struct integer_text
+  {
+    std::string_view digits;
+    int              base     = 10;
+    bool             negative = false;
+  };
+
+  template <number_syntax Syntax> constexpr integer_text split_integer(std::string_view body)
+  {
+    integer_text out{};
+    if(body.starts_with('-'))
+    {
+      out.negative = true;
+      body.remove_prefix(1);
+    }
+    else if(body.starts_with('+'))
+    {
+      body.remove_prefix(1);
+    }
+    if constexpr(Syntax.hexadecimal)
+    {
+      if(body.starts_with("0x"))
+      {
+        out.base = 16;
+        body.remove_prefix(2);
+      }
+    }
+    if constexpr(Syntax.octal)
+    {
+      if(out.base == 10 and body.starts_with("0o"))
+      {
+        out.base = 8;
+        body.remove_prefix(2);
+      }
+    }
+    if constexpr(Syntax.binary)
+    {
+      if(out.base == 10 and body.starts_with("0b"))
+      {
+        out.base = 2;
+        body.remove_prefix(2);
+      }
+    }
+    out.digits = body;
+    return out;
+  }
+
   template <number_syntax Syntax, typename Num>
   Num parse_number(std::string_view text, std::string_view format_name)
   {
@@ -392,44 +441,7 @@ REFLEX_EXPORT namespace reflex::serde::detail
     }
     else
     {
-      // from_chars takes neither a '+' nor a "0x"/"0o"/"0b" prefix, so the sign
-      // and the base come off here and the digits go in bare.
-      std::string_view body = body_text;
-      bool             neg  = false;
-      if(body.starts_with('-'))
-      {
-        neg = true;
-        body.remove_prefix(1);
-      }
-      else if(body.starts_with('+'))
-      {
-        body.remove_prefix(1);
-      }
-      int base = 10;
-      if constexpr(Syntax.hexadecimal)
-      {
-        if(body.starts_with("0x"))
-        {
-          base = 16;
-          body.remove_prefix(2);
-        }
-      }
-      if constexpr(Syntax.octal)
-      {
-        if(base == 10 and body.starts_with("0o"))
-        {
-          base = 8;
-          body.remove_prefix(2);
-        }
-      }
-      if constexpr(Syntax.binary)
-      {
-        if(base == 10 and body.starts_with("0b"))
-        {
-          base = 2;
-          body.remove_prefix(2);
-        }
-      }
+      const auto [body, base, neg] = split_integer<Syntax>(body_text);
       Num        value{};
       const auto last = body.data() + body.size();
       auto [ptr, ec]  = std::from_chars(body.data(), last, value, base);
@@ -451,6 +463,35 @@ REFLEX_EXPORT namespace reflex::serde::detail
       }
       return value;
     }
+  }
+
+  template <number_syntax Syntax>
+  std::optional<std::int64_t> parse_int64(std::string_view text, std::string_view format_name)
+  {
+    [[maybe_unused]] number_buffer buf{};
+    std::string_view               body_text = text;
+    if constexpr(Syntax.underscores)
+    {
+      body_text = strip_separators(text, buf, format_name);
+    }
+    const auto [body, base, neg] = split_integer<Syntax>(body_text);
+    std::uint64_t magnitude{};
+    const auto    last = body.data() + body.size();
+    auto [ptr, ec]     = std::from_chars(body.data(), last, magnitude, base);
+    if(ec == std::errc::result_out_of_range)
+    {
+      return std::nullopt;
+    }
+    if(ec != std::errc{} or ptr != last)
+    {
+      throw std::runtime_error(std::format("{}: '{}' is not an integer", format_name, text));
+    }
+    constexpr auto max = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if(magnitude > max + (neg ? 1 : 0))
+    {
+      return std::nullopt;
+    }
+    return static_cast<std::int64_t>(neg ? -magnitude : magnitude);
   }
 
   // A std::array<char, N> is a fixed buffer, trimmed at the first NUL.

@@ -2192,6 +2192,16 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       {
         return yaml::boolean{false};
       }
+      if constexpr(serde::detail::ext_json_reader<var_type>::enabled)
+      {
+        if(detail::matches_int<detail::yaml_numbers>(s.text))
+        {
+          if(const auto i = serde::detail::parse_int64<detail::yaml_numbers>(s.text, "YAML"))
+          {
+            return serde::detail::relaxed_integer<var_type>(*i);
+          }
+        }
+      }
       // yes/no/on/off deliberately fall through to string, which is what YAML
       // 1.2 core says they are. That differs from load<bool>(), which throws on
       // them: asked for a bool the intent is unambiguous and a 1.1 spelling is

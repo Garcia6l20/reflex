@@ -1965,6 +1965,14 @@ REFLEX_EXPORT namespace reflex::serde::bson
   }
 } // namespace reflex::serde::bson
 
+namespace reflex::serde::detail
+{
+template <> struct ext_json_reader<bson::value>
+{
+  static constexpr bool enabled = true;
+};
+}
+
 REFLEX_EXPORT namespace reflex::serde::ser
 {
   constexpr auto bson = ^^reflex::serde::bson::serializer;

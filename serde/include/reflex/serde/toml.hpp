@@ -1686,6 +1686,13 @@ REFLEX_EXPORT namespace reflex::serde::toml
       const std::string_view token = read_token();
       if(detail::matches_int<detail::toml_numbers>(token))
       {
+        if constexpr(serde::detail::ext_json_reader<var_type>::enabled)
+        {
+          if(const auto i = serde::detail::parse_int64<detail::toml_numbers>(token, "TOML"))
+          {
+            return serde::detail::relaxed_integer<var_type>(*i);
+          }
+        }
         return var_type{
             detail::parse_number<detail::toml_numbers, typename var_type::integral_type>(
                 token, "TOML")};

@@ -5,6 +5,9 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <cstdint>
+#include <utility>
+
 #include <reflex/tag_invoke.hpp>
 #endif
 
@@ -82,6 +85,23 @@ REFLEX_EXPORT namespace reflex::serde
 
   template <typename S>
   concept ext_json_serializer_c = ext_json_serializer_v<std::remove_cvref_t<S>>;
+
+  template <typename Var> struct ext_json_reader
+  {
+    static constexpr bool enabled = false;
+  };
+
+  template <typename Var> Var relaxed_integer(std::int64_t value)
+  {
+    static_assert(
+        Var::template can_hold<std::int32_t>() and Var::template can_hold<std::int64_t>(),
+        "an ext_json_reader value type must hold std::int32_t and std::int64_t");
+    if(std::in_range<std::int32_t>(value))
+    {
+      return Var{static_cast<std::int32_t>(value)};
+    }
+    return Var{value};
+  }
   }
 
   inline constexpr struct serialize_cpo : customization_point_object

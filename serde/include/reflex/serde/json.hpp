@@ -520,6 +520,64 @@ REFLEX_EXPORT namespace reflex::serde::json
       return value;
     }
 
+    template <typename Var> static Var relaxed_number(std::string_view token, double value)
+    {
+      if(token.find_first_not_of("-0123456789") == std::string_view::npos)
+      {
+        std::int64_t integer{};
+        const auto   last = token.data() + token.size();
+        auto [ptr, ec]    = std::from_chars(token.data(), last, integer);
+        if(ec == std::errc{} and ptr == last)
+        {
+          return serde::detail::relaxed_integer<Var>(integer);
+        }
+      }
+      return Var{value};
+    }
+
+    template <typename Var, bool Comments, typename De> static Var read_relaxed_number(De& de)
+    {
+      de.skip_to_value();
+      double value{};
+      if constexpr(De::bulk_scan)
+      {
+        const auto first = std::to_address(de.begin());
+        const auto last  = std::to_address(de.end());
+        auto [ptr, ec]   = std::from_chars(first, last, value);
+        if(ec != std::errc{} or (ptr != last and not ends_number<Comments>(*ptr)))
+        {
+          throw std::runtime_error("Failed to parse number");
+        }
+        de.advance_to(std::next(de.begin(), ptr - first));
+        return relaxed_number<Var>(std::string_view{first, ptr}, value);
+      }
+      else
+      {
+        heapless::string<64> token{};
+        while(not de.at_end())
+        {
+          const auto c = de.peek();
+          if((c == '-') or (c == '+') or (c == '.') or (c == 'e') or (c == 'E') or is_digit(c))
+          {
+            token.push_back(c);
+            de.advance();
+          }
+          else
+          {
+            break;
+          }
+        }
+        const auto last  = token.data() + token.size();
+        auto [ptr, ec]   = std::from_chars(token.data(), last, value);
+        const bool whole = ec == std::errc{} and ptr == last;
+        if(not whole or (not de.at_end() and not ends_number<Comments>(de.peek())))
+        {
+          throw std::runtime_error("Failed to parse number");
+        }
+        return relaxed_number<Var>(std::string_view{token.data(), token.size()}, value);
+      }
+    }
+
     template <typename Var> static consteval bool wraps_an_alternative()
     {
       template for(constexpr auto a : aggregate_types_of_var<Var>())
@@ -2193,7 +2251,14 @@ REFLEX_EXPORT namespace reflex::serde::json
         case '"':
           return de.template load<json::string>();
         default:
-          return de.template load<json::number>();
+          if constexpr(serde::detail::ext_json_reader<var_type>::enabled)
+          {
+            return detail::json_access::read_relaxed_number<var_type, Opts.comments>(de);
+          }
+          else
+          {
+            return de.template load<json::number>();
+          }
       }
     }
   };
