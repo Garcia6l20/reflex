@@ -86,6 +86,8 @@ REFLEX_EXPORT namespace reflex::serde
   template <typename S>
   concept ext_json_serializer_c = ext_json_serializer_v<std::remove_cvref_t<S>>;
 
+  template <typename T> inline constexpr bool ext_json_type_v = false;
+
   template <typename Var> struct ext_json_reader
   {
     static constexpr bool enabled = false;

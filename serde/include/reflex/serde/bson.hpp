@@ -95,7 +95,7 @@ struct ext_json_binary_body
 
 struct ext_json_binary
 {
-  [[= serde::rename{"$binary"}]] ext_json_binary_body binary;
+  [[= serde::rename{"$binary"}, = serde::inline_table]] ext_json_binary_body binary;
 };
 
 struct ext_json_object_id
@@ -128,7 +128,7 @@ struct ext_json_timestamp_body
 
 struct ext_json_timestamp
 {
-  [[= serde::rename{"$timestamp"}]] ext_json_timestamp_body timestamp;
+  [[= serde::rename{"$timestamp"}, = serde::inline_table]] ext_json_timestamp_body timestamp;
 };
 
 struct ext_json_regex_body
@@ -139,7 +139,7 @@ struct ext_json_regex_body
 
 struct ext_json_regex
 {
-  [[= serde::rename{"$regularExpression"}]] ext_json_regex_body regex;
+  [[= serde::rename{"$regularExpression"}, = serde::inline_table]] ext_json_regex_body regex;
 };
 
 struct ext_json_javascript
@@ -150,7 +150,7 @@ struct ext_json_javascript
 struct ext_json_code_w_scope
 {
   [[= serde::rename{"$code"}]] std::string   code;
-  [[= serde::rename{"$scope"}]] bson::object scope;
+  [[= serde::rename{"$scope"}, = serde::inline_table]] bson::object scope;
 };
 
 struct ext_json_symbol
@@ -161,12 +161,12 @@ struct ext_json_symbol
 struct ext_json_db_pointer_body
 {
   [[= serde::rename{"$ref"}]] std::string       ref;
-  [[= serde::rename{"$id"}]] ext_json_object_id id;
+  [[= serde::rename{"$id"}, = serde::inline_table]] ext_json_object_id id;
 };
 
 struct ext_json_db_pointer
 {
-  [[= serde::rename{"$dbPointer"}]] ext_json_db_pointer_body db_pointer;
+  [[= serde::rename{"$dbPointer"}, = serde::inline_table]] ext_json_db_pointer_body db_pointer;
 };
 
 struct ext_json_min_key
@@ -1967,6 +1967,10 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
 namespace reflex::serde::detail
 {
+template <> inline constexpr bool ext_json_type_v<bson::binary> = true;
+
+template <bson::detail::bson_extended_c T> inline constexpr bool ext_json_type_v<T> = true;
+
 template <> struct ext_json_reader<bson::value>
 {
   static constexpr bool enabled = true;

@@ -207,6 +207,83 @@ std::string json_members(std::span<std::string const> keys)
   return out;
 }
 
+struct ext_vector_holder
+{
+  std::vector<bson::object_id> ids;
+  std::vector<bson::binary>    bins;
+};
+
+struct ext_deep_inner
+{
+  bson::binary    bin;
+  bson::timestamp ts;
+};
+
+struct ext_deep_holder
+{
+  ext_deep_inner nested;
+};
+
+std::map<std::string, std::string> extended_toml()
+{
+  const auto oid_toml = std::format(R"({{ "$oid" = "{}" }})", oid_hex);
+  return {
+      {"bin", R"t({ "$binary" = { base64 = "3q0=", subType = "04" } })t"},
+      {"oid", oid_toml},
+      {"ts", R"t({ "$timestamp" = { t = 1700000000, i = 2 } })t"},
+      {"re", R"t({ "$regularExpression" = { pattern = '^a"b\d', options = "im" } })t"},
+      {"js", R"t({ "$code" = "g()" })t"},
+      {"cws", R"t({ "$code" = "f(x)", "$scope" = { x = 7 } })t"},
+      {"sym", R"t({ "$symbol" = "s" })t"},
+      {"dbp",
+       std::format(R"({{ "$dbPointer" = {{ "$ref" = "db.coll", "$id" = {} }} }})", oid_toml)},
+      {"min", R"t({ "$minKey" = 1 })t"},
+      {"max", R"t({ "$maxKey" = 1 })t"},
+      {"u", R"t({ "$undefined" = true })t"},
+  };
+}
+
+std::map<std::string, std::string> extended_toml_root()
+{
+  return {
+      {"bin", R"t("$binary" = { base64 = "3q0=", subType = "04" })t"},
+      {"oid", std::format(R"("$oid" = "{}")", oid_hex)},
+      {"ts", R"t("$timestamp" = { t = 1700000000, i = 2 })t"},
+      {"re", R"t("$regularExpression" = { pattern = '^a"b\d', options = "im" })t"},
+      {"js", R"t("$code" = "g()")t"},
+      {"cws", "\"$code\" = \"f(x)\"\n\"$scope\" = { x = 7 }"},
+      {"sym", R"t("$symbol" = "s")t"},
+      {"dbp",
+       std::format(
+           R"("$dbPointer" = {{ "$ref" = "db.coll", "$id" = {{ "$oid" = "{}" }} }})", oid_hex)},
+      {"min", R"t("$minKey" = 1)t"},
+      {"max", R"t("$maxKey" = 1)t"},
+      {"u", R"t("$undefined" = true)t"},
+  };
+}
+
+std::string toml_lines(std::span<std::string const> keys)
+{
+  const auto  values = extended_toml();
+  std::string out;
+  for(auto const& key : keys)
+  {
+    if(not out.empty())
+    {
+      out += '\n';
+    }
+    out += std::format("{} = {}", key, values.at(key));
+  }
+  return out;
+}
+
+bson::object all_text_object()
+{
+  auto object   = all_extended_object();
+  object["bin"] = dead(0x04);
+  return object;
+}
+
 template <typename T> bytes bson_root_of(T const& value)
 {
   bytes            out;
@@ -244,9 +321,9 @@ TEST_CASE("reflex::serde::bson: binary is written as Extended JSON $binary in YA
 TEST_CASE("reflex::serde::bson: binary is written as Extended JSON $binary in TOML")
 {
   CHECK_EQ(
-      toml_of(holder{dead(0x00)}), "[v]\n[v.\"$binary\"]\nbase64 = \"3q0=\"\nsubType = \"00\"");
+      toml_of(holder{dead(0x00)}), "v = { \"$binary\" = { base64 = \"3q0=\", subType = \"00\" } }");
   CHECK_EQ(
-      toml_of(holder{dead(0x04)}), "[v]\n[v.\"$binary\"]\nbase64 = \"3q0=\"\nsubType = \"04\"");
+      toml_of(holder{dead(0x04)}), "v = { \"$binary\" = { base64 = \"3q0=\", subType = \"04\" } }");
 }
 
 TEST_CASE("reflex::serde::bson: binary inside bson::value is written as $binary")
@@ -413,8 +490,63 @@ TEST_CASE("reflex::serde::bson: extended types are written as Extended JSON v2 i
                         "ts = {{ \"$timestamp\" = {{ t = 1700000000, i = 2 }} }}",
                         oid_hex));
   CHECK_EQ(toml_of(oid()), std::format("\"$oid\" = \"{}\"", oid_hex));
-  CHECK_EQ(toml_of(ts()), "[\"$timestamp\"]\nt = 1700000000\ni = 2");
-  CHECK_EQ(toml_of(cws()), "\"$code\" = \"f(x)\"\n[\"$scope\"]\nx = 7");
+  CHECK_EQ(toml_of(ts()), "\"$timestamp\" = { t = 1700000000, i = 2 }");
+  CHECK_EQ(toml_of(cws()), "\"$code\" = \"f(x)\"\n\"$scope\" = { x = 7 }");
+}
+
+TEST_CASE("reflex::serde::bson: TOML writes every Extended JSON document inline in every position")
+{
+  const auto               inline_forms = extended_toml();
+  const auto               root_forms   = extended_toml_root();
+  const auto               object       = all_text_object();
+  std::vector<std::string> sorted_keys;
+  std::string              elements;
+  for(auto const& [key, value] : object)
+  {
+    CAPTURE(key);
+    CHECK_EQ(toml_of(value), root_forms.at(key));
+    reflex::visit(
+        [&](auto const& alternative) { CHECK_EQ(toml_of(alternative), root_forms.at(key)); },
+        value);
+    sorted_keys.push_back(key);
+    elements += elements.empty() ? "" : ", ";
+    elements += inline_forms.at(key);
+  }
+
+  CHECK_EQ(toml_of(bson::value{object}), toml_lines(sorted_keys));
+
+  const std::array<std::string, 10> member_keys{"oid", "ts",  "re",  "js",  "cws",
+                                                "sym", "dbp", "min", "max", "u"};
+  CHECK_EQ(toml_of(all_extended()), toml_lines(member_keys) + "\nafter = 3");
+
+  bson::array list;
+  for(auto const& [key, value] : object)
+  {
+    list.push_back(value);
+  }
+  const bson::value in_array = bson::object{
+      {"list", list}
+  };
+  CHECK_EQ(toml_of(in_array), std::format("list = [{}]", elements));
+
+  const bson::value two_deep = bson::object{
+      {"outer", bson::object{{"inner", object}}}
+  };
+  CHECK_EQ(toml_of(two_deep), "[outer]\n[outer.inner]\n" + toml_lines(sorted_keys));
+
+  const std::array<std::string, 2> deep_keys{"bin", "ts"};
+  ext_deep_holder                  deep;
+  deep.nested.bin = dead(0x04);
+  deep.nested.ts  = ts();
+  CHECK_EQ(toml_of(deep), "[nested]\n" + toml_lines(deep_keys));
+
+  ext_vector_holder vectors;
+  vectors.ids  = {oid(), oid()};
+  vectors.bins = {dead(0x04)};
+  CHECK_EQ(
+      toml_of(vectors),
+      std::format(
+          "ids = [{0}, {0}]\nbins = [{1}]", inline_forms.at("oid"), inline_forms.at("bin")));
 }
 
 TEST_CASE("reflex::serde::bson: a malformed code_w_scope scope throws before its own text")
@@ -479,7 +611,7 @@ TEST_CASE("reflex::serde::bson: regex options are written in alphabetical order"
                                       18}));
   CHECK_EQ(json_of(unsorted), R"({"$regularExpression":{"pattern":"a","options":"imx"}})");
   CHECK_EQ(yaml_of(unsorted), "$regularExpression:\n  pattern: a\n  options: imx");
-  CHECK_EQ(toml_of(unsorted), "[\"$regularExpression\"]\npattern = \"a\"\noptions = \"imx\"");
+  CHECK_EQ(toml_of(unsorted), "\"$regularExpression\" = { pattern = \"a\", options = \"imx\" }");
   CHECK_EQ(
       json_of(bson::regex{"a", "mim"}), R"({"$regularExpression":{"pattern":"a","options":"im"}})");
   CHECK_EQ(unsorted.options, "xmi");

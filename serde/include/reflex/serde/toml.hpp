@@ -197,10 +197,12 @@ REFLEX_EXPORT namespace reflex::serde::toml
   // table; without it "k = v" follows the parent's own "key = " and produces
   // "outer = k = v", which is not a document.
   template <typename T>
-  concept header_table_c = (aggregate_c<std::remove_cvref_t<T>> or map_c<std::remove_cvref_t<T>>
+  concept header_table_c = (aggregate_c<std::remove_cvref_t<T>>
+                            or map_c<std::remove_cvref_t<T>>
                             or pair_c<std::remove_cvref_t<T>>)
                        and not str_c<std::remove_cvref_t<T>>
-                       and not derives_c<std::remove_cvref_t<T>, derive_t<Format>>;
+                       and not derives_c<std::remove_cvref_t<T>, derive_t<Format>>
+                       and not serde::detail::ext_json_type_v<std::remove_cvref_t<T>>;
 
   template <typename T>
   concept table_array_c = seq_c<std::remove_cvref_t<T>>
