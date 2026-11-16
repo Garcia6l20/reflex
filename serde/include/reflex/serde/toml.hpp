@@ -1127,6 +1127,16 @@ REFLEX_EXPORT namespace reflex::serde::toml
       return ser.comments_.slot.template take<serde::comments_of<Agg> const>();
     }
 
+    template <std::meta::info Member> static constexpr void check_inline_table()
+    {
+      using shape = detail::shape_t<typename[:type_of(Member):]>;
+      static_assert(
+          not serde::is_inline_table(Member)
+              or detail::header_table_c<shape>
+              or detail::table_array_c<shape>,
+          "serde::inline_table applies to a table or an array of tables");
+    }
+
     // Three passes over the members, and pass 1 must never emit a header: a key
     // written after a [subtable] header belongs to that subtable, so a `port` line
     // trailing a [server.tls] header becomes server.tls.port, not server.port - a
@@ -1158,6 +1168,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
           bool first = true;
           template for(constexpr auto member : members)
           {
+            check_inline_table<member>();
             constexpr bool omit = serde::omits_when_empty(member);
             if constexpr(omit)
             {
@@ -1175,8 +1186,12 @@ REFLEX_EXPORT namespace reflex::serde::toml
         // Pass 1 - every leaf and every array of leaves, as "key = value".
         template for(constexpr auto member : members)
         {
-          using shape = detail::shape_t<typename[:type_of(member):]>;
-          if constexpr(not(detail::header_table_c<shape> or detail::table_array_c<shape>))
+          using shape              = detail::shape_t<typename[:type_of(member):]>;
+          constexpr bool as_inline = serde::is_inline_table(member);
+          constexpr bool table_shape =
+              detail::header_table_c<shape> or detail::table_array_c<shape>;
+          check_inline_table<member>();
+          if constexpr(not table_shape or as_inline)
           {
             constexpr bool omit = serde::omits_when_empty(member);
             if constexpr(omit)
@@ -1203,8 +1218,9 @@ REFLEX_EXPORT namespace reflex::serde::toml
         // Pass 2 - every table, as "[path.key]" and then its own body.
         template for(constexpr auto member : members)
         {
-          using shape = detail::shape_t<typename[:type_of(member):]>;
-          if constexpr(detail::header_table_c<shape>)
+          using shape              = detail::shape_t<typename[:type_of(member):]>;
+          constexpr bool as_inline = serde::is_inline_table(member);
+          if constexpr(detail::header_table_c<shape> and not as_inline)
           {
             constexpr bool omit = serde::omits_when_empty(member);
             if constexpr(omit)
@@ -1231,8 +1247,9 @@ REFLEX_EXPORT namespace reflex::serde::toml
         // Pass 3 - every array of tables, as repeated "[[path.key]]".
         template for(constexpr auto member : members)
         {
-          using shape = detail::shape_t<typename[:type_of(member):]>;
-          if constexpr(detail::table_array_c<shape>)
+          using shape              = detail::shape_t<typename[:type_of(member):]>;
+          constexpr bool as_inline = serde::is_inline_table(member);
+          if constexpr(detail::table_array_c<shape> and not as_inline)
           {
             constexpr bool omit = serde::omits_when_empty(member);
             if constexpr(omit)

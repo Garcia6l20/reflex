@@ -78,6 +78,28 @@ REFLEX_EXPORT namespace reflex::serde
   {
   } no_omit;
 
+  /** @brief Write this member as a TOML inline table, `key = { ... }`, or an array of tables as
+   * an inline array, `key = [{ ... }, { ... }]`, instead of a `[key]` or `[[key]]` header.
+   *
+   * Applies to a member whose value is a table: an aggregate, a map or a pair, an optional of
+   * one, or a sequence of them. TOML inline tables hold no comments, so in a commented dump only
+   * the member's own leading and trailing comments are written: its footer and the comments of
+   * its inner members are dropped. Every other backend ignores it.
+   */
+  constexpr struct inline_table_t
+  {
+  } inline_table;
+
+  /** @brief Whether this member carries `serde::inline_table`.
+   *
+   * @param member_info a nonstatic data member.
+   * @return true when @p member_info is annotated `serde::inline_table`.
+   */
+  consteval bool is_inline_table(meta::info member_info)
+  {
+    return meta::has_annotation(member_info, ^^inline_table_t);
+  }
+
   namespace detail
   {
     template <typename T>
