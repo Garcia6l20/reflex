@@ -321,6 +321,22 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   {
     int depth_ = 0;
 
+    enum class inline_pos : char
+    {
+      none,
+      member,
+      element,
+    };
+
+    struct inline_state
+    {
+      inline_pos       pos = inline_pos::none;
+      std::string_view trailing{};
+      bool             trailing_taken = false;
+    };
+
+    inline_state inline_{};
+
     [[no_unique_address]] typename[:Opts.comments ? ^^detail::emit_state
                                                   : ^^serde::detail::no_comment_state:] comments_{};
 
@@ -347,7 +363,9 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     //
     //   A block-node writer never emits the indent for its own first line, and
     //   never emits a trailing newline. Before every line after the first it
-    //   emits '\n' followed by indent(depth).
+    //   emits '\n' followed by indent(depth). The one exception is a node that a
+    //   serialize override starts right after "key: " or "- ": enter_block_()
+    //   then indents it, and after a key it also breaks the line first.
     //
     // The parent is therefore what positions the cursor, which it already does
     // by having just written "key: " or "- ". Three things fall out: the
@@ -390,6 +408,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
 
     [[nodiscard]] indent_guard push()
     {
+      inline_.pos = inline_pos::none;
       return indent_guard{*this};
     }
 
@@ -525,11 +544,76 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       comments_.indent    = 0;
     }
 
+    class block_guard
+    {
+      serializer* s_;
+
+    public:
+      explicit block_guard(serializer* s) : s_{s}
+      {}
+      block_guard(block_guard const&)            = delete;
+      block_guard& operator=(block_guard const&) = delete;
+      ~block_guard()
+      {
+        if(s_ != nullptr)
+        {
+          --s_->depth_;
+        }
+      }
+    };
+
+    [[nodiscard]] block_guard enter_block_()
+    {
+      auto const pos = std::exchange(inline_.pos, inline_pos::none);
+      if(pos == inline_pos::none)
+      {
+        return block_guard{nullptr};
+      }
+      ++depth_;
+      if(pos == inline_pos::member)
+      {
+        if(not std::exchange(inline_.trailing_taken, true))
+        {
+          emit_trailing_(inline_.trailing);
+        }
+        this->newline();
+      }
+      return block_guard{this};
+    }
+
+    template <inline_pos Pos, typename T>
+    void serialize_inline_(T const& value, std::string_view trailing = {})
+    {
+      scope_guard restore{[this, saved = std::exchange(inline_, {Pos, trailing, false})] {
+        inline_     = saved;
+        inline_.pos = inline_pos::none;
+      }};
+      serialize(*this, value);
+      if(not inline_.trailing_taken)
+      {
+        emit_trailing_(trailing);
+      }
+    }
+
+    template <typename T> bool inline_empty_(T const& value) const
+    {
+      if constexpr(
+          aggregate_c<T> and not seq_c<T> and not map_c<T>
+          and reflex::tag_invocable_c<tag_t<serde::serialize>, serializer&, T const&>)
+      {
+        return false;
+      }
+      else
+      {
+        return detail::is_inline_empty(value);
+      }
+    }
+
     template <typename T> void write_value_trailing_(T const& value, std::string_view trailing)
     {
       if constexpr(detail::block_node_c<T>)
       {
-        if(not detail::is_inline_empty(value))
+        if(not inline_empty_(value))
         {
           emit_trailing_(trailing);
           auto guard = this->push();
@@ -539,8 +623,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         }
       }
       this->write_char(' ');
-      serialize(*this, value);
-      emit_trailing_(trailing);
+      serialize_inline_<inline_pos::member>(value, trailing);
     }
 
     template <typename V, typename Sub> void write_member_commented_(V const& value, Sub const& sub)
@@ -651,7 +734,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       else if constexpr(detail::block_node_c<T>)
       {
-        if(not detail::is_inline_empty(value))
+        if(not inline_empty_(value))
         {
           auto guard = this->push();
           if constexpr(BreakBefore)
@@ -674,7 +757,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         {
           this->write_char(' ');
         }
-        serialize(*this, value);
+        serialize_inline_<BreakBefore ? inline_pos::member : inline_pos::element>(value);
         return;
       }
     }
@@ -764,7 +847,8 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         return ser.out();
       }
 
-      bool first = true;
+      auto const block = ser.enter_block_();
+      bool       first = true;
       for(auto const& elem : value)
       {
         if(not first)
@@ -797,7 +881,8 @@ REFLEX_EXPORT namespace reflex::serde::yaml
         return ser.out();
       }
 
-      bool first = true;
+      auto const block = ser.enter_block_();
+      bool       first = true;
       for(auto const& [key, val] : value)
       {
         if(not first)
@@ -817,6 +902,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     template <pair_c Pair>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Pair const& value)
     {
+      auto const block = ser.enter_block_();
       serialize(ser, value.first);
       ser.write_char(':');
       ser.write_member(value.second);
@@ -877,6 +963,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     {
       ser.write_aggregate_commented_(value, node);
     }
+
+    template <typename Ser> static auto enter_block(Ser& ser)
+    {
+      return ser.enter_block_();
+    }
   };
   }
 
@@ -903,9 +994,15 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       ser.write_raw("{}");
       return ser.out();
     }
+    else if(serde::omits_every_member(value))
+    {
+      ser.write_raw("{}");
+      return ser.out();
+    }
     else
     {
-      bool first = true;
+      auto const block = detail::write_access::enter_block(ser);
+      bool       first = true;
       template for(constexpr auto member : define_static_array(
                        nonstatic_data_members_of(type, std::meta::access_context::current())))
       {
@@ -2970,6 +3067,12 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   }
 
 } // namespace reflex::serde::yaml
+
+namespace reflex::serde::detail
+{
+template <typename OutputIt, yaml::options Opts>
+inline constexpr bool ext_json_serializer_v<yaml::serializer<OutputIt, Opts>> = true;
+}
 
 REFLEX_EXPORT namespace reflex::serde::ser
 {

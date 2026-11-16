@@ -56,6 +56,21 @@ doctest_add_test(reflex-serde-bson-test
 )
 target_link_libraries(reflex-serde-bson-test PRIVATE reflex::serde::bson)
 
+doctest_add_test(reflex-serde-bson-skip-test
+  test-serde-bson-skip.cpp
+)
+target_link_libraries(reflex-serde-bson-skip-test PRIVATE reflex::serde::bson)
+
+doctest_add_test(reflex-serde-bson-types-test
+  test-serde-bson-types.cpp
+)
+target_link_libraries(reflex-serde-bson-types-test PRIVATE reflex::serde::bson)
+
+doctest_add_test(reflex-serde-bson-binary-test
+  test-serde-bson-binary.cpp
+)
+target_link_libraries(reflex-serde-bson-binary-test PRIVATE reflex::serde::bson)
+
 doctest_add_test(reflex-serde-xml-test
   test-serde-xml.cpp
 )

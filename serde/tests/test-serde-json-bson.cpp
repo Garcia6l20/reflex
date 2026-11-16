@@ -85,11 +85,39 @@ TEST_CASE("reflex::serde::json and bson: interoperability")
 
   SUBCASE("bson::value binary json serialized")
   {
-    bson::value typed = bson::binary{std::byte{0xDE}, std::byte{0xAD}};
+    bson::value typed = bson::binary{
+        .data = {std::byte{0xDE}, std::byte{0xAD}}
+    };
 
     std::string      out;
     json::serializer ser{out};
     ser.dump(typed);
-    CHECK(out == "[222,173]");
+    CHECK(out == R"({"$binary":{"base64":"3q0=","subType":"00"}})");
+  }
+}
+
+TEST_CASE("reflex::serde::json and bson: read a value tree from JSON")
+{
+  auto const text = std::string{JSON({"a": 1, "b": -5, "c": [2.5, "x", true, null], "d": {"e": 3000000000}})};
+
+  SUBCASE("bson::value")
+  {
+    auto v = json::deserializer{text}.load<bson::value>();
+    CHECK(v["a"] == 1);
+    CHECK(v["b"] == -5);
+    CHECK(v["b"] != std::numeric_limits<std::size_t>::max());
+    CHECK(v["c"][0] == 2.5);
+    CHECK(v["c"][1] == "x");
+    CHECK(v["c"][2] == true);
+    CHECK(v["d.e"] == 3'000'000'000LL);
+  }
+
+  SUBCASE("json::value")
+  {
+    auto v = json::deserializer{text}.load<json::value>();
+    CHECK(v["a"] == 1);
+    CHECK(v["b"] == -5);
+    CHECK(v["c"][1] == "x");
+    CHECK(v["d.e"] == 3'000'000'000LL);
   }
 }

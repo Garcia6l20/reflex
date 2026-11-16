@@ -436,6 +436,323 @@ TEST_CASE("reflex::serde::json::deserializer: a tagged object missing a member")
   CHECK_EQ(value.at("t")->as<jt_tagged_xy>().y, 7);
 }
 
+struct jt_point
+{
+  int x;
+  int y;
+};
+
+template <typename OutputIt, json::options Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, json::serializer<OutputIt, Opts>& ser, jt_point const& p)
+{
+  return serde::serialize(ser, std::format("{},{}", p.x, p.y));
+}
+
+using jt_point_var = poly::var<json::string, json::number, jt_point, jt_tagged_xy>;
+
+TEST_CASE("reflex::serde::json: a poly::var aggregate with its own overload skips the __type tag")
+{
+  const jt_point_var value = jt_point_var::obj_type{
+      {"p", jt_point{1, 2}    },
+      {"t", jt_tagged_xy{3, 4}},
+  };
+  const std::string id = std::to_string(std::hash<std::string_view>{}("jt_tagged_xy"));
+
+  std::string      out;
+  json::serializer ser{out};
+  ser.dump(value);
+  CHECK_EQ(out, R"({"p":"1,2","t":{"__type":)" + id + R"(,"x":3,"y":4}})");
+}
+
+struct jt_rt_point
+{
+  int  x;
+  int  y;
+  bool read_by_override = false;
+
+  constexpr bool operator==(jt_rt_point const&) const = default;
+};
+
+template <typename OutputIt, json::options Opts>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, json::serializer<OutputIt, Opts>& ser, jt_rt_point const& p)
+{
+  return serde::serialize(ser, std::format("{};{}", p.x, p.y));
+}
+
+template <typename InputIt, auto Opts>
+jt_rt_point tag_invoke(
+    tag_t<serde::deserialize>,
+    json::deserializer<InputIt, Opts>& de,
+    std::type_identity<jt_rt_point>)
+{
+  const auto s   = de.template load<std::string>();
+  const auto sep = s.find(';');
+  return {std::stoi(s.substr(0, sep)), std::stoi(s.substr(sep + 1)), true};
+}
+
+struct jt_three
+{
+  int x;
+  int y;
+};
+
+template <typename OutputIt, json::options Opts, typename Tag>
+OutputIt tag_invoke(
+    tag_t<serde::serialize>,
+    json::serializer<OutputIt, Opts>& ser,
+    jt_three const&                   p,
+    Tag)
+{
+  return serde::serialize(ser, std::format("three:{},{}", p.x, p.y));
+}
+
+using jt_override_var = poly::
+    var<json::string, json::number, json::boolean, jt_tagged_xy, jt_point, jt_rt_point, jt_three>;
+
+static jt_override_var jt_override_sample()
+{
+  return jt_override_var::obj_type{
+      {"n", jt_tagged_xy{3, 4}                                              },
+      {"r", jt_rt_point{5, 6}                                               },
+      {"s", jt_point{1, 2}                                                  },
+      {"t", jt_three{7, 8}                                                  },
+      {"e", jt_override_var::obj_type{}                                     },
+      {"o", jt_override_var::obj_type{{"k", 9.0}, {"r", jt_rt_point{-1, 0}}}},
+  };
+}
+
+static std::string jt_type_id(std::string_view name)
+{
+  return std::to_string(std::hash<std::string_view>{}(name));
+}
+
+static void check_override_read_back(jt_override_var const& back)
+{
+  REQUIRE(back.at("n")->is<jt_tagged_xy>());
+  CHECK_EQ(back.at("n")->as<jt_tagged_xy>().x, 3);
+  CHECK_EQ(back.at("n")->as<jt_tagged_xy>().y, 4);
+  REQUIRE(back.at("r")->is<jt_rt_point>());
+  CHECK_EQ(back.at("r")->as<jt_rt_point>(), jt_rt_point{5, 6, true});
+  REQUIRE(back.at("s")->is<json::string>());
+  CHECK_EQ(back.at("s")->as<json::string>(), "1,2");
+  REQUIRE(back.at("t")->is<json::string>());
+  CHECK_EQ(back.at("t")->as<json::string>(), "three:7,8");
+  REQUIRE(back.at("e")->is_object());
+  CHECK(back.at("e")->as_object().empty());
+  REQUIRE(back.at("o")->is_object());
+  CHECK_EQ(back.at("o.k")->as<json::number>(), 9.0);
+  REQUIRE(back.at("o.r")->is<jt_rt_point>());
+  CHECK_EQ(back.at("o.r")->as<jt_rt_point>(), jt_rt_point{-1, 0, true});
+}
+
+struct jt_stream_only
+{
+  int x;
+};
+
+template <typename OutputIt, json::options Opts>
+OutputIt tag_invoke(
+    tag_t<serde::serialize>,
+    json::serializer<OutputIt, Opts>& ser,
+    jt_stream_only const&             p)
+{
+  return serde::serialize(ser, p.x);
+}
+
+inline jt_stream_only tag_invoke(
+    tag_t<serde::deserialize>,
+    json::deserializer<std::istreambuf_iterator<char>>& de,
+    std::type_identity<jt_stream_only>)
+{
+  return {de.template load<int>()};
+}
+
+struct jt_default_write
+{
+  int x;
+};
+
+template <typename OutputIt>
+OutputIt
+    tag_invoke(tag_t<serde::serialize>, json::serializer<OutputIt>& ser, jt_default_write const& p)
+{
+  return serde::serialize(ser, p.x);
+}
+
+template <typename InputIt, auto Opts>
+jt_default_write tag_invoke(
+    tag_t<serde::deserialize>,
+    json::deserializer<InputIt, Opts>& de,
+    std::type_identity<jt_default_write>)
+{
+  return {de.template load<int>()};
+}
+
+struct jt_default_read
+{
+  int x;
+};
+
+template <typename OutputIt, json::options Opts>
+OutputIt tag_invoke(
+    tag_t<serde::serialize>,
+    json::serializer<OutputIt, Opts>& ser,
+    jt_default_read const&            p)
+{
+  return serde::serialize(ser, p.x);
+}
+
+template <typename InputIt>
+jt_default_read tag_invoke(
+    tag_t<serde::deserialize>,
+    json::deserializer<InputIt>& de,
+    std::type_identity<jt_default_read>)
+{
+  return {de.template load<int>()};
+}
+
+using jt_mismatch_var = poly::var<
+    json::string,
+    json::number,
+    json::boolean,
+    jt_stream_only,
+    jt_default_write,
+    jt_default_read>;
+
+using jt_string_writer   = std::back_insert_iterator<std::string>;
+using jt_stream_reader   = json::deserializer<std::istreambuf_iterator<char>>;
+using jt_indented_writer = json::serializer<jt_string_writer, json::options{.indent = 2}>;
+using jt_json5_reader =
+    json::deserializer<std::string::const_iterator, json::read_options{.comments = true}>;
+
+static_assert(not json::detail::poly_round_trip<jt_stream_only>::value);
+static_assert(not json::detail::poly_reader_agrees<jt_mismatch_var, jt_stream_reader>());
+static_assert(json::detail::poly_round_trip<jt_default_write>::value);
+static_assert(not json::detail::poly_writer_agrees<jt_default_write, jt_indented_writer>());
+static_assert(json::detail::poly_round_trip<jt_default_read>::value);
+static_assert(not json::detail::poly_reader_agrees<jt_mismatch_var, jt_json5_reader>());
+
+static_assert(json::detail::poly_writer_agrees<jt_rt_point, jt_indented_writer>());
+static_assert(json::detail::poly_reader_agrees<jt_override_var, jt_stream_reader>());
+static_assert(json::detail::poly_reader_agrees<jt_override_var, jt_json5_reader>());
+
+TEST_CASE("reflex::serde::json: a poly::var aggregate's overrides decide its shape and read-back")
+{
+  const std::string expected = R"({"e":{},"n":{"__type":)"
+                             + jt_type_id("jt_tagged_xy")
+                             + R"(,"x":3,"y":4},)"
+                             + R"("o":{"k":9,"r":{"__type":)"
+                             + jt_type_id("jt_rt_point")
+                             + R"(,"value":"-1;0"}},)"
+                             + R"("r":{"__type":)"
+                             + jt_type_id("jt_rt_point")
+                             + R"(,"value":"5;6"},)"
+                             + R"("s":"1,2","t":"three:7,8"})";
+
+  std::string out;
+  json::serializer{out}.dump(jt_override_sample());
+  CHECK_EQ(out, expected);
+
+  SUBCASE("contiguous")
+  {
+    check_override_read_back(json::deserializer{out}.load<jt_override_var>());
+  }
+  SUBCASE("stream")
+  {
+    std::istringstream in{out};
+    check_override_read_back(json::deserializer{in}.load<jt_override_var>());
+  }
+  SUBCASE("indented")
+  {
+    std::string pretty;
+    json::serializer{pretty, std::cw<json::options{.indent = 2}>}.dump(jt_override_sample());
+    CHECK_NE(pretty.find("  \"r\": {\n    \"__type\": "), std::string::npos);
+    CHECK_NE(pretty.find(",\n    \"value\": \"5;6\"\n  }"), std::string::npos);
+    check_override_read_back(json::deserializer{pretty}.load<jt_override_var>());
+  }
+}
+
+TEST_CASE("reflex::serde::json: a wrapped poly::var aggregate in the old member form throws")
+{
+  const std::string doc = R"({"r":{"__type":)"
+                        + jt_type_id("jt_rt_point")
+                        + R"(,"x":5,"y":6,"read_by_override":false}})";
+  CHECK_THROWS_WITH_AS(
+      std::ignore = json::deserializer{doc}.load<jt_override_var>(),
+      R"(JSON: expected "value" after the "__type" of a wrapped poly::var alternative)",
+      std::runtime_error);
+}
+
+TEST_CASE("reflex::serde::json: a wrapped poly::var aggregate needs __type first")
+{
+  const std::string doc = R"({"r":{"value":"5;6","__type":)" + jt_type_id("jt_rt_point") + "}}";
+  const auto*       message =
+      R"(JSON: "__type" must be the first member of a wrapped poly::var alternative)";
+  CHECK_THROWS_WITH_AS(
+      std::ignore = json::deserializer{doc}.load<jt_override_var>(), message, std::runtime_error);
+  std::istringstream in{doc};
+  CHECK_THROWS_WITH_AS(
+      std::ignore = json::deserializer{in}.load<jt_override_var>(), message, std::runtime_error);
+}
+
+static void check_wrapped_errors(auto load)
+{
+  const std::string id = jt_type_id("jt_rt_point");
+  CHECK_THROWS_WITH_AS(
+      std::ignore = load(R"({"r":{"__type":)" + id + R"(,"x":1}})"),
+      R"(JSON: expected "value" after the "__type" of a wrapped poly::var alternative)",
+      std::runtime_error);
+  CHECK_THROWS_WITH_AS(
+      std::ignore = load(R"({"r":{"__type":)" + id + R"(,"value":"1;2","x":1}})"),
+      R"(JSON: expected '}' after the "value" of a wrapped poly::var alternative)",
+      std::runtime_error);
+}
+
+TEST_CASE("reflex::serde::json: a wrapped poly::var aggregate needs its value member")
+{
+  SUBCASE("contiguous")
+  {
+    check_wrapped_errors(
+        [](std::string const& doc) { return json::deserializer{doc}.load<jt_override_var>(); });
+  }
+  SUBCASE("stream")
+  {
+    check_wrapped_errors([](std::string const& doc) {
+      std::istringstream in{doc};
+      return json::deserializer{in}.load<jt_override_var>();
+    });
+  }
+  SUBCASE("unknown keys skipped")
+  {
+    check_wrapped_errors([](std::string const& doc) {
+      return json::deserializer{
+          doc, std::cw<json::read_options{.unknown_keys = serde::unknown_keys::skip}>}
+          .load<jt_override_var>();
+    });
+  }
+}
+
+TEST_CASE(
+    "reflex::serde::json: a wrapped poly::var aggregate reads with comments and trailing commas")
+{
+  constexpr json::read_options json5{.comments = true, .trailing_commas = true};
+  const std::string            doc = R"({"r": /* a */ { // b
+    "__type" /* c */ : )"
+                                   + jt_type_id("jt_rt_point")
+                                   + R"( , // d
+    "value" : "5;6" , } , })";
+
+  const auto check = [](jt_override_var const& back) {
+    REQUIRE(back.at("r")->is<jt_rt_point>());
+    CHECK_EQ(back.at("r")->as<jt_rt_point>(), jt_rt_point{5, 6, true});
+  };
+  check(json::deserializer{doc, std::cw<json5>}.load<jt_override_var>());
+  std::istringstream in{doc};
+  check(json::deserializer{in, std::cw<json5>}.load<jt_override_var>());
+}
+
 struct jt_bytes
 {
   std::string            name;

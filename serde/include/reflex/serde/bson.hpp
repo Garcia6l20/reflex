@@ -17,6 +17,7 @@
 #include <reflex/serde/bson_value.hpp>
 #endif
 
+#include <reflex/serde/detail/encode.hpp>
 #include <reflex/serde/detail/io.hpp>
 
 namespace reflex::serde::bson::detail
@@ -24,7 +25,35 @@ namespace reflex::serde::bson::detail
 using bytes = std::vector<std::byte>;
 
 template <typename T>
-concept bson_scalar_c = decays_to_c<T, bson::decimal128> or decays_to_c<T, bson::datetime>;
+concept bson_extended_c = decays_to_c<T, bson::object_id>
+                       or decays_to_c<T, bson::timestamp>
+                       or decays_to_c<T, bson::regex>
+                       or decays_to_c<T, bson::javascript>
+                       or decays_to_c<T, bson::symbol>
+                       or decays_to_c<T, bson::db_pointer>
+                       or decays_to_c<T, bson::min_key>
+                       or decays_to_c<T, bson::max_key>
+                       or decays_to_c<T, bson::undefined>
+                       or decays_to_c<T, bson::code_w_scope>;
+
+template <typename T>
+concept bson_scalar_c = decays_to_c<T, bson::decimal128>
+                     or decays_to_c<T, bson::datetime>
+                     or decays_to_c<T, bson::binary>
+                     or bson_extended_c<T>;
+
+static_assert(bson_scalar_c<bson::binary> and not seq_c<bson::binary>);
+
+static_assert(bson_scalar_c<bson::object_id> and not seq_c<bson::object_id>);
+static_assert(bson_scalar_c<bson::timestamp> and not seq_c<bson::timestamp>);
+static_assert(bson_scalar_c<bson::regex> and not seq_c<bson::regex>);
+static_assert(bson_scalar_c<bson::javascript> and not seq_c<bson::javascript>);
+static_assert(bson_scalar_c<bson::symbol> and not seq_c<bson::symbol>);
+static_assert(bson_scalar_c<bson::db_pointer> and not seq_c<bson::db_pointer>);
+static_assert(bson_scalar_c<bson::min_key> and not seq_c<bson::min_key>);
+static_assert(bson_scalar_c<bson::max_key> and not seq_c<bson::max_key>);
+static_assert(bson_scalar_c<bson::undefined> and not seq_c<bson::undefined>);
+static_assert(bson_scalar_c<bson::code_w_scope> and not seq_c<bson::code_w_scope>);
 
 template <typename T>
 concept byte_seq_c =
@@ -32,19 +61,179 @@ concept byte_seq_c =
 
 enum class bson_type : std::uint8_t
 {
-  eof        = 0x00,
-  double_    = 0x01,
-  string     = 0x02,
-  document   = 0x03,
-  array      = 0x04,
-  binary     = 0x05,
-  datetime   = 0x09,
-  boolean    = 0x08,
-  null       = 0x0A,
-  int32      = 0x10,
-  int64      = 0x12,
-  decimal128 = 0x13
+  eof          = 0x00,
+  double_      = 0x01,
+  string       = 0x02,
+  document     = 0x03,
+  array        = 0x04,
+  binary       = 0x05,
+  undefined    = 0x06,
+  object_id    = 0x07,
+  boolean      = 0x08,
+  datetime     = 0x09,
+  null         = 0x0A,
+  regex        = 0x0B,
+  db_pointer   = 0x0C,
+  javascript   = 0x0D,
+  symbol       = 0x0E,
+  code_w_scope = 0x0F,
+  int32        = 0x10,
+  timestamp    = 0x11,
+  int64        = 0x12,
+  decimal128   = 0x13,
+  max_key      = 0x7F,
+  min_key      = 0xFF
 };
+
+inline constexpr std::byte binary_old_subtype{0x02};
+
+struct ext_json_binary_body
+{
+  std::string                                base64;
+  [[= serde::rename{"subType"}]] std::string sub_type;
+};
+
+struct ext_json_binary
+{
+  [[= serde::rename{"$binary"}]] ext_json_binary_body binary;
+};
+
+struct ext_json_object_id
+{
+  [[= serde::rename{"$oid"}]] std::string oid;
+};
+
+constexpr std::string sorted_regex_options(std::string_view options)
+{
+  if(options.contains('\0'))
+  {
+    throw std::invalid_argument("BSON regex options must not contain a null byte");
+  }
+  std::string sorted{options};
+  std::ranges::sort(sorted);
+  const auto [dup, end] = std::ranges::unique(sorted);
+  sorted.erase(dup, end);
+  if(not std::ranges::all_of(sorted, [](char c) { return std::string_view{"ilmsux"}.contains(c); }))
+  {
+    throw std::invalid_argument("BSON regex options may only hold the letters i, l, m, s, u, x");
+  }
+  return sorted;
+}
+
+struct ext_json_timestamp_body
+{
+  std::uint32_t t;
+  std::uint32_t i;
+};
+
+struct ext_json_timestamp
+{
+  [[= serde::rename{"$timestamp"}]] ext_json_timestamp_body timestamp;
+};
+
+struct ext_json_regex_body
+{
+  std::string pattern;
+  std::string options;
+};
+
+struct ext_json_regex
+{
+  [[= serde::rename{"$regularExpression"}]] ext_json_regex_body regex;
+};
+
+struct ext_json_javascript
+{
+  [[= serde::rename{"$code"}]] std::string code;
+};
+
+struct ext_json_code_w_scope
+{
+  [[= serde::rename{"$code"}]] std::string   code;
+  [[= serde::rename{"$scope"}]] bson::object scope;
+};
+
+struct ext_json_symbol
+{
+  [[= serde::rename{"$symbol"}]] std::string symbol;
+};
+
+struct ext_json_db_pointer_body
+{
+  [[= serde::rename{"$ref"}]] std::string       ref;
+  [[= serde::rename{"$id"}]] ext_json_object_id id;
+};
+
+struct ext_json_db_pointer
+{
+  [[= serde::rename{"$dbPointer"}]] ext_json_db_pointer_body db_pointer;
+};
+
+struct ext_json_min_key
+{
+  [[= serde::rename{"$minKey"}]] int min_key = 1;
+};
+
+struct ext_json_max_key
+{
+  [[= serde::rename{"$maxKey"}]] int max_key = 1;
+};
+
+struct ext_json_undefined
+{
+  [[= serde::rename{"$undefined"}]] bool undefined = true;
+};
+
+constexpr ext_json_object_id ext_json_of(bson::object_id const& value)
+{
+  return {.oid = serde::detail::hex_encode(value.bytes)};
+}
+
+constexpr ext_json_timestamp ext_json_of(bson::timestamp const& value)
+{
+  return {
+      .timestamp = {.t = value.seconds, .i = value.increment}
+  };
+}
+
+constexpr ext_json_regex ext_json_of(bson::regex const& value)
+{
+  return {
+      .regex = {.pattern = value.pattern, .options = sorted_regex_options(value.options)}
+  };
+}
+
+constexpr ext_json_javascript ext_json_of(bson::javascript const& value)
+{
+  return {.code = value.code};
+}
+
+constexpr ext_json_symbol ext_json_of(bson::symbol const& value)
+{
+  return {.symbol = value.name};
+}
+
+constexpr ext_json_db_pointer ext_json_of(bson::db_pointer const& value)
+{
+  return {
+      .db_pointer = {.ref = value.ref, .id = ext_json_of(value.id)}
+  };
+}
+
+constexpr ext_json_min_key ext_json_of(bson::min_key const&)
+{
+  return {};
+}
+
+constexpr ext_json_max_key ext_json_of(bson::max_key const&)
+{
+  return {};
+}
+
+constexpr ext_json_undefined ext_json_of(bson::undefined const&)
+{
+  return {};
+}
 
 constexpr void append(bytes& out, std::byte byte)
 {
@@ -82,6 +271,11 @@ constexpr void append(bytes& out, decimal128 value)
   out.append_range(raw);
 }
 
+constexpr void append(bytes& out, bson::object_id const& id)
+{
+  out.append_range(id.bytes);
+}
+
 constexpr void append(bytes& out, std::string_view value, bool include_size = false)
 {
   if(include_size)
@@ -103,6 +297,46 @@ constexpr void append(bytes& out, std::string_view value, bool include_size = fa
   }
 
   out.push_back(std::byte{0x00});
+}
+
+constexpr void append_cstring(bytes& out, std::string_view value, std::string_view what)
+{
+  if(value.contains('\0'))
+  {
+    throw std::invalid_argument(std::format("BSON {} must not contain a null byte", what));
+  }
+  append(out, value);
+}
+
+constexpr void check_scope(std::span<std::byte const> scope)
+{
+  if(scope.size() < 5 or scope.back() != std::byte{0x00})
+  {
+    throw std::invalid_argument("BSON code with scope needs an encoded scope document");
+  }
+  std::uint32_t declared = 0;
+  for(std::size_t i = 0; i < sizeof(declared); ++i)
+  {
+    declared |= std::to_integer<std::uint32_t>(scope[i]) << (8 * i);
+  }
+  if(declared != scope.size())
+  {
+    throw std::invalid_argument("BSON code with scope length prefix does not match its scope");
+  }
+}
+
+constexpr void append(bytes& out, bson::code_w_scope const& value)
+{
+  const auto& scope = value.scope;
+  check_scope(scope);
+  const auto total = 2 * sizeof(std::int32_t) + value.code.size() + 1 + scope.size();
+  if(total > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+  {
+    throw std::length_error("BSON code with scope exceeds the int32 length field");
+  }
+  append(out, static_cast<std::int32_t>(total));
+  append(out, std::string_view(value.code), true);
+  out.append_range(scope);
 }
 
 template <typename T>
@@ -270,6 +504,85 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
     append(out, key);
     append(out, value.millis_since_epoch);
   }
+  else if constexpr(std::same_as<value_t, bson::binary>)
+  {
+    append(out, detail::bson_type::binary);
+    append(out, key);
+    const auto old    = value.subtype == binary_old_subtype;
+    const auto prefix = old ? sizeof(std::int32_t) : 0;
+    const auto limit  = static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+    if(value.data.size() > limit - prefix)
+    {
+      throw std::length_error("BSON binary payload exceeds the int32 length field");
+    }
+    append(out, static_cast<std::int32_t>(value.data.size() + prefix));
+    append(out, value.subtype);
+    if(old)
+    {
+      append(out, static_cast<std::int32_t>(value.data.size()));
+    }
+    out.append_range(value.data);
+  }
+  else if constexpr(std::same_as<value_t, bson::object_id>)
+  {
+    append(out, detail::bson_type::object_id);
+    append(out, key);
+    append(out, value);
+  }
+  else if constexpr(std::same_as<value_t, bson::timestamp>)
+  {
+    append(out, detail::bson_type::timestamp);
+    append(out, key);
+    append(out, value.increment);
+    append(out, value.seconds);
+  }
+  else if constexpr(std::same_as<value_t, bson::regex>)
+  {
+    append(out, detail::bson_type::regex);
+    append(out, key);
+    append_cstring(out, value.pattern, "regex pattern");
+    append_cstring(out, sorted_regex_options(value.options), "regex options");
+  }
+  else if constexpr(std::same_as<value_t, bson::javascript>)
+  {
+    append(out, detail::bson_type::javascript);
+    append(out, key);
+    append(out, std::string_view(value.code), true);
+  }
+  else if constexpr(std::same_as<value_t, bson::symbol>)
+  {
+    append(out, detail::bson_type::symbol);
+    append(out, key);
+    append(out, std::string_view(value.name), true);
+  }
+  else if constexpr(std::same_as<value_t, bson::db_pointer>)
+  {
+    append(out, detail::bson_type::db_pointer);
+    append(out, key);
+    append(out, std::string_view(value.ref), true);
+    append(out, value.id);
+  }
+  else if constexpr(std::same_as<value_t, bson::min_key>)
+  {
+    append(out, detail::bson_type::min_key);
+    append(out, key);
+  }
+  else if constexpr(std::same_as<value_t, bson::max_key>)
+  {
+    append(out, detail::bson_type::max_key);
+    append(out, key);
+  }
+  else if constexpr(std::same_as<value_t, bson::undefined>)
+  {
+    append(out, detail::bson_type::undefined);
+    append(out, key);
+  }
+  else if constexpr(std::same_as<value_t, bson::code_w_scope>)
+  {
+    append(out, detail::bson_type::code_w_scope);
+    append(out, key);
+    append(out, value);
+  }
   else if constexpr(detail::byte_seq_c<value_t>)
   {
     append(out, detail::bson_type::binary);
@@ -375,9 +688,29 @@ REFLEX_EXPORT namespace reflex::serde::bson
   serializer(std::basic_ostream<CharT, CharTrait>&)
       -> serializer<std::ostreambuf_iterator<CharT, CharTrait>>;
 
-  template <std::input_iterator It> class deserializer
+  namespace detail
+  {
+    struct bson_access;
+  }
+
+  /** @brief Input options of bson::deserializer, its second template argument.
+   *
+   * With `unknown_keys::skip`, an element whose key matches no member is consumed by its type and
+   * length, every BSON element type included. A skipped document or array is checked by its
+   * declared length and trailing 0x00 only, a corrupt subtree under a skipped key is not reported.
+   */
+  struct read_options
+  {
+    serde::unknown_keys unknown_keys = serde::unknown_keys::error;
+
+    constexpr bool operator==(read_options const&) const = default;
+  };
+
+  template <std::input_iterator It, read_options Opts = read_options{}> class deserializer
   {
   public:
+    static constexpr read_options read_opts = Opts;
+
     using range_type = std::ranges::subrange<It, It>;
 
   private:
@@ -400,11 +733,10 @@ REFLEX_EXPORT namespace reflex::serde::bson
       struct no_key_buffer
       {};
 
+      using key_buffer = typename[:contiguous_byte_or_char ? ^^no_key_buffer : ^^std::string:];
+
       range_type  range;
       std::size_t position = 0;
-
-      [[no_unique_address]]
-      typename[:contiguous_byte_or_char ? ^^no_key_buffer : ^^std::string:] key_buf{};
 
       constexpr bool at_end() const
       {
@@ -443,16 +775,39 @@ REFLEX_EXPORT namespace reflex::serde::bson
         position += n;
       }
 
+      constexpr void skip(std::size_t n)
+      {
+        if constexpr(sized_input)
+        {
+          advance(n);
+        }
+        else
+        {
+          for(std::size_t i = 0; i < n; ++i)
+          {
+            read_byte();
+          }
+        }
+      }
+
+      constexpr void skip_cstring()
+      {
+        while(read_byte() != std::byte{0x00})
+        {}
+      }
+
       // A null-terminated key, borrowed from the input when it is contiguous. The
       // view is a run of the input, so it stays valid as long as the input does,
       // not merely until the next cursor operation. On a non-contiguous input it
-      // is a view of key_buf, which the next key overwrites.
+      // is a view of the caller's key_buf, which read_document owns per document:
+      // a nested document reads its keys into its own buffer, so this key stays
+      // valid across the value's read, until the next key of the same document.
       //
       // A key is a BSON cstring: terminated, no length prefix, and no embedded
       // null. A value is a BSON string: length-prefixed, and an embedded null is
       // allowed. read_view below is the value spelling and the two do not share
       // an implementation, because they do not share a shape.
-      constexpr std::string_view read_key()
+      constexpr std::string_view read_key([[maybe_unused]] key_buffer& key_buf)
       {
         if constexpr(contiguous_byte_or_char)
         {
@@ -629,10 +984,18 @@ REFLEX_EXPORT namespace reflex::serde::bson
             throw std::runtime_error("BSON string payload must be null-terminated");
           }
         }
-        else
+        else if constexpr(contiguous_byte_or_char)
         {
           // The owning spelling of read_key(), for callers that want to keep the result.
-          out = read_key();
+          key_buffer none;
+          out = read_key(none);
+        }
+        else
+        {
+          for(auto b = read_byte(); b != std::byte{0x00}; b = read_byte())
+          {
+            out.push_back(static_cast<char>(std::to_integer<unsigned char>(b)));
+          }
         }
         return out;
       }
@@ -683,6 +1046,19 @@ REFLEX_EXPORT namespace reflex::serde::bson
     deserializer(It begin, It end) : cursor_({begin, end})
     {}
 
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(It begin, It end, std::constant_wrapper<X>) : cursor_({begin, end})
+    {}
+
+    template <auto X>
+      requires(std::constant_wrapper<X>::value == Opts)
+    deserializer(std::ranges::input_range auto&& range, std::constant_wrapper<X>)
+        : cursor_{
+              {std::ranges::begin(range), std::ranges::end(range)}
+    }
+    {}
+
     deserializer(std::ranges::input_range auto&& range)
         : cursor_{
               {std::ranges::begin(range), std::ranges::end(range)}
@@ -695,6 +1071,14 @@ REFLEX_EXPORT namespace reflex::serde::bson
         It{};
       }
     deserializer(T& v) : cursor_{{It{v}, It{}}}
+    {}
+
+    template <typename T, auto X>
+      requires requires(T& v) {
+        It{v};
+        It{};
+      } and (std::constant_wrapper<X>::value == Opts)
+    deserializer(T& v, std::constant_wrapper<X>) : cursor_{{It{v}, It{}}}
     {}
 
     bool at_end() const
@@ -738,6 +1122,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
       const std::size_t end_pos = start + static_cast<std::size_t>(size);
 
+      typename cursor_t::key_buffer key_buf;
       while(cursor_.position < end_pos)
       {
         const auto type = static_cast<detail::bson_type>(cursor_.read_byte());
@@ -752,7 +1137,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
         // Borrowed from the input buffer when it is contiguous, valid for the duration
         // of the call. Copy it to keep it.
-        const std::string_view key = cursor_.read_key();
+        const std::string_view key = cursor_.read_key(key_buf);
         std::forward<Fn>(fn)(type, key);
         if(cursor_.position > end_pos)
         {
@@ -889,6 +1274,14 @@ REFLEX_EXPORT namespace reflex::serde::bson
         }
         value.millis_since_epoch = cursor_.template read<std::int64_t>();
       }
+      else if constexpr(std::same_as<value_t, bson::binary>)
+      {
+        read_binary(type, value);
+      }
+      else if constexpr(detail::bson_extended_c<value_t>)
+      {
+        read_extended(type, value);
+      }
       else if constexpr(number_c<value_t>)
       {
         switch(type)
@@ -908,18 +1301,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
       }
       else if constexpr(detail::byte_seq_c<value_t>)
       {
-        if(type != detail::bson_type::binary)
-        {
-          throw std::runtime_error("Expected BSON binary type");
-        }
-        const auto length = cursor_.template read<std::int32_t>();
-        if(length < 0)
-        {
-          throw std::runtime_error("Invalid BSON binary length");
-        }
-        const auto n = static_cast<std::size_t>(length);
-        cursor_.require(n);
-        const auto subtype = cursor_.read_byte();
+        const auto [n, subtype] = binary_header(type);
         if(subtype != std::byte{0x00})
         {
           throw std::runtime_error(std::format(
@@ -927,20 +1309,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
         }
         if constexpr(requires { value.resize(n); })
         {
-          if constexpr(cursor_t::sized_input)
-          {
-            value.resize(n);
-            cursor_.read_bytes_into(value.data(), n);
-          }
-          else
-          {
-            constexpr std::size_t max_unchecked_reserve = 64 * 1024;
-            value.reserve(std::min(n, max_unchecked_reserve));
-            for(std::size_t i = 0; i < n; ++i)
-            {
-              value.push_back(cursor_.read_byte());
-            }
-          }
+          value.clear();
+          read_payload(value, n);
         }
         else
         {
@@ -993,8 +1363,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
           throw std::runtime_error("Expected BSON document type");
         }
         read_document([this, &value](detail::bson_type elem_type, std::string_view key) {
-          object_visit_flat(
-              key, value, [this, elem_type](auto& member) { read_element(elem_type, member); });
+          read_member_or_miss(elem_type, key, value);
         });
       }
       else if constexpr(std::same_as<value_t, bson::value>)
@@ -1027,6 +1396,36 @@ REFLEX_EXPORT namespace reflex::serde::bson
             return;
           case detail::bson_type::binary:
             read_element(type, value.template emplace<bson::binary>());
+            return;
+          case detail::bson_type::object_id:
+            read_extended(type, value.template emplace<bson::object_id>());
+            return;
+          case detail::bson_type::timestamp:
+            read_extended(type, value.template emplace<bson::timestamp>());
+            return;
+          case detail::bson_type::regex:
+            read_extended(type, value.template emplace<bson::regex>());
+            return;
+          case detail::bson_type::javascript:
+            read_extended(type, value.template emplace<bson::javascript>());
+            return;
+          case detail::bson_type::symbol:
+            read_extended(type, value.template emplace<bson::symbol>());
+            return;
+          case detail::bson_type::db_pointer:
+            read_extended(type, value.template emplace<bson::db_pointer>());
+            return;
+          case detail::bson_type::min_key:
+            value = bson::min_key{};
+            return;
+          case detail::bson_type::max_key:
+            value = bson::max_key{};
+            return;
+          case detail::bson_type::undefined:
+            value = bson::undefined{};
+            return;
+          case detail::bson_type::code_w_scope:
+            read_extended(type, value.template emplace<bson::code_w_scope>());
             return;
           case detail::bson_type::document:
           {
@@ -1077,11 +1476,339 @@ REFLEX_EXPORT namespace reflex::serde::bson
     {
       return deserialize(*this, std::type_identity<T>{});
     }
+
+  private:
+    friend struct detail::bson_access;
+
+    static void expect(detail::bson_type type, detail::bson_type wanted, std::string_view name)
+    {
+      if(type != wanted)
+      {
+        throw std::runtime_error(std::format("Expected BSON {} type", name));
+      }
+    }
+
+    template <typename T> void read_extended(detail::bson_type type, T& value)
+    {
+      if constexpr(std::same_as<T, bson::object_id>)
+      {
+        expect(type, detail::bson_type::object_id, "ObjectId");
+        value.bytes = cursor_.template read_bytes<12>();
+      }
+      else if constexpr(std::same_as<T, bson::timestamp>)
+      {
+        expect(type, detail::bson_type::timestamp, "timestamp");
+        value.increment = cursor_.template read<std::uint32_t>();
+        value.seconds   = cursor_.template read<std::uint32_t>();
+      }
+      else if constexpr(std::same_as<T, bson::regex>)
+      {
+        expect(type, detail::bson_type::regex, "regex");
+        value.pattern = cursor_.template read<std::string>();
+        value.options = cursor_.template read<std::string>();
+      }
+      else if constexpr(std::same_as<T, bson::javascript>)
+      {
+        expect(type, detail::bson_type::javascript, "JavaScript code");
+        value.code = cursor_.template read<std::string, true>();
+      }
+      else if constexpr(std::same_as<T, bson::symbol>)
+      {
+        expect(type, detail::bson_type::symbol, "symbol");
+        value.name = cursor_.template read<std::string, true>();
+      }
+      else if constexpr(std::same_as<T, bson::db_pointer>)
+      {
+        expect(type, detail::bson_type::db_pointer, "DBPointer");
+        value.ref      = cursor_.template read<std::string, true>();
+        value.id.bytes = cursor_.template read_bytes<12>();
+      }
+      else if constexpr(std::same_as<T, bson::min_key>)
+      {
+        expect(type, detail::bson_type::min_key, "MinKey");
+      }
+      else if constexpr(std::same_as<T, bson::max_key>)
+      {
+        expect(type, detail::bson_type::max_key, "MaxKey");
+      }
+      else if constexpr(std::same_as<T, bson::code_w_scope>)
+      {
+        expect(type, detail::bson_type::code_w_scope, "code with scope");
+        read_code_w_scope(value);
+      }
+      else
+      {
+        expect(type, detail::bson_type::undefined, "undefined");
+      }
+    }
+
+    std::size_t checked_length(std::int32_t size, std::size_t limit)
+    {
+      const auto n = static_cast<std::size_t>(size);
+      if(cursor_.position > limit or n > limit - cursor_.position)
+      {
+        throw std::runtime_error("BSON element exceeds declared size");
+      }
+      cursor_.require(n);
+      return n;
+    }
+
+    std::size_t string_length(std::size_t limit)
+    {
+      const auto size = cursor_.template read<std::int32_t>();
+      if(size < 1)
+      {
+        throw std::runtime_error("Invalid BSON string length");
+      }
+      return checked_length(size, limit);
+    }
+
+    std::size_t document_body_length(std::size_t limit)
+    {
+      const auto size = cursor_.template read<std::int32_t>();
+      if(size < 5)
+      {
+        throw std::runtime_error("Invalid BSON document length");
+      }
+      return checked_length(size - static_cast<std::int32_t>(sizeof(std::int32_t)), limit);
+    }
+
+    std::size_t code_w_scope_limit()
+    {
+      const auto size = cursor_.template read<std::int32_t>();
+      if(size < 14)
+      {
+        throw std::runtime_error("Invalid BSON code with scope length");
+      }
+      const auto n = static_cast<std::size_t>(size) - sizeof(std::int32_t);
+      cursor_.require(n);
+      return cursor_.position + n;
+    }
+
+    void end_code_w_scope(std::size_t limit) const
+    {
+      if(cursor_.position != limit)
+      {
+        throw std::runtime_error("BSON code with scope length does not match its content");
+      }
+    }
+
+    void expect_string_terminator()
+    {
+      if(cursor_.read_byte() != std::byte{0x00})
+      {
+        throw std::runtime_error("BSON string payload must be null-terminated");
+      }
+    }
+
+    static void expect_document_terminator(std::byte last)
+    {
+      if(last != std::byte{0x00})
+      {
+        throw std::runtime_error("BSON document missing terminator");
+      }
+    }
+
+    template <typename Buffer> void read_payload(Buffer& out, std::size_t n)
+    {
+      const auto at = out.size();
+      if constexpr(cursor_t::sized_input)
+      {
+        out.resize(at + n);
+        cursor_.read_bytes_into(reinterpret_cast<std::byte*>(out.data() + at), n);
+      }
+      else
+      {
+        constexpr std::size_t max_unchecked_reserve = 64 * 1024;
+        out.reserve(at + std::min(n, max_unchecked_reserve));
+        for(std::size_t i = 0; i < n; ++i)
+        {
+          out.push_back(std::bit_cast<typename Buffer::value_type>(cursor_.read_byte()));
+        }
+      }
+    }
+
+    std::pair<std::size_t, std::byte> binary_header(detail::bson_type type)
+    {
+      if(type != detail::bson_type::binary)
+      {
+        throw std::runtime_error("Expected BSON binary type");
+      }
+      const auto length = cursor_.template read<std::int32_t>();
+      if(length < 0)
+      {
+        throw std::runtime_error("Invalid BSON binary length");
+      }
+      const auto n = static_cast<std::size_t>(length);
+      cursor_.require(n);
+      return {n, cursor_.read_byte()};
+    }
+
+    void read_binary(detail::bson_type type, bson::binary& value)
+    {
+      auto [n, subtype] = binary_header(type);
+      if(subtype == detail::binary_old_subtype)
+      {
+        if(n < sizeof(std::int32_t))
+        {
+          throw std::runtime_error("BSON binary subtype 0x02 is too short for its inner length");
+        }
+        n -= sizeof(std::int32_t);
+        const auto inner = cursor_.template read<std::int32_t>();
+        if(inner < 0 or static_cast<std::size_t>(inner) != n)
+        {
+          throw std::runtime_error(
+              std::format(
+                  "BSON binary subtype 0x02 inner length {} does not match its {} payload bytes",
+                  inner, n));
+        }
+      }
+      value.subtype = subtype;
+      value.data.clear();
+      read_payload(value.data, n);
+    }
+
+    void read_code_w_scope(bson::code_w_scope& value)
+    {
+      const auto limit = code_w_scope_limit();
+
+      value.code.clear();
+      read_payload(value.code, string_length(limit) - 1);
+      expect_string_terminator();
+
+      const auto body = document_body_length(limit);
+      value.scope.clear();
+      detail::append(value.scope, static_cast<std::int32_t>(body + sizeof(std::int32_t)));
+      read_payload(value.scope, body);
+      expect_document_terminator(value.scope.back());
+
+      end_code_w_scope(limit);
+    }
+
+    void skip_string(std::size_t limit)
+    {
+      cursor_.skip(string_length(limit) - 1);
+      expect_string_terminator();
+    }
+
+    void skip_document(std::size_t limit)
+    {
+      cursor_.skip(document_body_length(limit) - 1);
+      expect_document_terminator(cursor_.read_byte());
+    }
+
+    void skip_element(detail::bson_type type)
+    {
+      constexpr auto unbounded = std::numeric_limits<std::size_t>::max();
+      switch(type)
+      {
+        case detail::bson_type::null:
+        case detail::bson_type::undefined:
+        case detail::bson_type::min_key:
+        case detail::bson_type::max_key:
+          return;
+        case detail::bson_type::boolean:
+          cursor_.skip(1);
+          return;
+        case detail::bson_type::int32:
+          cursor_.skip(4);
+          return;
+        case detail::bson_type::double_:
+        case detail::bson_type::int64:
+        case detail::bson_type::datetime:
+        case detail::bson_type::timestamp:
+          cursor_.skip(8);
+          return;
+        case detail::bson_type::object_id:
+          cursor_.skip(12);
+          return;
+        case detail::bson_type::decimal128:
+          cursor_.skip(16);
+          return;
+        case detail::bson_type::string:
+        case detail::bson_type::javascript:
+        case detail::bson_type::symbol:
+          skip_string(unbounded);
+          return;
+        case detail::bson_type::binary:
+        {
+          const auto size = cursor_.template read<std::int32_t>();
+          if(size < 0)
+          {
+            throw std::runtime_error("Invalid BSON binary length");
+          }
+          const auto n = static_cast<std::size_t>(size) + 1;
+          cursor_.require(n);
+          cursor_.skip(n);
+          return;
+        }
+        case detail::bson_type::document:
+        case detail::bson_type::array:
+          skip_document(unbounded);
+          return;
+        case detail::bson_type::code_w_scope:
+        {
+          const auto limit = code_w_scope_limit();
+          skip_string(limit);
+          skip_document(limit);
+          end_code_w_scope(limit);
+          return;
+        }
+        case detail::bson_type::db_pointer:
+          skip_string(unbounded);
+          cursor_.skip(12);
+          return;
+        case detail::bson_type::regex:
+          cursor_.skip_cstring();
+          cursor_.skip_cstring();
+          return;
+        default:
+          throw std::runtime_error(std::format(
+              "BSON: unknown element type 0x{:02x}", std::to_underlying(type)));
+      }
+    }
+
+    template <typename Key, typename Value>
+    void read_member_or_miss(detail::bson_type type, Key const& key, Value& value)
+    {
+      if(not object_try_visit_flat(
+             key, value, [this, type](auto& member) { read_element(type, member); }))
+      {
+        if constexpr(Opts.unknown_keys == serde::unknown_keys::skip)
+        {
+          skip_element(type);
+        }
+        else
+        {
+          throw std::runtime_error(std::format("BSON: no member matches the key '{}'", key));
+        }
+      }
+    }
+  };
+
+  /** @brief The one way into the BSON deserializer's private members, for the namespace-scope
+   * readers.
+   */
+  struct detail::bson_access
+  {
+    template <typename De, typename Key, typename Value>
+    static void read_member_or_miss(De& de, bson_type type, Key const& key, Value& value)
+    {
+      de.read_member_or_miss(type, key, value);
+    }
   };
 
   template <std::input_iterator It> deserializer(It, It) -> deserializer<It>;
   template <std::ranges::input_range R>
   deserializer(R&&) -> deserializer<std::ranges::iterator_t<R>>;
+
+  template <std::input_iterator It, auto X>
+  deserializer(It, It, std::constant_wrapper<X>) -> deserializer<It, X>;
+  template <std::ranges::input_range R, auto X>
+  deserializer(R&&, std::constant_wrapper<X>) -> deserializer<std::ranges::iterator_t<R>, X>;
+  template <typename CharT, typename CharTrait, auto X>
+  deserializer(std::basic_istream<CharT, CharTrait>&, std::constant_wrapper<X>)
+      -> deserializer<std::istreambuf_iterator<CharT>, X>;
 
   template <typename CharT, typename CharTrait = std::char_traits<CharT>>
   deserializer(std::basic_istream<CharT, CharTrait>&)
@@ -1110,13 +1837,65 @@ REFLEX_EXPORT namespace reflex::serde::bson
     return ser.out();
   }
 
-  template <typename It> auto tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de)
+  /** @brief Write @p value as the Extended JSON v2 document
+   * `{"$binary": {"base64": ..., "subType": ...}}`, the subtype as two lowercase hex digits.
+   *
+   * Taken by the JSON, YAML and TOML serializers only. XML, CSV and BSON never see it.
+   */
+  template <serde::detail::ext_json_serializer_c S>
+  auto tag_invoke(tag_t<serde::serialize>, S & ser, bson::binary const& value)
+  {
+    const auto subtype = std::array{value.subtype};
+    return serde::serialize(
+        ser, detail::ext_json_binary{
+                 .binary = {
+                            .base64   = serde::detail::base64_encode(value.data),
+                            .sub_type = serde::detail::hex_encode(subtype),
+                            }
+    });
+  }
+
+  /** @brief Write @p value as its Extended JSON v2 document.
+   *
+   * `object_id` as `{"$oid": <24 lowercase hex>}`, `timestamp` as
+   * `{"$timestamp": {"t": <seconds>, "i": <increment>}}`, `regex` as
+   * `{"$regularExpression": {"pattern": ..., "options": ...}}`, `javascript` as `{"$code": ...}`,
+   * `code_w_scope` as `{"$code": ..., "$scope": {...}}`, `symbol` as `{"$symbol": ...}`,
+   * `db_pointer` as `{"$dbPointer": {"$ref": ..., "$id": {"$oid": ...}}}`, `min_key` as
+   * `{"$minKey": 1}`, `max_key` as `{"$maxKey": 1}` and `undefined` as `{"$undefined": true}`.
+   *
+   * The scope of a `code_w_scope` is decoded as a BSON document and written with the same rules.
+   * A malformed scope throws before any of this value's own text is written. Text already
+   * written for enclosing values, such as earlier members and the key, stays in the output. Taken
+   * by the JSON, YAML and TOML serializers only. XML, CSV and BSON never see it.
+   */
+  template <serde::detail::ext_json_serializer_c S, detail::bson_extended_c T>
+  auto tag_invoke(tag_t<serde::serialize>, S & ser, T const& value)
+  {
+    if constexpr(std::same_as<T, bson::code_w_scope>)
+    {
+      detail::check_scope(value.scope);
+      return serde::serialize(
+          ser, detail::ext_json_code_w_scope{
+                   .code  = value.code,
+                   .scope = deserializer{value.scope}.template load<bson::object>(),
+               });
+    }
+    else
+    {
+      return serde::serialize(ser, detail::ext_json_of(value));
+    }
+  }
+
+  template <typename It, read_options Opts>
+  auto tag_invoke(tag_default_t<serde::deserialize>, deserializer<It, Opts> & de)
   {
     return deserialize(de, std::type_identity<bson::value>{});
   }
 
-  template <std::input_iterator It, typename T>
-  T tag_invoke(tag_default_t<serde::deserialize>, deserializer<It> & de, std::type_identity<T>)
+  template <std::input_iterator It, read_options Opts, typename T>
+  T tag_invoke(
+      tag_default_t<serde::deserialize>, deserializer<It, Opts> & de, std::type_identity<T>)
   {
     using U = std::decay_t<T>;
     T value{};
@@ -1156,7 +1935,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
         }
         else
         {
-          object_visit_flat(key, value, [&](auto& member) { de.read_element(type, member); });
+          detail::bson_access::read_member_or_miss(de, type, key, value);
         }
       });
     }

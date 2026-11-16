@@ -16,7 +16,7 @@ REFLEX_EXPORT namespace reflex::serde
   /**
    * @brief What a reader does with a key no member of the destination aggregate matches.
    *
-   * A field of each text backend's `read_options`. JSON, YAML and TOML default to `error`, XML to
+   * A field of each backend's `read_options`. JSON, YAML, TOML and BSON default to `error`, XML to
    * `skip`, which is what each did before the option existed.
    */
   enum class unknown_keys

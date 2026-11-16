@@ -357,13 +357,15 @@ struct Blob
 
 TEST_CASE("reflex::serde::bson: bson::value holds binary")
 {
-  const bson::binary bin = {std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
+  const bson::binary bin = {
+      .data = {std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}}
+  };
 
   SUBCASE("generic decode of a typed-written struct")
   {
     std::vector<std::byte> out;
     bson::serializer       ser{out};
-    ser.dump(Blob{"blob", bin});
+    ser.dump(Blob{"blob", bin.data});
 
     auto value = bson::deserializer{out}.load<bson::value>();
 
@@ -964,4 +966,241 @@ TEST_CASE("reflex::serde::bson: an optional member")
     CHECK_EQ(bson::deserializer{bytes}.load<bson::value>().as<bson::object>().size(), 2u);
     CHECK(bson::deserializer{bytes}.load<bson::value>().as<bson::object>().at("number").is_null());
   }
+}
+
+struct uk_old_inner
+{
+  int gone;
+  int port;
+};
+
+struct uk_new_inner
+{
+  int port;
+
+  bool operator==(uk_new_inner const&) const = default;
+};
+
+struct uk_old_outer
+{
+  int          gone;
+  uk_old_inner inner;
+};
+
+struct uk_new_outer
+{
+  uk_new_inner inner;
+};
+
+template <typename T> std::vector<std::byte> uk_encode(T const& value)
+{
+  std::vector<std::byte> out;
+  bson::serializer       ser{out};
+  ser.dump(value);
+  return out;
+}
+
+template <typename T> std::string uk_error(std::vector<std::byte> const& bytes)
+{
+  try
+  {
+    (void)bson::deserializer{bytes}.template load<T>();
+  }
+  catch(std::runtime_error const& e)
+  {
+    return e.what();
+  }
+  return {};
+}
+
+TEST_CASE("reflex::serde::bson: an unknown key names itself")
+{
+  SUBCASE("at the root")
+  {
+    CHECK_EQ(
+        uk_error<uk_new_outer>(uk_encode(
+            uk_old_outer{
+                1, {2, 3}
+    })),
+        "BSON: no member matches the key 'gone'");
+  }
+
+  SUBCASE("in a nested aggregate")
+  {
+    CHECK_EQ(
+        uk_error<uk_new_inner>(uk_encode(uk_old_inner{2, 3})),
+        "BSON: no member matches the key 'gone'");
+  }
+
+  SUBCASE("a matching document still loads")
+  {
+    CHECK_EQ(bson::deserializer{uk_encode(uk_new_inner{4})}.load<uk_new_inner>(), uk_new_inner{4});
+  }
+}
+
+TEST_CASE("reflex::serde::bson: read options deduce")
+{
+  static_assert(bson::read_options{}.unknown_keys == unknown_keys::error);
+
+  constexpr bson::read_options defaults{};
+  constexpr bson::read_options skip{.unknown_keys = unknown_keys::skip};
+
+  std::vector<std::byte>     bytes = uk_encode(uk_new_inner{1});
+  std::span<std::byte>       view{bytes};
+  std::span<std::byte const> const_view{bytes};
+  std::istringstream         stream{std::string{"x"}};
+  std::vector<std::byte>     iter_source = bytes;
+
+  using vec_it = std::vector<std::byte>::iterator;
+  static_assert(std::same_as<
+                decltype(bson::deserializer{bytes, std::cw<defaults>}),
+                decltype(bson::deserializer{bytes})>);
+  static_assert(std::same_as<
+                decltype(bson::deserializer{view, std::cw<defaults>}),
+                decltype(bson::deserializer{view})>);
+  static_assert(std::same_as<
+                decltype(bson::deserializer{const_view, std::cw<defaults>}),
+                decltype(bson::deserializer{const_view})>);
+  static_assert(
+      std::same_as<
+          decltype(bson::deserializer{iter_source.begin(), iter_source.end(), std::cw<defaults>}),
+          bson::deserializer<vec_it>>);
+  static_assert(std::same_as<
+                decltype(bson::deserializer{stream, std::cw<defaults>}),
+                decltype(bson::deserializer{stream})>);
+  static_assert(
+      decltype(bson::deserializer{bytes, std::cw<skip>})::read_opts.unknown_keys
+      == unknown_keys::skip);
+
+  CHECK_EQ(bson::deserializer{bytes, std::cw<defaults>}.load<uk_new_inner>(), uk_new_inner{1});
+
+  std::istringstream in{
+      std::string{reinterpret_cast<char const*>(bytes.data()), bytes.size()}
+  };
+  CHECK_EQ(bson::deserializer{in, std::cw<defaults>}.load<uk_new_inner>(), uk_new_inner{1});
+}
+
+TEST_CASE("reflex::serde::bson: a mismatched option tag is rejected")
+{
+  using vec_it = std::vector<std::byte>::iterator;
+  static_assert(not std::constructible_from<
+                bson::deserializer<vec_it, bson::read_options{}>, std::vector<std::byte>&,
+                std::constant_wrapper<bson::read_options{.unknown_keys = unknown_keys::skip}>>);
+  static_assert(std::constructible_from<
+                bson::deserializer<vec_it, bson::read_options{}>, std::vector<std::byte>&,
+                std::constant_wrapper<bson::read_options{}>>);
+}
+
+namespace
+{
+constexpr std::string_view long_outer = "an_outer_key_well_past_any_small_string_buffer";
+constexpr std::string_view long_inner = "an_inner_key_also_well_past_any_small_string_buffer";
+
+using int_map = std::map<std::string, int>;
+
+struct nested_keys_t
+{
+  std::map<std::string, int_map>              groups;
+  std::map<std::string, std::vector<int_map>> lists;
+  int                                         tail = 0;
+
+  bool operator==(nested_keys_t const&) const = default;
+};
+
+nested_keys_t nested_keys()
+{
+  return {
+      .groups = {{std::string{long_outer}, {{std::string{long_inner}, 1}, {"b", 2}}},
+                 {"z", {{"q", 3}}}},
+      .lists  = {{std::string{long_outer}, {{{std::string{long_inner}, 4}}, {{"r", 5}}}},
+                 {"y", {{{"s", 6}}}}},
+      .tail   = 7,
+  };
+}
+
+std::vector<std::byte> dump_bytes(auto const& value)
+{
+  std::vector<std::byte> out;
+  bson::serializer       ser{out};
+  ser.dump(value);
+  return out;
+}
+
+template <typename T> T load_from_stream(std::vector<std::byte> const& data)
+{
+  std::istringstream in{
+      std::string{reinterpret_cast<char const*>(data.data()), data.size()},
+      std::ios::binary
+  };
+  return bson::deserializer{in}.template load<T>();
+}
+} // namespace
+
+TEST_CASE("reflex::serde::bson: keys survive nested reads from a stream")
+{
+  const auto expected = nested_keys();
+  const auto data     = dump_bytes(expected);
+
+  SUBCASE("a root map of maps")
+  {
+    const auto groups = dump_bytes(expected.groups);
+    CHECK_EQ(load_from_stream<std::map<std::string, int_map>>(groups), expected.groups);
+  }
+
+  SUBCASE("a root map of arrays of documents")
+  {
+    const auto lists = dump_bytes(expected.lists);
+    CHECK_EQ(load_from_stream<std::map<std::string, std::vector<int_map>>>(lists), expected.lists);
+  }
+
+  SUBCASE("an aggregate with map members")
+  {
+    CHECK_EQ(load_from_stream<nested_keys_t>(data), expected);
+  }
+
+  SUBCASE("bson::value")
+  {
+    const auto value = load_from_stream<bson::value>(data);
+    CHECK(value == bson::deserializer{data}.load());
+
+    auto const& root = value.as<bson::object>();
+    CHECK_EQ(root.size(), 3);
+    CHECK_EQ(root.at("tail"), 7);
+
+    auto const& groups = root.at("groups").as<bson::object>();
+    CHECK_EQ(groups.size(), 2);
+    auto const& outer = groups.at(std::string{long_outer}).as<bson::object>();
+    CHECK_EQ(outer.at(std::string{long_inner}), 1);
+    CHECK_EQ(outer.at("b"), 2);
+    CHECK_EQ(groups.at("z").as<bson::object>().at("q"), 3);
+
+    auto const& lists = root.at("lists").as<bson::object>();
+    CHECK_EQ(lists.size(), 2);
+    auto const& rows = lists.at(std::string{long_outer}).as<bson::array>();
+    CHECK_EQ(rows.size(), 2);
+    CHECK_EQ(rows[0].as<bson::object>().at(std::string{long_inner}), 4);
+    CHECK_EQ(rows[1].as<bson::object>().at("r"), 5);
+    CHECK_EQ(lists.at("y").as<bson::array>()[0].as<bson::object>().at("s"), 6);
+  }
+}
+
+namespace
+{
+struct prefilled_blob_t
+{
+  std::vector<std::byte> payload{std::byte{0x01}};
+
+  bool operator==(prefilled_blob_t const&) const = default;
+};
+} // namespace
+
+TEST_CASE("reflex::serde::bson: a binary member replaces its default contents")
+{
+  const prefilled_blob_t written{
+      {std::byte{0xAB}, std::byte{0xCD}}
+  };
+  const auto data = dump_bytes(written);
+
+  CHECK_EQ(bson::deserializer{data}.load<prefilled_blob_t>().payload, written.payload);
+  CHECK_EQ(load_from_stream<prefilled_blob_t>(data).payload, written.payload);
 }
