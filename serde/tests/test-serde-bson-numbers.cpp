@@ -332,9 +332,9 @@ TEST_CASE("other dynamic values keep reading integers as before")
   CHECK(json::deserializer{std::string{"7"}}.load<json::value>().is<json::number>());
   CHECK(yaml::deserializer{std::string{"7"}}.load<yaml::value>().is<yaml::number>());
   CHECK(json::deserializer{std::string{"7"}}.load<numbers_user_var>().is<double>());
-  static_assert(not serde::detail::ext_json_reader<json::value>::enabled);
-  static_assert(not serde::detail::ext_json_reader<yaml::value>::enabled);
-  static_assert(not serde::detail::ext_json_reader<toml::value>::enabled);
-  static_assert(not serde::detail::ext_json_reader<numbers_user_var>::enabled);
-  static_assert(serde::detail::ext_json_reader<bson::value>::enabled);
+  static_assert(not serde::detail::ext_json_value<json::value>::enabled);
+  static_assert(not serde::detail::ext_json_value<yaml::value>::enabled);
+  static_assert(not serde::detail::ext_json_value<toml::value>::enabled);
+  static_assert(not serde::detail::ext_json_value<numbers_user_var>::enabled);
+  static_assert(serde::detail::ext_json_value<bson::value>::enabled);
 }

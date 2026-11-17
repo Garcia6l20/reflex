@@ -169,11 +169,11 @@ REFLEX_EXPORT namespace reflex::serde::json
 
   template <typename Var, typename Ser, typename U> void write_alternative(Ser& ser, U const& value)
   {
-    if constexpr(serde::detail::ext_json_reader<Var>::enabled and std::same_as<U, double>)
+    if constexpr(serde::detail::ext_json_value<Var>::enabled and std::same_as<U, double>)
     {
       if(not std::isfinite(value))
       {
-        serde::serialize(ser, serde::detail::ext_json_reader<Var>::non_finite(value));
+        serde::serialize(ser, serde::detail::ext_json_value<Var>::non_finite(value));
         return;
       }
     }
@@ -2264,13 +2264,13 @@ REFLEX_EXPORT namespace reflex::serde::json
         case 'n':
           return de.template load<null_t>();
         case '{':
-          if constexpr(serde::detail::ext_json_reader<var_type>::enabled)
+          if constexpr(serde::detail::ext_json_value<var_type>::enabled)
           {
             static_assert(
                 not detail::json_access::wraps_an_alternative<var_type>(),
-                "a value type read through ext_json_reader must not take the poly::var __type "
+                "a value type read through ext_json_value must not take the poly::var __type "
                 "envelope, which would read a type wrapper object as an envelope");
-            return serde::detail::ext_json_reader<var_type>::lift(
+            return serde::detail::ext_json_value<var_type>::lift(
                 de.template load<typename var_type::obj_type>());
           }
           else if constexpr(detail::json_access::wraps_an_alternative<var_type>())
@@ -2286,7 +2286,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         case '"':
           return de.template load<json::string>();
         default:
-          if constexpr(serde::detail::ext_json_reader<var_type>::enabled)
+          if constexpr(serde::detail::ext_json_value<var_type>::enabled)
           {
             return detail::json_access::read_relaxed_number<var_type, Opts.comments>(de);
           }

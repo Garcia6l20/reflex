@@ -2194,7 +2194,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       // yes/no/on/off fall through to string, per YAML 1.2 core. load<bool>()
       // throws on them instead: asked for a bool, a 1.1 spelling is an error.
-      if constexpr(serde::detail::ext_json_reader<var_type>::enabled)
+      if constexpr(serde::detail::ext_json_value<var_type>::enabled)
       {
         if(detail::matches_int<detail::yaml_numbers>(s.text))
         {

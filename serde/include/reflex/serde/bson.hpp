@@ -2479,7 +2479,7 @@ template <> inline constexpr bool ext_json_type_v<bson::binary> = true;
 
 template <bson::detail::bson_extended_c T> inline constexpr bool ext_json_type_v<T> = true;
 
-template <> struct ext_json_reader<bson::value>
+template <> struct ext_json_value<bson::value>
 {
   static constexpr bool enabled = true;
 

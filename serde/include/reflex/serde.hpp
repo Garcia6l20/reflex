@@ -88,7 +88,7 @@ REFLEX_EXPORT namespace reflex::serde
 
   template <typename T> inline constexpr bool ext_json_type_v = false;
 
-  template <typename Var> struct ext_json_reader
+  template <typename Var> struct ext_json_value
   {
     static constexpr bool enabled = false;
   };
@@ -97,7 +97,7 @@ REFLEX_EXPORT namespace reflex::serde
   {
     static_assert(
         Var::template can_hold<std::int32_t>() and Var::template can_hold<std::int64_t>(),
-        "an ext_json_reader value type must hold std::int32_t and std::int64_t");
+        "an ext_json_value value type must hold std::int32_t and std::int64_t");
     if(std::in_range<std::int32_t>(value))
     {
       return Var{static_cast<std::int32_t>(value)};
