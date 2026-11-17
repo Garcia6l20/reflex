@@ -530,7 +530,8 @@ template argument.
 | TOML | `comments = false` | `comments = false`, `unknown_keys = error` |
 | XML | `indent = 0`, `comments = false` | `comments = false`, `unknown_keys = skip` |
 
-BSON and CSV take no options.
+CSV takes no options. BSON's writer takes none, and its reader takes
+`bson::read_options{.unknown_keys}`, default `error`.
 
 ### Pretty output
 
@@ -1444,9 +1445,10 @@ needs the `template` keyword, since `de` has a dependent type. An override writt
 `serializer<OutputIt>&` binds the default options only, and under any other
 set the backend's own overload for that type is used instead, silently.
 
-The same pattern applies to `reflex::serde::bson`, whose serializer and
-deserializer have no options argument: there the override takes
-`serializer<OutputIt>&` and `deserializer<It>&`.
+The same pattern applies to `reflex::serde::bson`. Its serializer has no
+options argument, so the override takes `serializer<OutputIt>&`. Its
+deserializer takes `bson::read_options` as its second argument, so the override
+takes `deserializer<It, Opts>&` with `auto Opts`, as for JSON.
 
 ---
 
