@@ -374,6 +374,60 @@ REFLEX_EXPORT namespace reflex::serde::toml
     }
   }
 
+  template <typename Var> Var lift_object(typename Var::obj_type&& object)
+  {
+    if constexpr(serde::detail::ext_json_value<Var>::enabled)
+    {
+      return serde::detail::ext_json_value<Var>::lift(std::move(object));
+    }
+    else
+    {
+      return Var{std::move(object)};
+    }
+  }
+
+  template <typename Var> void lift_tree(Var& value)
+  {
+    if(value.is_array())
+    {
+      for(auto& element : value.as_array())
+      {
+        lift_tree(element);
+      }
+    }
+    else if(value.is_object())
+    {
+      for(auto& [key, member] : value.as_object())
+      {
+        lift_tree(member);
+      }
+      value = lift_object<Var>(std::move(value.as_object()));
+    }
+  }
+
+  template <typename Map> consteval bool lifts_members()
+  {
+    if constexpr(requires { typename Map::mapped_type; })
+    {
+      return serde::detail::ext_json_value<typename Map::mapped_type>::enabled;
+    }
+    else
+    {
+      return false;
+    }
+  }
+
+  template <typename Map> void lift_members([[maybe_unused]] Map& map)
+  {
+    if constexpr(lifts_members<Map>())
+    {
+      for(auto& [key, value] : map)
+      {
+        lift_tree(value);
+      }
+    }
+  }
+
   template <bool Skip, typename Node, typename Fn>
   void table_descend(
       std::span<segment const> rest,
@@ -499,7 +553,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     {
       return nullptr;
     }
-    const std::string_view key = path.front().name;
+    [[maybe_unused]] const std::string_view key = path.front().name;
     template for(constexpr auto member : define_static_array(
                      nonstatic_data_members_of(^^Model, std::meta::access_context::current())))
     {
@@ -1311,6 +1365,8 @@ REFLEX_EXPORT namespace reflex::serde::toml
     // both "read a document" and "read an inline table"; this tells them apart.
     int depth_ = 0;
 
+    int lift_depth_ = 0;
+
     // The table every following assignment belongs to. The names point into
     // header_buf_ and only the next header rewrites it.
     std::vector<detail::segment> table_path_;
@@ -1380,6 +1436,49 @@ REFLEX_EXPORT namespace reflex::serde::toml
     bool at_document_level() const
     {
       return depth_ == 0;
+    }
+
+    /** @brief Marks a table whose values may lift as Extended JSON, while it is read.
+     *
+     * Only the outermost such table walks its finished tree, so a nested one is walked once.
+     */
+    class lift_scope
+    {
+      deserializer* d_;
+      bool          outermost_;
+
+    public:
+      lift_scope(deserializer& d, bool active) : d_{active ? &d : nullptr}
+      {
+        outermost_ = active and d.lift_depth_ == 0;
+        if(d_ != nullptr)
+        {
+          ++d_->lift_depth_;
+        }
+      }
+      lift_scope(lift_scope const&)            = delete;
+      lift_scope& operator=(lift_scope const&) = delete;
+      ~lift_scope()
+      {
+        if(d_ != nullptr)
+        {
+          --d_->lift_depth_;
+        }
+      }
+
+      bool outermost() const
+      {
+        return outermost_;
+      }
+    };
+
+    template <typename var_type> var_type lift_loaded(typename var_type::obj_type&& object) const
+    {
+      if(lift_depth_ == 0)
+      {
+        return detail::lift_object<var_type>(std::move(object));
+      }
+      return var_type{std::move(object)};
     }
 
     // TOML never makes indentation meaningful, so spaces and tabs are all of it.
@@ -1701,7 +1800,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
       }
       if(c == '{')
       {
-        return var_type{this->template load<typename var_type::obj_type>()};
+        return lift_loaded<var_type>(this->template load<typename var_type::obj_type>());
       }
       if(c == 't' or c == 'f')
       {
@@ -2545,7 +2644,7 @@ REFLEX_EXPORT namespace reflex::serde::toml
     {
       if(de.at_document_level())
       {
-        return var_type{de.template load<typename var_type::obj_type>()};
+        return de.template lift_loaded<var_type>(de.template load<typename var_type::obj_type>());
       }
       return de.template resolve_value<var_type>();
     }
@@ -2604,10 +2703,16 @@ REFLEX_EXPORT namespace reflex::serde::toml
   auto tag_invoke(
       tag_default_t<serde::deserialize>, deserializer<InputIt, Opts> & de, std::type_identity<Map>)
   {
-    Map value{};
+    Map                                                    value{};
+    const typename deserializer<InputIt, Opts>::lift_scope lifting{
+        de, detail::lifts_members<Map>()};
     if(not de.at_end() and de.peek_at(0) == '{')
     {
       de.template read_bracketed<'{', '}'>("an inline table", [&] { de.read_inline_pair(value); });
+      if(lifting.outermost())
+      {
+        detail::lift_members(value);
+      }
       return value;
     }
     if(not de.at_document_level())
@@ -2617,6 +2722,10 @@ REFLEX_EXPORT namespace reflex::serde::toml
           "written inline, and a [header] cannot appear here");
     }
     de.read_document(value);
+    if(lifting.outermost())
+    {
+      detail::lift_members(value);
+    }
     return value;
   }
 

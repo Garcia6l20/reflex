@@ -327,20 +327,6 @@ void numbers_check_decimal(bson::value const& lifted, bson::decimal128 original)
     CHECK(std::signbit(back) == std::signbit(original));
   }
 }
-
-void numbers_check_decimal_relay(bson::value const& read, bson::decimal128 original)
-{
-  const auto lifted = numbers_from_json(numbers_json_of(read));
-  numbers_check_decimal(lifted.as_object().at("x"), original);
-  numbers_check_decimal(lifted.as_object().at("a").as_array().at(0), original);
-}
-
-std::string const& numbers_decimal_text(bson::value const& read)
-{
-  auto const& wrapper = read.as_object().at("x").as_object().at("$numberDecimal");
-  REQUIRE(wrapper.is<std::string>());
-  return wrapper.as<std::string>();
-}
 }
 
 bson::value numbers_decimal_doc(bson::decimal128 number)
@@ -383,8 +369,12 @@ TEST_CASE("bson::value decimal128 writes as $numberDecimal in TOML")
         numbers_toml_of(bson::value{bson::object{{"x", number}}}),
         std::format("x = {{ \"$numberDecimal\" = \"{}\" }}", text));
     const auto back = toml::deserializer{written}.load<bson::value>();
-    CHECK_EQ(numbers_decimal_text(back), text);
-    numbers_check_decimal_relay(back, number);
+    numbers_check_decimal(back.as_object().at("x"), number);
+    numbers_check_decimal(back.as_object().at("a").as_array().at(0), number);
+    numbers_check_decimal(
+        toml::deserializer{std::format("\"$numberDecimal\" = \"{}\"", text)}.load<bson::value>(),
+        number);
+    CHECK_EQ(numbers_toml_of(back), written);
   }
 }
 
