@@ -486,3 +486,252 @@ TEST_CASE("reflex::serde::bson: JSON round trips that do not give back the origi
   CHECK(scope.as_object().at("d").is<bson::int32>());
   CHECK(scope.as_object().at("l").is<bson::int32>());
 }
+
+TEST_CASE("reflex::serde::bson: JSON reads $numberInt and $numberLong")
+{
+  const auto int32_of = [](std::string_view text) {
+    const auto read = read_json(std::format(R"({{"$numberInt":"{}"}})", text));
+    REQUIRE(read.is<bson::int32>());
+    return read.as<bson::int32>();
+  };
+  CHECK(int32_of("0") == 0);
+  CHECK(int32_of("-2147483648") == std::numeric_limits<bson::int32>::min());
+  CHECK(int32_of("2147483647") == std::numeric_limits<bson::int32>::max());
+
+  const auto int64_of = [](std::string_view text) {
+    const auto read = read_json(std::format(R"({{"$numberLong":"{}"}})", text));
+    REQUIRE(read.is<bson::int64>());
+    return read.as<bson::int64>();
+  };
+  CHECK(int64_of("5") == 5);
+  CHECK(int64_of("-9223372036854775808") == std::numeric_limits<bson::int64>::min());
+  CHECK(int64_of("9223372036854775807") == std::numeric_limits<bson::int64>::max());
+
+  const std::string bad_int = "Extended JSON: $numberInt must be a string holding a 32-bit integer";
+  check_throws(R"({"$numberInt":"2147483648"})", bad_int);
+  check_throws(R"({"$numberInt":"1.0"})", bad_int);
+  check_throws(R"({"$numberInt":" 1"})", bad_int);
+  check_throws(R"({"$numberInt":"+1"})", bad_int);
+  check_throws(R"({"$numberInt":""})", bad_int);
+  check_throws(R"({"$numberInt":1})", bad_int);
+  check_throws(
+      R"({"$numberLong":"9223372036854775808"})",
+      "Extended JSON: $numberLong must be a string holding a 64-bit integer");
+  check_throws(
+      R"({"$numberInt":"1","x":1})", "Extended JSON: unexpected key 'x' in a $numberInt document");
+}
+
+TEST_CASE("reflex::serde::bson: JSON reads $numberDouble and $numberDecimal")
+{
+  const auto double_of = [](std::string_view text) {
+    const auto read = read_json(std::format(R"({{"$numberDouble":"{}"}})", text));
+    REQUIRE(read.is<bson::number>());
+    return read.as<bson::number>();
+  };
+  CHECK(double_of("1.0") == 1.0);
+  CHECK(double_of("-0.0") == 0.0);
+  CHECK(std::signbit(double_of("-0.0")));
+  CHECK(double_of("1e308") == 1e308);
+  CHECK(double_of("Infinity") == std::numeric_limits<double>::infinity());
+  CHECK(double_of("-Infinity") == -std::numeric_limits<double>::infinity());
+  CHECK(std::isnan(double_of("NaN")));
+
+  const std::string bad_double = "Extended JSON: $numberDouble must be a string holding a double";
+  for(auto text : {"inf", "nan", "-NaN", "infinity", "1e309", "0x1p3", "", " 1", "+1"})
+  {
+    check_throws(std::format(R"({{"$numberDouble":"{}"}})", text), bad_double);
+  }
+  check_throws(R"({"$numberDouble":1.0})", bad_double);
+
+  const auto decimal_of = [](std::string_view text) {
+    const auto read = read_json(std::format(R"({{"$numberDecimal":"{}"}})", text));
+    REQUIRE(read.is<bson::decimal128>());
+    return read.as<bson::decimal128>();
+  };
+  CHECK(decimal_of("1.5") == bson::decimal128{1.5});
+  CHECK(decimal_of("Infinity") == std::numeric_limits<bson::decimal128>::infinity());
+  CHECK(decimal_of("-Infinity") == -std::numeric_limits<bson::decimal128>::infinity());
+  const auto nan = decimal_of("NaN");
+  CHECK(nan != nan);
+
+  constexpr auto infinity = std::numeric_limits<bson::decimal128>::infinity();
+  for(auto text : {"Inf", "inf", "INFINITY", "+Inf", "+infinity"})
+  {
+    CAPTURE(text);
+    CHECK(decimal_of(text) == infinity);
+  }
+  for(auto text : {"-inf", "-Inf", "-INFINITY"})
+  {
+    CAPTURE(text);
+    CHECK(decimal_of(text) == -infinity);
+  }
+  for(auto text : {"nan", "NAN", "-NaN", "+nan"})
+  {
+    CAPTURE(text);
+    const auto special = decimal_of(text);
+    CHECK(special != special);
+  }
+
+  const std::string bad_decimal =
+      "Extended JSON: $numberDecimal must be a string holding a decimal128";
+  check_throws(R"({"$numberDecimal":"1E+6144"})", bad_decimal);
+  check_throws(R"({"$numberDecimal":"infin"})", bad_decimal);
+  check_throws(R"({"$numberDecimal":"--inf"})", bad_decimal);
+  check_throws(R"({"$numberDecimal":"nan1"})", bad_decimal);
+  CHECK(decimal_of("+1.5") == bson::decimal128{1.5});
+  CHECK(decimal_of("-1.5") == bson::decimal128{-1.5});
+  check_throws(R"({"$numberDecimal":"++1"})", bad_decimal);
+  check_throws(R"({"$numberDecimal":"+-1"})", bad_decimal);
+  check_throws(R"({"$numberDecimal":"+"})", bad_decimal);
+  check_throws(
+      R"({"$numberDouble":"+1.5"})",
+      "Extended JSON: $numberDouble must be a string holding a double");
+  check_throws(R"({"$numberDecimal":1.5})", bad_decimal);
+}
+
+TEST_CASE("reflex::serde::bson: JSON reads $date from a $numberLong document")
+{
+  const auto date_of = [](std::string_view text) {
+    const auto read = read_json(std::string{text});
+    REQUIRE(read.is<bson::datetime>());
+    return read.as<bson::datetime>().millis_since_epoch;
+  };
+  CHECK(date_of(R"({"$date":{"$numberLong":"1700000000123"}})") == 1700000000123);
+  CHECK(date_of(R"({"$date":{"$numberLong":"0"}})") == 0);
+  CHECK(date_of(R"({"$date":{"$numberLong":"-1"}})") == -1);
+  CHECK(date_of(R"({"$date":5000000000})") == 5000000000);
+
+  const std::string bad_date =
+      "Extended JSON: $date must be an RFC 3339 string or a $numberLong document";
+  check_throws(R"({"$date":5})", bad_date);
+  check_throws(R"({"$date":{"$numberInt":"5"}})", bad_date);
+  check_throws(R"({"$date":1.5})", bad_date);
+  check_throws(
+      R"({"$date":{"$numberLong":"5"},"x":1})",
+      "Extended JSON: unexpected key 'x' in a $date document");
+}
+
+TEST_CASE("reflex::serde::bson: JSON reads $date as a relaxed RFC 3339 string")
+{
+  const auto date_of = [](std::string_view text) {
+    const auto read = read_json(std::format(R"({{"$date":"{}"}})", text));
+    REQUIRE(read.is<bson::datetime>());
+    return read.as<bson::datetime>().millis_since_epoch;
+  };
+  CHECK(date_of("2023-11-14T22:13:20.123Z") == 1700000000123);
+  CHECK(date_of("1970-01-01T00:00:00Z") == 0);
+  CHECK(date_of("1969-12-31T23:59:59.999Z") == -1);
+  CHECK(date_of("2023-11-14T23:13:20.123+01:00") == 1700000000123);
+  CHECK(date_of("2023-11-14T21:43:20.123-00:30") == 1700000000123);
+  CHECK(date_of("2023-11-14t22:13:20.123z") == 1700000000123);
+  CHECK(date_of("2023-11-14T22:13:20Z") == 1700000000000);
+  CHECK(date_of("2023-11-14T22:13:20.1Z") == 1700000000100);
+  CHECK(date_of("2023-11-14T22:13:20.123456Z") == 1700000000123);
+  CHECK(date_of("2024-02-29T00:00:00Z") == 1709164800000);
+  CHECK(date_of("9999-12-31T23:59:59.999Z") == 253402300799999);
+
+  const std::string bad_date =
+      "Extended JSON: $date must be an RFC 3339 string or a $numberLong document";
+  for(auto text :
+      {"2023-02-29T00:00:00Z", "2023-13-01T00:00:00Z", "2023-00-01T00:00:00Z",
+       "2023-11-14 22:13:20Z", "2023-11-14T22:13:20", "2023-11-14T24:00:00Z",
+       "2023-11-14T22:60:00Z", "2023-11-14T22:13:60Z", "2023-11-14T22:13:20.Z",
+       "2023-11-14T22:13:20+0100", "2023-11-14T22:13:20+01:00x", "2023-11-14T22:13:20+24:00",
+       "2023-11-14T22:13:20ZZ", "23-11-14T22:13:20Z", "2023-1-14T22:13:20Z", ""})
+  {
+    check_throws(std::format(R"({{"$date":"{}"}})", text), bad_date);
+  }
+}
+
+TEST_CASE("reflex::serde::bson: JSON canonical wrappers decode before the wrapper around them")
+{
+  CHECK(
+      read_json(R"({"$timestamp":{"t":{"$numberLong":"5"},"i":1}})")
+      == bson::value{
+          bson::timestamp{.increment = 1, .seconds = 5}
+  });
+}
+
+TEST_CASE("reflex::serde::bson: JSON reads a canonical Extended JSON document")
+{
+  const auto doc = read_json(R"({
+    "_id": {"$oid": "57e193d7a9cc81b4027498b5"},
+    "Symbol": {"$symbol": "symbol"},
+    "String": "string",
+    "Int32": {"$numberInt": "42"},
+    "Int64": {"$numberLong": "42"},
+    "Double": {"$numberDouble": "42.42"},
+    "SpecialFloat": {"$numberDouble": "NaN"},
+    "Decimal": {"$numberDecimal": "1234.5"},
+    "Binary": {"$binary": {"base64": "yO2rw/c4TKO2jauSqRR4ow==", "subType": "04"}},
+    "BinaryUserDefined": {"$binary": {"base64": "MTIz", "subType": "80"}},
+    "Code": {"$code": "function() {}"},
+    "CodeWithScope": {"$code": "function() {}", "$scope": {}},
+    "Subdocument": {"foo": "bar"},
+    "Array": [{"$numberInt": "1"}, {"$numberInt": "2"}, {"$numberInt": "3"}, {"$numberInt": "4"}, {"$numberInt": "5"}],
+    "Timestamp": {"$timestamp": {"t": 42, "i": 1}},
+    "RegularExpression": {"$regularExpression": {"pattern": "foo*", "options": "ix"}},
+    "DatetimeEpoch": {"$date": {"$numberLong": "0"}},
+    "DatetimePositive": {"$date": {"$numberLong": "253402300799999"}},
+    "DatetimeNegative": {"$date": {"$numberLong": "-62135596800000"}},
+    "True": true,
+    "False": false,
+    "DBPointer": {"$dbPointer": {"$ref": "db.collection", "$id": {"$oid": "57e193d7a9cc81b4027498b1"}}},
+    "DBRef": {"$ref": "collection", "$id": {"$oid": "57e193d7a9cc81b4027498b1"}, "$db": "database"},
+    "DBRefNoDB": {"$ref": "collection", "$id": {"$oid": "57fd71e96e32ab4225b723fb"}},
+    "Minkey": {"$minKey": 1},
+    "Maxkey": {"$maxKey": 1},
+    "Null": null,
+    "Undefined": {"$undefined": true}
+  })");
+  REQUIRE(doc.is_object());
+  auto const& members = doc.as_object();
+  const auto  is      = [&](std::string const& key, auto alternative) {
+    CAPTURE(key);
+    CHECK(members.at(key).is<decltype(alternative)>());
+  };
+  is("_id", bson::object_id{});
+  is("Symbol", bson::symbol{});
+  is("String", bson::string{});
+  is("Int32", bson::int32{});
+  is("Int64", bson::int64{});
+  is("Double", bson::number{});
+  is("SpecialFloat", bson::number{});
+  is("Decimal", bson::decimal128{});
+  is("Binary", bson::binary{});
+  is("BinaryUserDefined", bson::binary{});
+  is("Code", bson::javascript{});
+  is("CodeWithScope", bson::code_w_scope{});
+  is("Subdocument", bson::object{});
+  is("Array", bson::array{});
+  is("Timestamp", bson::timestamp{});
+  is("RegularExpression", bson::regex{});
+  is("DatetimeEpoch", bson::datetime{});
+  is("DatetimePositive", bson::datetime{});
+  is("DatetimeNegative", bson::datetime{});
+  is("True", bson::boolean{});
+  is("False", bson::boolean{});
+  is("DBPointer", bson::db_pointer{});
+  is("DBRef", bson::object{});
+  is("DBRefNoDB", bson::object{});
+  is("Minkey", bson::min_key{});
+  is("Maxkey", bson::max_key{});
+  is("Undefined", bson::undefined{});
+  CHECK(members.at("Null").is_null());
+  CHECK(members.at("Array").as_array().size() == 5);
+  CHECK(members.at("Array").as_array()[4] == bson::value{bson::int32{5}});
+  CHECK(members.at("Double") == bson::value{42.42});
+  CHECK(members.at("Decimal") == bson::value{bson::decimal128{1234.5}});
+  CHECK(members.at("DatetimePositive").as<bson::datetime>().millis_since_epoch == 253402300799999);
+  CHECK(members.at("DatetimeNegative").as<bson::datetime>().millis_since_epoch == -62135596800000);
+  CHECK(members.at("Binary").as<bson::binary>().subtype == std::byte{0x04});
+  CHECK(members.at("Binary").as<bson::binary>().data.size() == 16);
+  CHECK(
+      members.at("BinaryUserDefined")
+      == bson::value{
+          bson::binary{.subtype = std::byte{0x80}, .data = text_bytes("123")}
+  });
+  CHECK(members.at("DBRef").as_object().at("$id").is<bson::object_id>());
+  CHECK(members.at("DBRefNoDB").as_object().size() == 2);
+  CHECK(members.at("DBRefNoDB").as_object().at("$id").is<bson::object_id>());
+}

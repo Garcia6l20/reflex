@@ -1948,9 +1948,10 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
 namespace reflex::serde::bson::detail
 {
-inline constexpr std::array<std::string_view, 11> ext_json_keys{
-    "$binary", "$code",   "$dbPointer", "$maxKey",   "$minKey", "$oid", "$regularExpression",
-    "$scope",  "$symbol", "$timestamp", "$undefined"};
+inline constexpr std::array<std::string_view, 16> ext_json_keys{
+    "$binary",        "$code",         "$date",      "$dbPointer",  "$maxKey", "$minKey",
+    "$numberDecimal", "$numberDouble", "$numberInt", "$numberLong", "$oid",    "$regularExpression",
+    "$scope",         "$symbol",       "$timestamp", "$undefined"};
 
 [[noreturn]] inline void ext_json_error(std::string_view message)
 {
@@ -2139,6 +2140,243 @@ constexpr void
   }
 }
 
+template <std::integral T>
+constexpr std::optional<T> parse_ext_json_integer(bson::value const& value)
+{
+  if(not value.is<bson::string>())
+  {
+    return std::nullopt;
+  }
+  auto const& text = value.as<bson::string>();
+  const auto  last = text.data() + text.size();
+  T           result{};
+  auto [ptr, ec] = std::from_chars(text.data(), last, result);
+  if(ec != std::errc{} or ptr != last)
+  {
+    return std::nullopt;
+  }
+  return result;
+}
+
+constexpr bool equals_ignoring_case(std::string_view text, std::string_view lower)
+{
+  return std::ranges::equal(text, lower, [](char c, char l) {
+    return (c >= 'A' and c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c) == l;
+  });
+}
+
+constexpr std::optional<bson::decimal128> decimal128_special(std::string_view text)
+{
+  const bool negative = text.starts_with('-');
+  const auto body     = negative or text.starts_with('+') ? text.substr(1) : text;
+  if(equals_ignoring_case(body, "inf") or equals_ignoring_case(body, "infinity"))
+  {
+    constexpr auto infinity = std::numeric_limits<bson::decimal128>::infinity();
+    return negative ? -infinity : infinity;
+  }
+  if(equals_ignoring_case(body, "nan"))
+  {
+    return std::numeric_limits<bson::decimal128>::quiet_NaN();
+  }
+  return std::nullopt;
+}
+
+template <std::floating_point T>
+constexpr std::optional<T> parse_ext_json_float(bson::value const& value)
+{
+  if(not value.is<bson::string>())
+  {
+    return std::nullopt;
+  }
+  std::string_view text = value.as<bson::string>();
+  if constexpr(std::same_as<T, bson::decimal128>)
+  {
+    if(const auto special = decimal128_special(text))
+    {
+      return *special;
+    }
+    if(text.starts_with('+'))
+    {
+      text.remove_prefix(1);
+      if(text.starts_with('+') or text.starts_with('-'))
+      {
+        return std::nullopt;
+      }
+    }
+  }
+  const auto body = text.starts_with('-') ? text.substr(1) : text;
+  if(not body.empty() and std::string_view{"iInN"}.contains(body.front()))
+  {
+    if(text == "Infinity")
+    {
+      return std::numeric_limits<T>::infinity();
+    }
+    if(text == "-Infinity")
+    {
+      return -std::numeric_limits<T>::infinity();
+    }
+    if(text == "NaN")
+    {
+      return std::numeric_limits<T>::quiet_NaN();
+    }
+    return std::nullopt;
+  }
+  const auto last = text.data() + text.size();
+  T          result{};
+  auto [ptr, ec] = std::from_chars(text.data(), last, result);
+  if(ec != std::errc{} or ptr != last)
+  {
+    return std::nullopt;
+  }
+  return result;
+}
+
+template <typename T>
+constexpr T decode_number(
+    bson::object const& obj,
+    std::string_view    key,
+    std::optional<T>    parsed,
+    std::string_view    what)
+{
+  expect_ext_json_keys(obj, key, {key});
+  if(not parsed)
+  {
+    ext_json_error(std::format("{} must be a string holding {}", key, what));
+  }
+  return *parsed;
+}
+
+constexpr std::optional<int>
+    rfc3339_field(std::string_view text, std::size_t pos, std::size_t count)
+{
+  if(pos + count > text.size())
+  {
+    return std::nullopt;
+  }
+  int value = 0;
+  for(auto c : text.substr(pos, count))
+  {
+    if(c < '0' or c > '9')
+    {
+      return std::nullopt;
+    }
+    value = value * 10 + (c - '0');
+  }
+  return value;
+}
+
+constexpr std::optional<std::int64_t> rfc3339_millis(std::string_view text)
+{
+  if(text.size() < 20)
+  {
+    return std::nullopt;
+  }
+  const std::array<char, 5> separators{
+      text[4], text[7], text[10] == 't' ? 'T' : text[10], text[13], text[16]};
+  if(std::string_view{separators.data(), separators.size()} != "--T::")
+  {
+    return std::nullopt;
+  }
+  const auto year   = rfc3339_field(text, 0, 4);
+  const auto month  = rfc3339_field(text, 5, 2);
+  const auto day    = rfc3339_field(text, 8, 2);
+  const auto hour   = rfc3339_field(text, 11, 2);
+  const auto minute = rfc3339_field(text, 14, 2);
+  const auto second = rfc3339_field(text, 17, 2);
+  if(not(year and month and day and hour and minute and second))
+  {
+    return std::nullopt;
+  }
+  if(*hour > 23 or *minute > 59 or *second > 59)
+  {
+    return std::nullopt;
+  }
+  const std::chrono::year_month_day date{
+      std::chrono::year{*year}, std::chrono::month{static_cast<unsigned>(*month)},
+      std::chrono::day{static_cast<unsigned>(*day)}};
+  if(not date.ok())
+  {
+    return std::nullopt;
+  }
+
+  std::size_t  pos    = 19;
+  std::int64_t millis = 0;
+  if(text[pos] == '.')
+  {
+    const auto first = ++pos;
+    int        scale = 100;
+    while(pos < text.size() and text[pos] >= '0' and text[pos] <= '9')
+    {
+      millis += (text[pos] - '0') * scale;
+      scale /= 10;
+      ++pos;
+    }
+    if(pos == first)
+    {
+      return std::nullopt;
+    }
+  }
+
+  std::chrono::minutes offset{};
+  if(pos < text.size() and (text[pos] == 'Z' or text[pos] == 'z'))
+  {
+    ++pos;
+  }
+  else if(pos < text.size() and (text[pos] == '+' or text[pos] == '-'))
+  {
+    const auto offset_hour   = rfc3339_field(text, pos + 1, 2);
+    const auto offset_minute = rfc3339_field(text, pos + 4, 2);
+    if(not offset_hour or not offset_minute or text[pos + 3] != ':')
+    {
+      return std::nullopt;
+    }
+    if(*offset_hour > 23 or *offset_minute > 59)
+    {
+      return std::nullopt;
+    }
+    offset = std::chrono::hours{*offset_hour} + std::chrono::minutes{*offset_minute};
+    if(text[pos] == '-')
+    {
+      offset = -offset;
+    }
+    pos += 6;
+  }
+  else
+  {
+    return std::nullopt;
+  }
+  if(pos != text.size())
+  {
+    return std::nullopt;
+  }
+
+  const auto instant = std::chrono::sys_days{date}
+                     + std::chrono::hours{*hour}
+                     + std::chrono::minutes{*minute}
+                     + std::chrono::seconds{*second}
+                     + std::chrono::milliseconds{millis}
+                     - offset;
+  return std::chrono::duration_cast<std::chrono::milliseconds>(instant.time_since_epoch()).count();
+}
+
+constexpr bson::datetime decode_date(bson::object const& obj)
+{
+  expect_ext_json_keys(obj, "$date", {"$date"});
+  auto const& value = ext_json_member(obj, "$date");
+  if(value.is<bson::int64>())
+  {
+    return bson::datetime{value.as<bson::int64>()};
+  }
+  if(value.is<bson::string>())
+  {
+    if(const auto millis = rfc3339_millis(value.as<bson::string>()))
+    {
+      return bson::datetime{*millis};
+    }
+  }
+  ext_json_error("$date must be an RFC 3339 string or a $numberLong document");
+}
+
 constexpr std::optional<bson::value> decode_ext_json(bson::object const& obj)
 {
   const auto wrapper = std::ranges::find_if(
@@ -2183,6 +2421,26 @@ constexpr std::optional<bson::value> decode_ext_json(bson::object const& obj)
   {
     expect_ext_json_keys(obj, key, {key});
     return bson::symbol{ext_json_string(value, key)};
+  }
+  if(key == "$numberInt")
+  {
+    return decode_number(obj, key, parse_ext_json_integer<bson::int32>(value), "a 32-bit integer");
+  }
+  if(key == "$numberLong")
+  {
+    return decode_number(obj, key, parse_ext_json_integer<bson::int64>(value), "a 64-bit integer");
+  }
+  if(key == "$numberDouble")
+  {
+    return decode_number(obj, key, parse_ext_json_float<bson::number>(value), "a double");
+  }
+  if(key == "$numberDecimal")
+  {
+    return decode_number(obj, key, parse_ext_json_float<bson::decimal128>(value), "a decimal128");
+  }
+  if(key == "$date")
+  {
+    return decode_date(obj);
   }
   if(key == "$undefined")
   {
