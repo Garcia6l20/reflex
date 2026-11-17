@@ -529,7 +529,15 @@ TEST_CASE("reflex::serde::bson: parse reads bson::datetime from a millis string"
 {
   CHECK(reflex::parse_or_throw<bson::datetime>("1700000000123") == bson::datetime{1700000000123});
   CHECK(reflex::parse_or_throw<bson::datetime>("0") == bson::datetime{0});
-  CHECK_THROWS(reflex::parse_or_throw<bson::datetime>("-1"));
+  CHECK(reflex::parse_or_throw<bson::datetime>("-1") == bson::datetime{-1});
+  CHECK(
+      reflex::parse_or_throw<bson::datetime>("9223372036854775807")
+      == bson::datetime{std::numeric_limits<std::int64_t>::max()});
+  CHECK(
+      reflex::parse_or_throw<bson::datetime>("-9223372036854775808")
+      == bson::datetime{std::numeric_limits<std::int64_t>::min()});
+  CHECK_THROWS(reflex::parse_or_throw<bson::datetime>("9223372036854775808"));
+  CHECK_THROWS(reflex::parse_or_throw<bson::datetime>("18446744073709551615"));
   CHECK_THROWS(reflex::parse_or_throw<bson::datetime>("x5"));
 }
 
