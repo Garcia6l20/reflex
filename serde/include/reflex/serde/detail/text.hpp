@@ -397,6 +397,43 @@ REFLEX_EXPORT namespace reflex::serde::detail
     return out;
   }
 
+  template <number_syntax Syntax, std::integral Num>
+  std::optional<Num> parse_integer(
+      std::string_view body_text, std::string_view text, std::string_view format_name)
+  {
+    using magnitude_type         = std::make_unsigned_t<Num>;
+    const auto [body, base, neg] = split_integer<Syntax>(body_text);
+    magnitude_type magnitude{};
+    const auto     last = body.data() + body.size();
+    auto [ptr, ec]      = std::from_chars(body.data(), last, magnitude, base);
+    if(ec == std::errc::result_out_of_range)
+    {
+      return std::nullopt;
+    }
+    if(ec != std::errc{} or ptr != last)
+    {
+      throw std::runtime_error(std::format("{}: '{}' is not an integer", format_name, text));
+    }
+    if constexpr(std::is_signed_v<Num>)
+    {
+      constexpr auto max = static_cast<magnitude_type>(std::numeric_limits<Num>::max());
+      if(magnitude > max + (neg ? 1u : 0u))
+      {
+        return std::nullopt;
+      }
+      return static_cast<Num>(neg ? static_cast<magnitude_type>(-magnitude) : magnitude);
+    }
+    else
+    {
+      if(neg)
+      {
+        throw std::runtime_error(
+            std::format("{}: '{}' is negative and the destination is unsigned", format_name, text));
+      }
+      return magnitude;
+    }
+  }
+
   template <number_syntax Syntax, typename Num>
   Num parse_number(std::string_view text, std::string_view format_name)
   {
@@ -441,27 +478,11 @@ REFLEX_EXPORT namespace reflex::serde::detail
     }
     else
     {
-      const auto [body, base, neg] = split_integer<Syntax>(body_text);
-      Num        value{};
-      const auto last = body.data() + body.size();
-      auto [ptr, ec]  = std::from_chars(body.data(), last, value, base);
-      if(ec != std::errc{} or ptr != last)
+      if(const auto value = parse_integer<Syntax, Num>(body_text, text, format_name))
       {
-        throw std::runtime_error(std::format("{}: '{}' is not an integer", format_name, text));
+        return *value;
       }
-      if(neg)
-      {
-        if constexpr(std::is_signed_v<Num>)
-        {
-          value = static_cast<Num>(-value);
-        }
-        else
-        {
-          throw std::runtime_error(std::format(
-              "{}: '{}' is negative and the destination is unsigned", format_name, text));
-        }
-      }
-      return value;
+      throw std::runtime_error(std::format("{}: '{}' is not an integer", format_name, text));
     }
   }
 
@@ -474,24 +495,7 @@ REFLEX_EXPORT namespace reflex::serde::detail
     {
       body_text = strip_separators(text, buf, format_name);
     }
-    const auto [body, base, neg] = split_integer<Syntax>(body_text);
-    std::uint64_t magnitude{};
-    const auto    last = body.data() + body.size();
-    auto [ptr, ec]     = std::from_chars(body.data(), last, magnitude, base);
-    if(ec == std::errc::result_out_of_range)
-    {
-      return std::nullopt;
-    }
-    if(ec != std::errc{} or ptr != last)
-    {
-      throw std::runtime_error(std::format("{}: '{}' is not an integer", format_name, text));
-    }
-    constexpr auto max = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-    if(magnitude > max + (neg ? 1 : 0))
-    {
-      return std::nullopt;
-    }
-    return static_cast<std::int64_t>(neg ? -magnitude : magnitude);
+    return parse_integer<Syntax, std::int64_t>(body_text, text, format_name);
   }
 
   // A std::array<char, N> is a fixed buffer, trimmed at the first NUL.
