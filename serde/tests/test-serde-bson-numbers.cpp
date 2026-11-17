@@ -242,6 +242,51 @@ TEST_CASE("bson::value from YAML: prefixed integers and non-finite numbers")
   CHECK(std::isinf(inf.as<double>()));
 }
 
+TEST_CASE("bson::value non-finite doubles round trip through YAML and TOML in their native form")
+{
+  constexpr auto nan = std::numeric_limits<double>::quiet_NaN();
+  constexpr auto inf = std::numeric_limits<double>::infinity();
+
+  const bson::value original{
+      {"n", nan                        },
+      {"p", inf                        },
+      {"m", -inf                       },
+      {"a", bson::array{nan, -inf, inf}}
+  };
+
+  const auto check_back = [inf](bson::value back) {
+    REQUIRE(back["n"].is<double>());
+    CHECK(std::isnan(back["n"].as<double>()));
+    REQUIRE(back["p"].is<double>());
+    CHECK(back["p"].as<double>() == inf);
+    REQUIRE(back["m"].is<double>());
+    CHECK(back["m"].as<double>() == -inf);
+    REQUIRE(back["a"][0].is<double>());
+    CHECK(std::isnan(back["a"][0].as<double>()));
+    REQUIRE(back["a"][1].is<double>());
+    CHECK(back["a"][1].as<double>() == -inf);
+    REQUIRE(back["a"][2].is<double>());
+    CHECK(back["a"][2].as<double>() == inf);
+  };
+
+  SUBCASE("YAML")
+  {
+    const auto text = numbers_yaml_of(original);
+    CHECK_EQ(text, "a:\n  - .nan\n  - -.inf\n  - .inf\nm: -.inf\n'n': .nan\np: .inf");
+    const auto back = numbers_from_yaml(text);
+    check_back(back);
+    CHECK_EQ(numbers_yaml_of(back), text);
+  }
+  SUBCASE("TOML")
+  {
+    const auto text = numbers_toml_of(original);
+    CHECK_EQ(text, "a = [nan, -inf, inf]\nm = -inf\nn = nan\np = inf");
+    const auto back = toml::deserializer{text}.load<bson::value>();
+    check_back(back);
+    CHECK_EQ(numbers_toml_of(back), text);
+  }
+}
+
 TEST_CASE("bson::value from JSON: numbers inside containers")
 {
   for(auto read : {numbers_from_json, numbers_from_json_stream})

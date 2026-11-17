@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <bit>
 #include <charconv>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <span>
@@ -183,6 +184,20 @@ struct ext_json_undefined
 {
   [[= serde::rename{"$undefined"}]] bool undefined = true;
 };
+
+struct ext_json_number_double
+{
+  [[= serde::rename{"$numberDouble"}]] std::string_view number_double;
+};
+
+constexpr ext_json_number_double ext_json_non_finite(double value)
+{
+  if(std::isnan(value))
+  {
+    return {.number_double = "NaN"};
+  }
+  return {.number_double = value < 0 ? "-Infinity" : "Infinity"};
+}
 
 constexpr ext_json_object_id ext_json_of(bson::object_id const& value)
 {
@@ -2475,6 +2490,11 @@ template <> struct ext_json_reader<bson::value>
       return *std::move(decoded);
     }
     return bson::value{std::move(obj)};
+  }
+
+  static constexpr auto non_finite(double value)
+  {
+    return bson::detail::ext_json_non_finite(value);
   }
 };
 }

@@ -735,3 +735,118 @@ TEST_CASE("reflex::serde::bson: JSON reads a canonical Extended JSON document")
   CHECK(members.at("DBRefNoDB").as_object().size() == 2);
   CHECK(members.at("DBRefNoDB").as_object().at("$id").is<bson::object_id>());
 }
+
+namespace
+{
+struct non_finite_holder
+{
+  bson::value value = {};
+  double      plain = 0.0;
+};
+
+template <typename T> std::string non_finite_json_of(T const& value)
+{
+  std::string      out;
+  json::serializer ser{out};
+  ser.dump(value);
+  return out;
+}
+
+void check_same_double(bson::value const& read, double original)
+{
+  REQUIRE(read.is<double>());
+  if(std::isnan(original))
+  {
+    CHECK(std::isnan(read.as<double>()));
+  }
+  else
+  {
+    CHECK(read.as<double>() == original);
+  }
+}
+}
+
+TEST_CASE("reflex::serde::bson: JSON writes a non-finite double in bson::value as $numberDouble")
+{
+  constexpr auto nan = std::numeric_limits<double>::quiet_NaN();
+  constexpr auto inf = std::numeric_limits<double>::infinity();
+
+  const std::vector<std::pair<double, std::string>> cases{
+      {nan,  R"({"$numberDouble":"NaN"})"      },
+      {inf,  R"({"$numberDouble":"Infinity"})" },
+      {-inf, R"({"$numberDouble":"-Infinity"})"},
+  };
+
+  for(auto const& [number, text] : cases)
+  {
+    CAPTURE(text);
+
+    const auto root = json_of(bson::value{number});
+    CHECK_EQ(root, text);
+    check_same_double(read_json(text), number);
+    CHECK_EQ(json_of(read_json(text)), text);
+
+    const auto in_object = std::format(R"({{"x":{},"y":1}})", text);
+    CHECK_EQ(
+        json_of(
+            bson::value{
+                bson::object{{"x", number}, {"y", std::int32_t{1}}}
+    }),
+        in_object);
+    auto object_back = read_json(in_object);
+    check_same_double(object_back["x"], number);
+    CHECK(object_back["y"].is<std::int32_t>());
+    CHECK_EQ(json_of(object_back), in_object);
+
+    const auto in_array = std::format("[1.5,{},[{}]]", text, text);
+    CHECK_EQ(
+        json_of(
+            bson::value{
+                bson::array{1.5, number, bson::array{number}}
+    }),
+        in_array);
+    auto array_back = read_json(in_array);
+    check_same_double(array_back[1], number);
+    check_same_double(array_back[2][0], number);
+    CHECK_EQ(json_of(array_back), in_array);
+
+    CHECK_EQ(
+        non_finite_json_of(non_finite_holder{.value = bson::value{number}}),
+        std::format(R"({{"value":{},"plain":0}})", text));
+  }
+}
+
+TEST_CASE("reflex::serde::bson: JSON keeps refusing a non-finite double outside bson::value")
+{
+  constexpr auto nan     = std::numeric_limits<double>::quiet_NaN();
+  constexpr auto inf     = std::numeric_limits<double>::infinity();
+  const auto     message = "JSON has no literal for a non-finite number";
+
+  CHECK_THROWS_WITH_AS(
+      non_finite_json_of(non_finite_holder{.plain = nan}), message, std::runtime_error);
+  CHECK_THROWS_WITH_AS(
+      non_finite_json_of(non_finite_holder{.plain = -inf}), message, std::runtime_error);
+  CHECK_THROWS_WITH_AS(non_finite_json_of(nan), message, std::runtime_error);
+  CHECK_THROWS_WITH_AS(non_finite_json_of(json::value{nan}), message, std::runtime_error);
+  CHECK_THROWS_WITH_AS(
+      non_finite_json_of(json::value{json::object{{"x", inf}}}), message, std::runtime_error);
+  CHECK_THROWS_WITH_AS(
+      non_finite_json_of(
+          json::value{
+              json::array{1.0, nan}
+  }),
+      message, std::runtime_error);
+}
+
+TEST_CASE("reflex::serde::bson: JSON writes a finite double in bson::value as before")
+{
+  CHECK_EQ(json_of(bson::value{1.5}), "1.5");
+  CHECK_EQ(json_of(bson::value{bson::object{{"x", 2.5}}}), R"({"x":2.5})");
+  for(double number :
+      {0.0, -0.0, 1.0, 0.1, -2.5, 1e308, 5e-324, std::numeric_limits<double>::max()})
+  {
+    CAPTURE(number);
+    CHECK_EQ(json_of(bson::value{number}), non_finite_json_of(json::value{number}));
+    CHECK_EQ(json_of(bson::value{number}), non_finite_json_of(number));
+  }
+}

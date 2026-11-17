@@ -167,6 +167,19 @@ REFLEX_EXPORT namespace reflex::serde::json
     return {std::define_static_string(s), s.size()};
   }
 
+  template <typename Var, typename Ser, typename U> void write_alternative(Ser& ser, U const& value)
+  {
+    if constexpr(serde::detail::ext_json_reader<Var>::enabled and std::same_as<U, double>)
+    {
+      if(not std::isfinite(value))
+      {
+        serde::serialize(ser, serde::detail::ext_json_reader<Var>::non_finite(value));
+        return;
+      }
+    }
+    serde::serialize(ser, value);
+  }
+
   template <typename De, typename V> void load_object_member(De& de, V& v)
   {
     v = de.template load<std::remove_cvref_t<V>>();
@@ -753,7 +766,11 @@ REFLEX_EXPORT namespace reflex::serde::json
             emit.slot.give(node->[:node_member:]);
           }
         }
-        reflex::visit([&ser](auto const& v) { serialize(ser, v); }, member_value);
+        reflex::visit(
+            [&ser](auto const& v) {
+              write_alternative<std::remove_cvref_t<decltype(member_value)>>(ser, v);
+            },
+            member_value);
         const bool written_inside = emit.slot.node == nullptr;
         emit.slot                 = {};
         if(node != nullptr and (scalar_node or not written_inside))
@@ -1269,7 +1286,11 @@ REFLEX_EXPORT namespace reflex::serde::json
       entry.item(ser);
       serialize(ser, value.first);
       ser.write_raw(key_separator);
-      reflex::visit([&ser](const auto& v) { serialize(ser, v); }, value.second);
+      reflex::visit(
+          [&ser](const auto& v) {
+            detail::write_alternative<std::remove_cvref_t<decltype(value.second)>>(ser, v);
+          },
+          value.second);
       entry.close(ser, '}');
       return ser.out();
     }
@@ -1320,7 +1341,7 @@ REFLEX_EXPORT namespace reflex::serde::json
               }
               else
               {
-                serialize(ser, v);
+                detail::write_alternative<var_type>(ser, v);
               }
             },
             val);
@@ -1332,7 +1353,8 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <visitable_c T>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
-      return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
+      visit([&ser](const auto& v) { detail::write_alternative<T>(ser, v); }, value);
+      return ser.out();
     }
   };
 
@@ -1391,7 +1413,11 @@ REFLEX_EXPORT namespace reflex::serde::json
       members.item(ser);
       static constexpr std::string_view key_token = detail::quoted_key<member, (Opts.indent > 0)>();
       ser.write_raw(key_token);
-      reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
+      reflex::visit(
+          [&ser](const auto& v) {
+            detail::write_alternative<std::remove_cvref_t<decltype(member_value)>>(ser, v);
+          },
+          member_value);
     }
     members.close(ser, '}');
     return ser.out();
