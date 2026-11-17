@@ -1517,8 +1517,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
     template <typename Agg>
-    serde::comment_block*
-        load_member_commented_(std::string_view key, serde::comments_of<Agg>& node, Agg& value)
+    serde::comment_block* load_member_commented_(
+        [[maybe_unused]] std::string_view key,
+        serde::comments_of<Agg>&          node,
+        Agg&                              value)
     {
       template for(constexpr auto& member : serde::object_visitor<Agg>::__members())
       {
@@ -1796,6 +1798,19 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // '-' starts both a sequence entry and a negative number. So the structural
     // forms are tested first, each with the lookahead it needs, and everything
     // else is read as a scalar and classified afterwards.
+    template <typename var_type> static auto load_var_object(deserializer& de) -> var_type
+    {
+      if constexpr(serde::detail::ext_json_value<var_type>::enabled)
+      {
+        return serde::detail::ext_json_value<var_type>::lift(
+            de.template load<typename var_type::obj_type>());
+      }
+      else
+      {
+        return de.template load<typename var_type::obj_type>();
+      }
+    }
+
     template <typename var_type>
       requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
     friend auto
@@ -1815,7 +1830,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       if(c == '{')
       {
-        return de.template load<typename var_type::obj_type>();
+        return load_var_object<var_type>(de);
       }
       if(de.at_sequence_entry())
       {
@@ -1823,7 +1838,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       if(de.at_block_mapping())
       {
-        return de.template load<typename var_type::obj_type>();
+        return load_var_object<var_type>(de);
       }
       return de.template resolve_scalar<var_type>();
     }

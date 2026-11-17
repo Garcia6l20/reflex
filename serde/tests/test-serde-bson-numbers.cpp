@@ -361,9 +361,10 @@ TEST_CASE("bson::value decimal128 writes as $numberDecimal in YAML")
         written, std::format("a:\n  - $numberDecimal: {0}\nx:\n  $numberDecimal: {0}", yaml_text));
     CHECK_EQ(numbers_yaml_of(bson::value{number}), std::format("$numberDecimal: {}", yaml_text));
     const auto back = numbers_from_yaml(written);
-    CHECK_EQ(numbers_decimal_text(back), text);
+    numbers_check_decimal(back.as_object().at("x"), number);
+    numbers_check_decimal(back.as_object().at("a").as_array().at(0), number);
+    numbers_check_decimal(numbers_from_yaml(std::format("$numberDecimal: {}", yaml_text)), number);
     CHECK_EQ(numbers_yaml_of(back), written);
-    numbers_check_decimal_relay(back, number);
   }
 }
 
