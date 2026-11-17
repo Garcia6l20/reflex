@@ -9,46 +9,6 @@ import std;
 using namespace reflex;
 using namespace reflex::serde;
 
-namespace reflex::serde::json
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-
-template <typename It, auto Opts>
-bson::datetime tag_invoke(
-    tag_t<serde::deserialize>,
-    deserializer<It, Opts>& de,
-    std::type_identity<bson::datetime>)
-{
-  auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
-  return reflex::parse_or_throw<bson::datetime>(s);
-}
-}
-
-namespace reflex::serde::yaml
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-
-template <typename It, auto Opts>
-bson::datetime tag_invoke(
-    tag_t<serde::deserialize>,
-    deserializer<It, Opts>& de,
-    std::type_identity<bson::datetime>)
-{
-  auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
-  return reflex::parse_or_throw<bson::datetime>(s);
-}
-}
-
 namespace
 {
 using bytes = std::vector<std::byte>;
@@ -628,4 +588,87 @@ TEST_CASE("reflex::serde::bson: YAML typed reads name the expected wrapper or th
       "Extended JSON: a $binary document is missing 'subType'");
   check_typed_throws<yaml_typed_one<bson::undefined>>(
       "v:\n  $undefined: false\nn: 1", "Extended JSON: $undefined must be true");
+}
+
+namespace
+{
+bson::object every_alternative()
+{
+  auto all    = all_types();
+  all["i32"]  = bson::int32{-7};
+  all["i64"]  = bson::int64{5000000000};
+  all["num"]  = 2.5;
+  all["bool"] = true;
+  all["str"]  = std::string{"s"};
+  all["d128"] = bson::decimal128{1.5};
+  all["dt"]   = bson::datetime{1700000000123};
+  return all;
+}
+}
+
+TEST_CASE("reflex::serde::bson: YAML reads and writes a bson::value holding every alternative")
+{
+  const auto all = every_alternative();
+  REQUIRE(all.size() == 20);
+  check_round_trip(all);
+  const auto read = read_yaml(yaml_of(all));
+  for(auto const& [key, value] : all)
+  {
+    CAPTURE(key);
+    CHECK(read.as_object().at(key).index() == value.index());
+  }
+}
+
+TEST_CASE("reflex::serde::bson: YAML writes bson::datetime as a canonical $date document")
+{
+  const bson::datetime date{1700000000123};
+  CHECK_EQ(typed_yaml_of(date), "$date:\n  $numberLong: '1700000000123'");
+  CHECK_EQ(typed_yaml_of(bson::datetime{-1}), "$date:\n  $numberLong: '-1'");
+  CHECK_EQ(
+      typed_yaml_of(yaml_typed_one<bson::datetime>{.v = date, .n = 1}),
+      "v:\n  $date:\n    $numberLong: '1700000000123'\n'n': 1");
+  CHECK_EQ(
+      yaml_of(
+          bson::object{
+              {"d", date                                 },
+              {"a", bson::array{date, bson::datetime{-1}}},
+  }),
+      "a:\n  - $date:\n      $numberLong: '1700000000123'\n  - $date:\n      $numberLong: '-1'\n"
+      "d:\n  $date:\n    $numberLong: '1700000000123'");
+}
+
+TEST_CASE("reflex::serde::bson: YAML reads bson::datetime in both $date forms")
+{
+  const bson::datetime date{1700000000123};
+  check_round_trip(date);
+  check_round_trip(bson::datetime{-1});
+  check_round_trip(
+      bson::object{
+          {"d", date},
+  });
+  check_round_trip(bson::array{bson::value{bson::array{date, bson::datetime{-1}}}});
+  check_typed_round_trip(date);
+  check_typed_round_trip(bson::datetime{-1});
+  check_typed_round_trip(yaml_shapes_of(date, bson::datetime{-1}));
+
+  CHECK(read_typed_yaml<bson::datetime>("$date: 2023-11-14T22:13:20.123Z") == date);
+  CHECK(
+      read_typed_yaml<yaml_typed_one<bson::datetime>>(
+          "v:\n  $date: '2023-11-14T22:13:20.123Z'\nn: 1")
+          .v
+      == date);
+  CHECK(
+      read_typed_yaml<yaml_typed_one<bson::datetime>>(
+          "v: {$date: {$numberLong: '1700000000123'}}\nn: 1")
+          .v
+      == date);
+}
+
+TEST_CASE("reflex::serde::bson: YAML typed bson::datetime reads throw on another document")
+{
+  check_typed_throws<bson::datetime>(
+      "a: 1", "Extended JSON: expected a $date document for bson::datetime");
+  check_typed_throws<yaml_typed_one<bson::datetime>>(
+      "v:\n  $date: true\nn: 1",
+      "Extended JSON: $date must be an RFC 3339 string or a $numberLong document");
 }

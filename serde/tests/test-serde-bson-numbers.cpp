@@ -10,66 +10,6 @@ import std;
 using namespace reflex;
 using namespace reflex::serde;
 
-namespace reflex::serde::json
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-
-template <typename It, auto Opts>
-bson::datetime tag_invoke(
-    tag_t<serde::deserialize>,
-    deserializer<It, Opts>& de,
-    std::type_identity<bson::datetime>)
-{
-  auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
-  return reflex::parse_or_throw<bson::datetime>(s);
-}
-}
-
-namespace reflex::serde::yaml
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-
-template <typename It, auto Opts>
-bson::datetime tag_invoke(
-    tag_t<serde::deserialize>,
-    deserializer<It, Opts>& de,
-    std::type_identity<bson::datetime>)
-{
-  auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
-  return reflex::parse_or_throw<bson::datetime>(s);
-}
-}
-
-namespace reflex::serde::toml
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-
-template <typename It, auto Opts>
-bson::datetime tag_invoke(
-    tag_t<serde::deserialize>,
-    deserializer<It, Opts>& de,
-    std::type_identity<bson::datetime>)
-{
-  auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
-  return reflex::parse_or_throw<bson::datetime>(s);
-}
-}
-
 namespace
 {
 using bytes            = std::vector<std::byte>;

@@ -8,26 +8,6 @@ import std;
 using namespace reflex;
 using namespace reflex::serde;
 
-namespace reflex::serde::json
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-
-template <typename It, auto Opts>
-bson::datetime tag_invoke(
-    tag_t<serde::deserialize>,
-    deserializer<It, Opts>& de,
-    std::type_identity<bson::datetime>)
-{
-  auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
-  return reflex::parse_or_throw<bson::datetime>(s);
-}
-}
-
 namespace
 {
 using bytes = std::vector<std::byte>;
@@ -1157,4 +1137,99 @@ TEST_CASE("reflex::serde::bson: JSON still reads a byte vector member as an arra
   const auto read = read_typed_json<json_bytes_holder>(R"({"b":[222,173]})");
   CHECK(read.b == bytes{std::byte{0xDE}, std::byte{0xAD}});
   CHECK_EQ(typed_json_of(read), R"({"b":[222,173]})");
+}
+
+namespace
+{
+bson::object every_alternative()
+{
+  auto all    = all_types();
+  all["i32"]  = bson::int32{-7};
+  all["i64"]  = bson::int64{5000000000};
+  all["num"]  = 2.5;
+  all["bool"] = true;
+  all["str"]  = std::string{"s"};
+  all["d128"] = bson::decimal128{1.5};
+  all["dt"]   = bson::datetime{1700000000123};
+  return all;
+}
+
+std::string date_json(std::string_view millis)
+{
+  return std::format(R"({{"$date":{{"$numberLong":"{}"}}}})", millis);
+}
+}
+
+TEST_CASE("reflex::serde::bson: JSON reads and writes a bson::value holding every alternative")
+{
+  const auto all = every_alternative();
+  REQUIRE(all.size() == 20);
+  check_round_trip(all);
+  const auto read = read_json(json_of(all));
+  for(auto const& [key, value] : all)
+  {
+    CAPTURE(key);
+    CHECK(read.as_object().at(key).index() == value.index());
+  }
+}
+
+TEST_CASE("reflex::serde::bson: JSON writes bson::datetime as a canonical $date document")
+{
+  const bson::datetime date{1700000000123};
+  CHECK_EQ(typed_json_of(date), date_json("1700000000123"));
+  CHECK_EQ(typed_json_of(bson::datetime{-1}), date_json("-1"));
+  CHECK_EQ(
+      typed_json_of(json_typed_one<bson::datetime>{.v = date, .n = 1}),
+      std::format(R"({{"v":{},"n":1}})", date_json("1700000000123")));
+  CHECK_EQ(
+      json_of(
+          bson::object{
+              {"d", date                                 },
+              {"a", bson::array{date, bson::datetime{-1}}},
+  }),
+      std::format(
+          R"({{"a":[{},{}],"d":{}}})", date_json("1700000000123"), date_json("-1"),
+          date_json("1700000000123")));
+  CHECK_EQ(typed_json_of(std::vector{date}), std::format("[{}]", date_json("1700000000123")));
+}
+
+TEST_CASE("reflex::serde::bson: JSON reads bson::datetime in both $date forms")
+{
+  const bson::datetime date{1700000000123};
+  check_round_trip(date);
+  check_round_trip(bson::datetime{-1});
+  check_round_trip(
+      bson::object{
+          {"d", date},
+  });
+  check_round_trip(bson::array{bson::value{bson::array{date, bson::datetime{-1}}}});
+  check_typed_round_trip(date);
+  check_typed_round_trip(bson::datetime{-1});
+  check_typed_round_trip(json_shapes_of(date, bson::datetime{-1}));
+
+  CHECK(read_typed_json<bson::datetime>(date_json("1700000000123")) == date);
+  CHECK(read_typed_json<bson::datetime>(R"({"$date":"2023-11-14T22:13:20.123Z"})") == date);
+  CHECK(
+      read_typed_json<json_typed_one<bson::datetime>>(
+          R"({"v":{"$date":"2023-11-14T22:13:20.123Z"},"n":1})")
+          .v
+      == date);
+  CHECK(
+      read_typed_json<json_typed_one<bson::datetime>>(
+          std::format(R"({{"v":{},"n":1}})", date_json("1700000000123")))
+          .v
+      == date);
+}
+
+TEST_CASE("reflex::serde::bson: JSON typed bson::datetime reads throw on another document")
+{
+  const std::string expected = "Extended JSON: expected a $date document for bson::datetime";
+  CHECK_THROWS(read_typed_json<bson::datetime>("1700000000123"));
+  CHECK_THROWS(read_typed_json<bson::datetime>(R"("1700000000123")"));
+  check_typed_throws<bson::datetime>(R"({"$numberLong":"5"})", expected);
+  check_typed_throws<bson::datetime>(R"({"a":1})", expected);
+  const std::string bad_date =
+      "Extended JSON: $date must be an RFC 3339 string or a $numberLong document";
+  check_member_throws<bson::datetime>(R"({"$date":true})", bad_date);
+  check_member_throws<bson::datetime>(R"({"$date":"2023-02-29T00:00:00Z"})", bad_date);
 }

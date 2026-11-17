@@ -1298,6 +1298,12 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <map_c Map>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Map const& value)
     {
+      static_assert(
+          not serde::detail::ext_json_type_v<std::remove_cvref_t<typename Map::key_type>>,
+          std::string(display_string_of(dealias(^^typename Map::key_type)))
+              + " cannot be a JSON object key: its Extended JSON form is a document, not a "
+                "string");
+
       ser.write_char('{');
 
       nest entries;

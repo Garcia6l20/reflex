@@ -26,7 +26,8 @@ namespace reflex::serde::bson::detail
 using bytes = std::vector<std::byte>;
 
 template <typename T>
-concept bson_extended_c = decays_to_c<T, bson::object_id>
+concept bson_extended_c = decays_to_c<T, bson::datetime>
+                       or decays_to_c<T, bson::object_id>
                        or decays_to_c<T, bson::timestamp>
                        or decays_to_c<T, bson::regex>
                        or decays_to_c<T, bson::javascript>
@@ -219,6 +220,23 @@ inline ext_json_number_decimal ext_json_decimal(bson::decimal128 value)
   return {
       .number_decimal = std::string{buf.data(), r.ptr}
   };
+}
+
+struct ext_json_number_long
+{
+  [[= serde::rename{"$numberLong"}]] std::string number_long;
+};
+
+struct ext_json_datetime
+{
+  [[= serde::rename{"$date"}, = serde::inline_table]] ext_json_number_long date;
+};
+
+constexpr ext_json_datetime ext_json_of(bson::datetime const& value)
+{
+  std::array<char, 24> buf{};
+  const auto r = std::to_chars(buf.data(), buf.data() + buf.size(), value.millis_since_epoch);
+  return {.date = {.number_long = std::string{buf.data(), r.ptr}}};
 }
 
 constexpr ext_json_object_id ext_json_of(bson::object_id const& value)
@@ -1875,7 +1893,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
   /** @brief Write @p value as its Extended JSON v2 document.
    *
-   * `object_id` as `{"$oid": <24 lowercase hex>}`, `timestamp` as
+   * `datetime` as `{"$date": {"$numberLong": "<millis>"}}`, the canonical form, never the relaxed
+   * ISO-8601 string, `object_id` as `{"$oid": <24 lowercase hex>}`, `timestamp` as
    * `{"$timestamp": {"t": <seconds>, "i": <increment>}}`, `regex` as
    * `{"$regularExpression": {"pattern": ..., "options": ...}}`, `javascript` as `{"$code": ...}`,
    * `code_w_scope` as `{"$code": ..., "$scope": {...}}`, `symbol` as `{"$symbol": ...}`,
@@ -2500,6 +2519,10 @@ template <typename T> consteval std::string_view ext_json_wrapper_of()
   {
     return "$binary";
   }
+  else if constexpr(std::same_as<T, bson::datetime>)
+  {
+    return "$date";
+  }
   else if constexpr(std::same_as<T, bson::object_id>)
   {
     return "$oid";
@@ -2591,6 +2614,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
 {
   /** @brief Read a `binary` or an extended type from its Extended JSON v2 document, the form its
    * serialize overload writes, with the same rules as a type wrapper read into `bson::value`.
+   * A `datetime` also reads `$date` as a relaxed RFC 3339 string.
    *
    * Taken by the JSON, YAML and TOML deserializers only. XML, CSV and BSON never see it.
    *

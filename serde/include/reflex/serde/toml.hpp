@@ -1047,6 +1047,11 @@ REFLEX_EXPORT namespace reflex::serde::toml
     template <map_c Map>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Map const& value)
     {
+      static_assert(
+          not serde::detail::ext_json_type_v<std::remove_cvref_t<typename Map::key_type>>,
+          std::string(display_string_of(dealias(^^typename Map::key_type)))
+              + " cannot be a TOML key: its Extended JSON form is a table, not a string");
+
       using shape = detail::shape_t<typename Map::mapped_type>;
 
       if(ser.inline_mode())

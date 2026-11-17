@@ -12,36 +12,6 @@ import std;
 using namespace reflex;
 using namespace reflex::serde;
 
-namespace reflex::serde::json
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-}
-
-namespace reflex::serde::yaml
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-}
-
-namespace reflex::serde::toml
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-}
-
 namespace
 {
 using bytes = std::vector<std::byte>;
@@ -327,7 +297,24 @@ static_assert(reads_typed<json::deserializer<string_in>, bson::object_id>());
 static_assert(reads_typed<yaml::deserializer<string_in>, bson::binary>());
 static_assert(reads_typed<toml::deserializer<string_in>, bson::code_w_scope>());
 static_assert(not reads_typed<xml::deserializer<string_in>, bson::object_id>());
-static_assert(not reads_typed<json::deserializer<string_in>, bson::datetime>());
+static_assert(reads_typed<json::deserializer<string_in>, bson::datetime>());
+static_assert(reads_typed<yaml::deserializer<string_in>, bson::datetime>());
+static_assert(reads_typed<toml::deserializer<string_in>, bson::datetime>());
+static_assert(not reads_typed<xml::deserializer<string_in>, bson::datetime>());
+static_assert(not reads_typed<csv::deserializer<string_in>, bson::datetime>());
+
+template <typename Ser, typename T> constexpr bool writes_typed()
+{
+  return reflex::tag_invocable_c<tag_t<serde::serialize>, Ser&, T const&>;
+}
+
+static_assert(writes_typed<json::serializer<string_out>, bson::datetime>());
+static_assert(writes_typed<yaml::serializer<string_out>, bson::datetime>());
+static_assert(writes_typed<toml::serializer<string_out>, bson::datetime>());
+static_assert(not writes_typed<xml::serializer<string_out>, bson::datetime>());
+static_assert(not writes_typed<csv::serializer<string_out>, bson::datetime>());
+
+static_assert(not reflex::derives_c<bson::datetime, reflex::derive_t<reflex::Parse>>);
 
 template <typename... Ts> constexpr bool none_take_the_envelope()
 {
@@ -337,6 +324,7 @@ template <typename... Ts> constexpr bool none_take_the_envelope()
 static_assert(
     none_take_the_envelope<
         bson::binary,
+        bson::datetime,
         bson::object_id,
         bson::timestamp,
         bson::regex,
@@ -489,6 +477,60 @@ TEST_CASE("reflex::serde::bson: JSON writes the readable types bare in bson::val
       json_of(bson::value{all_text_object()}),
       std::format(
           R"({{"bin":{{"$binary":{{"base64":"3q0=","subType":"04"}}}},{}}})", json_members(keys)));
+}
+
+TEST_CASE("reflex::serde::bson: datetime is written as a canonical $date document, no __type")
+{
+  const bson::datetime date{1700000000123};
+  const bson::value    doc = bson::object{
+      {"d", date},
+  };
+  CHECK_EQ(json_of(date), R"({"$date":{"$numberLong":"1700000000123"}})");
+  CHECK_EQ(json_of(doc), R"({"d":{"$date":{"$numberLong":"1700000000123"}}})");
+  CHECK_EQ(json_of(bson::datetime{-1}), R"({"$date":{"$numberLong":"-1"}})");
+  CHECK_EQ(yaml_of(doc), "d:\n  $date:\n    $numberLong: '1700000000123'");
+  CHECK_EQ(toml_of(doc), R"(d = { "$date" = { "$numberLong" = "1700000000123" } })");
+}
+
+namespace
+{
+enum class[[= derive(Format, Parse)]] text_key_color
+{
+  red,
+  green
+};
+
+struct text_keyed
+{
+  std::map<std::string, int>    s;
+  std::map<int, int>            i;
+  std::map<text_key_color, int> e;
+};
+
+text_keyed text_keyed_sample()
+{
+  return {
+      .s = {{"a", 1}},
+      .i = {{-5, 2}},
+      .e = {{text_key_color::green, 3}},
+  };
+}
+}
+
+TEST_CASE("reflex::serde::bson: string, int and enum map keys write as before")
+{
+  const auto sample = text_keyed_sample();
+  CHECK_EQ(json_of(sample), R"({"s":{"a":1},"i":{-5:2},"e":{"green":3}})");
+  CHECK_EQ(yaml_of(sample), "s:\n  a: 1\ni:\n  -5: 2\ne:\n  green: 3");
+  CHECK_EQ(toml_of(sample), "[s]\na = 1\n[i]\n-5 = 2\n[e]\ngreen = 3");
+}
+
+TEST_CASE("reflex::serde::bson: parse reads bson::datetime from a millis string")
+{
+  CHECK(reflex::parse_or_throw<bson::datetime>("1700000000123") == bson::datetime{1700000000123});
+  CHECK(reflex::parse_or_throw<bson::datetime>("0") == bson::datetime{0});
+  CHECK_THROWS(reflex::parse_or_throw<bson::datetime>("-1"));
+  CHECK_THROWS(reflex::parse_or_throw<bson::datetime>("x5"));
 }
 
 TEST_CASE("reflex::serde::bson: extended types as typed aggregate members")

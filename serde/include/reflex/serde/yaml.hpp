@@ -161,8 +161,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   // mapping. Leaving it out puts "k: v" after the parent's own "key: " and
   // produces "outer: k: v", which is not a document.
   template <typename T>
-  concept block_node_c = (aggregate_c<std::remove_cvref_t<T>> or seq_c<std::remove_cvref_t<T>>
-                          or map_c<std::remove_cvref_t<T>> or pair_c<std::remove_cvref_t<T>>)
+  concept block_node_c = (aggregate_c<std::remove_cvref_t<T>>
+                          or seq_c<std::remove_cvref_t<T>>
+                          or map_c<std::remove_cvref_t<T>>
+                          or pair_c<std::remove_cvref_t<T>>
+                          or serde::detail::ext_json_type_v<std::remove_cvref_t<T>>)
                      and not str_c<std::remove_cvref_t<T>>;
 
   template <typename T> consteval std::size_t member_count()

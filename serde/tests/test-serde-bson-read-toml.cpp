@@ -9,46 +9,6 @@ import std;
 using namespace reflex;
 using namespace reflex::serde;
 
-namespace reflex::serde::json
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-
-template <typename It, auto Opts>
-bson::datetime tag_invoke(
-    tag_t<serde::deserialize>,
-    deserializer<It, Opts>& de,
-    std::type_identity<bson::datetime>)
-{
-  auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
-  return reflex::parse_or_throw<bson::datetime>(s);
-}
-}
-
-namespace reflex::serde::toml
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-
-template <typename It, auto Opts>
-bson::datetime tag_invoke(
-    tag_t<serde::deserialize>,
-    deserializer<It, Opts>& de,
-    std::type_identity<bson::datetime>)
-{
-  auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
-  return reflex::parse_or_throw<bson::datetime>(s);
-}
-}
-
 namespace
 {
 using bytes = std::vector<std::byte>;
@@ -775,4 +735,91 @@ TEST_CASE("reflex::serde::bson: TOML does not read a typed member from a header 
           std::format("n = 1\nv = {{ \"$oid\" = \"{}\" }}", oid_hex))
           .v
       == oid());
+}
+
+namespace
+{
+bson::object every_alternative()
+{
+  auto all    = all_types();
+  all["i32"]  = bson::int32{-7};
+  all["i64"]  = bson::int64{5000000000};
+  all["num"]  = 2.5;
+  all["bool"] = true;
+  all["str"]  = std::string{"s"};
+  all["d128"] = bson::decimal128{1.5};
+  all["dt"]   = bson::datetime{1700000000123};
+  return all;
+}
+}
+
+TEST_CASE("reflex::serde::bson: TOML reads and writes a bson::value holding every alternative")
+{
+  const auto all = every_alternative();
+  REQUIRE(all.size() == 20);
+  check_round_trip(all);
+  const auto read = read_toml(toml_of(all));
+  for(auto const& [key, value] : all)
+  {
+    CAPTURE(key);
+    CHECK(read.as_object().at(key).index() == value.index());
+  }
+}
+
+TEST_CASE("reflex::serde::bson: TOML writes bson::datetime as a canonical $date document")
+{
+  const bson::datetime date{1700000000123};
+  CHECK_EQ(typed_toml_of(date), R"("$date" = { "$numberLong" = "1700000000123" })");
+  CHECK_EQ(typed_toml_of(bson::datetime{-1}), R"("$date" = { "$numberLong" = "-1" })");
+  CHECK_EQ(
+      typed_toml_of(toml_typed_one<bson::datetime>{.v = date, .n = 1}),
+      "v = { \"$date\" = { \"$numberLong\" = \"1700000000123\" } }\nn = 1");
+  CHECK_EQ(
+      toml_of(
+          bson::object{
+              {"d", date                                 },
+              {"a", bson::array{date, bson::datetime{-1}}},
+  }),
+      "a = [{ \"$date\" = { \"$numberLong\" = \"1700000000123\" } }, "
+      "{ \"$date\" = { \"$numberLong\" = \"-1\" } }]\n"
+      "d = { \"$date\" = { \"$numberLong\" = \"1700000000123\" } }");
+}
+
+TEST_CASE("reflex::serde::bson: TOML reads bson::datetime in both $date forms")
+{
+  const bson::datetime date{1700000000123};
+  check_round_trip(date);
+  check_round_trip(bson::datetime{-1});
+  check_round_trip(
+      bson::object{
+          {"d", date},
+  });
+  check_round_trip(
+      bson::object{
+          {"a", bson::array{date, bson::datetime{-1}}}
+  });
+  check_typed_round_trip(date);
+  check_typed_round_trip(bson::datetime{-1});
+  check_typed_round_trip(toml_shapes_of(date, bson::datetime{-1}));
+
+  CHECK(read_typed_toml<bson::datetime>(R"("$date" = "2023-11-14T22:13:20.123Z")") == date);
+  CHECK(
+      read_typed_toml<toml_typed_one<bson::datetime>>(
+          "v = { \"$date\" = \"2023-11-14T22:13:20.123Z\" }\nn = 1")
+          .v
+      == date);
+  CHECK(
+      read_typed_toml<toml_typed_one<bson::datetime>>(
+          "v = { \"$date\" = { \"$numberLong\" = \"1700000000123\" } }\nn = 1")
+          .v
+      == date);
+}
+
+TEST_CASE("reflex::serde::bson: TOML typed bson::datetime reads throw on another document")
+{
+  check_typed_throws<bson::datetime>(
+      "a = 1", "Extended JSON: expected a $date document for bson::datetime");
+  check_typed_throws<toml_typed_one<bson::datetime>>(
+      "v = { \"$date\" = true }\nn = 1",
+      under("v", "Extended JSON: $date must be an RFC 3339 string or a $numberLong document"));
 }
