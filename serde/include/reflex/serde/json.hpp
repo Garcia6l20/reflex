@@ -2238,7 +2238,16 @@ REFLEX_EXPORT namespace reflex::serde::json
         case 'n':
           return de.template load<null_t>();
         case '{':
-          if constexpr(detail::json_access::wraps_an_alternative<var_type>())
+          if constexpr(serde::detail::ext_json_reader<var_type>::enabled)
+          {
+            static_assert(
+                not detail::json_access::wraps_an_alternative<var_type>(),
+                "a value type read through ext_json_reader must not take the poly::var __type "
+                "envelope, which would read a type wrapper object as an envelope");
+            return serde::detail::ext_json_reader<var_type>::lift(
+                de.template load<typename var_type::obj_type>());
+          }
+          else if constexpr(detail::json_access::wraps_an_alternative<var_type>())
           {
             return detail::json_access::read_var_object<var_type>(de);
           }

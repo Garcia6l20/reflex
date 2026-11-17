@@ -1965,6 +1965,260 @@ REFLEX_EXPORT namespace reflex::serde::bson
   }
 } // namespace reflex::serde::bson
 
+namespace reflex::serde::bson::detail
+{
+inline constexpr std::array<std::string_view, 11> ext_json_keys{
+    "$binary", "$code",   "$dbPointer", "$maxKey",   "$minKey", "$oid", "$regularExpression",
+    "$scope",  "$symbol", "$timestamp", "$undefined"};
+
+[[noreturn]] inline void ext_json_error(std::string_view message)
+{
+  throw std::runtime_error(std::format("Extended JSON: {}", message));
+}
+
+constexpr void expect_ext_json_keys(
+    bson::object const&                     obj,
+    std::string_view                        wrapper,
+    std::initializer_list<std::string_view> keys)
+{
+  for(auto const& [key, value] : obj)
+  {
+    if(not std::ranges::contains(keys, std::string_view{key}))
+    {
+      ext_json_error(std::format("unexpected key '{}' in a {} document", key, wrapper));
+    }
+  }
+  for(auto key : keys)
+  {
+    if(not obj.contains(std::string{key}))
+    {
+      ext_json_error(std::format("a {} document is missing '{}'", wrapper, key));
+    }
+  }
+}
+
+constexpr bson::value const& ext_json_member(bson::object const& obj, std::string_view key)
+{
+  return obj.find(std::string{key})->second;
+}
+
+constexpr std::string const& ext_json_string(bson::value const& value, std::string_view path)
+{
+  if(not value.is<bson::string>())
+  {
+    ext_json_error(std::format("{} must be a string", path));
+  }
+  return value.as<bson::string>();
+}
+
+constexpr bson::object const& ext_json_body(bson::object const& obj, std::string_view key)
+{
+  auto const& body = ext_json_member(obj, key);
+  if(not body.is_object())
+  {
+    ext_json_error(std::format("{} must be a document", key));
+  }
+  return body.as_object();
+}
+
+constexpr std::optional<std::int64_t> ext_json_integer(bson::value const& value)
+{
+  if(value.is<bson::int32>())
+  {
+    return value.as<bson::int32>();
+  }
+  if(value.is<bson::int64>())
+  {
+    return value.as<bson::int64>();
+  }
+  return std::nullopt;
+}
+
+constexpr bson::object_id decode_object_id(bson::value const& value)
+{
+  bson::object_id id;
+  if(not value.is<bson::string>()
+     or not serde::detail::hex_decode(value.as<bson::string>(), id.bytes))
+  {
+    ext_json_error("$oid must be a string of 24 hex digits");
+  }
+  return id;
+}
+
+constexpr bson::binary decode_binary(bson::object const& obj)
+{
+  auto const& body = ext_json_body(obj, "$binary");
+  expect_ext_json_keys(body, "$binary", {"base64", "subType"});
+
+  auto const& base64 = ext_json_member(body, "base64");
+  auto data = base64.is<bson::string>() ? serde::detail::base64_decode(base64.as<bson::string>())
+                                        : std::nullopt;
+  if(not data)
+  {
+    ext_json_error("$binary.base64 must be a padded base64 string");
+  }
+
+  auto const&              sub_type = ext_json_member(body, "subType");
+  std::array<std::byte, 1> subtype{};
+  if(not sub_type.is<bson::string>()
+     or not(
+         serde::detail::hex_decode(sub_type.as<bson::string>(), subtype)
+         or serde::detail::hex_decode("0" + sub_type.as<bson::string>(), subtype)))
+  {
+    ext_json_error("$binary.subType must be a string of 1 or 2 hex digits");
+  }
+  return {.subtype = subtype[0], .data = *std::move(data)};
+}
+
+constexpr std::uint32_t decode_timestamp_field(bson::object const& body, std::string_view key)
+{
+  const auto value = ext_json_integer(ext_json_member(body, key));
+  if(not value or not std::in_range<std::uint32_t>(*value))
+  {
+    ext_json_error(std::format("$timestamp.{} must be an integer from 0 to 4294967295", key));
+  }
+  return static_cast<std::uint32_t>(*value);
+}
+
+constexpr bson::timestamp decode_timestamp(bson::object const& obj)
+{
+  auto const& body = ext_json_body(obj, "$timestamp");
+  expect_ext_json_keys(body, "$timestamp", {"t", "i"});
+  return {
+      .increment = decode_timestamp_field(body, "i"),
+      .seconds   = decode_timestamp_field(body, "t"),
+  };
+}
+
+constexpr bson::regex decode_regex(bson::object const& obj)
+{
+  auto const& body = ext_json_body(obj, "$regularExpression");
+  expect_ext_json_keys(body, "$regularExpression", {"pattern", "options"});
+  return {
+      .pattern = ext_json_string(ext_json_member(body, "pattern"), "$regularExpression.pattern"),
+      .options = ext_json_string(ext_json_member(body, "options"), "$regularExpression.options"),
+  };
+}
+
+constexpr bson::db_pointer decode_db_pointer(bson::object const& obj)
+{
+  auto const& body = ext_json_body(obj, "$dbPointer");
+  expect_ext_json_keys(body, "$dbPointer", {"$ref", "$id"});
+  auto const& id = ext_json_member(body, "$id");
+  if(not id.is<bson::object_id>())
+  {
+    ext_json_error("$dbPointer.$id must be an $oid document");
+  }
+  return {
+      .ref = ext_json_string(ext_json_member(body, "$ref"), "$dbPointer.$ref"),
+      .id  = id.as<bson::object_id>(),
+  };
+}
+
+constexpr bson::value decode_code(bson::object const& obj)
+{
+  const bool scoped = obj.contains("$scope");
+  if(scoped)
+  {
+    expect_ext_json_keys(obj, "$code", {"$code", "$scope"});
+  }
+  else
+  {
+    expect_ext_json_keys(obj, "$code", {"$code"});
+  }
+  auto code = ext_json_string(ext_json_member(obj, "$code"), "$code");
+  if(not scoped)
+  {
+    return bson::javascript{std::move(code)};
+  }
+  auto const& scope = ext_json_member(obj, "$scope");
+  if(not scope.is_object())
+  {
+    ext_json_error("$scope must be a document");
+  }
+  bytes encoded;
+  try
+  {
+    encode_root(encoded, scope.as_object());
+  }
+  catch(std::logic_error const& error)
+  {
+    ext_json_error(std::format("$scope is not a valid BSON document: {}", error.what()));
+  }
+  return bson::code_w_scope{.code = std::move(code), .scope = std::move(encoded)};
+}
+
+constexpr void
+    expect_one(bson::object const& obj, std::string_view key, bool valid, std::string_view message)
+{
+  expect_ext_json_keys(obj, key, {key});
+  if(not valid)
+  {
+    ext_json_error(message);
+  }
+}
+
+constexpr std::optional<bson::value> decode_ext_json(bson::object const& obj)
+{
+  const auto wrapper = std::ranges::find_if(
+      obj, [](auto const& member) { return std::ranges::contains(ext_json_keys, member.first); });
+  if(wrapper == obj.end())
+  {
+    return std::nullopt;
+  }
+  if(obj.contains("$code") or obj.contains("$scope"))
+  {
+    return decode_code(obj);
+  }
+
+  const std::string_view key   = wrapper->first;
+  auto const&            value = wrapper->second;
+  if(key == "$oid")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_object_id(value);
+  }
+  if(key == "$binary")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_binary(obj);
+  }
+  if(key == "$timestamp")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_timestamp(obj);
+  }
+  if(key == "$regularExpression")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_regex(obj);
+  }
+  if(key == "$dbPointer")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_db_pointer(obj);
+  }
+  if(key == "$symbol")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return bson::symbol{ext_json_string(value, key)};
+  }
+  if(key == "$undefined")
+  {
+    expect_one(
+        obj, key, value.is<bson::boolean>() and value.as<bson::boolean>(),
+        "$undefined must be true");
+    return bson::undefined{};
+  }
+  expect_one(obj, key, ext_json_integer(value) == 1, std::format("{} must be 1", key));
+  if(key == "$minKey")
+  {
+    return bson::min_key{};
+  }
+  return bson::max_key{};
+}
+}
+
 namespace reflex::serde::detail
 {
 template <> inline constexpr bool ext_json_type_v<bson::binary> = true;
@@ -1974,6 +2228,15 @@ template <bson::detail::bson_extended_c T> inline constexpr bool ext_json_type_v
 template <> struct ext_json_reader<bson::value>
 {
   static constexpr bool enabled = true;
+
+  static constexpr bson::value lift(bson::object&& obj)
+  {
+    if(auto decoded = bson::detail::decode_ext_json(obj))
+    {
+      return *std::move(decoded);
+    }
+    return bson::value{std::move(obj)};
+  }
 };
 }
 
