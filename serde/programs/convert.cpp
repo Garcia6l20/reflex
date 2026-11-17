@@ -84,7 +84,20 @@ struct[[= cli::command("Convert file formats")]] convert_command
         if(verbose > 0)
           std::println("Using serializer '{}'", display_string_of(decay(^^decltype(ser))));
 
-        const auto value = serde::deserialize(de);
+        constexpr bool via_bson = serde::detail::ext_json_deserializer_c<decltype(de)>
+                              and meta::is_template_instance_of(
+                                      dealias(decay(^^decltype(ser))), ^^serde::bson::serializer);
+
+        const auto value = [&] {
+          if constexpr(via_bson)
+          {
+            return de.template load<serde::bson::value>();
+          }
+          else
+          {
+            return serde::deserialize(de);
+          }
+        }();
 
         if(verbose > 0)
           std::println("Deserialized value: {}", value);
