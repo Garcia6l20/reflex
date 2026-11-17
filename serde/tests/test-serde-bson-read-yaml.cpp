@@ -471,3 +471,161 @@ TEST_CASE("reflex::serde::bson: YAML reads the canonical document as JSON does")
     }
   }
 }
+
+namespace
+{
+struct yaml_typed
+{
+  bson::binary       bin;
+  bson::object_id    oid;
+  bson::timestamp    ts;
+  bson::regex        re;
+  bson::javascript   js;
+  bson::code_w_scope cws;
+  bson::symbol       sym;
+  bson::db_pointer   dbp;
+  bson::min_key      min;
+  bson::max_key      max;
+  bson::undefined    u;
+  int                after = 3;
+
+  bool operator==(yaml_typed const&) const = default;
+};
+
+template <typename T> struct yaml_typed_one
+{
+  T   v;
+  int n = 0;
+};
+
+template <typename T> struct yaml_shapes
+{
+  std::optional<T>         set;
+  std::optional<T>         none;
+  std::vector<T>           list;
+  std::map<std::string, T> map;
+  int                      tail = 5;
+
+  bool operator==(yaml_shapes const&) const = default;
+};
+
+template <typename T> yaml_shapes<T> yaml_shapes_of(T const& first, T const& second)
+{
+  return {
+      .set  = first,
+      .none = std::nullopt,
+      .list = {first,         second        },
+      .map  = {{"k1", first}, {"k2", second}},
+  };
+}
+
+yaml_typed yaml_typed_sample()
+{
+  return {
+      .bin = dead(0x04),
+      .oid = oid(),
+      .ts  = ts(),
+      .re  = re(),
+      .js  = {"g()"},
+      .cws = cws(),
+      .sym = {"s"},
+      .dbp = {.ref = "db.coll", .id = oid()},
+  };
+}
+
+template <typename T> std::string typed_yaml_of(T const& value)
+{
+  std::string      out;
+  yaml::serializer ser{out};
+  ser.dump(value);
+  return out;
+}
+
+template <typename T> T read_typed_yaml(std::string text)
+{
+  return yaml::deserializer{text}.load<T>();
+}
+
+template <typename T> void check_typed_round_trip(T const& original)
+{
+  const auto text = typed_yaml_of(original);
+  CAPTURE(text);
+  const auto read = read_typed_yaml<T>(text);
+  CHECK(read == original);
+  CHECK_EQ(typed_yaml_of(read), text);
+}
+
+template <typename T> void check_typed_throws(std::string text, std::string const& message)
+{
+  CAPTURE(text);
+  CHECK_THROWS_WITH_AS(read_typed_yaml<T>(text), message.c_str(), std::runtime_error);
+}
+}
+
+TEST_CASE("reflex::serde::bson: YAML reads every bson type as a typed member")
+{
+  const auto sample = yaml_typed_sample();
+  check_typed_round_trip(sample);
+  CHECK(
+      read_typed_yaml<yaml_typed_one<bson::object_id>>(
+          std::format("v: {{$oid: '{}'}}\nn: 1", oid_hex))
+          .v
+      == oid());
+  CHECK(
+      read_typed_yaml<yaml_typed_one<bson::code_w_scope>>(
+          "v:\n  $scope:\n    x: 7\n  $code: f(x)\nn: 1")
+          .v
+      == cws());
+}
+
+TEST_CASE("reflex::serde::bson: YAML reads bson types in optional, vector and map members")
+{
+  auto other     = oid();
+  other.bytes[0] = std::byte{0xFF};
+  check_typed_round_trip(yaml_shapes_of(oid(), other));
+  check_typed_round_trip(
+      yaml_shapes_of(dead(0x04), bson::binary{.subtype = std::byte{0x80}, .data = {}}));
+  check_typed_round_trip(yaml_shapes_of(re(), bson::regex{}));
+  check_typed_round_trip(yaml_shapes_of(cws(), cws()));
+  CHECK(
+      read_typed_yaml<std::vector<bson::object_id>>(
+          std::format("- $oid: '{0}'\n- {{$oid: '{0}'}}", oid_hex))
+      == std::vector{oid(), oid()});
+}
+
+TEST_CASE("reflex::serde::bson: YAML reads every bson type as the root")
+{
+  const auto sample = yaml_typed_sample();
+  check_typed_round_trip(dead(0x00));
+  check_typed_round_trip(sample.bin);
+  check_typed_round_trip(dead(0x80));
+  check_typed_round_trip(sample.oid);
+  check_typed_round_trip(sample.ts);
+  check_typed_round_trip(sample.re);
+  check_typed_round_trip(sample.js);
+  check_typed_round_trip(sample.cws);
+  check_typed_round_trip(sample.sym);
+  check_typed_round_trip(sample.dbp);
+  check_typed_round_trip(sample.min);
+  check_typed_round_trip(sample.max);
+  check_typed_round_trip(sample.u);
+  CHECK(read_typed_yaml<bson::object_id>(std::format("$oid: '{}'", oid_hex)) == oid());
+}
+
+TEST_CASE("reflex::serde::bson: YAML typed reads name the expected wrapper or the malformed key")
+{
+  check_typed_throws<bson::object_id>(
+      "a: 1", "Extended JSON: expected a $oid document for bson::object_id");
+  check_typed_throws<bson::javascript>(
+      "$code: f(x)\n$scope:\n  x: 7",
+      "Extended JSON: expected a $code document for bson::javascript");
+  check_typed_throws<bson::code_w_scope>(
+      "$code: g()", "Extended JSON: expected a $code and $scope document for bson::code_w_scope");
+  check_typed_throws<yaml_typed_one<bson::object_id>>(
+      "v:\n  $oid: zz\nn: 1", "Extended JSON: $oid must be a string of 24 hex digits");
+  check_typed_throws<yaml_typed_one<bson::binary>>(
+      "v:\n  $binary:\n    base64: 3q0=\nn: 1",
+      "Extended JSON: a $binary document is missing 'subType'");
+  check_typed_throws<yaml_typed_one<bson::undefined>>(
+      "v:\n  $undefined: false\nn: 1", "Extended JSON: $undefined must be true");
+}

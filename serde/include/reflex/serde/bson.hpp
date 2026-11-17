@@ -2493,6 +2493,67 @@ constexpr std::optional<bson::value> decode_ext_json(bson::object const& obj)
   }
   return bson::max_key{};
 }
+
+template <typename T> consteval std::string_view ext_json_wrapper_of()
+{
+  if constexpr(std::same_as<T, bson::binary>)
+  {
+    return "$binary";
+  }
+  else if constexpr(std::same_as<T, bson::object_id>)
+  {
+    return "$oid";
+  }
+  else if constexpr(std::same_as<T, bson::timestamp>)
+  {
+    return "$timestamp";
+  }
+  else if constexpr(std::same_as<T, bson::regex>)
+  {
+    return "$regularExpression";
+  }
+  else if constexpr(std::same_as<T, bson::javascript>)
+  {
+    return "$code";
+  }
+  else if constexpr(std::same_as<T, bson::code_w_scope>)
+  {
+    return "$code and $scope";
+  }
+  else if constexpr(std::same_as<T, bson::symbol>)
+  {
+    return "$symbol";
+  }
+  else if constexpr(std::same_as<T, bson::db_pointer>)
+  {
+    return "$dbPointer";
+  }
+  else if constexpr(std::same_as<T, bson::min_key>)
+  {
+    return "$minKey";
+  }
+  else if constexpr(std::same_as<T, bson::max_key>)
+  {
+    return "$maxKey";
+  }
+  else
+  {
+    static_assert(std::same_as<T, bson::undefined>, "no Extended JSON wrapper for this type");
+    return "$undefined";
+  }
+}
+
+template <typename T> constexpr T expect_ext_json(bson::object const& obj)
+{
+  if(auto decoded = decode_ext_json(obj); decoded and decoded->template is<T>())
+  {
+    return std::move(*decoded).template as<T>();
+  }
+  ext_json_error(
+      std::format(
+          "expected a {} document for bson::{}", ext_json_wrapper_of<T>(),
+          std::meta::identifier_of(^^T)));
+}
 }
 
 namespace reflex::serde::detail
@@ -2524,6 +2585,25 @@ template <> struct ext_json_value<bson::value>
     return bson::detail::ext_json_decimal(value);
   }
 };
+}
+
+REFLEX_EXPORT namespace reflex::serde::bson
+{
+  /** @brief Read a `binary` or an extended type from its Extended JSON v2 document, the form its
+   * serialize overload writes, with the same rules as a type wrapper read into `bson::value`.
+   *
+   * Taken by the JSON, YAML and TOML deserializers only. XML, CSV and BSON never see it.
+   *
+   * @throws std::runtime_error `Extended JSON: expected a <wrapper> document for bson::<type>` when
+   * the document is not a type wrapper or wraps another type, or the wrapper's own message when it
+   * is malformed.
+   */
+  template <serde::detail::ext_json_deserializer_c D, typename T>
+    requires(std::same_as<T, bson::binary> or detail::bson_extended_c<T>)
+  T tag_invoke(tag_t<serde::deserialize>, D & de, std::type_identity<T>)
+  {
+    return detail::expect_ext_json<T>(de.template load<bson::object>());
+  }
 }
 
 REFLEX_EXPORT namespace reflex::serde::ser

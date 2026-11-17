@@ -598,3 +598,181 @@ TEST_CASE("reflex::serde::bson: TOML reads the canonical document as JSON does")
     }
   }
 }
+
+namespace
+{
+struct toml_typed
+{
+  bson::binary       bin;
+  bson::object_id    oid;
+  bson::timestamp    ts;
+  bson::regex        re;
+  bson::javascript   js;
+  bson::code_w_scope cws;
+  bson::symbol       sym;
+  bson::db_pointer   dbp;
+  bson::min_key      min;
+  bson::max_key      max;
+  bson::undefined    u;
+  int                after = 3;
+
+  bool operator==(toml_typed const&) const = default;
+};
+
+struct toml_typed_list
+{
+  std::vector<toml_typed> items;
+
+  bool operator==(toml_typed_list const&) const = default;
+};
+
+template <typename T> struct toml_typed_one
+{
+  T   v;
+  int n = 0;
+};
+
+template <typename T> struct toml_shapes
+{
+  std::optional<T>         set;
+  std::optional<T>         none;
+  std::vector<T>           list;
+  std::map<std::string, T> map;
+  int                      tail = 5;
+
+  bool operator==(toml_shapes const&) const = default;
+};
+
+template <typename T> toml_shapes<T> toml_shapes_of(T const& first, T const& second)
+{
+  return {
+      .set  = first,
+      .none = std::nullopt,
+      .list = {first,         second        },
+      .map  = {{"k1", first}, {"k2", second}},
+  };
+}
+
+toml_typed toml_typed_sample()
+{
+  return {
+      .bin = dead(0x04),
+      .oid = oid(),
+      .ts  = ts(),
+      .re  = re(),
+      .js  = {"g()"},
+      .cws = cws(),
+      .sym = {"s"},
+      .dbp = {.ref = "db.coll", .id = oid()},
+  };
+}
+
+template <typename T> std::string typed_toml_of(T const& value)
+{
+  std::string      out;
+  toml::serializer ser{out};
+  ser.dump(value);
+  return out;
+}
+
+template <typename T> T read_typed_toml(std::string text)
+{
+  return toml::deserializer{text}.load<T>();
+}
+
+template <typename T> void check_typed_round_trip(T const& original)
+{
+  const auto text = typed_toml_of(original);
+  CAPTURE(text);
+  const auto read = read_typed_toml<T>(text);
+  CHECK(read == original);
+  CHECK_EQ(typed_toml_of(read), text);
+}
+
+template <typename T> void check_typed_throws(std::string text, std::string const& message)
+{
+  CAPTURE(text);
+  CHECK_THROWS_WITH_AS(read_typed_toml<T>(text), message.c_str(), std::runtime_error);
+}
+}
+
+TEST_CASE("reflex::serde::bson: TOML reads every bson type as a typed member")
+{
+  const auto sample = toml_typed_sample();
+  const auto forms  = written_toml();
+  CHECK_EQ(
+      typed_toml_of(sample),
+      std::format(
+          "bin = {}\noid = {}\nts = {}\nre = {}\njs = {}\ncws = {}\nsym = {}\ndbp = {}\n"
+          "min = {}\nmax = {}\nu = {}\nafter = 3",
+          forms.at("bin4"), forms.at("oid"), forms.at("ts"), forms.at("re"), forms.at("js"),
+          forms.at("cws"), forms.at("sym"), forms.at("dbp"), forms.at("min"), forms.at("max"),
+          forms.at("u")));
+  check_typed_round_trip(sample);
+  check_typed_round_trip(
+      toml_typed_list{
+          .items = {sample, toml_typed{}}
+  });
+}
+
+TEST_CASE("reflex::serde::bson: TOML reads bson types in optional, vector and map members")
+{
+  auto other     = oid();
+  other.bytes[0] = std::byte{0xFF};
+  check_typed_round_trip(toml_shapes_of(oid(), other));
+  check_typed_round_trip(
+      toml_shapes_of(dead(0x04), bson::binary{.subtype = std::byte{0x80}, .data = {}}));
+  check_typed_round_trip(toml_shapes_of(re(), bson::regex{}));
+  check_typed_round_trip(toml_shapes_of(cws(), cws()));
+}
+
+TEST_CASE("reflex::serde::bson: TOML reads every bson type as the root document")
+{
+  const auto sample = toml_typed_sample();
+  check_typed_round_trip(dead(0x00));
+  check_typed_round_trip(sample.bin);
+  check_typed_round_trip(dead(0x80));
+  check_typed_round_trip(sample.oid);
+  check_typed_round_trip(sample.ts);
+  check_typed_round_trip(sample.re);
+  check_typed_round_trip(sample.js);
+  check_typed_round_trip(sample.cws);
+  check_typed_round_trip(sample.sym);
+  check_typed_round_trip(sample.dbp);
+  check_typed_round_trip(sample.min);
+  check_typed_round_trip(sample.max);
+  check_typed_round_trip(sample.u);
+  const auto roots = written_toml_root();
+  CHECK(read_typed_toml<bson::object_id>(roots.at("oid")) == oid());
+  CHECK(read_typed_toml<bson::code_w_scope>(roots.at("cws")) == cws());
+  CHECK(read_typed_toml<bson::db_pointer>(roots.at("dbp")) == sample.dbp);
+}
+
+TEST_CASE("reflex::serde::bson: TOML typed reads name the expected wrapper or the malformed key")
+{
+  check_typed_throws<bson::object_id>(
+      "a = 1", "Extended JSON: expected a $oid document for bson::object_id");
+  check_typed_throws<bson::javascript>(
+      written_toml_root().at("cws"),
+      "Extended JSON: expected a $code document for bson::javascript");
+  check_typed_throws<toml_typed_one<bson::code_w_scope>>(
+      "v = { \"$code\" = \"g()\" }\nn = 1",
+      under("v", "Extended JSON: expected a $code and $scope document for bson::code_w_scope"));
+  check_typed_throws<toml_typed_one<bson::timestamp>>(
+      "v = { \"$timestamp\" = { t = -1, i = 1 } }\nn = 1",
+      under("v", "Extended JSON: $timestamp.t must be an integer from 0 to 4294967295"));
+  check_typed_throws<toml_typed_one<bson::max_key>>(
+      "v = { \"$maxKey\" = 2 }\nn = 1", under("v", "Extended JSON: $maxKey must be 1"));
+}
+
+TEST_CASE("reflex::serde::bson: TOML does not read a typed member from a header table")
+{
+  check_typed_throws<toml_typed_one<bson::object_id>>(
+      std::format("n = 1\n[v]\n\"$oid\" = \"{}\"", oid_hex),
+      "TOML: key 'v.$oid': Key not found in object");
+  CHECK(
+      read_typed_toml<toml_typed_one<bson::object_id>>(
+          std::format("n = 1\nv = {{ \"$oid\" = \"{}\" }}", oid_hex))
+          .v
+      == oid());
+}

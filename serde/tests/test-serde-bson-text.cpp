@@ -303,6 +303,51 @@ static_assert(serde::detail::ext_json_serializer_c<toml::serializer<string_out>>
 static_assert(not serde::detail::ext_json_serializer_c<xml::serializer<string_out>>);
 static_assert(not serde::detail::ext_json_serializer_c<csv::serializer<string_out>>);
 static_assert(not serde::detail::ext_json_serializer_c<bson::serializer<bytes_out>>);
+
+using string_in = std::string::const_iterator;
+using stream_in = std::istreambuf_iterator<char>;
+using bytes_in  = bytes::const_iterator;
+
+static_assert(serde::detail::ext_json_deserializer_c<json::deserializer<string_in>>);
+static_assert(serde::detail::ext_json_deserializer_c<json::deserializer<stream_in>>);
+static_assert(serde::detail::ext_json_deserializer_c<yaml::deserializer<string_in>>);
+static_assert(serde::detail::ext_json_deserializer_c<yaml::deserializer<stream_in>>);
+static_assert(serde::detail::ext_json_deserializer_c<toml::deserializer<string_in>>);
+static_assert(serde::detail::ext_json_deserializer_c<toml::deserializer<stream_in>>);
+static_assert(not serde::detail::ext_json_deserializer_c<xml::deserializer<string_in>>);
+static_assert(not serde::detail::ext_json_deserializer_c<csv::deserializer<string_in>>);
+static_assert(not serde::detail::ext_json_deserializer_c<bson::deserializer<bytes_in>>);
+
+template <typename De, typename T> constexpr bool reads_typed()
+{
+  return reflex::tag_invocable_c<tag_t<serde::deserialize>, De&, std::type_identity<T>>;
+}
+
+static_assert(reads_typed<json::deserializer<string_in>, bson::object_id>());
+static_assert(reads_typed<yaml::deserializer<string_in>, bson::binary>());
+static_assert(reads_typed<toml::deserializer<string_in>, bson::code_w_scope>());
+static_assert(not reads_typed<xml::deserializer<string_in>, bson::object_id>());
+static_assert(not reads_typed<json::deserializer<string_in>, bson::datetime>());
+
+template <typename... Ts> constexpr bool none_take_the_envelope()
+{
+  return (... and not json::detail::poly_round_trip<Ts>::value);
+}
+
+static_assert(
+    none_take_the_envelope<
+        bson::binary,
+        bson::object_id,
+        bson::timestamp,
+        bson::regex,
+        bson::javascript,
+        bson::code_w_scope,
+        bson::symbol,
+        bson::db_pointer,
+        bson::min_key,
+        bson::max_key,
+        bson::undefined>(),
+    "a bson type with an Extended JSON form must be written bare inside bson::value");
 }
 
 TEST_CASE("reflex::serde::bson: binary is written as Extended JSON $binary in JSON")
@@ -434,6 +479,16 @@ TEST_CASE("reflex::serde::bson: extended types nested two levels in bson::value"
     elements += value;
   }
   CHECK_EQ(json_of(in_arrays), std::format("[[[{}]]]", elements));
+}
+
+TEST_CASE("reflex::serde::bson: JSON writes the readable types bare in bson::value, no __type")
+{
+  const std::array<std::string, 10> keys{"cws", "dbp", "js",  "max", "min",
+                                         "oid", "re",  "sym", "ts",  "u"};
+  CHECK_EQ(
+      json_of(bson::value{all_text_object()}),
+      std::format(
+          R"({{"bin":{{"$binary":{{"base64":"3q0=","subType":"04"}}}},{}}})", json_members(keys)));
 }
 
 TEST_CASE("reflex::serde::bson: extended types as typed aggregate members")

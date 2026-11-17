@@ -3108,6 +3108,9 @@ namespace reflex::serde::detail
 {
 template <typename OutputIt, yaml::options Opts>
 inline constexpr bool ext_json_serializer_v<yaml::serializer<OutputIt, Opts>> = true;
+
+template <typename InputIt, yaml::read_options Opts>
+inline constexpr bool ext_json_deserializer_v<yaml::deserializer<InputIt, Opts>> = true;
 }
 
 REFLEX_EXPORT namespace reflex::serde::ser

@@ -2735,6 +2735,9 @@ namespace reflex::serde::detail
 {
 template <typename OutputIt, toml::options Opts>
 inline constexpr bool ext_json_serializer_v<toml::serializer<OutputIt, Opts>> = true;
+
+template <typename InputIt, toml::read_options Opts>
+inline constexpr bool ext_json_deserializer_v<toml::deserializer<InputIt, Opts>> = true;
 }
 
 REFLEX_EXPORT namespace reflex::serde::ser

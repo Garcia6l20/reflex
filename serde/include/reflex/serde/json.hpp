@@ -2319,7 +2319,9 @@ REFLEX_EXPORT namespace reflex::serde::json
   /** @brief True when @p T writes and reads itself through its own JSON overloads, so a
    * poly::var object member holding it is written as `{"__type": id, "value": ...}` and read
    * back through its deserialize overload. A type with a serialize overload alone is written
-   * bare and does not read back as itself.
+   * bare and does not read back as itself. A type with an Extended JSON text form,
+   * `serde::detail::ext_json_type_v`, is always written bare: its type wrapper document already
+   * names it, and a value type reading Extended JSON lifts it from that document.
    *
    * Decided on `json::serializer<std::back_insert_iterator<std::string>>` and
    * `json::deserializer<std::string::const_iterator>` with default options, since the writer and
@@ -2334,7 +2336,11 @@ REFLEX_EXPORT namespace reflex::serde::json
   {
     static consteval bool check()
     {
-      if constexpr(not aggregate_c<T>)
+      if constexpr(serde::detail::ext_json_type_v<T>)
+      {
+        return false;
+      }
+      else if constexpr(not aggregate_c<T>)
       {
         return false;
       }
@@ -2409,6 +2415,9 @@ namespace reflex::serde::detail
 {
 template <typename OutputIt, json::options Opts>
 inline constexpr bool ext_json_serializer_v<json::serializer<OutputIt, Opts>> = true;
+
+template <typename InputIt, json::read_options Opts>
+inline constexpr bool ext_json_deserializer_v<json::deserializer<InputIt, Opts>> = true;
 }
 
 REFLEX_EXPORT namespace reflex::serde::ser

@@ -945,3 +945,216 @@ TEST_CASE("reflex::serde::bson: JSON keeps the plain form of a float128 outside 
       non_finite_json_of(decimal_holder{.plain = std::numeric_limits<std::float128_t>::infinity()}),
       "JSON has no literal for a non-finite number", std::runtime_error);
 }
+
+namespace
+{
+struct json_typed
+{
+  bson::binary       bin;
+  bson::object_id    oid;
+  bson::timestamp    ts;
+  bson::regex        re;
+  bson::javascript   js;
+  bson::code_w_scope cws;
+  bson::symbol       sym;
+  bson::db_pointer   dbp;
+  bson::min_key      min;
+  bson::max_key      max;
+  bson::undefined    u;
+  int                after = 3;
+
+  bool operator==(json_typed const&) const = default;
+};
+
+template <typename T> struct json_typed_one
+{
+  T   v;
+  int n = 0;
+};
+
+template <typename T> struct json_shapes
+{
+  std::optional<T>         set;
+  std::optional<T>         none;
+  std::vector<T>           list;
+  std::map<std::string, T> map;
+  int                      tail = 5;
+
+  bool operator==(json_shapes const&) const = default;
+};
+
+template <typename T> json_shapes<T> json_shapes_of(T const& first, T const& second)
+{
+  return {
+      .set  = first,
+      .none = std::nullopt,
+      .list = {first,         second        },
+      .map  = {{"k1", first}, {"k2", second}},
+  };
+}
+
+struct json_bytes_holder
+{
+  std::vector<std::byte> b;
+};
+
+json_typed json_typed_sample()
+{
+  return {
+      .bin = dead(0x04),
+      .oid = oid(),
+      .ts  = {.increment = 2, .seconds = 1700000000},
+      .re  = {.pattern = R"(^a"b\d)", .options = "im"},
+      .js  = {"g()"},
+      .cws = cws(),
+      .sym = {"s"},
+      .dbp = {.ref = "db.coll", .id = oid()},
+  };
+}
+
+template <typename T> std::string typed_json_of(T const& value)
+{
+  std::string      out;
+  json::serializer ser{out};
+  ser.dump(value);
+  return out;
+}
+
+template <typename T> T read_typed_json(std::string text)
+{
+  return json::deserializer{text}.load<T>();
+}
+
+template <typename T> void check_typed_round_trip(T const& original)
+{
+  const auto text = typed_json_of(original);
+  CAPTURE(text);
+  const auto read = read_typed_json<T>(text);
+  CHECK(read == original);
+  CHECK_EQ(typed_json_of(read), text);
+}
+
+template <typename T> void check_typed_throws(std::string text, std::string const& message)
+{
+  CAPTURE(text);
+  CHECK_THROWS_WITH_AS(read_typed_json<T>(text), message.c_str(), std::runtime_error);
+}
+
+template <typename T> void check_member_throws(std::string body, std::string const& message)
+{
+  check_typed_throws<json_typed_one<T>>(std::format(R"({{"v":{},"n":1}})", body), message);
+}
+}
+
+TEST_CASE("reflex::serde::bson: JSON reads every bson type as a typed member")
+{
+  const auto sample = json_typed_sample();
+  const auto forms  = written_json();
+  CHECK_EQ(
+      typed_json_of(sample),
+      std::format(
+          R"({{"bin":{},"oid":{},"ts":{},"re":{},"js":{},"cws":{},"sym":{},"dbp":{},)"
+          R"("min":{},"max":{},"u":{},"after":3}})",
+          forms.at("bin4"), forms.at("oid"), forms.at("ts"), forms.at("re"), forms.at("js"),
+          forms.at("cws"), forms.at("sym"), forms.at("dbp"), forms.at("min"), forms.at("max"),
+          forms.at("u")));
+  check_typed_round_trip(sample);
+}
+
+TEST_CASE("reflex::serde::bson: JSON reads bson types in optional, vector and map members")
+{
+  auto other     = oid();
+  other.bytes[0] = std::byte{0xFF};
+  check_typed_round_trip(json_shapes_of(oid(), other));
+  check_typed_round_trip(
+      json_shapes_of(dead(0x04), bson::binary{.subtype = std::byte{0x80}, .data = {}}));
+  check_typed_round_trip(
+      json_shapes_of(bson::regex{.pattern = R"(^a"b\d)", .options = "im"}, bson::regex{}));
+  check_typed_round_trip(json_shapes_of(cws(), cws()));
+  CHECK_EQ(
+      typed_json_of(json_shapes_of(oid(), oid())),
+      std::format(
+          R"({{"set":{0},"none":null,"list":[{0},{0}],"map":{{"k1":{0},"k2":{0}}},"tail":5}})",
+          written_json().at("oid")));
+}
+
+TEST_CASE("reflex::serde::bson: JSON reads every bson type as the root")
+{
+  const auto sample = json_typed_sample();
+  check_typed_round_trip(dead(0x00));
+  check_typed_round_trip(sample.bin);
+  check_typed_round_trip(dead(0x80));
+  check_typed_round_trip(sample.oid);
+  check_typed_round_trip(sample.ts);
+  check_typed_round_trip(sample.re);
+  check_typed_round_trip(sample.js);
+  check_typed_round_trip(sample.cws);
+  check_typed_round_trip(sample.sym);
+  check_typed_round_trip(sample.dbp);
+  check_typed_round_trip(sample.min);
+  check_typed_round_trip(sample.max);
+  check_typed_round_trip(sample.u);
+  CHECK(read_typed_json<bson::object_id>(written_json().at("oid")) == oid());
+  CHECK(read_typed_json<bson::code_w_scope>(R"j({"$scope":{"x":7},"$code":"f(x)"})j") == cws());
+  CHECK(
+      read_typed_json<std::vector<bson::object_id>>(
+          std::format("[{0},{0}]", written_json().at("oid")))
+      == std::vector{oid(), oid()});
+}
+
+TEST_CASE("reflex::serde::bson: JSON names the expected wrapper when a typed read gets another")
+{
+  const std::string oid_message = "Extended JSON: expected a $oid document for bson::object_id";
+  check_typed_throws<bson::object_id>(R"({"a":1})", oid_message);
+  check_typed_throws<bson::object_id>(
+      R"({"bytes":[80,97,114,131,148,165,182,199,216,233,250,11]})", oid_message);
+  check_typed_throws<bson::object_id>(R"({"$numberInt":"5"})", oid_message);
+  check_typed_throws<bson::javascript>(
+      R"j({"$code":"f(x)","$scope":{"x":7}})j",
+      "Extended JSON: expected a $code document for bson::javascript");
+  check_typed_throws<bson::code_w_scope>(
+      R"j({"$code":"g()"})j",
+      "Extended JSON: expected a $code and $scope document for bson::code_w_scope");
+  check_typed_throws<bson::binary>(
+      written_json().at("oid"), "Extended JSON: expected a $binary document for bson::binary");
+  check_typed_throws<bson::min_key>(
+      R"({"$maxKey":1})", "Extended JSON: expected a $minKey document for bson::min_key");
+  check_member_throws<bson::undefined>(
+      "{}", "Extended JSON: expected a $undefined document for bson::undefined");
+}
+
+TEST_CASE("reflex::serde::bson: JSON typed members throw the wrapper's own message when malformed")
+{
+  check_member_throws<bson::object_id>(
+      R"({"$oid":"zz"})", "Extended JSON: $oid must be a string of 24 hex digits");
+  check_member_throws<bson::object_id>(
+      R"({"$oid":"5061728394a5b6c7d8e9fa0b","x":1})",
+      "Extended JSON: unexpected key 'x' in a $oid document");
+  check_member_throws<bson::binary>(
+      R"({"$binary":{"base64":"3q1=","subType":"00"}})",
+      "Extended JSON: $binary.base64 must be a padded base64 string");
+  check_member_throws<bson::timestamp>(
+      R"({"$timestamp":{"t":4294967296,"i":1}})",
+      "Extended JSON: $timestamp.t must be an integer from 0 to 4294967295");
+  check_member_throws<bson::regex>(
+      R"({"$regularExpression":{"pattern":1,"options":""}})",
+      "Extended JSON: $regularExpression.pattern must be a string");
+  check_member_throws<bson::javascript>(R"({"$code":1})", "Extended JSON: $code must be a string");
+  check_member_throws<bson::code_w_scope>(
+      R"({"$code":"f","$scope":1})", "Extended JSON: $scope must be a document");
+  check_member_throws<bson::symbol>(R"({"$symbol":1})", "Extended JSON: $symbol must be a string");
+  check_member_throws<bson::db_pointer>(
+      R"({"$dbPointer":{"$ref":"db.coll","$id":"x"}})",
+      "Extended JSON: $dbPointer.$id must be an $oid document");
+  check_member_throws<bson::min_key>(R"({"$minKey":2})", "Extended JSON: $minKey must be 1");
+  check_member_throws<bson::max_key>(R"({"$maxKey":0})", "Extended JSON: $maxKey must be 1");
+  check_member_throws<bson::undefined>(
+      R"({"$undefined":false})", "Extended JSON: $undefined must be true");
+}
+
+TEST_CASE("reflex::serde::bson: JSON still reads a byte vector member as an array of numbers")
+{
+  const auto read = read_typed_json<json_bytes_holder>(R"({"b":[222,173]})");
+  CHECK(read.b == bytes{std::byte{0xDE}, std::byte{0xAD}});
+  CHECK_EQ(typed_json_of(read), R"({"b":[222,173]})");
+}
