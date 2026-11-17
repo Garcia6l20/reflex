@@ -357,6 +357,7 @@ REFLEX_EXPORT namespace reflex::serde::detail
     bool             negative = false;
   };
 
+  // from_chars takes neither a '+' nor a 0x/0o/0b prefix: strip them here.
   template <number_syntax Syntax> constexpr integer_text split_integer(std::string_view body)
   {
     integer_text out{};
@@ -401,6 +402,7 @@ REFLEX_EXPORT namespace reflex::serde::detail
   std::optional<Num> parse_integer(
       std::string_view body_text, std::string_view text, std::string_view format_name)
   {
+    // Unsigned, so the magnitude of a signed minimum, max() + 1, still parses.
     using magnitude_type         = std::make_unsigned_t<Num>;
     const auto [body, base, neg] = split_integer<Syntax>(body_text);
     magnitude_type magnitude{};

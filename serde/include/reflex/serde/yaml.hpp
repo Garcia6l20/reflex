@@ -2192,6 +2192,8 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       {
         return yaml::boolean{false};
       }
+      // yes/no/on/off fall through to string, per YAML 1.2 core. load<bool>()
+      // throws on them instead: asked for a bool, a 1.1 spelling is an error.
       if constexpr(serde::detail::ext_json_reader<var_type>::enabled)
       {
         if(detail::matches_int<detail::yaml_numbers>(s.text))
@@ -2202,14 +2204,8 @@ REFLEX_EXPORT namespace reflex::serde::yaml
           }
         }
       }
-      // yes/no/on/off deliberately fall through to string, which is what YAML
-      // 1.2 core says they are. That differs from load<bool>(), which throws on
-      // them: asked for a bool the intent is unambiguous and a 1.1 spelling is
-      // worth an error, but asked what this *is*, 1.2 answers "a string".
-      // The hex and octal forms have to go through the integral parser and then
-      // widen: yaml::number is a double, and the floating-point branch of
-      // parse_number has no notion of a base prefix. Plain decimal integers
-      // need no such detour, std::from_chars reads them as a double directly.
+      // yaml::number is a double, and the floating-point parse knows no base
+      // prefix: hex and octal go through the integral parser, then widen.
       if(s.text.starts_with("0x") or s.text.starts_with("0o"))
       {
         return static_cast<yaml::number>(
