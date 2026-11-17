@@ -793,7 +793,9 @@ REFLEX_EXPORT namespace reflex::serde::toml
     template <typename T> void write_inline(T const& value)
     {
       const inline_guard guard{*this};
-      reflex::visit([this](auto const& v) { serialize(*this, v); }, value);
+      reflex::visit(
+          [this](auto const& v) { serialize(*this, serde::detail::ext_json_alternative<T>(v)); },
+          value);
     }
 
     // TOML has no null, so an empty optional takes its key with it. Only this can
@@ -976,7 +978,11 @@ REFLEX_EXPORT namespace reflex::serde::toml
           ser.write_raw(", ");
         }
         first = false;
-        reflex::visit([&ser](auto const& v) { serialize(ser, v); }, elem);
+        reflex::visit(
+            [&ser](auto const& v) {
+              serialize(ser, serde::detail::ext_json_alternative<typename Seq::value_type>(v));
+            },
+            elem);
       }
       ser.write_char(']');
       return ser.out();
@@ -1088,7 +1094,11 @@ REFLEX_EXPORT namespace reflex::serde::toml
     template <visitable_c T>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
-      return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
+      return visit(
+          [&ser](const auto& v) {
+            return serialize(ser, serde::detail::ext_json_alternative<T>(v));
+          },
+          value);
     }
 
     template <derives_c<derive_t<Format>> T>

@@ -850,3 +850,98 @@ TEST_CASE("reflex::serde::bson: JSON writes a finite double in bson::value as be
     CHECK_EQ(json_of(bson::value{number}), non_finite_json_of(number));
   }
 }
+
+namespace
+{
+struct decimal_holder
+{
+  bson::value     value = {};
+  std::float128_t plain = 0;
+};
+
+std::vector<std::pair<bson::decimal128, std::string>> decimal_cases()
+{
+  constexpr auto inf = std::numeric_limits<bson::decimal128>::infinity();
+  return {
+      {bson::decimal128{0},                                 "0"                                     },
+      {-bson::decimal128{0},                                "-0"                                    },
+      {bson::decimal128{1.5},                               "1.5"                                   },
+      {1e100f128,                                           "1e+100"                                },
+      {123456789012345678901234567890123.0f128,             "123456789012345678901234567890123"     },
+      {1.23456789012345678901234567890123e-5f128,           "1.23456789012345678901234567890123e-05"},
+      {std::numeric_limits<bson::decimal128>::quiet_NaN(),  "NaN"                                   },
+      {-std::numeric_limits<bson::decimal128>::quiet_NaN(), "NaN"                                   },
+      {inf,                                                 "Infinity"                              },
+      {-inf,                                                "-Infinity"                             },
+  };
+}
+
+void check_same_decimal(bson::value const& read, bson::decimal128 original)
+{
+  REQUIRE(read.is<bson::decimal128>());
+  const auto back = read.as<bson::decimal128>();
+  if(std::isnan(original))
+  {
+    CHECK(std::isnan(back));
+  }
+  else
+  {
+    CHECK(back == original);
+    CHECK(std::signbit(back) == std::signbit(original));
+  }
+}
+}
+
+TEST_CASE("reflex::serde::bson: JSON writes a decimal128 in bson::value as $numberDecimal")
+{
+  for(auto const& [number, digits] : decimal_cases())
+  {
+    const auto text = std::format(R"({{"$numberDecimal":"{}"}})", digits);
+    CAPTURE(text);
+
+    CHECK_EQ(json_of(bson::value{number}), text);
+    check_same_decimal(read_json(text), number);
+    CHECK_EQ(json_of(read_json(text)), text);
+
+    const auto in_object = std::format(R"({{"x":{},"y":1}})", text);
+    CHECK_EQ(
+        json_of(
+            bson::value{
+                bson::object{{"x", number}, {"y", std::int32_t{1}}}
+    }),
+        in_object);
+    auto object_back = read_json(in_object);
+    check_same_decimal(object_back["x"], number);
+    CHECK_EQ(json_of(object_back), in_object);
+
+    const auto in_array = std::format("[1.5,{},[{}]]", text, text);
+    CHECK_EQ(
+        json_of(
+            bson::value{
+                bson::array{1.5, number, bson::array{number}}
+    }),
+        in_array);
+    auto array_back = read_json(in_array);
+    check_same_decimal(array_back[1], number);
+    check_same_decimal(array_back[2][0], number);
+    CHECK_EQ(json_of(array_back), in_array);
+
+    CHECK_EQ(
+        non_finite_json_of(decimal_holder{.value = bson::value{number}}),
+        std::format(R"({{"value":{},"plain":0}})", text));
+  }
+}
+
+TEST_CASE("reflex::serde::bson: JSON keeps the plain form of a float128 outside bson::value")
+{
+  CHECK_EQ(
+      non_finite_json_of(decimal_holder{.value = bson::value{1.5}, .plain = 1.5f128}),
+      R"({"value":1.5,"plain":1.5})");
+  CHECK_EQ(
+      non_finite_json_of(decimal_holder{.plain = 1e100f128}), R"({"value":null,"plain":1e+100})");
+  CHECK_EQ(non_finite_json_of(1.5f128), "1.5");
+  CHECK_EQ(non_finite_json_of(std::vector{1.5f128, -0.0f128}), "[1.5,-0]");
+  CHECK_THROWS_WITH_AS(
+      non_finite_json_of(decimal_holder{.plain = std::numeric_limits<std::float128_t>::infinity()}),
+      "JSON has no literal for a non-finite number", std::runtime_error);
+}

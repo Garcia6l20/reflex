@@ -422,7 +422,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // covers a plain member and a poly::var member alike.
     template <typename T> void write_member(T const& value)
     {
-      reflex::visit([this](auto const& v) { this->write_value<true>(v); }, value);
+      reflex::visit(
+          [this](auto const& v) {
+            this->write_value<true>(serde::detail::ext_json_alternative<T>(v));
+          },
+          value);
     }
 
     // The same decision for a sequence entry, which has just written "- ". No
@@ -431,7 +435,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // one difference is the whole of it.
     template <typename T> void write_element(T const& value)
     {
-      reflex::visit([this](auto const& v) { this->write_value<false>(v); }, value);
+      reflex::visit(
+          [this](auto const& v) {
+            this->write_value<false>(serde::detail::ext_json_alternative<T>(v));
+          },
+          value);
     }
 
   private:
@@ -661,7 +669,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       else
       {
         reflex::visit(
-            [this, trailing](auto const& v) { this->write_value_trailing_(v, trailing); }, value);
+            [this, trailing](auto const& v) {
+              this->write_value_trailing_(serde::detail::ext_json_alternative<V>(v), trailing);
+            },
+            value);
       }
     }
 
@@ -914,7 +925,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     template <visitable_c T>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
-      return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
+      return visit(
+          [&ser](const auto& v) {
+            return serialize(ser, serde::detail::ext_json_alternative<T>(v));
+          },
+          value);
     }
 
     template <derives_c<derive_t<Format>> T>

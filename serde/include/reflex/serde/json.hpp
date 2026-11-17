@@ -177,7 +177,7 @@ REFLEX_EXPORT namespace reflex::serde::json
         return;
       }
     }
-    serde::serialize(ser, value);
+    serde::serialize(ser, serde::detail::ext_json_alternative<Var>(value));
   }
 
   template <typename De, typename V> void load_object_member(De& de, V& v)

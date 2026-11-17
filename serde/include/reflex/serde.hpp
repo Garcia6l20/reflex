@@ -93,6 +93,18 @@ REFLEX_EXPORT namespace reflex::serde
     static constexpr bool enabled = false;
   };
 
+  template <typename Var, typename U> constexpr decltype(auto) ext_json_alternative(U const& value)
+  {
+    if constexpr(requires { ext_json_value<Var>::wrap(value); })
+    {
+      return ext_json_value<Var>::wrap(value);
+    }
+    else
+    {
+      return (value);
+    }
+  }
+
   template <typename Var> Var relaxed_integer(std::int64_t value)
   {
     static_assert(

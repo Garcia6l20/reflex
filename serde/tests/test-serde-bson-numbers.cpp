@@ -287,6 +287,167 @@ TEST_CASE("bson::value non-finite doubles round trip through YAML and TOML in th
   }
 }
 
+namespace
+{
+struct numbers_decimal_case
+{
+  bson::decimal128 value;
+  std::string      text;
+  std::string      yaml;
+};
+
+std::vector<numbers_decimal_case> numbers_decimal_cases()
+{
+  constexpr auto inf = std::numeric_limits<bson::decimal128>::infinity();
+  constexpr auto nan = std::numeric_limits<bson::decimal128>::quiet_NaN();
+  return {
+      {bson::decimal128{0},                     "0",                                 "'0'"      },
+      {-bson::decimal128{0},                    "-0",                                "'-0'"     },
+      {bson::decimal128{1.5},                   "1.5",                               "'1.5'"    },
+      {1e100f128,                               "1e+100",                            "'1e+100'" },
+      {123456789012345678901234567890123.0f128, "123456789012345678901234567890123",
+       "'123456789012345678901234567890123'"                                                    },
+      {nan,                                     "NaN",                               "NaN"      },
+      {inf,                                     "Infinity",                          "Infinity" },
+      {-inf,                                    "-Infinity",                         "-Infinity"},
+  };
+}
+
+void numbers_check_decimal(bson::value const& lifted, bson::decimal128 original)
+{
+  REQUIRE(lifted.is<bson::decimal128>());
+  const auto back = lifted.as<bson::decimal128>();
+  if(std::isnan(original))
+  {
+    CHECK(std::isnan(back));
+  }
+  else
+  {
+    CHECK(back == original);
+    CHECK(std::signbit(back) == std::signbit(original));
+  }
+}
+
+void numbers_check_decimal_relay(bson::value const& read, bson::decimal128 original)
+{
+  const auto lifted = numbers_from_json(numbers_json_of(read));
+  numbers_check_decimal(lifted.as_object().at("x"), original);
+  numbers_check_decimal(lifted.as_object().at("a").as_array().at(0), original);
+}
+
+std::string const& numbers_decimal_text(bson::value const& read)
+{
+  auto const& wrapper = read.as_object().at("x").as_object().at("$numberDecimal");
+  REQUIRE(wrapper.is<std::string>());
+  return wrapper.as<std::string>();
+}
+}
+
+bson::value numbers_decimal_doc(bson::decimal128 number)
+{
+  return bson::value{
+      {"x", number             },
+      {"a", bson::array{number}}
+  };
+}
+
+TEST_CASE("bson::value decimal128 writes as $numberDecimal in YAML")
+{
+  for(auto const& [number, text, yaml_text] : numbers_decimal_cases())
+  {
+    CAPTURE(text);
+    const auto written = numbers_yaml_of(numbers_decimal_doc(number));
+    CHECK_EQ(
+        written, std::format("a:\n  - $numberDecimal: {0}\nx:\n  $numberDecimal: {0}", yaml_text));
+    CHECK_EQ(numbers_yaml_of(bson::value{number}), std::format("$numberDecimal: {}", yaml_text));
+    const auto back = numbers_from_yaml(written);
+    CHECK_EQ(numbers_decimal_text(back), text);
+    CHECK_EQ(numbers_yaml_of(back), written);
+    numbers_check_decimal_relay(back, number);
+  }
+}
+
+TEST_CASE("bson::value decimal128 writes as $numberDecimal in TOML")
+{
+  for(auto const& [number, text, yaml_text] : numbers_decimal_cases())
+  {
+    CAPTURE(text);
+    const auto written = numbers_toml_of(numbers_decimal_doc(number));
+    CHECK_EQ(
+        written, std::format(
+                     "a = [{{ \"$numberDecimal\" = \"{0}\" }}]\nx = {{ \"$numberDecimal\" = "
+                     "\"{0}\" }}",
+                     text));
+    CHECK_EQ(
+        numbers_toml_of(bson::value{bson::object{{"x", number}}}),
+        std::format("x = {{ \"$numberDecimal\" = \"{}\" }}", text));
+    const auto back = toml::deserializer{written}.load<bson::value>();
+    CHECK_EQ(numbers_decimal_text(back), text);
+    numbers_check_decimal_relay(back, number);
+  }
+}
+
+struct numbers_commented
+{
+  bson::value d;
+  bson::value o;
+  int         n = 0;
+};
+
+struct numbers_plain_float128
+{
+  std::float128_t                a = 0;
+  std::vector<std::float128_t>   v;
+  std::optional<std::float128_t> o;
+  std::optional<std::float128_t> e;
+};
+
+TEST_CASE("bson::value decimal128 writes as $numberDecimal in YAML comments mode")
+{
+  constexpr yaml::options with_comments{.comments = true};
+
+  serde::comments_of<numbers_commented> c;
+  c.d.trailing = "decimal";
+  c.o.leading  = {"object"};
+  c.n.trailing = "plain";
+
+  const numbers_commented value{
+      .d = bson::decimal128{1.5},
+      .o = bson::object{{"x", bson::decimal128{-2}}},
+      .n = 3,
+  };
+  std::string out;
+  yaml::serializer{out, std::cw<with_comments>}.dump(value, c);
+  CHECK_EQ(
+      out, "d: # decimal\n"
+           "  $numberDecimal: '1.5'\n"
+           "# object\n"
+           "o:\n"
+           "  x:\n"
+           "    $numberDecimal: '-2'\n"
+           "'n': 3 # plain\n");
+}
+
+TEST_CASE("a plain float128 keeps its plain form in YAML and TOML")
+{
+  const numbers_plain_float128 value{
+      .a = 1.5f128,
+      .v = {-0.0f128, 1e100f128},
+      .o = 2.5f128,
+      .e = std::nullopt,
+  };
+
+  std::string      yaml_out;
+  yaml::serializer yaml_ser{yaml_out};
+  yaml_ser.dump(value);
+  CHECK_EQ(yaml_out, "a: 1.5\nv:\n  - -0\n  - 1e+100\no: 2.5\ne: null");
+
+  std::string      toml_out;
+  toml::serializer toml_ser{toml_out};
+  toml_ser.dump(value);
+  CHECK_EQ(toml_out, "a = 1.5\nv = [-0.0, 1e+100]\no = 2.5");
+}
+
 TEST_CASE("bson::value from JSON: numbers inside containers")
 {
   for(auto read : {numbers_from_json, numbers_from_json_stream})

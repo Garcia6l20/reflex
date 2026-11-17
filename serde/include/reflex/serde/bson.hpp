@@ -199,6 +199,28 @@ constexpr ext_json_number_double ext_json_non_finite(double value)
   return {.number_double = value < 0 ? "-Infinity" : "Infinity"};
 }
 
+struct ext_json_number_decimal
+{
+  [[= serde::rename{"$numberDecimal"}]] std::string number_decimal;
+};
+
+inline ext_json_number_decimal ext_json_decimal(bson::decimal128 value)
+{
+  if(std::isnan(value))
+  {
+    return {.number_decimal = "NaN"};
+  }
+  if(std::isinf(value))
+  {
+    return {.number_decimal = value < 0 ? "-Infinity" : "Infinity"};
+  }
+  std::array<char, 64> buf{};
+  const auto           r = std::to_chars(buf.data(), buf.data() + buf.size(), value);
+  return {
+      .number_decimal = std::string{buf.data(), r.ptr}
+  };
+}
+
 constexpr ext_json_object_id ext_json_of(bson::object_id const& value)
 {
   return {.oid = serde::detail::hex_encode(value.bytes)};
@@ -2495,6 +2517,11 @@ template <> struct ext_json_value<bson::value>
   static constexpr auto non_finite(double value)
   {
     return bson::detail::ext_json_non_finite(value);
+  }
+
+  template <std::same_as<bson::decimal128> U> static auto wrap(U value)
+  {
+    return bson::detail::ext_json_decimal(value);
   }
 };
 }
