@@ -400,6 +400,45 @@ TEST_CASE("reflex::serde::bson: JSON $scope the BSON writer refuses throws with 
       R"({"$code":"f","$scope":{"r":{"$regularExpression":{"pattern":"a","options":"q"}}}})",
       "Extended JSON: $scope is not a valid BSON document: "
       "BSON regex options may only hold the letters i, l, m, s, u, x");
+  check_throws(
+      R"({"$code":"f","$scope":{"a\u0000b":1}})",
+      "Extended JSON: $scope is not a valid BSON document: BSON key must not contain a null byte");
+  check_throws(
+      R"({"$code":"f","$scope":{"o":{"a\u0000b":1}}})",
+      "Extended JSON: $scope is not a valid BSON document: BSON key must not contain a null byte");
+}
+
+TEST_CASE("reflex::serde::bson: the BSON writer refuses a key holding a null byte")
+{
+  const auto key = std::string{"a\0b", 3};
+  bytes      out;
+
+  bson::serializer flat{out};
+  CHECK_THROWS_WITH_AS(
+      serde::serialize(
+          flat,
+          bson::object{
+              {key, 1}
+  }),
+      "BSON key must not contain a null byte", std::invalid_argument);
+
+  bson::serializer nested{out};
+  CHECK_THROWS_WITH_AS(
+      serde::serialize(
+          nested,
+          bson::object{
+              {"o", bson::object{{key, 1}}}
+  }),
+      "BSON key must not contain a null byte", std::invalid_argument);
+
+  bson::serializer in_map{out};
+  CHECK_THROWS_WITH_AS(
+      serde::serialize(
+          in_map,
+          std::map<std::string, int>{
+              {key, 1}
+  }),
+      "BSON key must not contain a null byte", std::invalid_argument);
 }
 
 TEST_CASE("reflex::serde::bson: JSON round trips that do not give back the original value")

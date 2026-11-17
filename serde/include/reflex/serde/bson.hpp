@@ -365,7 +365,7 @@ template <typename T>
 constexpr void write_document_value(bytes& out, std::string_view key, T const& value)
 {
   append(out, detail::bson_type::document);
-  append(out, key);
+  append_cstring(out, key, "key");
 
   make_document(out, [&](bytes& doc) {
     if constexpr(map_c<T>)
@@ -400,7 +400,7 @@ template <typename T>
 constexpr void write_array_value(bytes& out, std::string_view key, T const& value)
 {
   append(out, detail::bson_type::array);
-  append(out, key);
+  append_cstring(out, key, "key");
 
   make_document(out, [&](bytes& doc) {
     std::size_t idx = 0;
@@ -423,7 +423,7 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   if constexpr(std::same_as<value_t, null_t>)
   {
     append(out, detail::bson_type::null);
-    append(out, key);
+    append_cstring(out, key, "key");
   }
   else if constexpr(optional_c<value_t>)
   {
@@ -439,13 +439,13 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   else if constexpr(std::same_as<value_t, bool>)
   {
     append(out, detail::bson_type::boolean);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, value ? std::byte{0x01} : std::byte{0x00});
   }
   else if constexpr(str_c<value_t>)
   {
     append(out, detail::bson_type::string);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, std::string_view(value), true);
   }
   else if constexpr(std::floating_point<value_t>)
@@ -453,13 +453,13 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
     if constexpr(std::same_as<value_t, decimal128>)
     {
       append(out, detail::bson_type::decimal128);
-      append(out, key);
+      append_cstring(out, key, "key");
       append(out, value);
     }
     else
     {
       append(out, detail::bson_type::double_);
-      append(out, key);
+      append_cstring(out, key, "key");
       append(out, static_cast<double>(value));
     }
   }
@@ -468,13 +468,13 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
     if constexpr(std::same_as<value_t, bson::int32>)
     {
       append(out, detail::bson_type::int32);
-      append(out, key);
+      append_cstring(out, key, "key");
       append(out, value);
     }
     else if constexpr(std::same_as<value_t, bson::int64>)
     {
       append(out, detail::bson_type::int64);
-      append(out, key);
+      append_cstring(out, key, "key");
       append(out, value);
     }
     else if(
@@ -482,32 +482,32 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
         and (value <= std::numeric_limits<std::int32_t>::max()))
     {
       append(out, detail::bson_type::int32);
-      append(out, key);
+      append_cstring(out, key, "key");
       append(out, static_cast<std::int32_t>(value));
     }
     else
     {
       append(out, detail::bson_type::int64);
-      append(out, key);
+      append_cstring(out, key, "key");
       append(out, static_cast<std::int64_t>(value));
     }
   }
   else if constexpr(std::same_as<value_t, bson::decimal128>)
   {
     append(out, detail::bson_type::decimal128);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, value);
   }
   else if constexpr(std::same_as<value_t, bson::datetime>)
   {
     append(out, detail::bson_type::datetime);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, value.millis_since_epoch);
   }
   else if constexpr(std::same_as<value_t, bson::binary>)
   {
     append(out, detail::bson_type::binary);
-    append(out, key);
+    append_cstring(out, key, "key");
     const auto old    = value.subtype == binary_old_subtype;
     const auto prefix = old ? sizeof(std::int32_t) : 0;
     const auto limit  = static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
@@ -526,67 +526,67 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   else if constexpr(std::same_as<value_t, bson::object_id>)
   {
     append(out, detail::bson_type::object_id);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, value);
   }
   else if constexpr(std::same_as<value_t, bson::timestamp>)
   {
     append(out, detail::bson_type::timestamp);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, value.increment);
     append(out, value.seconds);
   }
   else if constexpr(std::same_as<value_t, bson::regex>)
   {
     append(out, detail::bson_type::regex);
-    append(out, key);
+    append_cstring(out, key, "key");
     append_cstring(out, value.pattern, "regex pattern");
     append_cstring(out, sorted_regex_options(value.options), "regex options");
   }
   else if constexpr(std::same_as<value_t, bson::javascript>)
   {
     append(out, detail::bson_type::javascript);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, std::string_view(value.code), true);
   }
   else if constexpr(std::same_as<value_t, bson::symbol>)
   {
     append(out, detail::bson_type::symbol);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, std::string_view(value.name), true);
   }
   else if constexpr(std::same_as<value_t, bson::db_pointer>)
   {
     append(out, detail::bson_type::db_pointer);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, std::string_view(value.ref), true);
     append(out, value.id);
   }
   else if constexpr(std::same_as<value_t, bson::min_key>)
   {
     append(out, detail::bson_type::min_key);
-    append(out, key);
+    append_cstring(out, key, "key");
   }
   else if constexpr(std::same_as<value_t, bson::max_key>)
   {
     append(out, detail::bson_type::max_key);
-    append(out, key);
+    append_cstring(out, key, "key");
   }
   else if constexpr(std::same_as<value_t, bson::undefined>)
   {
     append(out, detail::bson_type::undefined);
-    append(out, key);
+    append_cstring(out, key, "key");
   }
   else if constexpr(std::same_as<value_t, bson::code_w_scope>)
   {
     append(out, detail::bson_type::code_w_scope);
-    append(out, key);
+    append_cstring(out, key, "key");
     append(out, value);
   }
   else if constexpr(detail::byte_seq_c<value_t>)
   {
     append(out, detail::bson_type::binary);
-    append(out, key);
+    append_cstring(out, key, "key");
     if(value.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
     {
       throw std::length_error("BSON binary payload exceeds the int32 length field");
