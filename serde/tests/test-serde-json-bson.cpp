@@ -11,26 +11,6 @@ using namespace std::string_view_literals;
 
 #define JSON(...) #__VA_ARGS__
 
-namespace reflex::serde::json
-{
-template <typename OutputIt, auto Opts>
-OutputIt
-    tag_invoke(tag_t<serde::serialize>, serializer<OutputIt, Opts>& ser, bson::datetime const& dt)
-{
-  return tag_invoke(tag_t<serde::serialize>{}, ser, std::format("{}", dt));
-}
-
-template <typename It, auto Opts>
-bson::datetime tag_invoke(
-    tag_t<serde::deserialize>,
-    deserializer<It, Opts>& de,
-    std::type_identity<bson::datetime>)
-{
-  auto s = tag_invoke(tag_t<serde::deserialize>{}, de, std::type_identity<std::string>{});
-  return reflex::parse_or_throw<bson::datetime>(s);
-}
-} // namespace reflex::serde::json
-
 TEST_CASE("reflex::serde::json and bson: interoperability")
 {
   using json::null;
@@ -51,9 +31,8 @@ TEST_CASE("reflex::serde::json and bson: interoperability")
   SUBCASE("datetime")
   {
     auto        now          = bson::datetime::now();
-    std::string datetime_str = std::format("\"{}\"", now);
+    std::string datetime_str = std::format(R"({{"$date":{{"$numberLong":"{}"}}}})", now);
     auto        datetime     = json::deserializer{datetime_str}.load<bson::datetime>();
-    std::println("Parsed datetime: {}", datetime);
     CHECK(datetime == now);
 
     std::ostringstream json_out;

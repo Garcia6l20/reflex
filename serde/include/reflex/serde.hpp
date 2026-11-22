@@ -5,6 +5,9 @@
 #endif
 
 #ifndef REFLEX_MODULE
+#include <cstdint>
+#include <utility>
+
 #include <reflex/tag_invoke.hpp>
 #endif
 
@@ -82,6 +85,42 @@ REFLEX_EXPORT namespace reflex::serde
 
   template <typename S>
   concept ext_json_serializer_c = ext_json_serializer_v<std::remove_cvref_t<S>>;
+
+  template <typename D> inline constexpr bool ext_json_deserializer_v = false;
+
+  template <typename D>
+  concept ext_json_deserializer_c = ext_json_deserializer_v<std::remove_cvref_t<D>>;
+
+  template <typename T> inline constexpr bool ext_json_type_v = false;
+
+  template <typename Var> struct ext_json_value
+  {
+    static constexpr bool enabled = false;
+  };
+
+  template <typename Var, typename U> constexpr decltype(auto) ext_json_alternative(U const& value)
+  {
+    if constexpr(requires { ext_json_value<Var>::wrap(value); })
+    {
+      return ext_json_value<Var>::wrap(value);
+    }
+    else
+    {
+      return (value);
+    }
+  }
+
+  template <typename Var> Var relaxed_integer(std::int64_t value)
+  {
+    static_assert(
+        Var::template can_hold<std::int32_t>() and Var::template can_hold<std::int64_t>(),
+        "an ext_json_value value type must hold std::int32_t and std::int64_t");
+    if(std::in_range<std::int32_t>(value))
+    {
+      return Var{static_cast<std::int32_t>(value)};
+    }
+    return Var{value};
+  }
   }
 
   inline constexpr struct serialize_cpo : customization_point_object

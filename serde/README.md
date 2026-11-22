@@ -211,14 +211,24 @@ drops it, writing puts it back.
 outside `ilmsux` throws `std::invalid_argument`. `bson::code_w_scope::scope`
 holds the encoded scope document and defaults to the empty document.
 
+An integer read from JSON, YAML or TOML into a `bson::value` is an `int32`, or
+an `int64` outside int32 range, the smallest BSON integer that holds it. A
+number with a fraction or an exponent is a `double`. Past int64, a JSON or YAML
+decimal integer reads as a `double`, and TOML or a YAML hex or octal integer
+throws `TOML: '<text>' is not an integer`, or the YAML equivalent. Only
+`bson::value` reads this way: `json::value` and `yaml::value` have no integer
+alternative and read a `double`, and every other `poly::var` is unchanged.
+
 ### Text form of the BSON types
 
-JSON, YAML and TOML write `bson::binary` and the types below in the Extended
-JSON v2 shape. The other types keep their plain form: `int32`, `int64`,
-`double`, `datetime` and `decimal128` are not rewritten.
+JSON, YAML and TOML write the types below in the Extended JSON v2 shape and
+read them back, both inside a `bson::value` and as typed members or roots.
+`datetime` is written canonical. A `bson::value` needs no user overload in any
+of the three backends.
 
 | type | JSON |
 |---|---|
+| `datetime` | `{"$date":{"$numberLong":"1700000000123"}}` |
 | `binary` | `{"$binary":{"base64":"3q0=","subType":"04"}}` |
 | `object_id` | `{"$oid":"5061728394a5b6c7d8e9fa0b"}` |
 | `timestamp` | `{"$timestamp":{"t":1700000000,"i":2}}` |
@@ -231,8 +241,127 @@ JSON v2 shape. The other types keep their plain form: `int32`, `int64`,
 | `max_key` | `{"$maxKey":1}` |
 | `undefined` | `{"$undefined":true}` |
 
-XML and CSV have no text form for these types. Reading the shapes back from
-text is not supported: JSON cannot read a `bson::binary` in any shape.
+`int32`, `int64` and `double` keep their plain form. `decimal128` keeps its
+plain form as a typed member, and inside a `bson::value` it writes
+`{"$numberDecimal":"1.5"}`, the shortest text that reads back to the same
+value. JSON has no literal for a non-finite number, so inside a `bson::value`
+it writes `{"$numberDouble":"NaN"}`, `"Infinity"` or `"-Infinity"`. A plain
+`double` member still throws `JSON has no literal for a non-finite number`.
+YAML and TOML write their native `.nan` and `nan`.
+
+TOML writes each of these documents as an inline table, in every position:
+
+```toml
+"$binary" = { base64 = "3q0=", subType = "04" }
+id = { "$oid" = "5061728394a5b6c7d8e9fa0b" }
+ids = [{ "$oid" = "5061728394a5b6c7d8e9fa0b" }]
+d = { "$date" = { "$numberLong" = "1700000000123" } }
+```
+
+The first line is a root `bson::binary`: the root's own keys stay lines. YAML
+quotes `subType: '04'` and any `$oid` or number body a YAML reader would take
+for a number.
+
+A BSON type as a map key is a compile error in JSON, YAML and TOML, since its
+text form is a document. XML and CSV have no text form for these types and
+read none.
+
+A user `tag_invoke` for one of these types over a concrete backend
+serializer or deserializer, such as `json::serializer<OutputIt, Opts>&`, is
+more specialized than the library's and silently replaces its form. One over a
+generic constrained `S&` is ambiguous.
+
+#### Reading Extended JSON
+
+```cpp
+import reflex.serde.bson;
+import reflex.serde.json;
+using namespace reflex::serde;
+
+auto v = json::deserializer{std::string{
+    R"({"id":{"$oid":"5061728394a5b6c7d8e9fa0b"},"n":7,"big":5000000000})"}}
+             .load<bson::value>();
+// v["id"].is<bson::object_id>(), v["n"].is<bson::int32>(), v["big"].is<bson::int64>()
+
+struct record
+{
+  bson::object_id id;
+  bson::datetime  at;
+};
+
+auto r = json::deserializer{std::string{
+    R"({"id":{"$oid":"5061728394a5b6c7d8e9fa0b"},"at":{"$date":"2023-11-14T22:13:20.123Z"}})"}}
+             .load<record>();
+// r.at.millis_since_epoch == 1700000000123
+```
+
+An object holding one of the 16 reserved keys is a type wrapper: `$oid`,
+`$symbol`, `$numberInt`, `$numberLong`, `$numberDouble`, `$numberDecimal`,
+`$binary`, `$code`, `$scope`, `$timestamp`, `$regularExpression`,
+`$dbPointer`, `$date`, `$minKey`, `$maxKey`, `$undefined`. Rules, per the spec's
+parser section:
+
+- A wrapper must hold exactly its own keys, in any order. A missing key, an
+  extra key or a value of the wrong type throws `std::runtime_error` with a
+  message that starts with `Extended JSON:` and names the key. There is no
+  fallback to a plain object. Two examples:
+  - `Extended JSON: unexpected key 'x' in a $oid document`
+  - `Extended JSON: $timestamp.t must be an integer from 0 to 4294967295`
+- Any other `$` key, such as `$set`, `$type`, `$regex` or `$uuid`, leaves the
+  object plain, and so does a DBRef, `{"$ref": ..., "$id": ...}`. The legacy
+  `$regex`/`$options`, `$binary`/`$type` and `$uuid` forms are not read.
+- The root is classified too, unlike the spec, so a whole document
+  `{"$oid": "..."}` read into `bson::value` is an `object_id` and the writer's
+  own output reads back.
+- Hex digits are read in either case. `subType` takes 1 or 2 hex digits.
+  `base64` must be padded, with zero pad bits.
+- The canonical number wrappers take a string body only: `$numberInt`,
+  `$numberLong`, `$numberDouble` with `"Infinity"`, `"-Infinity"` and `"NaN"`,
+  and `$numberDecimal`, which also takes `Inf`, `Infinity` and `NaN` in any case
+  with an optional sign. A wrong body throws, as below. In YAML the body must be
+  quoted: an unquoted `$numberInt: 5` throws the same message.
+  - `Extended JSON: $numberInt must be a string holding a 32-bit integer`
+- `$date` takes `{"$numberLong": "<millis>"}` or an RFC 3339 string with a `Z`,
+  `+hh:mm` or `-hh:mm` offset. Fractional seconds past the third digit are
+  truncated, and `23:59:60` throws. Wrappers are decoded
+  bottom-up, so the legacy `{"$date": <integer>}` is accepted when the integer
+  is outside int32 range, and a wrapped number such as `{"$numberLong": "5"}` is
+  accepted where the spec wants a plain number, in `$timestamp`, `$minKey` and
+  `$maxKey`.
+- Regex options are stored as read, neither sorted nor checked. The writer sorts
+  and checks them, so `"xi"` reads as `"xi"` and writes as `"ix"`.
+
+A typed member takes its own wrapper only. Anything else throws, for example
+`Extended JSON: expected a $oid document for bson::object_id`. A `datetime`
+member reads both `$date` forms. The canonical number wrappers lift inside a
+`bson::value` only: an `int` member does not read `{"$numberInt": "5"}`.
+
+TOML lifts a wrapper written inline, as a header table or through dotted keys,
+below a root `bson::value`, `bson::object` or `std::map<std::string,
+bson::value>`. Below a `bson::value` data member of a struct, only the inline
+form lifts: `[v]` then `"$oid" = "..."` stays a plain table. A header table for a
+typed member throws `TOML: key 'v.$oid': Key not found in object`. An error
+inside a typed member `v` is prefixed with `TOML: key 'v':`, one inside a
+`bson::value` document is bare. The library's own TOML output never uses the
+header form for these types.
+
+Known limits:
+
+- `bson::decimal128` is `std::float128_t`, IEEE binary128, not IEEE decimal128.
+  A `$numberDecimal` beyond about `1.2E+4932` or below about `6.5E-4966` throws,
+  a decimal fraction such as `0.1` is not exact, and trailing zeros and NaN
+  payloads are lost. The shortest binary128 text can hold 35 significant digits,
+  which a conforming decimal128 reader rejects.
+- `bson::object` is a `std::map`, so keys come back sorted. A `$scope` read from
+  text has its numbers relaxed, so a double `1.0` comes back as int32 `1` and the
+  scope bytes differ.
+- The TOML reader has no limit on inline table nesting. A deep enough document
+  overflows the stack.
+
+`reflex-serde-convert` reads JSON, YAML and TOML through `bson::value` when it
+writes BSON, so wrappers become BSON types and `{"a":1}` becomes an int32
+element where it was a double. A malformed wrapper is an error. Text to text
+keeps the input format's own value type.
 
 ---
 
@@ -283,6 +412,10 @@ struct [[= serde::naming::camel_case]] api_response
 };
 // JSON: {"statusCode":200,"content-type":"..."}
 ```
+
+`serde::inline_table` is honoured by TOML only: it writes a table member as
+`key = { ... }` instead of a `[key]` section. See
+[Table layout](#table-layout).
 
 ---
 
@@ -397,7 +530,8 @@ template argument.
 | TOML | `comments = false` | `comments = false`, `unknown_keys = error` |
 | XML | `indent = 0`, `comments = false` | `comments = false`, `unknown_keys = skip` |
 
-BSON and CSV take no options.
+CSV takes no options. BSON's writer takes none, and its reader takes
+`bson::read_options{.unknown_keys}`, default `error`.
 
 ### Pretty output
 
@@ -1036,6 +1170,8 @@ struct Probe
 | `std::vector<std::vector<Aggregate>>` | inline, since an inline array has no line for a header |
 | an empty `std::optional` | nothing, key included |
 | `std::pair<K, V>` | a one-entry table |
+| a member marked `serde::inline_table` | `key = { ... }` or `key = [{ ... }]`, on one line |
+| a BSON type with an Extended JSON form | `key = { "$oid" = "..." }`, always inline |
 
 A map member gets its own header before its entries, the way any other table
 member does, and a map key that is not a bare key is quoted inside the path:
@@ -1061,6 +1197,30 @@ An empty `std::optional` drops its key. TOML has no null, so writing anything
 would be a lie and omission is what a TOML reader expects. An inline table has a
 key to omit too. An array element does not - `x = [1, , 3]` is not TOML - so a
 null reaching an array element throws, with a message naming the format.
+
+`serde::inline_table` forces a table member onto one line, wherever it is
+declared:
+
+```cpp
+struct Endpoint
+{
+  std::string                                host;
+  [[= serde::inline_table]] Tls              tls;
+  Tls                                        backup;
+  [[= serde::inline_table]] std::vector<Tls> pool;
+};
+// host = "h"
+// tls = { enabled = true, port = 8443 }
+// pool = [{ enabled = true, port = 1 }]
+// [backup]
+// enabled = false
+// port = 2
+```
+
+It applies to an aggregate, a map, a sequence of aggregates and an optional of
+one. On a scalar member it fails a `static_assert`. JSON and YAML ignore it. In a commented dump the
+member keeps its leading and trailing comments, and its footer and the comments
+of its inner members are dropped, since an inline table has no line for them.
 
 ### Strings
 
@@ -1285,9 +1445,10 @@ needs the `template` keyword, since `de` has a dependent type. An override writt
 `serializer<OutputIt>&` binds the default options only, and under any other
 set the backend's own overload for that type is used instead, silently.
 
-The same pattern applies to `reflex::serde::bson`, whose serializer and
-deserializer have no options argument: there the override takes
-`serializer<OutputIt>&` and `deserializer<It>&`.
+The same pattern applies to `reflex::serde::bson`. Its serializer has no
+options argument, so the override takes `serializer<OutputIt>&`. Its
+deserializer takes `bson::read_options` as its second argument, so the override
+takes `deserializer<It, Opts>&` with `auto Opts`, as for JSON.
 
 ---
 

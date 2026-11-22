@@ -181,7 +181,7 @@ REFLEX_EXPORT namespace reflex::serde::bson
   constexpr parse_result<datetime> tag_invoke(
       tag_t<Parse>, std::string_view s, std::type_identity<datetime>) noexcept
   {
-    std::uint64_t ms = 0;
+    datetime::rep ms = 0;
     auto [ptr, ec]   = std::from_chars(s.data(), s.data() + s.size(), ms);
     if(ec != std::errc())
     {

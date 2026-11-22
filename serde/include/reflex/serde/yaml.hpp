@@ -161,8 +161,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
   // mapping. Leaving it out puts "k: v" after the parent's own "key: " and
   // produces "outer: k: v", which is not a document.
   template <typename T>
-  concept block_node_c = (aggregate_c<std::remove_cvref_t<T>> or seq_c<std::remove_cvref_t<T>>
-                          or map_c<std::remove_cvref_t<T>> or pair_c<std::remove_cvref_t<T>>)
+  concept block_node_c = (aggregate_c<std::remove_cvref_t<T>>
+                          or seq_c<std::remove_cvref_t<T>>
+                          or map_c<std::remove_cvref_t<T>>
+                          or pair_c<std::remove_cvref_t<T>>
+                          or serde::detail::ext_json_type_v<std::remove_cvref_t<T>>)
                      and not str_c<std::remove_cvref_t<T>>;
 
   template <typename T> consteval std::size_t member_count()
@@ -422,7 +425,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // covers a plain member and a poly::var member alike.
     template <typename T> void write_member(T const& value)
     {
-      reflex::visit([this](auto const& v) { this->write_value<true>(v); }, value);
+      reflex::visit(
+          [this](auto const& v) {
+            this->write_value<true>(serde::detail::ext_json_alternative<T>(v));
+          },
+          value);
     }
 
     // The same decision for a sequence entry, which has just written "- ". No
@@ -431,7 +438,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // one difference is the whole of it.
     template <typename T> void write_element(T const& value)
     {
-      reflex::visit([this](auto const& v) { this->write_value<false>(v); }, value);
+      reflex::visit(
+          [this](auto const& v) {
+            this->write_value<false>(serde::detail::ext_json_alternative<T>(v));
+          },
+          value);
     }
 
   private:
@@ -661,7 +672,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       else
       {
         reflex::visit(
-            [this, trailing](auto const& v) { this->write_value_trailing_(v, trailing); }, value);
+            [this, trailing](auto const& v) {
+              this->write_value_trailing_(serde::detail::ext_json_alternative<V>(v), trailing);
+            },
+            value);
       }
     }
 
@@ -914,7 +928,11 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     template <visitable_c T>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
-      return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
+      return visit(
+          [&ser](const auto& v) {
+            return serialize(ser, serde::detail::ext_json_alternative<T>(v));
+          },
+          value);
     }
 
     template <derives_c<derive_t<Format>> T>
@@ -1502,8 +1520,10 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     }
 
     template <typename Agg>
-    serde::comment_block*
-        load_member_commented_(std::string_view key, serde::comments_of<Agg>& node, Agg& value)
+    serde::comment_block* load_member_commented_(
+        [[maybe_unused]] std::string_view key,
+        serde::comments_of<Agg>&          node,
+        Agg&                              value)
     {
       template for(constexpr auto& member : serde::object_visitor<Agg>::__members())
       {
@@ -1781,6 +1801,19 @@ REFLEX_EXPORT namespace reflex::serde::yaml
     // '-' starts both a sequence entry and a negative number. So the structural
     // forms are tested first, each with the lookahead it needs, and everything
     // else is read as a scalar and classified afterwards.
+    template <typename var_type> static auto load_var_object(deserializer& de) -> var_type
+    {
+      if constexpr(serde::detail::ext_json_value<var_type>::enabled)
+      {
+        return serde::detail::ext_json_value<var_type>::lift(
+            de.template load<typename var_type::obj_type>());
+      }
+      else
+      {
+        return de.template load<typename var_type::obj_type>();
+      }
+    }
+
     template <typename var_type>
       requires(meta::is_template_instance_of(^^var_type, ^^poly::var))
     friend auto
@@ -1800,7 +1833,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       if(c == '{')
       {
-        return de.template load<typename var_type::obj_type>();
+        return load_var_object<var_type>(de);
       }
       if(de.at_sequence_entry())
       {
@@ -1808,7 +1841,7 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       }
       if(de.at_block_mapping())
       {
-        return de.template load<typename var_type::obj_type>();
+        return load_var_object<var_type>(de);
       }
       return de.template resolve_scalar<var_type>();
     }
@@ -2192,14 +2225,20 @@ REFLEX_EXPORT namespace reflex::serde::yaml
       {
         return yaml::boolean{false};
       }
-      // yes/no/on/off deliberately fall through to string, which is what YAML
-      // 1.2 core says they are. That differs from load<bool>(), which throws on
-      // them: asked for a bool the intent is unambiguous and a 1.1 spelling is
-      // worth an error, but asked what this *is*, 1.2 answers "a string".
-      // The hex and octal forms have to go through the integral parser and then
-      // widen: yaml::number is a double, and the floating-point branch of
-      // parse_number has no notion of a base prefix. Plain decimal integers
-      // need no such detour, std::from_chars reads them as a double directly.
+      // yes/no/on/off fall through to string, per YAML 1.2 core. load<bool>()
+      // throws on them instead: asked for a bool, a 1.1 spelling is an error.
+      if constexpr(serde::detail::ext_json_value<var_type>::enabled)
+      {
+        if(detail::matches_int<detail::yaml_numbers>(s.text))
+        {
+          if(const auto i = serde::detail::parse_int64<detail::yaml_numbers>(s.text, "YAML"))
+          {
+            return serde::detail::relaxed_integer<var_type>(*i);
+          }
+        }
+      }
+      // yaml::number is a double, and the floating-point parse knows no base
+      // prefix: hex and octal go through the integral parser, then widen.
       if(s.text.starts_with("0x") or s.text.starts_with("0o"))
       {
         return static_cast<yaml::number>(
@@ -3072,6 +3111,9 @@ namespace reflex::serde::detail
 {
 template <typename OutputIt, yaml::options Opts>
 inline constexpr bool ext_json_serializer_v<yaml::serializer<OutputIt, Opts>> = true;
+
+template <typename InputIt, yaml::read_options Opts>
+inline constexpr bool ext_json_deserializer_v<yaml::deserializer<InputIt, Opts>> = true;
 }
 
 REFLEX_EXPORT namespace reflex::serde::ser

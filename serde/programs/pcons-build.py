@@ -37,3 +37,121 @@ if build_testing:
             args=["-if", "json", "-of", fmt, str(unnamed), str(work / f"forced-{fmt}")],
             labels=["serde"],
         )
+
+    extended = {
+        "json": r'{"arr":[1,"x",[false]],"bin":{"$binary":{"base64":"3q0=","subType":"00"}},'
+        r'"bin4":{"$binary":{"base64":"3q0=","subType":"04"}},'
+        r'"bin8":{"$binary":{"base64":"3q0=","subType":"80"}},"bool":true,'
+        r'"cws":{"$code":"f(x)","$scope":{"x":7}},"d128":{"$numberDecimal":"1.5"},'
+        r'"dbp":{"$dbPointer":{"$ref":"db.coll","$id":{"$oid":"5061728394a5b6c7d8e9fa0b"}}},'
+        r'"doc":{"$set":1},"dt":{"$date":{"$numberLong":"1700000000123"}},"i32":-7,'
+        r'"i64":5000000000,"js":{"$code":"g()"},"max":{"$maxKey":1},"min":{"$minKey":1},'
+        r'"num":2.5,"oid":{"$oid":"5061728394a5b6c7d8e9fa0b"},'
+        r'"re":{"$regularExpression":{"pattern":"^a\"b\\d","options":"im"}},"str":"s",'
+        r'"sym":{"$symbol":"s"},"ts":{"$timestamp":{"t":1700000000,"i":2}},'
+        r'"u":{"$undefined":true}}',
+        "yaml": r"""arr:
+  - 1
+  - x
+  - - false
+bin:
+  $binary:
+    base64: 3q0=
+    subType: '00'
+bin4:
+  $binary:
+    base64: 3q0=
+    subType: '04'
+bin8:
+  $binary:
+    base64: 3q0=
+    subType: '80'
+bool: true
+cws:
+  $code: f(x)
+  $scope:
+    x: 7
+d128:
+  $numberDecimal: '1.5'
+dbp:
+  $dbPointer:
+    $ref: db.coll
+    $id:
+      $oid: 5061728394a5b6c7d8e9fa0b
+doc:
+  $set: 1
+dt:
+  $date:
+    $numberLong: '1700000000123'
+i32: -7
+i64: 5000000000
+js:
+  $code: g()
+max:
+  $maxKey: 1
+min:
+  $minKey: 1
+num: 2.5
+oid:
+  $oid: 5061728394a5b6c7d8e9fa0b
+re:
+  $regularExpression:
+    pattern: ^a"b\d
+    options: im
+str: s
+sym:
+  $symbol: s
+ts:
+  $timestamp:
+    t: 1700000000
+    i: 2
+u:
+  $undefined: true""",
+        "toml": r"""arr = [1, "x", [false]]
+bin = { "$binary" = { base64 = "3q0=", subType = "00" } }
+bin4 = { "$binary" = { base64 = "3q0=", subType = "04" } }
+bin8 = { "$binary" = { base64 = "3q0=", subType = "80" } }
+bool = true
+cws = { "$code" = "f(x)", "$scope" = { x = 7 } }
+d128 = { "$numberDecimal" = "1.5" }
+dbp = { "$dbPointer" = { "$ref" = "db.coll", "$id" = { "$oid" = "5061728394a5b6c7d8e9fa0b" } } }
+dt = { "$date" = { "$numberLong" = "1700000000123" } }
+i32 = -7
+i64 = 5000000000
+js = { "$code" = "g()" }
+max = { "$maxKey" = 1 }
+min = { "$minKey" = 1 }
+num = 2.5
+oid = { "$oid" = "5061728394a5b6c7d8e9fa0b" }
+re = { "$regularExpression" = { pattern = '^a"b\d', options = "im" } }
+str = "s"
+sym = { "$symbol" = "s" }
+ts = { "$timestamp" = { t = 1700000000, i = 2 } }
+u = { "$undefined" = true }
+[doc]
+"$set" = 1""",
+    }
+    fixtures = {
+        fmt: write_file(work / f"ext.{fmt}", text) for fmt, text in extended.items()
+    }
+    round_trip = (
+        'set -e; "$1" "$2" "$4" >/dev/null; "$1" "$3" "$5" >/dev/null; cmp "$4" "$5"; '
+        '"$1" "$5" "$6" >/dev/null; cmp "$3" "$6"'
+    )
+    for fmt, fixture in fixtures.items():
+        project.Test(
+            f"serde.convert-ext-{fmt}",
+            "/bin/sh",
+            args=[
+                "-c",
+                round_trip,
+                "sh",
+                convert,
+                str(fixtures["json"]),
+                str(fixture),
+                str(work / f"ext-{fmt}-ref.bson"),
+                str(work / f"ext-{fmt}.bson"),
+                str(work / f"ext-{fmt}-back.{fmt}"),
+            ],
+            labels=["serde"],
+        )

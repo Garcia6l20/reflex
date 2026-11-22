@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <bit>
 #include <charconv>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <span>
@@ -25,7 +26,8 @@ namespace reflex::serde::bson::detail
 using bytes = std::vector<std::byte>;
 
 template <typename T>
-concept bson_extended_c = decays_to_c<T, bson::object_id>
+concept bson_extended_c = decays_to_c<T, bson::datetime>
+                       or decays_to_c<T, bson::object_id>
                        or decays_to_c<T, bson::timestamp>
                        or decays_to_c<T, bson::regex>
                        or decays_to_c<T, bson::javascript>
@@ -95,7 +97,7 @@ struct ext_json_binary_body
 
 struct ext_json_binary
 {
-  [[= serde::rename{"$binary"}]] ext_json_binary_body binary;
+  [[= serde::rename{"$binary"}, = serde::inline_table]] ext_json_binary_body binary;
 };
 
 struct ext_json_object_id
@@ -128,7 +130,7 @@ struct ext_json_timestamp_body
 
 struct ext_json_timestamp
 {
-  [[= serde::rename{"$timestamp"}]] ext_json_timestamp_body timestamp;
+  [[= serde::rename{"$timestamp"}, = serde::inline_table]] ext_json_timestamp_body timestamp;
 };
 
 struct ext_json_regex_body
@@ -139,7 +141,7 @@ struct ext_json_regex_body
 
 struct ext_json_regex
 {
-  [[= serde::rename{"$regularExpression"}]] ext_json_regex_body regex;
+  [[= serde::rename{"$regularExpression"}, = serde::inline_table]] ext_json_regex_body regex;
 };
 
 struct ext_json_javascript
@@ -150,7 +152,7 @@ struct ext_json_javascript
 struct ext_json_code_w_scope
 {
   [[= serde::rename{"$code"}]] std::string   code;
-  [[= serde::rename{"$scope"}]] bson::object scope;
+  [[= serde::rename{"$scope"}, = serde::inline_table]] bson::object scope;
 };
 
 struct ext_json_symbol
@@ -161,12 +163,12 @@ struct ext_json_symbol
 struct ext_json_db_pointer_body
 {
   [[= serde::rename{"$ref"}]] std::string       ref;
-  [[= serde::rename{"$id"}]] ext_json_object_id id;
+  [[= serde::rename{"$id"}, = serde::inline_table]] ext_json_object_id id;
 };
 
 struct ext_json_db_pointer
 {
-  [[= serde::rename{"$dbPointer"}]] ext_json_db_pointer_body db_pointer;
+  [[= serde::rename{"$dbPointer"}, = serde::inline_table]] ext_json_db_pointer_body db_pointer;
 };
 
 struct ext_json_min_key
@@ -183,6 +185,59 @@ struct ext_json_undefined
 {
   [[= serde::rename{"$undefined"}]] bool undefined = true;
 };
+
+struct ext_json_number_double
+{
+  [[= serde::rename{"$numberDouble"}]] std::string_view number_double;
+};
+
+constexpr ext_json_number_double ext_json_non_finite(double value)
+{
+  if(std::isnan(value))
+  {
+    return {.number_double = "NaN"};
+  }
+  return {.number_double = value < 0 ? "-Infinity" : "Infinity"};
+}
+
+struct ext_json_number_decimal
+{
+  [[= serde::rename{"$numberDecimal"}]] std::string number_decimal;
+};
+
+inline ext_json_number_decimal ext_json_decimal(bson::decimal128 value)
+{
+  if(std::isnan(value))
+  {
+    return {.number_decimal = "NaN"};
+  }
+  if(std::isinf(value))
+  {
+    return {.number_decimal = value < 0 ? "-Infinity" : "Infinity"};
+  }
+  std::array<char, 64> buf{};
+  const auto           r = std::to_chars(buf.data(), buf.data() + buf.size(), value);
+  return {
+      .number_decimal = std::string{buf.data(), r.ptr}
+  };
+}
+
+struct ext_json_number_long
+{
+  [[= serde::rename{"$numberLong"}]] std::string number_long;
+};
+
+struct ext_json_datetime
+{
+  [[= serde::rename{"$date"}, = serde::inline_table]] ext_json_number_long date;
+};
+
+constexpr ext_json_datetime ext_json_of(bson::datetime const& value)
+{
+  std::array<char, 24> buf{};
+  const auto r = std::to_chars(buf.data(), buf.data() + buf.size(), value.millis_since_epoch);
+  return {.date = {.number_long = std::string{buf.data(), r.ptr}}};
+}
 
 constexpr ext_json_object_id ext_json_of(bson::object_id const& value)
 {
@@ -308,6 +363,12 @@ constexpr void append_cstring(bytes& out, std::string_view value, std::string_vi
   append(out, value);
 }
 
+constexpr void append_element_header(bytes& out, bson_type type, std::string_view key)
+{
+  append(out, type);
+  append_cstring(out, key, "key");
+}
+
 constexpr void check_scope(std::span<std::byte const> scope)
 {
   if(scope.size() < 5 or scope.back() != std::byte{0x00})
@@ -364,8 +425,7 @@ template <typename Fn> constexpr void make_document(bytes& out, Fn&& write_eleme
 template <typename T>
 constexpr void write_document_value(bytes& out, std::string_view key, T const& value)
 {
-  append(out, detail::bson_type::document);
-  append(out, key);
+  append_element_header(out, detail::bson_type::document, key);
 
   make_document(out, [&](bytes& doc) {
     if constexpr(map_c<T>)
@@ -399,8 +459,7 @@ constexpr void write_document_value(bytes& out, std::string_view key, T const& v
 template <typename T>
 constexpr void write_array_value(bytes& out, std::string_view key, T const& value)
 {
-  append(out, detail::bson_type::array);
-  append(out, key);
+  append_element_header(out, detail::bson_type::array, key);
 
   make_document(out, [&](bytes& doc) {
     std::size_t idx = 0;
@@ -422,8 +481,7 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
 
   if constexpr(std::same_as<value_t, null_t>)
   {
-    append(out, detail::bson_type::null);
-    append(out, key);
+    append_element_header(out, detail::bson_type::null, key);
   }
   else if constexpr(optional_c<value_t>)
   {
@@ -438,28 +496,24 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   }
   else if constexpr(std::same_as<value_t, bool>)
   {
-    append(out, detail::bson_type::boolean);
-    append(out, key);
+    append_element_header(out, detail::bson_type::boolean, key);
     append(out, value ? std::byte{0x01} : std::byte{0x00});
   }
   else if constexpr(str_c<value_t>)
   {
-    append(out, detail::bson_type::string);
-    append(out, key);
+    append_element_header(out, detail::bson_type::string, key);
     append(out, std::string_view(value), true);
   }
   else if constexpr(std::floating_point<value_t>)
   {
     if constexpr(std::same_as<value_t, decimal128>)
     {
-      append(out, detail::bson_type::decimal128);
-      append(out, key);
+      append_element_header(out, detail::bson_type::decimal128, key);
       append(out, value);
     }
     else
     {
-      append(out, detail::bson_type::double_);
-      append(out, key);
+      append_element_header(out, detail::bson_type::double_, key);
       append(out, static_cast<double>(value));
     }
   }
@@ -467,47 +521,40 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   {
     if constexpr(std::same_as<value_t, bson::int32>)
     {
-      append(out, detail::bson_type::int32);
-      append(out, key);
+      append_element_header(out, detail::bson_type::int32, key);
       append(out, value);
     }
     else if constexpr(std::same_as<value_t, bson::int64>)
     {
-      append(out, detail::bson_type::int64);
-      append(out, key);
+      append_element_header(out, detail::bson_type::int64, key);
       append(out, value);
     }
     else if(
         (value >= std::numeric_limits<std::int32_t>::min())
         and (value <= std::numeric_limits<std::int32_t>::max()))
     {
-      append(out, detail::bson_type::int32);
-      append(out, key);
+      append_element_header(out, detail::bson_type::int32, key);
       append(out, static_cast<std::int32_t>(value));
     }
     else
     {
-      append(out, detail::bson_type::int64);
-      append(out, key);
+      append_element_header(out, detail::bson_type::int64, key);
       append(out, static_cast<std::int64_t>(value));
     }
   }
   else if constexpr(std::same_as<value_t, bson::decimal128>)
   {
-    append(out, detail::bson_type::decimal128);
-    append(out, key);
+    append_element_header(out, detail::bson_type::decimal128, key);
     append(out, value);
   }
   else if constexpr(std::same_as<value_t, bson::datetime>)
   {
-    append(out, detail::bson_type::datetime);
-    append(out, key);
+    append_element_header(out, detail::bson_type::datetime, key);
     append(out, value.millis_since_epoch);
   }
   else if constexpr(std::same_as<value_t, bson::binary>)
   {
-    append(out, detail::bson_type::binary);
-    append(out, key);
+    append_element_header(out, detail::bson_type::binary, key);
     const auto old    = value.subtype == binary_old_subtype;
     const auto prefix = old ? sizeof(std::int32_t) : 0;
     const auto limit  = static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
@@ -525,68 +572,57 @@ template <typename T> constexpr void write_element(bytes& out, std::string_view 
   }
   else if constexpr(std::same_as<value_t, bson::object_id>)
   {
-    append(out, detail::bson_type::object_id);
-    append(out, key);
+    append_element_header(out, detail::bson_type::object_id, key);
     append(out, value);
   }
   else if constexpr(std::same_as<value_t, bson::timestamp>)
   {
-    append(out, detail::bson_type::timestamp);
-    append(out, key);
+    append_element_header(out, detail::bson_type::timestamp, key);
     append(out, value.increment);
     append(out, value.seconds);
   }
   else if constexpr(std::same_as<value_t, bson::regex>)
   {
-    append(out, detail::bson_type::regex);
-    append(out, key);
+    append_element_header(out, detail::bson_type::regex, key);
     append_cstring(out, value.pattern, "regex pattern");
     append_cstring(out, sorted_regex_options(value.options), "regex options");
   }
   else if constexpr(std::same_as<value_t, bson::javascript>)
   {
-    append(out, detail::bson_type::javascript);
-    append(out, key);
+    append_element_header(out, detail::bson_type::javascript, key);
     append(out, std::string_view(value.code), true);
   }
   else if constexpr(std::same_as<value_t, bson::symbol>)
   {
-    append(out, detail::bson_type::symbol);
-    append(out, key);
+    append_element_header(out, detail::bson_type::symbol, key);
     append(out, std::string_view(value.name), true);
   }
   else if constexpr(std::same_as<value_t, bson::db_pointer>)
   {
-    append(out, detail::bson_type::db_pointer);
-    append(out, key);
+    append_element_header(out, detail::bson_type::db_pointer, key);
     append(out, std::string_view(value.ref), true);
     append(out, value.id);
   }
   else if constexpr(std::same_as<value_t, bson::min_key>)
   {
-    append(out, detail::bson_type::min_key);
-    append(out, key);
+    append_element_header(out, detail::bson_type::min_key, key);
   }
   else if constexpr(std::same_as<value_t, bson::max_key>)
   {
-    append(out, detail::bson_type::max_key);
-    append(out, key);
+    append_element_header(out, detail::bson_type::max_key, key);
   }
   else if constexpr(std::same_as<value_t, bson::undefined>)
   {
-    append(out, detail::bson_type::undefined);
-    append(out, key);
+    append_element_header(out, detail::bson_type::undefined, key);
   }
   else if constexpr(std::same_as<value_t, bson::code_w_scope>)
   {
-    append(out, detail::bson_type::code_w_scope);
-    append(out, key);
+    append_element_header(out, detail::bson_type::code_w_scope, key);
     append(out, value);
   }
   else if constexpr(detail::byte_seq_c<value_t>)
   {
-    append(out, detail::bson_type::binary);
-    append(out, key);
+    append_element_header(out, detail::bson_type::binary, key);
     if(value.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
     {
       throw std::length_error("BSON binary payload exceeds the int32 length field");
@@ -1857,7 +1893,8 @@ REFLEX_EXPORT namespace reflex::serde::bson
 
   /** @brief Write @p value as its Extended JSON v2 document.
    *
-   * `object_id` as `{"$oid": <24 lowercase hex>}`, `timestamp` as
+   * `datetime` as `{"$date": {"$numberLong": "<millis>"}}`, the canonical form, never the relaxed
+   * ISO-8601 string, `object_id` as `{"$oid": <24 lowercase hex>}`, `timestamp` as
    * `{"$timestamp": {"t": <seconds>, "i": <increment>}}`, `regex` as
    * `{"$regularExpression": {"pattern": ..., "options": ...}}`, `javascript` as `{"$code": ...}`,
    * `code_w_scope` as `{"$code": ..., "$scope": {...}}`, `symbol` as `{"$symbol": ...}`,
@@ -1964,6 +2001,634 @@ REFLEX_EXPORT namespace reflex::serde::bson
     return value;
   }
 } // namespace reflex::serde::bson
+
+namespace reflex::serde::bson::detail
+{
+inline constexpr std::array<std::string_view, 16> ext_json_keys{
+    "$binary",        "$code",         "$date",      "$dbPointer",  "$maxKey", "$minKey",
+    "$numberDecimal", "$numberDouble", "$numberInt", "$numberLong", "$oid",    "$regularExpression",
+    "$scope",         "$symbol",       "$timestamp", "$undefined"};
+
+[[noreturn]] inline void ext_json_error(std::string_view message)
+{
+  throw std::runtime_error(std::format("Extended JSON: {}", message));
+}
+
+constexpr void expect_ext_json_keys(
+    bson::object const&                     obj,
+    std::string_view                        wrapper,
+    std::initializer_list<std::string_view> keys)
+{
+  for(auto const& [key, value] : obj)
+  {
+    if(not std::ranges::contains(keys, std::string_view{key}))
+    {
+      ext_json_error(std::format("unexpected key '{}' in a {} document", key, wrapper));
+    }
+  }
+  for(auto key : keys)
+  {
+    if(not obj.contains(std::string{key}))
+    {
+      ext_json_error(std::format("a {} document is missing '{}'", wrapper, key));
+    }
+  }
+}
+
+constexpr bson::value const& ext_json_member(bson::object const& obj, std::string_view key)
+{
+  return obj.find(std::string{key})->second;
+}
+
+constexpr std::string const& ext_json_string(bson::value const& value, std::string_view path)
+{
+  if(not value.is<bson::string>())
+  {
+    ext_json_error(std::format("{} must be a string", path));
+  }
+  return value.as<bson::string>();
+}
+
+constexpr bson::object const& ext_json_body(bson::object const& obj, std::string_view key)
+{
+  auto const& body = ext_json_member(obj, key);
+  if(not body.is_object())
+  {
+    ext_json_error(std::format("{} must be a document", key));
+  }
+  return body.as_object();
+}
+
+constexpr std::optional<std::int64_t> ext_json_integer(bson::value const& value)
+{
+  if(value.is<bson::int32>())
+  {
+    return value.as<bson::int32>();
+  }
+  if(value.is<bson::int64>())
+  {
+    return value.as<bson::int64>();
+  }
+  return std::nullopt;
+}
+
+constexpr bson::object_id decode_object_id(bson::value const& value)
+{
+  bson::object_id id;
+  if(not value.is<bson::string>()
+     or not serde::detail::hex_decode(value.as<bson::string>(), id.bytes))
+  {
+    ext_json_error("$oid must be a string of 24 hex digits");
+  }
+  return id;
+}
+
+constexpr bson::binary decode_binary(bson::object const& obj)
+{
+  auto const& body = ext_json_body(obj, "$binary");
+  expect_ext_json_keys(body, "$binary", {"base64", "subType"});
+
+  auto const& base64 = ext_json_member(body, "base64");
+  auto data = base64.is<bson::string>() ? serde::detail::base64_decode(base64.as<bson::string>())
+                                        : std::nullopt;
+  if(not data)
+  {
+    ext_json_error("$binary.base64 must be a padded base64 string");
+  }
+
+  auto const&              sub_type = ext_json_member(body, "subType");
+  std::array<std::byte, 1> subtype{};
+  if(not sub_type.is<bson::string>()
+     or not(
+         serde::detail::hex_decode(sub_type.as<bson::string>(), subtype)
+         or serde::detail::hex_decode("0" + sub_type.as<bson::string>(), subtype)))
+  {
+    ext_json_error("$binary.subType must be a string of 1 or 2 hex digits");
+  }
+  return {.subtype = subtype[0], .data = *std::move(data)};
+}
+
+constexpr std::uint32_t decode_timestamp_field(bson::object const& body, std::string_view key)
+{
+  const auto value = ext_json_integer(ext_json_member(body, key));
+  if(not value or not std::in_range<std::uint32_t>(*value))
+  {
+    ext_json_error(std::format("$timestamp.{} must be an integer from 0 to 4294967295", key));
+  }
+  return static_cast<std::uint32_t>(*value);
+}
+
+constexpr bson::timestamp decode_timestamp(bson::object const& obj)
+{
+  auto const& body = ext_json_body(obj, "$timestamp");
+  expect_ext_json_keys(body, "$timestamp", {"t", "i"});
+  return {
+      .increment = decode_timestamp_field(body, "i"),
+      .seconds   = decode_timestamp_field(body, "t"),
+  };
+}
+
+constexpr bson::regex decode_regex(bson::object const& obj)
+{
+  auto const& body = ext_json_body(obj, "$regularExpression");
+  expect_ext_json_keys(body, "$regularExpression", {"pattern", "options"});
+  return {
+      .pattern = ext_json_string(ext_json_member(body, "pattern"), "$regularExpression.pattern"),
+      .options = ext_json_string(ext_json_member(body, "options"), "$regularExpression.options"),
+  };
+}
+
+constexpr bson::db_pointer decode_db_pointer(bson::object const& obj)
+{
+  auto const& body = ext_json_body(obj, "$dbPointer");
+  expect_ext_json_keys(body, "$dbPointer", {"$ref", "$id"});
+  auto const& id = ext_json_member(body, "$id");
+  if(not id.is<bson::object_id>())
+  {
+    ext_json_error("$dbPointer.$id must be an $oid document");
+  }
+  return {
+      .ref = ext_json_string(ext_json_member(body, "$ref"), "$dbPointer.$ref"),
+      .id  = id.as<bson::object_id>(),
+  };
+}
+
+constexpr bson::value decode_code(bson::object const& obj)
+{
+  const bool scoped = obj.contains("$scope");
+  if(scoped)
+  {
+    expect_ext_json_keys(obj, "$code", {"$code", "$scope"});
+  }
+  else
+  {
+    expect_ext_json_keys(obj, "$code", {"$code"});
+  }
+  auto code = ext_json_string(ext_json_member(obj, "$code"), "$code");
+  if(not scoped)
+  {
+    return bson::javascript{std::move(code)};
+  }
+  auto const& scope = ext_json_member(obj, "$scope");
+  if(not scope.is_object())
+  {
+    ext_json_error("$scope must be a document");
+  }
+  bytes encoded;
+  try
+  {
+    encode_root(encoded, scope.as_object());
+  }
+  catch(std::logic_error const& error)
+  {
+    ext_json_error(std::format("$scope is not a valid BSON document: {}", error.what()));
+  }
+  return bson::code_w_scope{.code = std::move(code), .scope = std::move(encoded)};
+}
+
+constexpr void
+    expect_one(bson::object const& obj, std::string_view key, bool valid, std::string_view message)
+{
+  expect_ext_json_keys(obj, key, {key});
+  if(not valid)
+  {
+    ext_json_error(message);
+  }
+}
+
+template <std::integral T>
+constexpr std::optional<T> parse_ext_json_integer(bson::value const& value)
+{
+  if(not value.is<bson::string>())
+  {
+    return std::nullopt;
+  }
+  auto const& text = value.as<bson::string>();
+  const auto  last = text.data() + text.size();
+  T           result{};
+  auto [ptr, ec] = std::from_chars(text.data(), last, result);
+  if(ec != std::errc{} or ptr != last)
+  {
+    return std::nullopt;
+  }
+  return result;
+}
+
+constexpr bool equals_ignoring_case(std::string_view text, std::string_view lower)
+{
+  return std::ranges::equal(text, lower, [](char c, char l) {
+    return (c >= 'A' and c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c) == l;
+  });
+}
+
+constexpr std::optional<bson::decimal128> decimal128_special(std::string_view text)
+{
+  const bool negative = text.starts_with('-');
+  const auto body     = negative or text.starts_with('+') ? text.substr(1) : text;
+  if(equals_ignoring_case(body, "inf") or equals_ignoring_case(body, "infinity"))
+  {
+    constexpr auto infinity = std::numeric_limits<bson::decimal128>::infinity();
+    return negative ? -infinity : infinity;
+  }
+  if(equals_ignoring_case(body, "nan"))
+  {
+    return std::numeric_limits<bson::decimal128>::quiet_NaN();
+  }
+  return std::nullopt;
+}
+
+template <std::floating_point T>
+constexpr std::optional<T> parse_ext_json_float(bson::value const& value)
+{
+  if(not value.is<bson::string>())
+  {
+    return std::nullopt;
+  }
+  std::string_view text = value.as<bson::string>();
+  if constexpr(std::same_as<T, bson::decimal128>)
+  {
+    if(const auto special = decimal128_special(text))
+    {
+      return *special;
+    }
+    if(text.starts_with('+'))
+    {
+      text.remove_prefix(1);
+      if(text.starts_with('+') or text.starts_with('-'))
+      {
+        return std::nullopt;
+      }
+    }
+  }
+  const auto body = text.starts_with('-') ? text.substr(1) : text;
+  if(not body.empty() and std::string_view{"iInN"}.contains(body.front()))
+  {
+    if(text == "Infinity")
+    {
+      return std::numeric_limits<T>::infinity();
+    }
+    if(text == "-Infinity")
+    {
+      return -std::numeric_limits<T>::infinity();
+    }
+    if(text == "NaN")
+    {
+      return std::numeric_limits<T>::quiet_NaN();
+    }
+    return std::nullopt;
+  }
+  const auto last = text.data() + text.size();
+  T          result{};
+  auto [ptr, ec] = std::from_chars(text.data(), last, result);
+  if(ec != std::errc{} or ptr != last)
+  {
+    return std::nullopt;
+  }
+  return result;
+}
+
+template <typename T>
+constexpr T decode_number(
+    bson::object const& obj,
+    std::string_view    key,
+    std::optional<T>    parsed,
+    std::string_view    what)
+{
+  expect_ext_json_keys(obj, key, {key});
+  if(not parsed)
+  {
+    ext_json_error(std::format("{} must be a string holding {}", key, what));
+  }
+  return *parsed;
+}
+
+constexpr std::optional<int>
+    rfc3339_field(std::string_view text, std::size_t pos, std::size_t count)
+{
+  if(pos + count > text.size())
+  {
+    return std::nullopt;
+  }
+  int value = 0;
+  for(auto c : text.substr(pos, count))
+  {
+    if(c < '0' or c > '9')
+    {
+      return std::nullopt;
+    }
+    value = value * 10 + (c - '0');
+  }
+  return value;
+}
+
+constexpr std::optional<std::int64_t> rfc3339_millis(std::string_view text)
+{
+  if(text.size() < 20)
+  {
+    return std::nullopt;
+  }
+  const std::array<char, 5> separators{
+      text[4], text[7], text[10] == 't' ? 'T' : text[10], text[13], text[16]};
+  if(std::string_view{separators.data(), separators.size()} != "--T::")
+  {
+    return std::nullopt;
+  }
+  const auto year   = rfc3339_field(text, 0, 4);
+  const auto month  = rfc3339_field(text, 5, 2);
+  const auto day    = rfc3339_field(text, 8, 2);
+  const auto hour   = rfc3339_field(text, 11, 2);
+  const auto minute = rfc3339_field(text, 14, 2);
+  const auto second = rfc3339_field(text, 17, 2);
+  if(not(year and month and day and hour and minute and second))
+  {
+    return std::nullopt;
+  }
+  if(*hour > 23 or *minute > 59 or *second > 59)
+  {
+    return std::nullopt;
+  }
+  const std::chrono::year_month_day date{
+      std::chrono::year{*year}, std::chrono::month{static_cast<unsigned>(*month)},
+      std::chrono::day{static_cast<unsigned>(*day)}};
+  if(not date.ok())
+  {
+    return std::nullopt;
+  }
+
+  std::size_t  pos    = 19;
+  std::int64_t millis = 0;
+  if(text[pos] == '.')
+  {
+    const auto first = ++pos;
+    int        scale = 100;
+    while(pos < text.size() and text[pos] >= '0' and text[pos] <= '9')
+    {
+      millis += (text[pos] - '0') * scale;
+      scale /= 10;
+      ++pos;
+    }
+    if(pos == first)
+    {
+      return std::nullopt;
+    }
+  }
+
+  std::chrono::minutes offset{};
+  if(pos < text.size() and (text[pos] == 'Z' or text[pos] == 'z'))
+  {
+    ++pos;
+  }
+  else if(pos < text.size() and (text[pos] == '+' or text[pos] == '-'))
+  {
+    const auto offset_hour   = rfc3339_field(text, pos + 1, 2);
+    const auto offset_minute = rfc3339_field(text, pos + 4, 2);
+    if(not offset_hour or not offset_minute or text[pos + 3] != ':')
+    {
+      return std::nullopt;
+    }
+    if(*offset_hour > 23 or *offset_minute > 59)
+    {
+      return std::nullopt;
+    }
+    offset = std::chrono::hours{*offset_hour} + std::chrono::minutes{*offset_minute};
+    if(text[pos] == '-')
+    {
+      offset = -offset;
+    }
+    pos += 6;
+  }
+  else
+  {
+    return std::nullopt;
+  }
+  if(pos != text.size())
+  {
+    return std::nullopt;
+  }
+
+  const auto instant = std::chrono::sys_days{date}
+                     + std::chrono::hours{*hour}
+                     + std::chrono::minutes{*minute}
+                     + std::chrono::seconds{*second}
+                     + std::chrono::milliseconds{millis}
+                     - offset;
+  return std::chrono::duration_cast<std::chrono::milliseconds>(instant.time_since_epoch()).count();
+}
+
+constexpr bson::datetime decode_date(bson::object const& obj)
+{
+  expect_ext_json_keys(obj, "$date", {"$date"});
+  auto const& value = ext_json_member(obj, "$date");
+  if(value.is<bson::int64>())
+  {
+    return bson::datetime{value.as<bson::int64>()};
+  }
+  if(value.is<bson::string>())
+  {
+    if(const auto millis = rfc3339_millis(value.as<bson::string>()))
+    {
+      return bson::datetime{*millis};
+    }
+  }
+  ext_json_error("$date must be an RFC 3339 string or a $numberLong document");
+}
+
+constexpr std::optional<bson::value> decode_ext_json(bson::object const& obj)
+{
+  const auto wrapper = std::ranges::find_if(
+      obj, [](auto const& member) { return std::ranges::contains(ext_json_keys, member.first); });
+  if(wrapper == obj.end())
+  {
+    return std::nullopt;
+  }
+  if(obj.contains("$code") or obj.contains("$scope"))
+  {
+    return decode_code(obj);
+  }
+
+  const std::string_view key   = wrapper->first;
+  auto const&            value = wrapper->second;
+  if(key == "$oid")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_object_id(value);
+  }
+  if(key == "$binary")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_binary(obj);
+  }
+  if(key == "$timestamp")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_timestamp(obj);
+  }
+  if(key == "$regularExpression")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_regex(obj);
+  }
+  if(key == "$dbPointer")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return decode_db_pointer(obj);
+  }
+  if(key == "$symbol")
+  {
+    expect_ext_json_keys(obj, key, {key});
+    return bson::symbol{ext_json_string(value, key)};
+  }
+  if(key == "$numberInt")
+  {
+    return decode_number(obj, key, parse_ext_json_integer<bson::int32>(value), "a 32-bit integer");
+  }
+  if(key == "$numberLong")
+  {
+    return decode_number(obj, key, parse_ext_json_integer<bson::int64>(value), "a 64-bit integer");
+  }
+  if(key == "$numberDouble")
+  {
+    return decode_number(obj, key, parse_ext_json_float<bson::number>(value), "a double");
+  }
+  if(key == "$numberDecimal")
+  {
+    return decode_number(obj, key, parse_ext_json_float<bson::decimal128>(value), "a decimal128");
+  }
+  if(key == "$date")
+  {
+    return decode_date(obj);
+  }
+  if(key == "$undefined")
+  {
+    expect_one(
+        obj, key, value.is<bson::boolean>() and value.as<bson::boolean>(),
+        "$undefined must be true");
+    return bson::undefined{};
+  }
+  expect_one(obj, key, ext_json_integer(value) == 1, std::format("{} must be 1", key));
+  if(key == "$minKey")
+  {
+    return bson::min_key{};
+  }
+  return bson::max_key{};
+}
+
+template <typename T> consteval std::string_view ext_json_wrapper_of()
+{
+  if constexpr(std::same_as<T, bson::binary>)
+  {
+    return "$binary";
+  }
+  else if constexpr(std::same_as<T, bson::datetime>)
+  {
+    return "$date";
+  }
+  else if constexpr(std::same_as<T, bson::object_id>)
+  {
+    return "$oid";
+  }
+  else if constexpr(std::same_as<T, bson::timestamp>)
+  {
+    return "$timestamp";
+  }
+  else if constexpr(std::same_as<T, bson::regex>)
+  {
+    return "$regularExpression";
+  }
+  else if constexpr(std::same_as<T, bson::javascript>)
+  {
+    return "$code";
+  }
+  else if constexpr(std::same_as<T, bson::code_w_scope>)
+  {
+    return "$code and $scope";
+  }
+  else if constexpr(std::same_as<T, bson::symbol>)
+  {
+    return "$symbol";
+  }
+  else if constexpr(std::same_as<T, bson::db_pointer>)
+  {
+    return "$dbPointer";
+  }
+  else if constexpr(std::same_as<T, bson::min_key>)
+  {
+    return "$minKey";
+  }
+  else if constexpr(std::same_as<T, bson::max_key>)
+  {
+    return "$maxKey";
+  }
+  else
+  {
+    static_assert(std::same_as<T, bson::undefined>, "no Extended JSON wrapper for this type");
+    return "$undefined";
+  }
+}
+
+template <typename T> constexpr T expect_ext_json(bson::object const& obj)
+{
+  if(auto decoded = decode_ext_json(obj); decoded and decoded->template is<T>())
+  {
+    return std::move(*decoded).template as<T>();
+  }
+  ext_json_error(
+      std::format(
+          "expected a {} document for bson::{}", ext_json_wrapper_of<T>(),
+          std::meta::identifier_of(^^T)));
+}
+}
+
+namespace reflex::serde::detail
+{
+template <> inline constexpr bool ext_json_type_v<bson::binary> = true;
+
+template <bson::detail::bson_extended_c T> inline constexpr bool ext_json_type_v<T> = true;
+
+template <> struct ext_json_value<bson::value>
+{
+  static constexpr bool enabled = true;
+
+  static constexpr bson::value lift(bson::object&& obj)
+  {
+    if(auto decoded = bson::detail::decode_ext_json(obj))
+    {
+      return *std::move(decoded);
+    }
+    return bson::value{std::move(obj)};
+  }
+
+  static constexpr auto non_finite(double value)
+  {
+    return bson::detail::ext_json_non_finite(value);
+  }
+
+  template <std::same_as<bson::decimal128> U> static auto wrap(U value)
+  {
+    return bson::detail::ext_json_decimal(value);
+  }
+};
+}
+
+REFLEX_EXPORT namespace reflex::serde::bson
+{
+  /** @brief Read a `binary` or an extended type from its Extended JSON v2 document, the form its
+   * serialize overload writes, with the same rules as a type wrapper read into `bson::value`.
+   * A `datetime` also reads `$date` as a relaxed RFC 3339 string.
+   *
+   * Taken by the JSON, YAML and TOML deserializers only. XML, CSV and BSON never see it.
+   *
+   * @throws std::runtime_error `Extended JSON: expected a <wrapper> document for bson::<type>` when
+   * the document is not a type wrapper or wraps another type, or the wrapper's own message when it
+   * is malformed.
+   */
+  template <serde::detail::ext_json_deserializer_c D, typename T>
+    requires(std::same_as<T, bson::binary> or detail::bson_extended_c<T>)
+  T tag_invoke(tag_t<serde::deserialize>, D & de, std::type_identity<T>)
+  {
+    return detail::expect_ext_json<T>(de.template load<bson::object>());
+  }
+}
 
 REFLEX_EXPORT namespace reflex::serde::ser
 {

@@ -96,6 +96,11 @@ doctest_add_test(reflex-serde-json-bson-test
 )
 target_link_libraries(reflex-serde-json-bson-test PRIVATE reflex::serde::json reflex::serde::bson)
 
+doctest_add_test(reflex-serde-bson-read-json-test
+  test-serde-bson-read-json.cpp
+)
+target_link_libraries(reflex-serde-bson-read-json-test PRIVATE reflex::serde::json reflex::serde::bson)
+
 
 doctest_add_test(reflex-serde-test-object-visit
   test-object-visit.cpp

@@ -167,6 +167,19 @@ REFLEX_EXPORT namespace reflex::serde::json
     return {std::define_static_string(s), s.size()};
   }
 
+  template <typename Var, typename Ser, typename U> void write_alternative(Ser& ser, U const& value)
+  {
+    if constexpr(serde::detail::ext_json_value<Var>::enabled and std::same_as<U, double>)
+    {
+      if(not std::isfinite(value))
+      {
+        serde::serialize(ser, serde::detail::ext_json_value<Var>::non_finite(value));
+        return;
+      }
+    }
+    serde::serialize(ser, serde::detail::ext_json_alternative<Var>(value));
+  }
+
   template <typename De, typename V> void load_object_member(De& de, V& v)
   {
     v = de.template load<std::remove_cvref_t<V>>();
@@ -520,6 +533,64 @@ REFLEX_EXPORT namespace reflex::serde::json
       return value;
     }
 
+    template <typename Var> static Var relaxed_number(std::string_view token, double value)
+    {
+      if(token.find_first_not_of("-0123456789") == std::string_view::npos)
+      {
+        std::int64_t integer{};
+        const auto   last = token.data() + token.size();
+        auto [ptr, ec]    = std::from_chars(token.data(), last, integer);
+        if(ec == std::errc{} and ptr == last)
+        {
+          return serde::detail::relaxed_integer<Var>(integer);
+        }
+      }
+      return Var{value};
+    }
+
+    template <typename Var, bool Comments, typename De> static Var read_relaxed_number(De& de)
+    {
+      de.skip_to_value();
+      double value{};
+      if constexpr(De::bulk_scan)
+      {
+        const auto first = std::to_address(de.begin());
+        const auto last  = std::to_address(de.end());
+        auto [ptr, ec]   = std::from_chars(first, last, value);
+        if(ec != std::errc{} or (ptr != last and not ends_number<Comments>(*ptr)))
+        {
+          throw std::runtime_error("Failed to parse number");
+        }
+        de.advance_to(std::next(de.begin(), ptr - first));
+        return relaxed_number<Var>(std::string_view{first, ptr}, value);
+      }
+      else
+      {
+        heapless::string<64> token{};
+        while(not de.at_end())
+        {
+          const auto c = de.peek();
+          if((c == '-') or (c == '+') or (c == '.') or (c == 'e') or (c == 'E') or is_digit(c))
+          {
+            token.push_back(c);
+            de.advance();
+          }
+          else
+          {
+            break;
+          }
+        }
+        const auto last  = token.data() + token.size();
+        auto [ptr, ec]   = std::from_chars(token.data(), last, value);
+        const bool whole = ec == std::errc{} and ptr == last;
+        if(not whole or (not de.at_end() and not ends_number<Comments>(de.peek())))
+        {
+          throw std::runtime_error("Failed to parse number");
+        }
+        return relaxed_number<Var>(std::string_view{token.data(), token.size()}, value);
+      }
+    }
+
     template <typename Var> static consteval bool wraps_an_alternative()
     {
       template for(constexpr auto a : aggregate_types_of_var<Var>())
@@ -695,7 +766,11 @@ REFLEX_EXPORT namespace reflex::serde::json
             emit.slot.give(node->[:node_member:]);
           }
         }
-        reflex::visit([&ser](auto const& v) { serialize(ser, v); }, member_value);
+        reflex::visit(
+            [&ser](auto const& v) {
+              write_alternative<std::remove_cvref_t<decltype(member_value)>>(ser, v);
+            },
+            member_value);
         const bool written_inside = emit.slot.node == nullptr;
         emit.slot                 = {};
         if(node != nullptr and (scalar_node or not written_inside))
@@ -1211,7 +1286,11 @@ REFLEX_EXPORT namespace reflex::serde::json
       entry.item(ser);
       serialize(ser, value.first);
       ser.write_raw(key_separator);
-      reflex::visit([&ser](const auto& v) { serialize(ser, v); }, value.second);
+      reflex::visit(
+          [&ser](const auto& v) {
+            detail::write_alternative<std::remove_cvref_t<decltype(value.second)>>(ser, v);
+          },
+          value.second);
       entry.close(ser, '}');
       return ser.out();
     }
@@ -1219,6 +1298,12 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <map_c Map>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, Map const& value)
     {
+      static_assert(
+          not serde::detail::ext_json_type_v<std::remove_cvref_t<typename Map::key_type>>,
+          std::string(display_string_of(dealias(^^typename Map::key_type)))
+              + " cannot be a JSON object key: its Extended JSON form is a document, not a "
+                "string");
+
       ser.write_char('{');
 
       nest entries;
@@ -1262,7 +1347,7 @@ REFLEX_EXPORT namespace reflex::serde::json
               }
               else
               {
-                serialize(ser, v);
+                detail::write_alternative<var_type>(ser, v);
               }
             },
             val);
@@ -1274,7 +1359,8 @@ REFLEX_EXPORT namespace reflex::serde::json
     template <visitable_c T>
     friend OutputIt tag_invoke(tag_t<serde::serialize>, serializer& ser, T const& value)
     {
-      return visit([&ser](const auto& v) { return serialize(ser, v); }, value);
+      visit([&ser](const auto& v) { detail::write_alternative<T>(ser, v); }, value);
+      return ser.out();
     }
   };
 
@@ -1333,7 +1419,11 @@ REFLEX_EXPORT namespace reflex::serde::json
       members.item(ser);
       static constexpr std::string_view key_token = detail::quoted_key<member, (Opts.indent > 0)>();
       ser.write_raw(key_token);
-      reflex::visit([&ser](const auto& v) { serialize(ser, v); }, member_value);
+      reflex::visit(
+          [&ser](const auto& v) {
+            detail::write_alternative<std::remove_cvref_t<decltype(member_value)>>(ser, v);
+          },
+          member_value);
     }
     members.close(ser, '}');
     return ser.out();
@@ -2180,7 +2270,16 @@ REFLEX_EXPORT namespace reflex::serde::json
         case 'n':
           return de.template load<null_t>();
         case '{':
-          if constexpr(detail::json_access::wraps_an_alternative<var_type>())
+          if constexpr(serde::detail::ext_json_value<var_type>::enabled)
+          {
+            static_assert(
+                not detail::json_access::wraps_an_alternative<var_type>(),
+                "a value type read through ext_json_value must not take the poly::var __type "
+                "envelope, which would read a type wrapper object as an envelope");
+            return serde::detail::ext_json_value<var_type>::lift(
+                de.template load<typename var_type::obj_type>());
+          }
+          else if constexpr(detail::json_access::wraps_an_alternative<var_type>())
           {
             return detail::json_access::read_var_object<var_type>(de);
           }
@@ -2193,7 +2292,14 @@ REFLEX_EXPORT namespace reflex::serde::json
         case '"':
           return de.template load<json::string>();
         default:
-          return de.template load<json::number>();
+          if constexpr(serde::detail::ext_json_value<var_type>::enabled)
+          {
+            return detail::json_access::read_relaxed_number<var_type, Opts.comments>(de);
+          }
+          else
+          {
+            return de.template load<json::number>();
+          }
       }
     }
   };
@@ -2219,7 +2325,9 @@ REFLEX_EXPORT namespace reflex::serde::json
   /** @brief True when @p T writes and reads itself through its own JSON overloads, so a
    * poly::var object member holding it is written as `{"__type": id, "value": ...}` and read
    * back through its deserialize overload. A type with a serialize overload alone is written
-   * bare and does not read back as itself.
+   * bare and does not read back as itself. A type with an Extended JSON text form,
+   * `serde::detail::ext_json_type_v`, is always written bare: its type wrapper document already
+   * names it, and a value type reading Extended JSON lifts it from that document.
    *
    * Decided on `json::serializer<std::back_insert_iterator<std::string>>` and
    * `json::deserializer<std::string::const_iterator>` with default options, since the writer and
@@ -2234,7 +2342,11 @@ REFLEX_EXPORT namespace reflex::serde::json
   {
     static consteval bool check()
     {
-      if constexpr(not aggregate_c<T>)
+      if constexpr(serde::detail::ext_json_type_v<T>)
+      {
+        return false;
+      }
+      else if constexpr(not aggregate_c<T>)
       {
         return false;
       }
@@ -2309,6 +2421,9 @@ namespace reflex::serde::detail
 {
 template <typename OutputIt, json::options Opts>
 inline constexpr bool ext_json_serializer_v<json::serializer<OutputIt, Opts>> = true;
+
+template <typename InputIt, json::read_options Opts>
+inline constexpr bool ext_json_deserializer_v<json::deserializer<InputIt, Opts>> = true;
 }
 
 REFLEX_EXPORT namespace reflex::serde::ser
