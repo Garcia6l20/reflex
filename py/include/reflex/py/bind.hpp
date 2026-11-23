@@ -4,7 +4,9 @@
 #pragma once
 
 #ifndef REFLEX_MODULE
+#include <algorithm>
 #include <meta>
+#include <numeric>
 #include <vector>
 
 #include <reflex/meta.hpp>
@@ -228,20 +230,34 @@ REFLEX_EXPORT namespace reflex::py
     consteval auto groups_by_spelling(std::meta::info scope, Pred keep)
         -> std::vector<std::meta::info>
     {
-      std::vector<std::meta::info> groups;
+      std::vector<std::meta::info> members;
+      std::vector<std::string>     names;
       for(auto m : std::meta::members_of(scope, std::meta::access_context::current()))
       {
-        if(not keep(m))
+        if(keep(m))
         {
-          continue;
+          members.push_back(m);
+          names.push_back(meta::spelling_of(m));
         }
-        const auto name = meta::spelling_of(m);
-        const bool seen = std::ranges::any_of(
-            groups, [&](std::meta::info g) { return meta::spelling_of(g) == name; });
-        if(not seen)
+      }
+      std::vector<std::size_t> order(members.size());
+      std::ranges::iota(order, 0uz);
+      std::ranges::sort(order, [&](std::size_t a, std::size_t b) {
+        return names[a] == names[b] ? a < b : names[a] < names[b];
+      });
+      std::vector<std::size_t> first;
+      for(std::size_t i = 0; i < order.size(); ++i)
+      {
+        if(i == 0 or names[order[i]] != names[order[i - 1]])
         {
-          groups.push_back(m);
+          first.push_back(order[i]);
         }
+      }
+      std::ranges::sort(first);
+      std::vector<std::meta::info> groups;
+      for(auto i : first)
+      {
+        groups.push_back(members[i]);
       }
       return groups;
     }

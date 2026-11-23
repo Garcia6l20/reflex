@@ -9,8 +9,20 @@ env = project.default_environment
 nanobind = project.get_target("nanobind.runtime")
 py = project.get_target("reflex.py")
 
+compile_only = {"groups-limit"}
+ops_limits = {"groups-limit": 16777216}
+
 for src in project.current_dir.glob("test-*.cpp"):
-    test = add_test(src.stem.removeprefix("test-"), [src.name], [py], group="py")
+    name = src.stem.removeprefix("test-")
+    test = add_test(
+        name,
+        [src.name],
+        [py],
+        group="py",
+        discover=None if name in compile_only else "doctest",
+    )
+    if name in ops_limits:
+        test.private.compile_flags.append(f"-fconstexpr-ops-limit={ops_limits[name]}")
     print(f"-- Test added: {test.name}")
 
 for src in project.current_dir.glob("ext/*.cpp"):
